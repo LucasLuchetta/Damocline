@@ -114,3 +114,31 @@ func TestArrivalDropReporting(t *testing.T) {
 		t.Fatalf("underdelivery must fail: %+v", result)
 	}
 }
+
+func TestPlannedArrivalAccountingWithSlowLocalServer(t *testing.T) {
+    server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        time.Sleep(220 * time.Millisecond)
+        w.WriteHeader(http.StatusOK)
+    }))
+    defer server.Close()
+    s := config.Scenario{
+        Name: "local arrival fixture", BaseURL: server.URL, Users: 1,
+        Duration: "1s", Mode: "arrival", ArrivalRate: 20, MaxRPS: 30,
+        P95LimitMS: 1500, Steps: []config.Step{{Name: "page", Method: "GET", Path: "/"}},
+    }
+    v, err := config.Parse(s, config.Options{Authorized: true})
+    if err != nil {t.Fatal(err)}
+    out := Run(context.Background(), v)
+    if out.ArrivalsScheduled != 20 {
+        t.Fatalf("lost planned events: expected 20, got %d: %+v", out.ArrivalsScheduled, out)
+    }
+    if out.ArrivalsScheduled != out.IterationsStarted+out.ArrivalsDropped {
+        t.Fatalf("planned events do not reconcile: %+v", out)
+    }
+    if out.ArrivalsDropped != out.ArrivalsDroppedBusy+out.ArrivalsDroppedLate {
+        t.Fatalf("dropped event reasons do not reconcile: %+v", out)
+    }
+    if out.ArrivalsDropped == 0 || out.Outcome == "PASS" {
+        t.Fatalf("undelivered workload must not pass: %+v",out)
+    }
+}

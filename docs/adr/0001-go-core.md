@@ -15,7 +15,7 @@ Keep the core independent from any web UI. Only add external dependencies with a
 
 ## Alternatives
 
-- **Wrap k6:** faster to deliver, but does not meet the independent-engine goal.
+- **Delegate generation to a third-party engine:** less initial engineering work, but does not meet the native-engine and measurement-ownership goals.
 - **Rust:** technically viable, but greater initial development complexity for the planned contributors and scope.
 - **Python-only core:** accessible but less suitable for the desired native single-binary engine design.
 

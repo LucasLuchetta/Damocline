@@ -81,7 +81,7 @@ This launches the guided setup. It asks for your authorized HTTPS origin, read-o
 
 You can alternatively run `.\start.cmd` directly in the cloned directory, or `go run ./cmd/damocline start`. The `damocline` command registered by setup is a tiny `.cmd` launcher running the checked-out Go sources, so `git pull` updates the tool without downloading release binaries. **Go still compiles a temporary native program locally**, and Windows security software may inspect it.
 
-Browser login session reuse **does not replay login forms**, create distinct user accounts, or measure browser rendering. The load engine remains Damocline's own Go implementation, not k6.
+Browser login session reuse **does not replay login forms**, create distinct user accounts, or measure browser rendering. Load generation uses Damocline's native Go engine.
 
 See [Source installation and browser login](docs/SOURCE_INSTALL.md) and [Guided CLI](docs/INTERACTIVE_START.md).
 
@@ -140,7 +140,7 @@ For Windows/PowerShell, session-cookie authentication, and safely testing your o
 
 ## Advanced capacity exploration (experimental)
 
-Damocline has its **own native Go engine**. It does not invoke k6 or external load-testing engines.
+Damocline uses its **own native Go engine** for request scheduling and measurement.
 
 ```bash
 # Copy and edit the example for a system you own or are authorized to test.

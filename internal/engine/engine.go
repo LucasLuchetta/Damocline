@@ -16,6 +16,7 @@ import (
 
 	"github.com/LucasLuchetta/Damocline/internal/config"
 	"github.com/LucasLuchetta/Damocline/internal/report"
+	"github.com/LucasLuchetta/Damocline/internal/scheduler"
 )
 
 const maxResponseBytes = 2 << 20
@@ -64,6 +65,7 @@ func Run(parent context.Context, v config.Validated) report.Result {
 	defer tr.CloseIdleConnections()
 	var startedIterations, completedIterations, scheduledIterations, droppedIterations atomic.Int64
 	var wg sync.WaitGroup
+	var arrivalStats scheduler.Stats
 	clients := make([]*http.Client, v.Scenario.Users)
 	for i := range clients {
 		jar, _ := cookiejar.New(nil)
@@ -133,26 +135,16 @@ func Run(parent context.Context, v config.Validated) report.Result {
 				}
 			}(clients[i])
 		}
-		interval := time.Second / time.Duration(v.Scenario.ArrivalRate)
-		clock := time.NewTicker(interval)
-	loop:
-		for {
+		arrivalStats = scheduler.Drive(ctx, v.Duration, v.Scenario.ArrivalRate, func() bool {
 			select {
-			case <-ctx.Done():
-				break loop
-			case <-clock.C:
-				if ctx.Err() != nil {
-					break loop
-				}
-				scheduledIterations.Add(1)
-				select {
-				case arrivals <- struct{}{}:
-				default:
-					droppedIterations.Add(1)
-				}
+			case arrivals <- struct{}{}:
+				return true
+			default:
+				return false
 			}
-		}
-		clock.Stop()
+		})
+		scheduledIterations.Store(arrivalStats.Planned)
+		droppedIterations.Store(arrivalStats.Dropped())
 		close(arrivals)
 	} else {
 		for i := 0; i < v.Scenario.Users; i++ {
@@ -186,7 +178,7 @@ func Run(parent context.Context, v config.Validated) report.Result {
 	}
 	result := report.Result{SchemaVersion: 2, Name: v.Scenario.Name, Target: v.Base.Scheme + "://" + v.Base.Host, StartedAt: started.UTC().Format(time.RFC3339), ElapsedSeconds: round(elapsed.Seconds()),
 		Config:  report.RunConfig{Users: v.Scenario.Users, Duration: v.Scenario.Duration, RampUp: v.Scenario.RampUp, ThinkTime: v.Scenario.ThinkTime, RequestTimeout: v.Timeout.String(), MaxRPS: v.Scenario.MaxRPS, P95LimitMS: v.Scenario.P95LimitMS, MaxErrorRate: v.Scenario.MaxErrorRate, Mode: v.Scenario.Mode, ArrivalRate: v.Scenario.ArrivalRate, SeparateSessions: len(v.Cookies) > 0, MinSamplesPerStep: v.Scenario.MinSamplesPerStep},
-		Metrics: agg, Journeys: journeyMetrics, Steps: steps, Outcome: "PASS", ErrorsRate: round(errorsRate), IterationsStarted: startedIterations.Load(), IterationsCompleted: completedIterations.Load(), ArrivalsScheduled: scheduledIterations.Load(), ArrivalsDropped: droppedIterations.Load(),
+		Metrics: agg, Journeys: journeyMetrics, Steps: steps, Outcome: "PASS", ErrorsRate: round(errorsRate), IterationsStarted: startedIterations.Load(), IterationsCompleted: completedIterations.Load(), ArrivalsScheduled: scheduledIterations.Load(), ArrivalsDropped: droppedIterations.Load(), ArrivalsDroppedLate: arrivalStats.DroppedLate, ArrivalsDroppedBusy: arrivalStats.DroppedBusy, SchedulerLagP95MS: float64(arrivalStats.P95Lag.Microseconds()) / 1000, SchedulerLagMaxMS: float64(arrivalStats.MaxLag.Microseconds()) / 1000,
 		Note: "Measured synthetic HTTP actors under the configured workload; not a universal server capacity or a browser-user count."}
 	if agg.Total == 0 || agg.Success == 0 || errorsRate > v.Scenario.MaxErrorRate || agg.P95MS > v.Scenario.P95LimitMS || result.ArrivalsDropped > 0 {
 		result.Outcome = "FAIL"
@@ -195,6 +187,9 @@ func Run(parent context.Context, v config.Validated) report.Result {
 		if st.Metrics.Total < v.Scenario.MinSamplesPerStep || st.Metrics.Success == 0 || st.Metrics.P95MS > v.Scenario.P95LimitMS || (st.Metrics.Total > 0 && float64(st.Metrics.Failures)/float64(st.Metrics.Total) > v.Scenario.MaxErrorRate) {
 			result.Outcome = "FAIL"
 		}
+	}
+	if arrivalStats.DroppedLate > 0 {
+		result.Outcome = "INCONCLUSIVE"
 	}
 	if errors.Is(parent.Err(), context.Canceled) || errors.Is(parent.Err(), context.DeadlineExceeded) {
 		result.Outcome = "ABORTED"
@@ -206,8 +201,15 @@ func Run(parent context.Context, v config.Validated) report.Result {
 	if agg.Total > 0 && elapsed.Seconds() > 0 && float64(agg.Total)/elapsed.Seconds() > 0.9*float64(v.Scenario.MaxRPS) {
 		result.Warnings = append(result.Warnings, "Request throughput is near max_rps: the configured client-side rate ceiling may hide server capacity. This run alone cannot establish a user-count limit.")
 	}
-	if result.ArrivalsDropped > 0 {
-		result.Warnings = append(result.Warnings, "Arrival starts were dropped because all VU workers were busy. Offered load was not fully delivered.")
+	if arrivalStats.DroppedBusy > 0 {
+		result.Warnings = append(result.Warnings, "Planned arrivals found no idle synthetic workers. This is not proof of server saturation.")
+	}
+	if arrivalStats.DroppedLate > 0 {
+		result.Warnings = append(result.Warnings, "The load generator missed planned arrival deadlines; this trial cannot demonstrate a server capacity ceiling.")
+	}
+	if v.Scenario.Mode == "arrival" && !arrivalStats.Consistent() {
+		result.Outcome = "INCONCLUSIVE"
+		result.Warnings = append(result.Warnings, "Arrival counts did not reconcile: treat measurements as invalid.")
 	}
 	if agg.Cancelled > 0 {
 		result.Warnings = append(result.Warnings, "In-flight requests were cancelled at the test boundary; completion statistics exclude them.")

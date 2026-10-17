@@ -120,6 +120,15 @@ func Evaluate(r report.Result, host *hostmon.Result) Assessment {
 	if r.ArrivalsDropped > 0 {
 		a.Findings = append(a.Findings, Finding{"LIMIT", fmt.Sprintf("%d scheduled journey starts were dropped: offered load was not delivered.", r.ArrivalsDropped)})
 	}
+	if r.ArrivalsDroppedLate > 0 {
+		a.Findings = append(a.Findings, Finding{"LIMIT", fmt.Sprintf("%d planned arrivals missed their deadline at the load generator; no server-limit conclusion is supported.", r.ArrivalsDroppedLate)})
+	}
+	if r.ArrivalsDroppedBusy > 0 {
+		a.Findings = append(a.Findings, Finding{"LIMIT", fmt.Sprintf("%d arrivals had no idle synthetic worker; server bottleneck is not established.", r.ArrivalsDroppedBusy)})
+	}
+	if r.SchedulerLagMaxMS > 0 {
+		a.Findings = append(a.Findings, Finding{"INFO", fmt.Sprintf("Generator scheduling lag p95 %.1f ms, peak %.1f ms.", r.SchedulerLagP95MS, r.SchedulerLagMaxMS)})
+	}
 	if r.Metrics.Cancelled > 0 {
 		a.Findings = append(a.Findings, Finding{"CAUTION", fmt.Sprintf("%d requests were cancelled at the run boundary and excluded from completed-request percentiles.", r.Metrics.Cancelled)})
 	}

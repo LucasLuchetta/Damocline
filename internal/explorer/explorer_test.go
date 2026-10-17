@@ -60,3 +60,20 @@ func TestAbort(t *testing.T) {
 		t.Fatalf("unexpected: %+v %v", r, err)
 	}
 }
+
+func TestInconclusiveGeneratorCannotBecomeApplicationFailure(t *testing.T) {
+    v, err := config.Parse(config.Scenario{
+        Name: "local scenario", BaseURL:"http://127.0.0.1:18080",
+        Users:1, Duration:"10s", MaxRPS:20, P95LimitMS:1000,
+        Steps:[]config.Step{{Name:"local",Path:"/"}},
+    },config.Options{Authorized:true})
+    if err!=nil{t.Fatal(err)}
+    r,err:=WithRunner(context.Background(),v,Options{
+        MinUsers:1,MaxUsers:4,Repeats:2,StageDuration:10*time.Second,
+    },func(context.Context,config.Validated)report.Result{
+        return report.Result{Outcome:"INCONCLUSIVE",ArrivalsDroppedLate:1}
+    })
+    if err!=nil || r.Outcome!="INCONCLUSIVE" || r.HighestPassingUsers!=nil || r.FirstFailingUsers!=nil {
+        t.Fatalf("generator limitations must not be branded as server capacity failure: %+v err=%v",r,err)
+    }
+}

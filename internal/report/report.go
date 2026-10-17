@@ -112,6 +112,10 @@ type Result struct {
 	IterationsCompleted int64        `json:"iterations_completed"`
 	ArrivalsScheduled   int64        `json:"arrivals_scheduled"`
 	ArrivalsDropped     int64        `json:"arrivals_dropped"`
+	ArrivalsDroppedLate int64        `json:"arrivals_dropped_late,omitempty"`
+	ArrivalsDroppedBusy int64        `json:"arrivals_dropped_busy,omitempty"`
+	SchedulerLagP95MS   float64      `json:"scheduler_lag_p95_ms,omitempty"`
+	SchedulerLagMaxMS   float64      `json:"scheduler_lag_max_ms,omitempty"`
 	Warnings            []string     `json:"warnings,omitempty"`
 }
 

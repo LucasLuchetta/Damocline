@@ -1,6 +1,6 @@
 # Advanced testing — native Damocline engine
 
-Damocline is an open-source **native Go engine**, not a wrapper around k6 or another load generator. This document describes the v0.2 experimental features: native closed-loop and independent arrival-rate execution, isolated HTTP cookie jars, distinct authenticated test identities, repeated capacity-level exploration, Linux host sampling, and UTC timestamp correlation.
+Damocline is an open-source **native Go load-testing engine**. This document describes the v0.2 experimental features: native closed-loop and independent arrival-rate execution, isolated HTTP cookie jars, distinct authenticated test identities, repeated capacity-level exploration, Linux host sampling, and UTC timestamp correlation.
 
 **Do not interpret the output as a universal maximum number of people who can log into your web app.** A capacity number applies only to the exact workload mix, data size, infrastructure, period and thresholds tested. Test only systems you own or have explicit permission to assess; use staging wherever possible.
 
