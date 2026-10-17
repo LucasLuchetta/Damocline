@@ -555,27 +555,33 @@ func TestPlannedArrivalAccountingWithSlowLocalServer(t *testing.T) {
 }
 
 func TestArrivalRunDrainsAdmittedWorkAfterScheduleWindow(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// A 160ms response spans several 50ms arrival intervals. The last
-		// admitted request must still be running at the 300ms cutoff,
-		// independent of Windows/Linux scheduling jitter.
-		time.Sleep(160 * time.Millisecond)
-		w.WriteHeader(http.StatusOK)
-	}))
+	// A 160ms response spans several 50ms arrival intervals. The last
+	// admitted request must still be running at the 300ms cutoff,
+	// independent of Windows/Linux scheduling jitter.
+	fixture, err := reference.New(reference.Config{Delay: 160 * time.Millisecond, MaxConcurrent: 10, MaxRequests: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(fixture)
 	defer server.Close()
 	s := config.Scenario{Name: "arrival drain", BaseURL: server.URL, Users: 10,
 		Duration: "1s", Mode: "arrival", ArrivalRate: 20, MaxRPS: 30, P95LimitMS: 1000,
-		Steps: []config.Step{{Name: "work", Method: "GET", Path: "/"}}}
+		Steps: []config.Step{{Name: "work", Method: "GET", Path: "/work"}}}
 	v, err := config.Parse(s, config.Options{Authorized: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	v.Duration = 300 * time.Millisecond
 	r := Run(context.Background(), v)
+	ledger := fixture.Snapshot()
 	if r.ArrivalsScheduled != 6 || r.ArrivalsDropped != 0 || r.IterationsCompleted != r.IterationsStarted ||
 		r.Metrics.Cancelled != 0 || r.Outcome != "PASS" || r.ObservationSeconds != v.Duration.Seconds() ||
 		r.ElapsedSeconds <= r.ObservationSeconds {
 		t.Fatalf("admitted arrivals should drain after scheduling stops: %+v", r)
+	}
+	if ledger.Received != 6 || ledger.Completed != 6 || ledger.Success != 6 || ledger.Failures != 0 || ledger.Cancelled != 0 || ledger.Rejected != 0 ||
+		ledger.Received != ledger.Completed+ledger.Cancelled+ledger.Rejected {
+		t.Fatalf("graceful-drain work did not reconcile with the independent server ledger: %+v", ledger)
 	}
 }
 
