@@ -26,6 +26,12 @@ type Result struct {
 }
 
 func Evaluate(evidence campaign.Result, goal capacitygoal.Goal) (Result, error) {
+	return evaluateWithQuality(evidence, goal, report.AssessQuality)
+}
+
+type qualityAssessor func(report.Result) *report.Quality
+
+func evaluateWithQuality(evidence campaign.Result, goal capacitygoal.Goal, assess qualityAssessor) (Result, error) {
 	target, err := capacitygoal.EvaluatedUsers(goal)
 	if err != nil {
 		return Result{}, err
@@ -46,7 +52,7 @@ func Evaluate(evidence campaign.Result, goal capacitygoal.Goal) (Result, error) 
 		result.Findings = append(result.Findings, fmt.Sprintf("The passing base level (%d VUs) differs from the required target (%d VUs). Test the exact target before deciding on capacity.", evidence.BaseUsers, target))
 		return result, nil
 	}
-	if blocker := qualityBlocker(evidence); blocker != "" {
+	if blocker := qualityBlocker(evidence, assess); blocker != "" {
 		result.Findings = append(result.Findings, blocker)
 		return result, nil
 	}
@@ -67,7 +73,7 @@ func Evaluate(evidence campaign.Result, goal capacitygoal.Goal) (Result, error) 
 	return result, nil
 }
 
-func qualityBlocker(evidence campaign.Result) string {
+func qualityBlocker(evidence campaign.Result, assess qualityAssessor) string {
 	for _, trial := range evidence.Trials {
 		for _, phase := range trial.Phases {
 			if phase.Name == "warmup" {
@@ -76,7 +82,20 @@ func qualityBlocker(evidence campaign.Result) string {
 			if phase.Run.Quality == nil {
 				return "A required campaign phase is missing explicit data-quality evidence; the tested demand remains INSUFFICIENT_EVIDENCE."
 			}
-			switch phase.Run.Quality.State {
+			if phase.Run.Quality.State != report.QualityValid && phase.Run.Quality.State != report.QualityInvalid && phase.Run.Quality.State != report.QualityLimited {
+				return "A required campaign phase has unknown measurement quality; the tested demand remains INSUFFICIENT_EVIDENCE."
+			}
+			if assess == nil {
+				return "A required campaign phase cannot have its data quality recomputed; the tested demand remains INSUFFICIENT_EVIDENCE."
+			}
+			recomputed := assess(phase.Run)
+			if recomputed == nil {
+				return "A required campaign phase has no recomputable data-quality result; the tested demand remains INSUFFICIENT_EVIDENCE."
+			}
+			if phase.Run.Quality.State != recomputed.State {
+				return fmt.Sprintf("A required campaign phase claims %s measurement quality but its report fields recompute as %s; the tested demand remains INSUFFICIENT_EVIDENCE.", phase.Run.Quality.State, recomputed.State)
+			}
+			switch recomputed.State {
 			case report.QualityValid:
 				continue
 			case report.QualityInvalid:
