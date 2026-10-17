@@ -21,8 +21,8 @@ import (
 
 	"github.com/LucasLuchetta/Damocline/internal/config"
 	"github.com/LucasLuchetta/Damocline/internal/engine"
-	"github.com/LucasLuchetta/Damocline/internal/reference"
 	"github.com/LucasLuchetta/Damocline/internal/protocolcheck"
+	"github.com/LucasLuchetta/Damocline/internal/reference"
 	"github.com/LucasLuchetta/Damocline/internal/report"
 )
 
@@ -30,28 +30,29 @@ const stageDuration = 5 * time.Second
 const soakDuration = 30 * time.Second
 
 type assessment struct {
-	SchemaVersion  int                `json:"schema_version"`
-	Preflight       preflightRecord    `json:"preflight"`
-	Status         string             `json:"status"`
-	At             string             `json:"at"`
-	OS             string             `json:"os"`
-	Arch           string             `json:"arch"`
-	GoVersion      string             `json:"go_version"`
-	LogicalCPUs    int                `json:"logical_cpus"`
-	FixtureDelay   string             `json:"fixture_delay"`
-	StageDuration  string             `json:"stage_duration"`
-	ArrivalRates   []int              `json:"arrival_rates"`
-	Repeats        int                `json:"repeats"`
-	Extended       bool               `json:"extended"`
-	Runs           []report.Result    `json:"runs"`
-	SoakRun        report.Result      `json:"soak_run"`
-	Server         reference.Snapshot `json:"server"`
-	OverloadRun    report.Result      `json:"overload_run"`
-	OverloadServer reference.Snapshot `json:"overload_server"`
-	FailureRun     report.Result      `json:"failure_run"`
-	FailureServer  reference.Snapshot `json:"failure_server"`
-	Checks         []string           `json:"checks"`
-	Limitations    []string           `json:"limitations"`
+	SchemaVersion  int                     `json:"schema_version"`
+	Preflight      preflightRecord         `json:"preflight"`
+	Status         string                  `json:"status"`
+	At             string                  `json:"at"`
+	OS             string                  `json:"os"`
+	Arch           string                  `json:"arch"`
+	GoVersion      string                  `json:"go_version"`
+	LogicalCPUs    int                     `json:"logical_cpus"`
+	FixtureDelay   string                  `json:"fixture_delay"`
+	StageDuration  string                  `json:"stage_duration"`
+	ArrivalRates   []int                   `json:"arrival_rates"`
+	Repeats        int                     `json:"repeats"`
+	Extended       bool                    `json:"extended"`
+	Runs           []report.Result         `json:"runs"`
+	SoakRun        report.Result           `json:"soak_run"`
+	Server         reference.Snapshot      `json:"server"`
+	OverloadRun    report.Result           `json:"overload_run"`
+	OverloadServer reference.Snapshot      `json:"overload_server"`
+	FailureRun     report.Result           `json:"failure_run"`
+	FailureServer  reference.Snapshot      `json:"failure_server"`
+	SchedulerLag   schedulerLagCalibration `json:"scheduler_lag_calibration"`
+	Checks         []string                `json:"checks"`
+	Limitations    []string                `json:"limitations"`
 }
 
 func main() {
@@ -78,7 +79,9 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Println(protocolcheck.Summary(result))
-		if result.Status != "TRANSPORT_FIXTURES_PASSED" { os.Exit(1) }
+		if result.Status != "TRANSPORT_FIXTURES_PASSED" {
+			os.Exit(1)
+		}
 		return
 	}
 	if *checkScenario != "" {
@@ -249,6 +252,7 @@ func runMatrix(path string, repeats int, extended bool) error {
 	result := assessment{SchemaVersion: 1, Status: "CHECKS_FAILED", At: time.Now().UTC().Format(time.RFC3339), OS: runtime.GOOS, Arch: runtime.GOARCH,
 		GoVersion: runtime.Version(), LogicalCPUs: runtime.NumCPU(), FixtureDelay: "20ms", StageDuration: stageDuration.String(), ArrivalRates: rates, Repeats: repeats, Extended: extended,
 		Limitations: []string{"Local loopback checks are not generator calibration across operating systems or load ranges.", "Generator and target are separate processes but share one host; process pressure can still interfere.", "No application, database, or customer infrastructure capacity is inferred."}}
+	result.SchedulerLag = calibrateSchedulerLag()
 	for _, rate := range rates {
 		scenario := config.Scenario{Name: "Local reference " + strconv.Itoa(rate) + " arrivals/s", BaseURL: "http://" + address,
 			Users: 10, Duration: stageDuration.String(), MaxRPS: max(50, rate), Mode: "arrival", ArrivalRate: rate,
@@ -333,6 +337,9 @@ func runMatrix(path string, repeats int, extended bool) error {
 	result.Checks = append(result.Checks, checkSoak(result.SoakRun)...)
 	result.Checks = append(result.Checks, checkOverload(result.OverloadRun, result.OverloadServer)...)
 	result.Checks = append(result.Checks, checkFailures(result.FailureRun, result.FailureServer)...)
+	if result.SchedulerLag.Status != "PASSED" {
+		result.Checks = append(result.Checks, "injected scheduler pause was not measured within the fixture tolerance")
+	}
 	if len(result.Checks) == 0 {
 		result.Status = "REFERENCE_SMOKE_PASSED"
 	}
@@ -352,9 +359,9 @@ func runMatrix(path string, repeats int, extended bool) error {
 			RunnerVersion: sourceRunnerVersion(),
 		},
 		preflightFixture{
-			NetworkMode: "loopback_same_host_separate_process",
+			NetworkMode:   "loopback_same_host_separate_process",
 			WorkloadModel: "open_loop_journey_arrivals",
-			Method: "GET", HealthyResponseBytes: 4 << 10,
+			Method:        "GET", HealthyResponseBytes: 4 << 10,
 			HealthyDelay: "20ms", StageDuration: stageDuration.String(),
 			SoakDuration: soakDuration.String(), StageUsers: 10,
 			MaximumRPS: 100, Repeats: repeats, Extended: extended,
@@ -368,8 +375,9 @@ func runMatrix(path string, repeats int, extended bool) error {
 	if err := report.WriteAnyJSON(path, result); err != nil {
 		return err
 	}
-	fmt.Printf("%s: %d healthy stages plus %s soak, fixture %d/%d completed; slow-target drops %d/%d; recovery %d/%d success; %d discrepancies. Report: %s\n",
+	fmt.Printf("%s: %d healthy stages plus %s soak, fixture %d/%d completed; scheduler lag %s across %d injected observations (tolerance ±%.0f ms); slow-target drops %d/%d; recovery %d/%d success; %d discrepancies. Report: %s\n",
 		result.Status, len(result.Runs), soakDuration, result.Server.Completed, result.Server.Received,
+		result.SchedulerLag.Status, len(result.SchedulerLag.Observations), result.SchedulerLag.ToleranceMS,
 		result.OverloadRun.ArrivalsDropped, result.OverloadRun.ArrivalsScheduled,
 		result.FailureRun.Metrics.Success, result.FailureRun.Metrics.Total, len(result.Checks), path)
 	if len(result.Checks) > 0 {
