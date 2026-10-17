@@ -91,6 +91,8 @@ func percentile(values []time.Duration, p float64) time.Duration {
 func roundMS(d time.Duration) float64 { return float64(d.Microseconds()) / 1000.0 }
 
 type RunConfig struct {
+	WorkloadRevision  string          `json:"workload_revision,omitempty"`
+	Environment       string          `json:"environment,omitempty"`
 	Users             int             `json:"users"`
 	Duration          string          `json:"duration"`
 	RampUp            string          `json:"ramp_up,omitempty"`

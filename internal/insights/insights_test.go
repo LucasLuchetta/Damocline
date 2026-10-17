@@ -98,6 +98,23 @@ func TestComparisonExplainsDifferentRPSCaps(t *testing.T) {
 		}
 	}
 }
+
+func TestComparisonRequiresRevisionAndRecordsEnvironment(t *testing.T) {
+	prev := synthetic()
+	now := synthetic()
+	prev.Config.WorkloadRevision = "checkout-v4"
+	now.Config.WorkloadRevision = "checkout-v4"
+	prev.Config.Environment = "staging-small"
+	now.Config.Environment = "staging-large"
+	var b bytes.Buffer
+	Write(&b, now, nil, &prev)
+	if strings.Contains(b.String(), "Workload revision, acceptance criteria") {
+		t.Fatalf("matched controlled inputs unexpectedly rejected: %s", b.String())
+	}
+	if !strings.Contains(b.String(), "Environment: staging-small -> staging-large") || !strings.Contains(b.String(), "not proof of cause") {
+		t.Fatalf("environment comparison missing limitation: %s", b.String())
+	}
+}
 func TestReadRunRejectsBrokenInput(t *testing.T) {
 	d := t.TempDir()
 	p := filepath.Join(d, "broken.json")

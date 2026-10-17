@@ -16,6 +16,8 @@ import (
 
 type Scenario struct {
 	Name                   string    `json:"name"`
+	WorkloadRevision       string    `json:"workload_revision,omitempty"`
+	Environment            string    `json:"environment,omitempty"`
 	BaseURL                string    `json:"base_url"`
 	Users                  int       `json:"users"`
 	Duration               string    `json:"duration"`
@@ -130,6 +132,11 @@ func Parse(s Scenario, o Options) (Validated, error) {
 	}
 	if strings.TrimSpace(s.Name) == "" {
 		return v, errors.New("name is required")
+	}
+	for field, value := range map[string]string{"workload_revision": s.WorkloadRevision, "environment": s.Environment} {
+		if value != "" && !regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$`).MatchString(value) {
+			return v, fmt.Errorf("%s must be a safe 1-120 character label", field)
+		}
 	}
 	if s.Users < 1 || s.Users > 50 {
 		return v, errors.New("users must be between 1 and 50 for this initial release")

@@ -253,3 +253,16 @@ func TestSyntheticDataPrefixEnablesOnlyTheSyntheticIDTemplate(t *testing.T) {
 		t.Fatal("invalid synthetic prefix environment name was accepted")
 	}
 }
+
+func TestWorkloadRevisionAndEnvironmentLabelsAreValidated(t *testing.T) {
+	s := good()
+	s.WorkloadRevision = "checkout-v3.2"
+	s.Environment = "staging-small"
+	if _, err := Parse(s, Options{Authorized: true}); err != nil {
+		t.Fatalf("safe reproducibility labels rejected: %v", err)
+	}
+	s.Environment = "production cluster"
+	if _, err := Parse(s, Options{Authorized: true}); err == nil {
+		t.Fatal("unsafe environment label accepted")
+	}
+}

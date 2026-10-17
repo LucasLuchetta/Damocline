@@ -284,9 +284,14 @@ func Write(w io.Writer, r report.Result, host *hostmon.Result, previous *report.
 
 func writeComparison(w io.Writer, old, current report.Result) {
 	fmt.Fprintln(w, "\nComparison with previous run:")
-	compatible := old.Target == current.Target && old.Config.Users == current.Config.Users && old.Config.Mode == current.Config.Mode && old.Config.SeparateSessions == current.Config.SeparateSessions && old.Config.ThinkTime == current.Config.ThinkTime && sameSteps(old.Steps, current.Steps) && sameProfiles(old.Config.Profiles, current.Config.Profiles)
+	compatible := old.Target == current.Target && old.Config.WorkloadRevision != "" && old.Config.WorkloadRevision == current.Config.WorkloadRevision && old.Config.Users == current.Config.Users && old.Config.Mode == current.Config.Mode && old.Config.ArrivalRate == current.Config.ArrivalRate && old.Config.SeparateSessions == current.Config.SeparateSessions && old.Config.ThinkTime == current.Config.ThinkTime && old.Config.RequestTimeout == current.Config.RequestTimeout && old.Config.P95LimitMS == current.Config.P95LimitMS && old.Config.MaxErrorRate == current.Config.MaxErrorRate && old.Config.MinSamplesPerStep == current.Config.MinSamplesPerStep && old.Config.WindowDuration == current.Config.WindowDuration && sameSteps(old.Steps, current.Steps) && sameProfiles(old.Config.Profiles, current.Config.Profiles)
 	if !compatible {
-		fmt.Fprintln(w, "  [LIMIT] Workload settings, authentication mode, target, or routes differ. This is NOT a controlled comparison.")
+		fmt.Fprintln(w, "  [LIMIT] Workload revision, acceptance criteria, authentication mode, target, or routes differ or are unrecorded. This is NOT a controlled comparison.")
+	}
+	if old.Config.Environment == "" || current.Config.Environment == "" {
+		fmt.Fprintln(w, "  [LIMIT] One or both environment labels are missing; record the deployment and hosting configuration for a reproducible comparison.")
+	} else {
+		fmt.Fprintf(w, "  Environment: %s -> %s. A changed environment is a tested comparison condition, not proof of cause.\n", old.Config.Environment, current.Config.Environment)
 	}
 	if old.Config.MaxRPS != current.Config.MaxRPS {
 		fmt.Fprintf(w, "  [LIMIT] max_rps ceilings differ (%d vs %d); a configured ceiling is not the actual traffic rate.\n", old.Config.MaxRPS, current.Config.MaxRPS)
