@@ -301,44 +301,76 @@ func loadStartProfile() (config.Scenario, startPreferences, error) {
 // start is an interactive interface over Damocline's own native HTTP engine.
 // Every actual test needs explicit confirmation; setup never sends traffic.
 func start(input io.Reader, output, errOutput io.Writer) int {
+	return startWithMode(input, output, errOutput, "default")
+}
+
+func startWithMode(input io.Reader, output, errOutput io.Writer, mode string) int {
 	w := wizard{input: bufio.NewReader(input), out: output}
 	fmt.Fprintln(output, "DAMOCLINE")
 	fmt.Fprintln(output, "Find the limit before it finds you.")
 	fmt.Fprintln(output, "Native Load Testing & Capacity Exploration")
 	fmt.Fprintln(output, "Open Source | Local First")
+	fmt.Fprintln(output, "Commands: damocline /start (new scenario), damocline /history (repeat saved scenario)")
 	var s config.Scenario
 	var p startPreferences
 	var err error
+	newScenario := mode == "new"
+	fromHistory := mode == "history"
 	useSaved := false
-	if _, statErr := os.Stat(scenarioPath); statErr == nil {
-		selected, askErr := w.choose("Saved profile found. Use it? (y/n)", "y", "y", "n")
-		if askErr != nil {
-			fmt.Fprintf(errOutput, "Input ended: %v\n", askErr)
+	if mode == "default" {
+		if _, statErr := os.Stat(scenarioPath); statErr == nil {
+			selected, askErr := w.choose("Saved profile found. Use it? (y/n, /start, /history)", "y", "y", "n", "/start", "/history")
+			if askErr != nil {
+				fmt.Fprintf(errOutput, "Input ended: %v\n", askErr)
+				return 2
+			}
+			switch selected {
+			case "y":
+				useSaved = true
+			case "/history":
+				fromHistory = true
+			default:
+				newScenario = true
+			}
+		} else {
+			newScenario = true
+		}
+	}
+	switch {
+	case fromHistory:
+		s, p, err = w.selectHistory()
+		if errors.Is(err, errHistoryCancelled) {
+			fmt.Fprintln(output, "No test started.")
+			return 0
+		}
+		if err != nil {
+			fmt.Fprintf(errOutput, "History error: %v\n", err)
 			return 2
 		}
-		useSaved = selected == "y"
-	}
-	if useSaved {
+		if err := saveActiveProfile(s, p); err != nil {
+			fmt.Fprintf(errOutput, "Could not activate saved scenario: %v\n", err)
+			return 2
+		}
+	case useSaved:
 		s, p, err = loadStartProfile()
 		if err != nil {
 			fmt.Fprintf(errOutput, "Could not open saved profile: %v\n", err)
 			return 2
 		}
-	} else {
+	case newScenario:
 		s, p, err = w.configure()
 		if err != nil {
 			fmt.Fprintf(errOutput, "Setup stopped: %v\n", err)
 			return 2
 		}
-		err = writePrivateJSON(scenarioPath, s)
-		if err == nil {
-			err = writePrivateJSON(preferencesPath, p)
-		}
-		if err != nil {
+		if err := saveActiveProfile(s, p); err != nil {
 			fmt.Fprintf(errOutput, "Could not save configuration: %v\n", err)
 			return 2
 		}
 		fmt.Fprintf(output, "Scenario saved in %s (no credentials stored).\n", scenarioPath)
+	default:
+		fmt.Fprintln(errOutput, "Invalid interactive mode")
+		return 2
 	}
 	if p.AuthMode == "browser" {
 		fmt.Fprintln(output, "\nSign in to the temporary Edge/Chrome window using a test account, then visit read-only pages to test.")
@@ -361,7 +393,7 @@ func start(input io.Reader, output, errOutput io.Writer) int {
 				known[path]=true
 			}
 		}
-		if err:=writePrivateJSON(scenarioPath,s);err!=nil {fmt.Fprintf(errOutput,"Could not save routes: %v\n",err);return 2}
+		if err:=saveActiveProfile(s,p);err!=nil {fmt.Fprintf(errOutput,"Could not save routes: %v\n",err);return 2}
 		previous, wasSet := os.LookupEnv("DAMOCLINE_SESSION_COOKIE")
 		if err:=os.Setenv("DAMOCLINE_SESSION_COOKIE",captured.CookieHeader);err!=nil {fmt.Fprintln(errOutput,"Could not store temporary session in process memory");return 2}
 		defer func(){if wasSet {_=os.Setenv("DAMOCLINE_SESSION_COOKIE",previous)} else {_=os.Unsetenv("DAMOCLINE_SESSION_COOKIE")}}()
