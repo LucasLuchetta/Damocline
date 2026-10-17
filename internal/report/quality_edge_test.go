@@ -41,3 +41,34 @@ func TestQualityCancellationAndSLOAreIndependent(t *testing.T) {
  q:=AssessQuality(r)
  if q.State!=QualityLimited {t.Fatalf("legitimate dropped work should be limited, not corrupt: %+v",q)}
 }
+
+func TestQualityReconcilesNamedStepAndProfileLedgers(t *testing.T) {
+ cases:=[]struct{name string; mutate func(*Result); invalid bool}{
+  {"exact step and profile ledgers",func(r *Result){
+   r.Steps=[]StepResult{{Metrics:MetricSet{Total:40,Success:40}},{Metrics:MetricSet{Total:60,Success:60}}}
+   r.Profiles=[]ProfileResult{{Journeys:MetricSet{Total:40,Success:40}},{Journeys:MetricSet{Total:60,Success:60}}}
+  },false},
+  {"missing step request",func(r *Result){
+   r.Steps=[]StepResult{{Metrics:MetricSet{Total:99,Success:99}}}
+  },true},
+  {"duplicated step request",func(r *Result){
+   r.Steps=[]StepResult{{Metrics:MetricSet{Total:100,Success:100}},{Metrics:MetricSet{Total:1,Success:1}}}
+  },true},
+  {"missing profile journey",func(r *Result){
+   r.Profiles=[]ProfileResult{{Journeys:MetricSet{Total:99,Success:99}}}
+  },true},
+  {"duplicated profile journey",func(r *Result){
+   r.Profiles=[]ProfileResult{{Journeys:MetricSet{Total:100,Success:100}},{Journeys:MetricSet{Total:1,Success:1}}}
+  },true},
+  {"step cancellation mismatch",func(r *Result){
+   r.Steps=[]StepResult{{Metrics:MetricSet{Total:100,Success:100,Cancelled:1}}}
+  },true},
+ }
+ for _,tc:=range cases {
+  t.Run(tc.name,func(t *testing.T){
+   r:=validSyntheticQualityRun();tc.mutate(&r)
+   q:=AssessQuality(r)
+   if (q.State==QualityInvalid)!=tc.invalid {t.Fatalf("unexpected ledger state: %+v",q)}
+  })
+ }
+}

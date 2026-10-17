@@ -75,6 +75,45 @@ func AssessQuality(r Result) *Quality {
 			break
 		}
 	}
+	// Check each independent ledger against the aggregate when its coverage is
+	// complete. A missing ledger is LIMITED (not invented), while a present
+	// contradictory ledger is INVALID. All subtraction avoids integer overflow.
+	if len(r.Steps)>0 {
+		var total, success, failures, cancelled int
+		for _,step:=range r.Steps {
+			m:=step.Metrics
+			if m.Total<0 || m.Success<0 || m.Failures<0 || m.Cancelled<0 ||
+				m.Total>r.Metrics.Total-total || m.Success>r.Metrics.Success-success ||
+				m.Failures>r.Metrics.Failures-failures || m.Cancelled>r.Metrics.Cancelled-cancelled {
+				invalidate("Named-step ledger exceeds aggregate request counters.")
+				break
+			}
+			total+=m.Total;success+=m.Success;failures+=m.Failures;cancelled+=m.Cancelled
+		}
+		if total!=r.Metrics.Total || success!=r.Metrics.Success ||
+			failures!=r.Metrics.Failures || cancelled!=r.Metrics.Cancelled {
+			invalidate("Named-step ledger does not reconcile with aggregate requests.")
+		}
+	} else if r.Metrics.Total>0 {
+		limit("Named-step ledger is absent; per-step reconciliation is unavailable.")
+	}
+	if len(r.Profiles)>0 {
+		var total, success, failures, cancelled int
+		for _,profile:=range r.Profiles {
+			m:=profile.Journeys
+			if m.Total<0 || m.Success<0 || m.Failures<0 || m.Cancelled<0 ||
+				m.Total>r.Journeys.Total-total || m.Success>r.Journeys.Success-success ||
+				m.Failures>r.Journeys.Failures-failures || m.Cancelled>r.Journeys.Cancelled-cancelled {
+				invalidate("Profile journey ledger exceeds aggregate counters.")
+				break
+			}
+			total+=m.Total;success+=m.Success;failures+=m.Failures;cancelled+=m.Cancelled
+		}
+		if total!=r.Journeys.Total || success!=r.Journeys.Success ||
+			failures!=r.Journeys.Failures || cancelled!=r.Journeys.Cancelled {
+			invalidate("Profile journey ledger does not reconcile with aggregate journeys.")
+		}
+	}
 	limit("No equivalent, fresh, host-validated generator preflight was attached; workload-specific capacity is not certified.")
 	return q
 }
