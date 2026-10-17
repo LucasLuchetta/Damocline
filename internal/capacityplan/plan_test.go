@@ -12,17 +12,17 @@ import (
 func TestEvaluateRequiresExactSustainedEvidence(t *testing.T) {
 	goal := capacitygoal.Goal{PeakUsers: 100, GrowthPercent: 20, ReservePercent: 25}
 	passing := campaign.Result{SchemaVersion: 1, Scenario: "synthetic", Outcome: "PASS", BaseUsers: 100, Repeats: 2, Trials: passingTrials(), ObservationVariability: validVariability()}
-	result, err := Evaluate(passing, goal)
+	result, err := evaluateWithDeclaredTestQuality(passing, goal)
 	if err != nil || result.State != "INSUFFICIENT_EVIDENCE" || result.TargetUsers != 150 {
 		t.Fatalf("unexpected: %+v %v", result, err)
 	}
 	passing.BaseUsers = 150
-	result, err = Evaluate(passing, goal)
+	result, err = evaluateWithDeclaredTestQuality(passing, goal)
 	if err != nil || result.State != "GOAL_MET_UNDER_TESTED_CONDITIONS" {
 		t.Fatalf("unexpected: %+v %v", result, err)
 	}
 	passing.BaseUsers = 200
-	result, err = Evaluate(passing, goal)
+	result, err = evaluateWithDeclaredTestQuality(passing, goal)
 	if err != nil || result.State != "INSUFFICIENT_EVIDENCE" {
 		t.Fatalf("different workload level must not be interpolated: %+v %v", result, err)
 	}
@@ -32,37 +32,49 @@ func TestEvaluateRequiresValidDataQualityForEveryRequiredPhase(t *testing.T) {
 	goal := capacitygoal.Goal{PeakUsers: 10}
 	evidence := campaign.Result{SchemaVersion: 1, Scenario: "synthetic", Outcome: "PASS", BaseUsers: 10, Repeats: 2, Trials: passingTrials(), ObservationVariability: validVariability()}
 	evidence.Trials[1].Phases[0].Run.Quality = &report.Quality{State: report.QualityLimited}
-	result, err := Evaluate(evidence, goal)
+	result, err := evaluateWithDeclaredTestQuality(evidence, goal)
 	if err != nil || result.State != "INSUFFICIENT_EVIDENCE" || !containsFinding(result.Findings, "LIMITED measurement quality") {
 		t.Fatalf("limited phase quality must block a positive demand result: %+v %v", result, err)
 	}
 
 	evidence.Trials[1].Phases[0].Run.Quality = nil
-	result, err = Evaluate(evidence, goal)
+	result, err = evaluateWithDeclaredTestQuality(evidence, goal)
 	if err != nil || result.State != "INSUFFICIENT_EVIDENCE" || !containsFinding(result.Findings, "missing explicit data-quality evidence") {
 		t.Fatalf("missing phase quality must block a positive demand result: %+v %v", result, err)
 	}
 
 	evidence.Trials[1].Phases[0].Run.Quality = &report.Quality{State: "UNRECOGNIZED"}
-	result, err = Evaluate(evidence, goal)
+	result, err = evaluateWithDeclaredTestQuality(evidence, goal)
 	if err != nil || result.State != "INSUFFICIENT_EVIDENCE" || !containsFinding(result.Findings, "unknown measurement quality") {
 		t.Fatalf("unknown phase quality must block a positive demand result: %+v %v", result, err)
 	}
 
 	evidence.Trials[1].Phases[0].Run.Quality = &report.Quality{State: report.QualityValid}
-	evidence.Trials[0].Phases[1].Run.Quality = &report.Quality{State: report.QualityInvalid}
-	result, err = Evaluate(evidence, goal)
+	invalidRun := &evidence.Trials[0].Phases[1].Run
+	invalidRun.Metrics.Total = -1
+	invalidRun.Quality = report.AssessQuality(*invalidRun)
+	result, err = evaluateWithDeclaredTestQuality(evidence, goal)
 	if err != nil || result.State != "INSUFFICIENT_EVIDENCE" || !containsFinding(result.Findings, "INVALID measurement quality") {
 		t.Fatalf("invalid recovery quality must block a positive demand result: %+v %v", result, err)
 	}
 
 	// Warm-up establishes workload state but does not participate in approval.
+	invalidRun.Metrics.Total = 300
+	invalidRun.Quality = &report.Quality{State: report.QualityValid}
 	evidence.Trials[0].Phases = append([]campaign.Phase{{Name: "warmup", Run: report.Result{Outcome: "PASS"}}}, evidence.Trials[0].Phases...)
 	evidence.Trials[0].Phases[2].Run.Quality = &report.Quality{State: report.QualityValid}
 	evidence.Trials[0].Phases[1].Run.Quality = &report.Quality{State: report.QualityValid}
-	result, err = Evaluate(evidence, goal)
+	result, err = evaluateWithDeclaredTestQuality(evidence, goal)
 	if err != nil || result.State != "GOAL_MET_UNDER_TESTED_CONDITIONS" {
 		t.Fatalf("unqualified warm-up must not block qualified required phases: %+v %v", result, err)
+	}
+}
+
+func TestEvaluateRecomputesClaimedValidQuality(t *testing.T) {
+	evidence := campaign.Result{SchemaVersion: 1, Scenario: "synthetic", Outcome: "PASS", BaseUsers: 10, Repeats: 2, Trials: passingTrials(), ObservationVariability: validVariability()}
+	result, err := Evaluate(evidence, capacitygoal.Goal{PeakUsers: 10})
+	if err != nil || result.State != "INSUFFICIENT_EVIDENCE" || !containsFinding(result.Findings, "claims VALID_WITHIN_ENVELOPE measurement quality but its report fields recompute as") {
+		t.Fatalf("a self-declared valid state without supporting phase evidence must be rejected: %+v %v", result, err)
 	}
 }
 
@@ -76,7 +88,7 @@ func TestEvaluateRequiresAdequateConditionalStatisticalEvidence(t *testing.T) {
 				run.Metrics.Total, run.Metrics.Success = 50, 50
 			}
 		}
-		result, err := Evaluate(evidence, goal)
+		result, err := evaluateWithDeclaredTestQuality(evidence, goal)
 		if err != nil || result.State != "INSUFFICIENT_EVIDENCE" || !containsFinding(result.Findings, "conditional binomial bound") {
 			t.Fatalf("0/50 must not establish a 1%% error budget: %+v %v", result, err)
 		}
@@ -84,7 +96,7 @@ func TestEvaluateRequiresAdequateConditionalStatisticalEvidence(t *testing.T) {
 	t.Run("missing percentile interval blocks", func(t *testing.T) {
 		evidence := campaign.Result{SchemaVersion: 1, Scenario: "synthetic", Outcome: "PASS", BaseUsers: 10, Repeats: 2, Trials: passingTrials(), ObservationVariability: validVariability()}
 		evidence.Trials[0].Phases[0].Run.Steps[0].Metrics.P95IID95Approximation = false
-		result, err := Evaluate(evidence, goal)
+		result, err := evaluateWithDeclaredTestQuality(evidence, goal)
 		if err != nil || result.State != "INSUFFICIENT_EVIDENCE" || !containsFinding(result.Findings, "per-step lacks an adequate p95 rank interval") {
 			t.Fatalf("missing per-step percentile interval must block: %+v %v", result, err)
 		}
@@ -92,7 +104,7 @@ func TestEvaluateRequiresAdequateConditionalStatisticalEvidence(t *testing.T) {
 	t.Run("missing windows block", func(t *testing.T) {
 		evidence := campaign.Result{SchemaVersion: 1, Scenario: "synthetic", Outcome: "PASS", BaseUsers: 10, Repeats: 2, Trials: passingTrials(), ObservationVariability: validVariability()}
 		evidence.Trials[1].Phases[0].Run.Windows = nil
-		result, err := Evaluate(evidence, goal)
+		result, err := evaluateWithDeclaredTestQuality(evidence, goal)
 		if err != nil || result.State != "INSUFFICIENT_EVIDENCE" || !containsFinding(result.Findings, "complete, configured SLO-window evidence") {
 			t.Fatalf("missing window metrics must block: %+v %v", result, err)
 		}
@@ -100,7 +112,7 @@ func TestEvaluateRequiresAdequateConditionalStatisticalEvidence(t *testing.T) {
 	t.Run("degraded SLO window blocks", func(t *testing.T) {
 		evidence := campaign.Result{SchemaVersion: 1, Scenario: "synthetic", Outcome: "PASS", BaseUsers: 10, Repeats: 2, Trials: passingTrials(), ObservationVariability: validVariability()}
 		evidence.Trials[0].Phases[0].Run.Windows[0].Metrics.P95IID95UpperMS = 101
-		result, err := Evaluate(evidence, goal)
+		result, err := evaluateWithDeclaredTestQuality(evidence, goal)
 		if err != nil || result.State != "INSUFFICIENT_EVIDENCE" || !containsFinding(result.Findings, "phase window lacks an adequate p95 rank interval") {
 			t.Fatalf("a degraded window must not be hidden by aggregate metrics: %+v %v", result, err)
 		}
@@ -108,14 +120,14 @@ func TestEvaluateRequiresAdequateConditionalStatisticalEvidence(t *testing.T) {
 	t.Run("gapped window coverage blocks", func(t *testing.T) {
 		evidence := campaign.Result{SchemaVersion: 1, Scenario: "synthetic", Outcome: "PASS", BaseUsers: 10, Repeats: 2, Trials: passingTrials(), ObservationVariability: validVariability()}
 		evidence.Trials[0].Phases[0].Run.Windows[0].StartSeconds = 1
-		result, err := Evaluate(evidence, goal)
+		result, err := evaluateWithDeclaredTestQuality(evidence, goal)
 		if err != nil || result.State != "INSUFFICIENT_EVIDENCE" || !containsFinding(result.Findings, "missing, overlapping, or out-of-range SLO windows") {
 			t.Fatalf("gapped window coverage must block: %+v %v", result, err)
 		}
 	})
 	t.Run("missing repeat variability blocks", func(t *testing.T) {
 		evidence := campaign.Result{SchemaVersion: 1, Scenario: "synthetic", Outcome: "PASS", BaseUsers: 10, Repeats: 2, Trials: passingTrials()}
-		result, err := Evaluate(evidence, goal)
+		result, err := evaluateWithDeclaredTestQuality(evidence, goal)
 		if err != nil || result.State != "INSUFFICIENT_EVIDENCE" || !containsFinding(result.Findings, "variability is not recorded") {
 			t.Fatalf("missing variability must block: %+v %v", result, err)
 		}
@@ -153,6 +165,12 @@ func validStatisticalRun() report.Result {
 
 func validVariability() *campaign.Variability {
 	return &campaign.Variability{Runs: 2, P95MinMS: 20, P95MaxMS: 30, ErrorRateMin: 0, ErrorRateMax: 0, ThroughputMinRPS: 20, ThroughputMaxRPS: 30}
+}
+
+func evaluateWithDeclaredTestQuality(evidence campaign.Result, goal capacitygoal.Goal) (Result, error) {
+	return evaluateWithQuality(evidence, goal, func(run report.Result) *report.Quality {
+		return run.Quality
+	})
 }
 
 func containsFinding(findings []string, part string) bool {
