@@ -42,6 +42,37 @@ func TestSuccess(t *testing.T) {
 	}
 }
 
+func TestHTTPTraceMeasuresLoopbackPhasesAndConnectionReuse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("trace body"))
+	}))
+	defer server.Close()
+	v := scenario(t, server.URL, []config.Step{{Name: "page", Path: "/"}})
+	v.Duration = 180 * time.Millisecond
+	v.Scenario.Users = 1
+	v.Scenario.MaxRPS = 10
+	r := Run(context.Background(), v)
+	if len(r.Steps) != 1 {
+		t.Fatalf("expected one step: %+v", r.Steps)
+	}
+	trace := r.Steps[0].HTTPTrace
+	if trace.CompleteCount != r.Steps[0].Metrics.Total || trace.FirstByteCount == 0 || trace.BodyCount == 0 {
+		t.Fatalf("expected first-byte, body and complete observations: %+v", trace)
+	}
+	if trace.FirstByteMS < 0 || trace.BodyMS < 0 || trace.CompleteMS < trace.FirstByteMS {
+		t.Fatalf("invalid phase boundaries: %+v", trace)
+	}
+	if trace.ConnectCount < 1 || trace.ConnectCount >= trace.CompleteCount {
+		t.Fatalf("expected initial connection plus reused connections, got %+v", trace)
+	}
+	if trace.WriteCount != trace.CompleteCount {
+		t.Fatalf("request-write callbacks did not reconcile: %+v", trace)
+	}
+	if trace.RateWaitCount != trace.CompleteCount || trace.RateWaitMS < 0 {
+		t.Fatalf("rate wait should be measured separately for each admitted step: %+v", trace)
+	}
+}
+
 func TestWeightedProfilesAreMeasuredSeparately(t *testing.T) {
 	seen := map[string]int{}
 	var mu sync.Mutex

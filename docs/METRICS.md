@@ -56,6 +56,12 @@ Generator health samples Go heap allocation, goroutines, garbage-collection acti
 
 Arrival accounting and scheduler lag are also measurement-quality signals. Any unexplained reconciliation mismatch invalidates interpretation. A late scheduler start indicates generator timing error; a busy-worker drop indicates configured worker capacity prevented delivery. Neither should silently be counted as target capacity.
 
+## HTTP client timing boundaries (G0-12 partial)
+
+Each named step reports additive client-observed phase totals in `http_trace`. `rate_wait_ms` runs from the start of that step's rate-token wait until the token is admitted, so it is outside HTTP request latency. `dns_ms`, `connect_ms`, and `tls_ms` sum completed attempts seen through Go `httptrace`; their counts indicate how many attempts were observed. A zero count means no such attempt was observed (commonly due to a reused connection), not a zero-duration phase. Failed attempts are included when their completion callback fires; an attempt interrupted before its callback is not assigned an invented duration.
+
+`first_byte_ms` sums time from immediately before `http.Client.Do` to the first response byte callback. It includes client scheduling, connection work, network transit and target response delay; it is not server processing time. `body_ms` sums time from first response byte to the end of the bounded body read. `complete_ms` sums full client-observed request duration from immediately before `Do` through body read completion, or through a transport error. Counts distinguish phase observations from requests. These totals are diagnostic sums, not percentiles and not additive disjoint slices: DNS/connect/TLS overlap may occur and first-byte already includes earlier phases. Request queue waiting internal to `net/http.Transport` is not exposed by this API; `request_write_ms` records time until `WroteRequest` and must not be interpreted as a pure queue duration. Clock/trace callback accuracy has not been calibrated under host load.
+
 ## What is not yet measured
 
 - No predeclared long soak protocol for checking whether SLOs held throughout a production-representative steady state.

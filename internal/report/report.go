@@ -30,6 +30,47 @@ type MetricSet struct {
 	totalDuration         time.Duration
 }
 
+// HTTPTrace records client-observed transport phases. A zero count means the
+// phase was not attempted (for example, DNS on a reused connection); it does
+// not mean the phase took zero time.
+type HTTPTrace struct {
+	WriteCount     int     `json:"request_write_count"`
+	WriteMS        float64 `json:"request_write_ms,omitempty"`
+	RateWaitCount  int     `json:"rate_wait_count"`
+	RateWaitMS     float64 `json:"rate_wait_ms,omitempty"`
+	DNSCount       int     `json:"dns_count"`
+	DNSMS          float64 `json:"dns_ms,omitempty"`
+	ConnectCount   int     `json:"connect_count"`
+	ConnectMS      float64 `json:"connect_ms,omitempty"`
+	TLSCount       int     `json:"tls_count"`
+	TLSMS          float64 `json:"tls_ms,omitempty"`
+	FirstByteCount int     `json:"first_byte_count"`
+	FirstByteMS    float64 `json:"first_byte_ms,omitempty"`
+	BodyCount      int     `json:"body_count"`
+	BodyMS         float64 `json:"body_ms,omitempty"`
+	CompleteCount  int     `json:"complete_count"`
+	CompleteMS     float64 `json:"complete_ms,omitempty"`
+}
+
+func (t *HTTPTrace) Record(o HTTPTrace) {
+	t.WriteCount += o.WriteCount
+	t.WriteMS += o.WriteMS
+	t.RateWaitCount += o.RateWaitCount
+	t.RateWaitMS += o.RateWaitMS
+	t.DNSCount += o.DNSCount
+	t.DNSMS += o.DNSMS
+	t.ConnectCount += o.ConnectCount
+	t.ConnectMS += o.ConnectMS
+	t.TLSCount += o.TLSCount
+	t.TLSMS += o.TLSMS
+	t.FirstByteCount += o.FirstByteCount
+	t.FirstByteMS += o.FirstByteMS
+	t.BodyCount += o.BodyCount
+	t.BodyMS += o.BodyMS
+	t.CompleteCount += o.CompleteCount
+	t.CompleteMS += o.CompleteMS
+}
+
 func NewMetricSet() *MetricSet { return &MetricSet{Reasons: make(map[string]int)} }
 func (m *MetricSet) Record(latency time.Duration, success, cancelled bool, reason string) {
 	if cancelled {
@@ -116,11 +157,12 @@ type ProfileConfig struct {
 	ThinkTime string `json:"think_time"`
 }
 type StepResult struct {
-	Profile string    `json:"profile,omitempty"`
-	Name    string    `json:"name"`
-	Method  string    `json:"method"`
-	Path    string    `json:"path"`
-	Metrics MetricSet `json:"metrics"`
+	Profile   string    `json:"profile,omitempty"`
+	Name      string    `json:"name"`
+	Method    string    `json:"method"`
+	Path      string    `json:"path"`
+	Metrics   MetricSet `json:"metrics"`
+	HTTPTrace HTTPTrace `json:"http_trace"`
 }
 
 // ProfileResult records completed and interrupted journeys by workflow. Its
@@ -165,8 +207,8 @@ type Result struct {
 	LittleLawEstimate   float64                  `json:"little_law_in_flight_estimate,omitempty"`
 	Warnings            []string                 `json:"warnings,omitempty"`
 	Generator           *generatorhealth.Summary `json:"generator,omitempty"`
-	Quality             *Quality                  `json:"data_quality,omitempty"`
-	Signals             []Signal                  `json:"diagnostic_signals,omitempty"`
+	Quality             *Quality                 `json:"data_quality,omitempty"`
+	Signals             []Signal                 `json:"diagnostic_signals,omitempty"`
 }
 
 // WindowSeconds returns the configured workload window when the report records

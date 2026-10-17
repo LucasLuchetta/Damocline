@@ -4,12 +4,14 @@ package engine
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/cookiejar"
+	"net/http/httptrace"
 	"net/url"
 	"regexp"
 	"strconv"
@@ -31,6 +33,8 @@ var variablePattern = regexp.MustCompile(`\{\{([a-z][a-z0-9_]{0,63})\}\}`)
 type sample struct {
 	name               string
 	latency            time.Duration
+	trace              report.HTTPTrace
+	requestStarted     bool
 	success, cancelled bool
 	reason             string
 }
@@ -38,6 +42,7 @@ type collector struct {
 	mu          sync.Mutex
 	aggregate   *report.MetricSet
 	steps       map[string]*report.MetricSet
+	stepTraces  map[string]*report.HTTPTrace
 	journeys    *report.MetricSet
 	profiles    map[string]*report.MetricSet
 	started     time.Time
@@ -48,9 +53,10 @@ type collector struct {
 
 func newCollector(v config.Validated, started time.Time) *collector {
 	c := &collector{aggregate: report.NewMetricSet(),
-		journeys: report.NewMetricSet(), steps: make(map[string]*report.MetricSet, len(v.Steps)), profiles: make(map[string]*report.MetricSet, len(v.Profiles)), started: started, window: v.Window, observation: v.Duration}
+		journeys: report.NewMetricSet(), steps: make(map[string]*report.MetricSet, len(v.Steps)), stepTraces: make(map[string]*report.HTTPTrace, len(v.Steps)), profiles: make(map[string]*report.MetricSet, len(v.Profiles)), started: started, window: v.Window, observation: v.Duration}
 	for _, s := range v.Steps {
 		c.steps[s.Name] = report.NewMetricSet()
+		c.stepTraces[s.Name] = &report.HTTPTrace{}
 	}
 	for _, profile := range v.Profiles {
 		c.profiles[profile.Name] = report.NewMetricSet()
@@ -98,6 +104,7 @@ func (c *collector) add(s sample) {
 	defer c.mu.Unlock()
 	c.aggregate.Record(s.latency, s.success, s.cancelled, s.reason)
 	c.steps[s.name].Record(s.latency, s.success, s.cancelled, s.reason)
+	c.stepTraces[s.name].Record(s.trace)
 	if c.window <= 0 {
 		return
 	}
@@ -183,12 +190,18 @@ func Run(parent context.Context, v config.Validated) report.Result {
 			variables["synthetic_id"] = fmt.Sprintf("%s-%x-%d-%d", v.SyntheticDataPrefix, started.UnixNano(), actor+1, sequence)
 		}
 		for stepIndex, step := range profile.Steps {
+			waitStarted := time.Now()
 			if !waitToken(ctx, ticker.C) {
+				coll.add(sample{name: step.Name, cancelled: true, reason: "journey_cancelled", trace: report.HTTPTrace{RateWaitCount: 1, RateWaitMS: ms(time.Since(waitStarted))}})
 				fullyCompleted = false
 				break
 			}
 			s, extracted := execute(ctx, client, v.Base, v.Timeout, step, variables, &inFlight)
-			coll.add(s)
+			s.trace.RateWaitCount = 1
+			s.trace.RateWaitMS = ms(time.Since(waitStarted))
+			if s.requestStarted || s.cancelled {
+				coll.add(s)
+			}
 			for name, value := range extracted {
 				variables[name] = value
 			}
@@ -282,7 +295,7 @@ func Run(parent context.Context, v config.Validated) report.Result {
 		if len(v.Scenario.Profiles) > 0 {
 			profileName = st.Profile
 		}
-		steps = append(steps, report.StepResult{Profile: profileName, Name: st.Name, Method: st.Method, Path: safePath(st.Path), Metrics: coll.steps[st.Name].Snapshot()})
+		steps = append(steps, report.StepResult{Profile: profileName, Name: st.Name, Method: st.Method, Path: safePath(st.Path), Metrics: coll.steps[st.Name].Snapshot(), HTTPTrace: *coll.stepTraces[st.Name]})
 	}
 	windows := make([]report.WindowResult, 0, len(coll.windows))
 	for index, metrics := range coll.windows {
@@ -437,33 +450,108 @@ func execute(parent context.Context, client *http.Client, base *url.URL, timeout
 		req.Header.Set(k, value)
 	}
 	start := time.Now()
+	var traceMu sync.Mutex
+	trace := report.HTTPTrace{}
+	var dnsStart, connectStart, tlsStart, firstByte time.Time
+	clientTrace := &httptrace.ClientTrace{
+		DNSStart: func(httptrace.DNSStartInfo) {
+			traceMu.Lock()
+			dnsStart = time.Now()
+			traceMu.Unlock()
+		},
+		DNSDone: func(httptrace.DNSDoneInfo) {
+			traceMu.Lock()
+			if !dnsStart.IsZero() {
+				trace.DNSCount++
+				trace.DNSMS += ms(time.Since(dnsStart))
+				dnsStart = time.Time{}
+			}
+			traceMu.Unlock()
+		},
+		ConnectStart: func(_, _ string) {
+			traceMu.Lock()
+			connectStart = time.Now()
+			traceMu.Unlock()
+		},
+		ConnectDone: func(_, _ string, _ error) {
+			traceMu.Lock()
+			if !connectStart.IsZero() {
+				trace.ConnectCount++
+				trace.ConnectMS += ms(time.Since(connectStart))
+				connectStart = time.Time{}
+			}
+			traceMu.Unlock()
+		},
+		TLSHandshakeStart: func() {
+			traceMu.Lock()
+			tlsStart = time.Now()
+			traceMu.Unlock()
+		},
+		TLSHandshakeDone: func(_ tls.ConnectionState, _ error) {
+			traceMu.Lock()
+			if !tlsStart.IsZero() {
+				trace.TLSCount++
+				trace.TLSMS += ms(time.Since(tlsStart))
+				tlsStart = time.Time{}
+			}
+			traceMu.Unlock()
+		},
+		GotFirstResponseByte: func() {
+			traceMu.Lock()
+			firstByte = time.Now()
+			trace.FirstByteCount++
+			trace.FirstByteMS += ms(time.Since(start))
+			traceMu.Unlock()
+		},
+		WroteRequest: func(httptrace.WroteRequestInfo) {
+			traceMu.Lock()
+			trace.WriteCount++
+			trace.WriteMS += ms(time.Since(start))
+			traceMu.Unlock()
+		},
+	}
+	req = req.WithContext(httptrace.WithClientTrace(req.Context(), clientTrace))
 	inFlight.Add(1)
 	defer inFlight.Add(-1)
 	res, err := client.Do(req)
 	if err != nil {
 		d := time.Since(start)
+		traceMu.Lock()
+		trace.CompleteCount++
+		trace.CompleteMS += ms(d)
+		observedTrace := trace
+		traceMu.Unlock()
 		if parent.Err() != nil {
-			return sample{name: s.Name, latency: d, cancelled: true, reason: "run_cancelled"}, nil
+			return sample{name: s.Name, latency: d, trace: observedTrace, requestStarted: true, cancelled: true, reason: "run_cancelled"}, nil
 		}
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return sample{name: s.Name, latency: d, reason: "timeout"}, nil
+			return sample{name: s.Name, latency: d, trace: observedTrace, requestStarted: true, reason: "timeout"}, nil
 		}
-		return sample{name: s.Name, latency: d, reason: "transport"}, nil
+		return sample{name: s.Name, latency: d, trace: observedTrace, requestStarted: true, reason: "transport"}, nil
 	}
 	defer res.Body.Close()
 	data, readErr := io.ReadAll(io.LimitReader(res.Body, maxResponseBytes+1))
 	d := time.Since(start)
+	traceMu.Lock()
+	if !firstByte.IsZero() {
+		trace.BodyCount++
+		trace.BodyMS += ms(time.Since(firstByte))
+	}
+	trace.CompleteCount++
+	trace.CompleteMS += ms(d)
+	observedTrace := trace
+	traceMu.Unlock()
 	if parent.Err() != nil {
-		return sample{name: s.Name, latency: d, cancelled: true, reason: "run_cancelled"}, nil
+		return sample{name: s.Name, latency: d, trace: observedTrace, requestStarted: true, cancelled: true, reason: "run_cancelled"}, nil
 	}
 	if readErr != nil {
 		if errors.Is(readErr, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return sample{name: s.Name, latency: d, reason: "timeout"}, nil
+			return sample{name: s.Name, latency: d, trace: observedTrace, requestStarted: true, reason: "timeout"}, nil
 		}
-		return sample{name: s.Name, latency: d, reason: "body_read"}, nil
+		return sample{name: s.Name, latency: d, trace: observedTrace, requestStarted: true, reason: "body_read"}, nil
 	}
 	if len(data) > maxResponseBytes {
-		return sample{name: s.Name, latency: d, reason: "response_too_large"}, nil
+		return sample{name: s.Name, latency: d, trace: observedTrace, requestStarted: true, reason: "response_too_large"}, nil
 	}
 	ok := res.StatusCode >= 200 && res.StatusCode <= 299
 	if len(s.ExpectedStatus) > 0 {
@@ -476,17 +564,19 @@ func execute(parent context.Context, client *http.Client, base *url.URL, timeout
 		}
 	}
 	if !ok {
-		return sample{name: s.Name, latency: d, reason: fmt.Sprintf("http_%d", res.StatusCode)}, nil
+		return sample{name: s.Name, latency: d, trace: observedTrace, requestStarted: true, reason: fmt.Sprintf("http_%d", res.StatusCode)}, nil
 	}
 	if s.MustContain != "" && !bytes.Contains(data, []byte(s.MustContain)) {
-		return sample{name: s.Name, latency: d, reason: "assertion_missing_text"}, nil
+		return sample{name: s.Name, latency: d, trace: observedTrace, requestStarted: true, reason: "assertion_missing_text"}, nil
 	}
 	extracted, err := extractValues(s.Extract, res.Header, data)
 	if err != nil {
-		return sample{name: s.Name, latency: d, reason: "extraction_failed"}, nil
+		return sample{name: s.Name, latency: d, trace: observedTrace, requestStarted: true, reason: "extraction_failed"}, nil
 	}
-	return sample{name: s.Name, latency: d, success: true}, extracted
+	return sample{name: s.Name, latency: d, trace: observedTrace, requestStarted: true, success: true}, extracted
 }
+
+func ms(d time.Duration) float64 { return float64(d.Microseconds()) / 1000 }
 
 func interpolateURL(base *url.URL, pathTemplate string, variables map[string]string) (string, error) {
 	pathOnly, query, hasQuery := strings.Cut(pathTemplate, "?")
