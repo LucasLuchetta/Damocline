@@ -76,6 +76,57 @@ func TestWeightedProfilesAreMeasuredSeparately(t *testing.T) {
 	}
 }
 
+func TestJourneyExtractsResponseValuesForLaterSteps(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/session":
+			w.Header().Set("X-Test-Token", "token-123")
+			_, _ = w.Write([]byte(`{"record":{"id":"alpha/beta"}}`))
+		case "/records/alpha/beta":
+			if r.Header.Get("X-Token") != "Bearer token-123" {
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+			_, _ = w.Write([]byte("record found"))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	s := config.Scenario{Name: "dependent local journey", BaseURL: srv.URL, Users: 1, Duration: "1s", MaxRPS: 20, P95LimitMS: 1000, MaxErrorRate: 0,
+		Steps: []config.Step{
+			{Name: "session", Path: "/session", Extract: map[string]config.Extract{"record_id": {JSONPointer: "/record/id"}, "token": {Header: "X-Test-Token"}}},
+			{Name: "record", Path: "/records/{{record_id}}", Headers: map[string]string{"X-Token": "Bearer {{token}}"}, MustContain: "record found"},
+		}}
+	v, err := config.Parse(s, config.Options{Authorized: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	v.Duration = 300 * time.Millisecond
+	r := Run(context.Background(), v)
+	if r.Outcome != "PASS" || r.Steps[0].Metrics.Success == 0 || r.Steps[1].Metrics.Success == 0 {
+		t.Fatalf("dependent journey did not complete: %+v", r)
+	}
+}
+
+func TestFailedExtractionFailsStep(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"missing":true}`))
+	}))
+	defer srv.Close()
+	s := config.Scenario{Name: "failed extraction", BaseURL: srv.URL, Users: 1, Duration: "1s", MaxRPS: 10, P95LimitMS: 1000, MaxErrorRate: 0,
+		Steps: []config.Step{{Name: "session", Path: "/", Extract: map[string]config.Extract{"record_id": {JSONPointer: "/id"}}}}}
+	v, err := config.Parse(s, config.Options{Authorized: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	v.Duration = 200 * time.Millisecond
+	r := Run(context.Background(), v)
+	if r.Outcome == "PASS" || r.Metrics.Reasons["extraction_failed"] == 0 {
+		t.Fatalf("missing extraction was not reported: %+v", r)
+	}
+}
+
 func TestArrivalProfilesFollowConfiguredWeights(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)

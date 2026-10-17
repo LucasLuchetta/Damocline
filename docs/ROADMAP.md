@@ -28,7 +28,7 @@ This is a working plan for an open-source project in **pre-alpha**. The native l
 ## M1 — Realistic workload modeling
 
 - [x] Versioned, strictly validated JSON scenario schema; YAML is not supported.
-- [x] Environment-backed cookie/header references, cookie jars, and HTTP response assertions; dynamic response extraction and dependent steps remain open.
+- [x] Environment-backed cookie/header references, cookie jars, HTTP response assertions, bounded JSON Pointer/header extraction, and dependent steps within one journey; dynamic login/CSRF recording remains open.
 - [x] Closed-loop VUs with configurable think times.
 - [x] Open-loop journey arrivals with scheduled/admitted/busy-dropped/late-dropped accounting; model/session representativeness remains open.
 - [ ] Isolated read/write workflows with explicit synthetic test data.

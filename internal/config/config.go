@@ -43,13 +43,21 @@ type Profile struct {
 }
 
 type Step struct {
-	Name           string            `json:"name"`
-	Method         string            `json:"method"`
-	Path           string            `json:"path"`
-	Headers        map[string]string `json:"headers,omitempty"`
-	ExpectedStatus []int             `json:"expected_status,omitempty"`
-	MustContain    string            `json:"must_contain,omitempty"`
-	BodyEnv        string            `json:"body_env,omitempty"`
+	Name           string             `json:"name"`
+	Method         string             `json:"method"`
+	Path           string             `json:"path"`
+	Headers        map[string]string  `json:"headers,omitempty"`
+	ExpectedStatus []int              `json:"expected_status,omitempty"`
+	MustContain    string             `json:"must_contain,omitempty"`
+	BodyEnv        string             `json:"body_env,omitempty"`
+	Extract        map[string]Extract `json:"extract,omitempty"`
+}
+
+// Extract declares a value that a step may capture for later steps in the same
+// journey. Exactly one selector is required for each variable.
+type Extract struct {
+	JSONPointer string `json:"json_pointer,omitempty"`
+	Header      string `json:"header,omitempty"`
 }
 
 type Options struct {
@@ -85,9 +93,12 @@ type PreparedStep struct {
 	URL             string
 	ResolvedHeaders map[string]string
 	Body            []byte
+	PathTemplate    string
 }
 
 var envPattern = regexp.MustCompile(`^\$\{([A-Z_][A-Z0-9_]*)\}$`)
+var variablePattern = regexp.MustCompile(`\{\{([a-z][a-z0-9_]{0,63})\}\}`)
+var variableNamePattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
 
 func Load(path string) (Scenario, error) {
 	f, err := os.Open(path)
@@ -217,6 +228,7 @@ func Parse(s Scenario, o Options) (Validated, error) {
 			return v, err
 		}
 		profileSteps := make([]PreparedStep, 0, len(profile.Steps))
+		available := map[string]bool{}
 		for _, step := range profile.Steps {
 			if step.Name == "" || len(step.Name) > 80 || seen[step.Name] {
 				return v, fmt.Errorf("step names must be non-empty, unique, and at most 80 characters: %q", step.Name)
@@ -240,6 +252,9 @@ func Parse(s Scenario, o Options) (Validated, error) {
 			}
 			if step.Path == "" || !strings.HasPrefix(step.Path, "/") || strings.HasPrefix(step.Path, "//") || strings.ContainsAny(step.Path, "\r\n\\") {
 				return v, fmt.Errorf("step %q path must be a relative-to-origin absolute path", step.Name)
+			}
+			if err := validatePathTemplate(step.Path, available); err != nil {
+				return v, fmt.Errorf("step %q: %w", step.Name, err)
 			}
 			p, err := url.Parse(step.Path)
 			if err != nil || p.Host != "" || p.Scheme != "" || p.Fragment != "" || strings.Contains(strings.ToLower(p.EscapedPath()), "%2e") || strings.Contains(step.Path, "..") {
@@ -265,6 +280,9 @@ func Parse(s Scenario, o Options) (Validated, error) {
 				if len(value) > 8192 {
 					return v, fmt.Errorf("header value too large in %q", step.Name)
 				}
+				if err := validateTemplate(value, available); err != nil {
+					return v, fmt.Errorf("header %q in step %q: %w", key, step.Name, err)
+				}
 				found := envPattern.FindStringSubmatch(value)
 				if found != nil {
 					secret, ok := os.LookupEnv(found[1])
@@ -276,7 +294,8 @@ func Parse(s Scenario, o Options) (Validated, error) {
 					}
 					head[key] = secret
 				} else {
-					if canonical == "authorization" || canonical == "cookie" || canonical == "proxy-authorization" || strings.Contains(canonical, "api-key") {
+					isSensitive := canonical == "authorization" || canonical == "cookie" || canonical == "proxy-authorization" || strings.Contains(canonical, "api-key")
+					if isSensitive && !strings.Contains(value, "{{") {
 						return v, fmt.Errorf("sensitive header %q must reference an environment variable like ${DAMOCLINE_COOKIE}", key)
 					}
 					head[key] = value
@@ -292,9 +311,15 @@ func Parse(s Scenario, o Options) (Validated, error) {
 					return v, fmt.Errorf("body_env %s exceeds 64 KiB", step.BodyEnv)
 				}
 				body = []byte(secret)
+				if err := validateTemplate(secret, available); err != nil {
+					return v, fmt.Errorf("body_env in step %q: %w", step.Name, err)
+				}
+			}
+			if err := validateExtracts(step.Extract, available); err != nil {
+				return v, fmt.Errorf("step %q: %w", step.Name, err)
 			}
 			step.Method = method
-			preparedStep := PreparedStep{Step: step, Profile: profile.Name, URL: u.ResolveReference(p).String(), ResolvedHeaders: head, Body: body}
+			preparedStep := PreparedStep{Step: step, Profile: profile.Name, URL: u.ResolveReference(p).String(), ResolvedHeaders: head, Body: body, PathTemplate: step.Path}
 			prepared = append(prepared, preparedStep)
 			profileSteps = append(profileSteps, preparedStep)
 		}
@@ -360,6 +385,67 @@ func containsCookieHeader(steps []Step) bool {
 		}
 	}
 	return false
+}
+
+func validatePathTemplate(path string, available map[string]bool) error {
+	pathOnly, query, hasQuery := strings.Cut(path, "?")
+	if hasQuery && strings.Contains(query, "{{") {
+		return errors.New("variables are only supported as complete path segments, headers, or body_env content")
+	}
+	for _, segment := range strings.Split(pathOnly, "/") {
+		if !strings.Contains(segment, "{{") {
+			continue
+		}
+		matches := variablePattern.FindStringSubmatch(segment)
+		if len(matches) != 2 || matches[0] != segment || !available[matches[1]] {
+			return fmt.Errorf("path variable %q must be extracted by an earlier step and occupy a complete path segment", segment)
+		}
+	}
+	return nil
+}
+
+func validateTemplate(value string, available map[string]bool) error {
+	if !strings.Contains(value, "{{") {
+		return nil
+	}
+	matches := variablePattern.FindAllStringSubmatch(value, -1)
+	if len(matches) == 0 {
+		return errors.New("invalid variable template")
+	}
+	for _, match := range matches {
+		if !available[match[1]] {
+			return fmt.Errorf("variable %q is not extracted by an earlier step", match[1])
+		}
+	}
+	remaining := variablePattern.ReplaceAllString(value, "")
+	if strings.Contains(remaining, "{{") || strings.Contains(remaining, "}}") {
+		return errors.New("invalid variable template")
+	}
+	return nil
+}
+
+func validateExtracts(extracts map[string]Extract, available map[string]bool) error {
+	for name, extract := range extracts {
+		if !variableNamePattern.MatchString(name) {
+			return fmt.Errorf("invalid extracted variable name %q", name)
+		}
+		if available[name] {
+			return fmt.Errorf("variable %q is extracted more than once in one journey", name)
+		}
+		hasPointer := extract.JSONPointer != ""
+		hasHeader := extract.Header != ""
+		if hasPointer == hasHeader {
+			return fmt.Errorf("extract %q must define exactly one of json_pointer or header", name)
+		}
+		if hasPointer && (!strings.HasPrefix(extract.JSONPointer, "/") || len(extract.JSONPointer) > 512) {
+			return fmt.Errorf("extract %q has an invalid json_pointer", name)
+		}
+		if hasHeader && (len(extract.Header) > 128 || strings.ContainsAny(extract.Header, "\r\n")) {
+			return fmt.Errorf("extract %q has an invalid header", name)
+		}
+		available[name] = true
+	}
+	return nil
 }
 
 func isLoopback(h string) bool {

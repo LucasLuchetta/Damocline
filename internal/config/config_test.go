@@ -197,3 +197,32 @@ func TestRejectInvalidWeightedProfiles(t *testing.T) {
 		})
 	}
 }
+
+func TestRejectInvalidDynamicWorkflowReferences(t *testing.T) {
+	tests := []struct {
+		name  string
+		steps []Step
+	}{
+		{
+			name:  "forward reference",
+			steps: []Step{{Name: "record", Path: "/records/{{id}}"}},
+		},
+		{
+			name:  "query reference",
+			steps: []Step{{Name: "session", Path: "/session", Extract: map[string]Extract{"id": {JSONPointer: "/id"}}}, {Name: "record", Path: "/records?id={{id}}"}},
+		},
+		{
+			name:  "invalid extractor",
+			steps: []Step{{Name: "session", Path: "/session", Extract: map[string]Extract{"id": {JSONPointer: "/id", Header: "X-ID"}}}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := good()
+			s.Steps = tt.steps
+			if _, err := Parse(s, Options{Authorized: true}); err == nil {
+				t.Fatal("invalid dynamic workflow was accepted")
+			}
+		})
+	}
+}

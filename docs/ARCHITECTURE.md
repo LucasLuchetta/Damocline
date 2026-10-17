@@ -32,7 +32,7 @@ Damocline measures observed application behavior under a defined synthetic workl
 
 **Workload scheduler.** The engine supports closed-loop virtual users and open-loop journey arrivals. It tracks scheduled starts, actual starts, late and worker-busy drops, scheduler lag, and iteration completion. A partly open model with independently arriving sessions and dependent steps within each session is not implemented.
 
-**Virtual-user runtime.** Each actor can maintain its own configured cookie and place in a sequential workflow. Closed-loop VUs keep one deterministic weighted-profile assignment for the run; arrival mode selects a profile per planned journey start. Response assertions are supported. Response-driven value extraction, dependent request construction, and dynamic multi-step sessions remain planned.
+**Virtual-user runtime.** Each actor can maintain its own configured cookie and place in a sequential workflow. Closed-loop VUs keep one deterministic weighted-profile assignment for the run; arrival mode selects a profile per planned journey start. Steps can extract a bounded header or JSON Pointer value for later steps in the same journey. Response assertions are supported. Dynamic login/CSRF recording and a full partly open session model remain planned.
 
 **HTTP execution.** Use Go's networking primitives for HTTP/TLS. Damocline itself owns the load-control logic, sequencing, timing, measurement, failure accounting, and safety guards. Handle keep-alive, redirects, deadlines, and response-body cleanup explicitly.
 

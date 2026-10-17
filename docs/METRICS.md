@@ -24,6 +24,8 @@ Do not describe a request rate, open TCP connection count, or total logins as "s
 
 **Weighted profiles:** a scenario can define two to ten named workflows, each with a positive integer weight, steps, and optional think time. Closed-loop VUs are allocated deterministically across profiles; arrival mode selects each planned journey with smooth weighted round-robin. The report records configured weights, assigned closed-loop VUs, and actual started/completed/cancelled journeys. A weight is an intended demand mix, not evidence that the mix represents production use; derive it from sanitized usage evidence and review the observed counts.
 
+**Dependent steps:** a step may extract a string, number, or Boolean through a JSON Pointer, or a bounded response-header value. Later steps in the same journey may use it in complete path segments, headers, or `body_env` content. Extracted values are kept only in the VU's current journey and are never written to the report. Extraction failure makes the step fail; it is not silently replaced with a prior value.
+
 A **partly open session model**—independent session arrivals followed by dependent requests and think times within each session—is not implemented. Open-loop journey arrivals and closed-loop VUs answer different questions and are not interchangeable.
 
 ## Statistical interpretation and generator health

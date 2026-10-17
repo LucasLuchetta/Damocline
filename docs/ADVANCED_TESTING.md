@@ -39,8 +39,11 @@ Scenario fields:
 | `think_time` | Delay between steps in a VU journey. |
 | `per_vu_cookie_env_prefix` | Optional prefix for independent session cookies. |
 | `profiles` | Optional replacement for `steps`: 2-10 named weighted workflows, each with `name`, `weight`, `steps`, and optional `think_time`. |
+| `extract` | Optional map of response values to capture using exactly one `json_pointer` or `header` selector. |
 
 Use either top-level `steps` or `profiles`, never both. [`examples/weighted-profiles-readonly.json`](../examples/weighted-profiles-readonly.json) shows a three-profile read-only mix. Profile weights describe the planned mix. In closed mode, configure at least one VU per profile; in arrival mode, inspect actual profile starts in the report. HTTP redirects are not followed. A redirect to login is a failure unless explicitly listed as expected (not recommended for an authenticated page test).
+
+A later step may use a value extracted by an earlier one in the same journey. Path variables must occupy a whole path segment, which prevents a response value from changing origin or query semantics. Header and body templates use `{{variable_name}}`. Extracted values are not placed in report output.
 
 ## 3. Independent test users
 

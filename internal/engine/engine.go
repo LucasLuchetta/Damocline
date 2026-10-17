@@ -4,11 +4,15 @@ package engine
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/cookiejar"
+	"net/url"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -21,6 +25,8 @@ import (
 )
 
 const maxResponseBytes = 2 << 20
+
+var variablePattern = regexp.MustCompile(`\{\{([a-z][a-z0-9_]{0,63})\}\}`)
 
 type sample struct {
 	name               string
@@ -132,13 +138,17 @@ func Run(parent context.Context, v config.Validated) report.Result {
 		journeyStart := time.Now()
 		journeyOk := true
 		fullyCompleted := true
+		variables := map[string]string{}
 		for stepIndex, step := range profile.Steps {
 			if !waitToken(ctx, ticker.C) {
 				fullyCompleted = false
 				break
 			}
-			s := execute(ctx, client, v.Timeout, step)
+			s, extracted := execute(ctx, client, v.Base, v.Timeout, step, variables)
 			coll.add(s)
+			for name, value := range extracted {
+				variables[name] = value
+			}
 			if !s.success {
 				journeyOk = false
 			}
@@ -327,46 +337,54 @@ func sleep(ctx context.Context, d time.Duration) bool {
 		return ctx.Err() == nil
 	}
 }
-func execute(parent context.Context, client *http.Client, timeout time.Duration, s config.PreparedStep) sample {
+func execute(parent context.Context, client *http.Client, base *url.URL, timeout time.Duration, s config.PreparedStep, variables map[string]string) (sample, map[string]string) {
 	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
+	requestURL, err := interpolateURL(base, s.PathTemplate, variables)
+	if err != nil {
+		return sample{name: s.Name, reason: "variable_interpolation"}, nil
+	}
 	var body io.Reader
 	if len(s.Body) > 0 {
-		body = bytes.NewReader(s.Body)
+		body = bytes.NewReader([]byte(interpolate(string(s.Body), variables)))
 	}
-	req, err := http.NewRequestWithContext(ctx, s.Method, s.URL, body)
+	req, err := http.NewRequestWithContext(ctx, s.Method, requestURL, body)
 	if err != nil {
-		return sample{name: s.Name, reason: "request_build"}
+		return sample{name: s.Name, reason: "request_build"}, nil
 	}
 	for k, v := range s.ResolvedHeaders {
-		req.Header.Set(k, v)
+		value := interpolate(v, variables)
+		if strings.ContainsAny(value, "\r\n") {
+			return sample{name: s.Name, reason: "variable_interpolation"}, nil
+		}
+		req.Header.Set(k, value)
 	}
 	start := time.Now()
 	res, err := client.Do(req)
 	if err != nil {
 		d := time.Since(start)
 		if parent.Err() != nil {
-			return sample{name: s.Name, latency: d, cancelled: true, reason: "run_cancelled"}
+			return sample{name: s.Name, latency: d, cancelled: true, reason: "run_cancelled"}, nil
 		}
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return sample{name: s.Name, latency: d, reason: "timeout"}
+			return sample{name: s.Name, latency: d, reason: "timeout"}, nil
 		}
-		return sample{name: s.Name, latency: d, reason: "transport"}
+		return sample{name: s.Name, latency: d, reason: "transport"}, nil
 	}
 	defer res.Body.Close()
 	data, readErr := io.ReadAll(io.LimitReader(res.Body, maxResponseBytes+1))
 	d := time.Since(start)
 	if parent.Err() != nil {
-		return sample{name: s.Name, latency: d, cancelled: true, reason: "run_cancelled"}
+		return sample{name: s.Name, latency: d, cancelled: true, reason: "run_cancelled"}, nil
 	}
 	if readErr != nil {
 		if errors.Is(readErr, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return sample{name: s.Name, latency: d, reason: "timeout"}
+			return sample{name: s.Name, latency: d, reason: "timeout"}, nil
 		}
-		return sample{name: s.Name, latency: d, reason: "body_read"}
+		return sample{name: s.Name, latency: d, reason: "body_read"}, nil
 	}
 	if len(data) > maxResponseBytes {
-		return sample{name: s.Name, latency: d, reason: "response_too_large"}
+		return sample{name: s.Name, latency: d, reason: "response_too_large"}, nil
 	}
 	ok := res.StatusCode >= 200 && res.StatusCode <= 299
 	if len(s.ExpectedStatus) > 0 {
@@ -379,12 +397,110 @@ func execute(parent context.Context, client *http.Client, timeout time.Duration,
 		}
 	}
 	if !ok {
-		return sample{name: s.Name, latency: d, reason: fmt.Sprintf("http_%d", res.StatusCode)}
+		return sample{name: s.Name, latency: d, reason: fmt.Sprintf("http_%d", res.StatusCode)}, nil
 	}
 	if s.MustContain != "" && !bytes.Contains(data, []byte(s.MustContain)) {
-		return sample{name: s.Name, latency: d, reason: "assertion_missing_text"}
+		return sample{name: s.Name, latency: d, reason: "assertion_missing_text"}, nil
 	}
-	return sample{name: s.Name, latency: d, success: true}
+	extracted, err := extractValues(s.Extract, res.Header, data)
+	if err != nil {
+		return sample{name: s.Name, latency: d, reason: "extraction_failed"}, nil
+	}
+	return sample{name: s.Name, latency: d, success: true}, extracted
+}
+
+func interpolateURL(base *url.URL, pathTemplate string, variables map[string]string) (string, error) {
+	pathOnly, query, hasQuery := strings.Cut(pathTemplate, "?")
+	segments := strings.Split(pathOnly, "/")
+	for i, segment := range segments {
+		if !strings.HasPrefix(segment, "{{") || !strings.HasSuffix(segment, "}}") {
+			continue
+		}
+		name := strings.TrimSuffix(strings.TrimPrefix(segment, "{{"), "}}")
+		value, ok := variables[name]
+		if !ok {
+			return "", fmt.Errorf("missing variable %q", name)
+		}
+		segments[i] = url.PathEscape(value)
+	}
+	resolvedPath := strings.Join(segments, "/")
+	if hasQuery {
+		resolvedPath += "?" + query
+	}
+	parsed, err := url.Parse(resolvedPath)
+	if err != nil {
+		return "", err
+	}
+	return base.ResolveReference(parsed).String(), nil
+}
+
+func interpolate(value string, variables map[string]string) string {
+	return variablePattern.ReplaceAllStringFunc(value, func(match string) string {
+		name := strings.TrimSuffix(strings.TrimPrefix(match, "{{"), "}}")
+		return variables[name]
+	})
+}
+
+func extractValues(extracts map[string]config.Extract, headers http.Header, body []byte) (map[string]string, error) {
+	values := map[string]string{}
+	if len(extracts) == 0 {
+		return values, nil
+	}
+	var document any
+	for name, extract := range extracts {
+		if extract.Header != "" {
+			value := headers.Get(extract.Header)
+			if value == "" || len(value) > 8192 || strings.ContainsAny(value, "\r\n") {
+				return nil, fmt.Errorf("header extraction %q failed", name)
+			}
+			values[name] = value
+			continue
+		}
+		if document == nil {
+			if err := json.Unmarshal(body, &document); err != nil {
+				return nil, fmt.Errorf("decode JSON response: %w", err)
+			}
+		}
+		value, ok := jsonPointer(document, extract.JSONPointer)
+		if !ok || value == "" || len(value) > 8192 {
+			return nil, fmt.Errorf("JSON pointer extraction %q failed", name)
+		}
+		values[name] = value
+	}
+	return values, nil
+}
+
+func jsonPointer(document any, pointer string) (string, bool) {
+	current := document
+	for _, raw := range strings.Split(strings.TrimPrefix(pointer, "/"), "/") {
+		part := strings.ReplaceAll(strings.ReplaceAll(raw, "~1", "/"), "~0", "~")
+		switch node := current.(type) {
+		case map[string]any:
+			var ok bool
+			current, ok = node[part]
+			if !ok {
+				return "", false
+			}
+		case []any:
+			index, err := strconv.Atoi(part)
+			if err != nil || index < 0 || index >= len(node) {
+				return "", false
+			}
+			current = node[index]
+		default:
+			return "", false
+		}
+	}
+	switch value := current.(type) {
+	case string:
+		return value, true
+	case float64:
+		return strconv.FormatFloat(value, 'f', -1, 64), true
+	case bool:
+		return strconv.FormatBool(value), true
+	default:
+		return "", false
+	}
 }
 func safePath(p string) string {
 	if i := strings.IndexByte(p, '?'); i >= 0 {
