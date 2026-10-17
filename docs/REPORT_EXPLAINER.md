@@ -40,6 +40,11 @@ phase in a complete repeated campaign to carry explicit
 quality remains `INSUFFICIENT_EVIDENCE`. Current runs are `LIMITED` while the
 workload-specific generator preflight gate is unfinished, so this positive
 demand assessment is intentionally unavailable from current campaign reports.
+The planner also requires adequate conditional P95 and error-rate bounds for
+every required phase aggregate, step, and SLO window; full window coverage; and
+spread data for every independent observation trial. These bounds assume
+independent, stationary observations, which Damocline does not establish, so
+they are not a dependence-aware confidence guarantee.
 
 ## Understand the four answers
 
