@@ -52,7 +52,7 @@ This is a working plan for an open-source project in **pre-alpha**. The native l
 
 ## M3 — Optional infrastructure telemetry
 
-- [x] Optional native Linux host CPU/memory collector without a listening port; per-container collection remains open.
+- [x] Optional native Linux host CPU/memory collector without a listening port and an explicitly authorized local Docker container CPU/memory snapshot; continuous per-container correlation remains open.
 - [ ] Integrations with existing metric endpoints and OpenTelemetry. A bounded explicit collector for Prometheus-text application metric endpoints is implemented; OpenTelemetry remains open.
 - [ ] Database, queues, cloud and Kubernetes adapters as demanded.
 - [x] Separate Linux host-time correlation reports with cautious diagnostic language.

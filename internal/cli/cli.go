@@ -18,6 +18,7 @@ import (
 	"github.com/LucasLuchetta/Damocline/internal/capacitygoal"
 	"github.com/LucasLuchetta/Damocline/internal/config"
 	"github.com/LucasLuchetta/Damocline/internal/correlate"
+	"github.com/LucasLuchetta/Damocline/internal/dockermon"
 	"github.com/LucasLuchetta/Damocline/internal/engine"
 	"github.com/LucasLuchetta/Damocline/internal/explorer"
 	"github.com/LucasLuchetta/Damocline/internal/hostmon"
@@ -75,6 +76,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return monitor(args[1:], stdout, stderr)
 	case "metrics":
 		return metricsCmd(args[1:], stdout, stderr)
+	case "docker":
+		return dockerCmd(args[1:], stdout, stderr)
 	case "correlate":
 		return correlateCmd(args[1:], stdout, stderr)
 	default:
@@ -100,6 +103,7 @@ Usage:
   damocline explore --config scenario.json --peak-users 10 --growth-percent 25 --reserve-percent 20 --authorized
   damocline monitor --duration 3m --interval 2s --out reports/host.json
 	  damocline metrics --endpoint https://app.example.com/metrics --authorized [--out reports/app-metrics.json]
+	  damocline docker --authorized [--out reports/docker.json]
   damocline correlate --load reports/load.json --host reports/host.json --out reports/correlated.json
   damocline update           # check and install source updates
   damocline update --auto    # enable automatic updates
@@ -432,6 +436,38 @@ func explore(args []string, stdout, stderr io.Writer) int {
 }
 
 // monitor reads host-level CPU and RAM without opening any network listener.
+func dockerCmd(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("docker", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	authorized := fs.Bool("authorized", false, "confirm permission to inspect local Docker resources")
+	out := fs.String("out", "", "JSON snapshot output path")
+	if err := fs.Parse(args); err != nil || len(fs.Args()) != 0 {
+		return 2
+	}
+	if !*authorized {
+		fmt.Fprintln(stderr, "explicit --authorized confirmation is required before collecting Docker metrics")
+		return 2
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	snapshot, err := dockermon.Collect(ctx)
+	if err != nil {
+		fmt.Fprintf(stderr, "docker metrics error: %v\n", err)
+		return 2
+	}
+	for _, container := range snapshot.Containers {
+		fmt.Fprintf(stdout, "%s: CPU %.1f%% | memory %d / %d bytes\n", container.Name, container.CPUPercent, container.MemoryBytes, container.MemoryLimit)
+	}
+	fmt.Fprintln(stdout, snapshot.Note)
+	if *out != "" {
+		if err := report.WriteAnyJSON(*out, snapshot); err != nil {
+			fmt.Fprintf(stderr, "report error: %v\n", err)
+			return 2
+		}
+	}
+	return 0
+}
+
 func metricsCmd(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("metrics", flag.ContinueOnError)
 	fs.SetOutput(stderr)

@@ -125,6 +125,8 @@ For an application that exposes a permitted Prometheus-text metric endpoint, tak
 
 The collector accepts only HTTP(S), follows no redirects, caps the response body, aggregates labeled samples by metric name, and does not preserve labels or credentials. It is a point-in-time observation. Correlate it with a named campaign manually; a high queue, error, or latency metric does not by itself prove which component caused a bottleneck.
 
+For local Docker container snapshots, run `damocline docker --authorized --out reports/docker.json`. It invokes one bounded `docker stats --no-stream` call and records CPU and memory observations. Docker availability, access permissions, database waits, queue state, and application traces remain separate concerns.
+
 ## 10. Inspect a saved report locally
 
 ```powershell
