@@ -58,7 +58,23 @@ func main() {
 	out := flag.String("out", ".damocline/calibration/reference.json", "local JSON result path")
 	repeats := flag.Int("repeats", 1, "repeat the fixed three-stage matrix (1..3)")
 	extended := flag.Bool("extended", false, "add bounded 15, 20, 50, and 100 arrivals/s loopback stages; allows up to two repeats")
+	checkScenario := flag.String("check-scenario", "", "offline-only: compare a scenario against a saved local reference artifact")
+	calibration := flag.String("calibration", ".damocline/calibration/reference.json", "local reference JSON to use with --check-scenario")
 	flag.Parse()
+	if *checkScenario != "" {
+		if *serve {
+			fmt.Fprintln(os.Stderr, "--serve cannot be combined with offline --check-scenario")
+			os.Exit(1)
+		}
+		if err := runOfflineCoverage(*calibration, *checkScenario, os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			if errors.Is(err, errInconclusive) {
+				os.Exit(2)
+			}
+			os.Exit(1)
+		}
+		return
+	}
 	if *serve {
 		if err := runFixture(); err != nil {
 			fmt.Fprintln(os.Stderr, err)

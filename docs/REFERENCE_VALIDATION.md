@@ -24,6 +24,22 @@ The new metadata excludes temporary loopback ports, customer hostnames, request 
 
 **Not a client-workload readiness certificate:** a passing 4 KiB loopback reference cannot verify unrelated HTTPS traffic, payload sizes, multi-step sessions, or real client networks. Workload equivalence, artifact freshness and host matching remain explicitly open under G0-02/G0-08.
 
+## Compare a requested scenario with the measured reference (G0-02)
+
+Run this **offline** command after generating a local reference JSON. It reads a bounded calibration file and a scenario file, but does not contact the application's URL, launch test traffic, or access its credentials:
+
+```powershell
+go run ./cmd/damocline-calibrate --check-scenario examples/weighted-profiles-readonly.json --calibration .damocline/calibration/reference.json
+```
+
+The output is structured JSON with `status: "INCONCLUSIVE"`, a `request_shape` summary, exact `tested_arrival_rates`, and per-dimension `MATCHED`, `OUTSIDE_REFERENCE`, or `UNVERIFIED` findings. The CLI exits with code 2 when inconclusive (note that `go run` itself may report this as `exit status 2` and exit with code 1). Malformed scenarios produce an input error, not synthetic traffic.
+
+This is **not a capacity-pass command**. It checks explicitly whether the declared VU/worker count, arrival rate, workload model, simple GET-only request mix, durations, timeout, ceiling, and URL transport resemble the tested fixture. Only the *exact* arrival rates in the preflight record can match; 25 arrivals/s is **not** assumed validated from nearby passing 20 and 50 arrivals/s stages. A closed-loop workload cannot be equated to open-loop arrivals.
+
+The existing fixture measures a 20 ms, 4 KiB, unencrypted IPv4-loopback GET. Scenario JSON does not establish the target's real response-body distribution, connection reuse, server identity or generator equivalence. For that reason even a declared workload that resembles the fixture remains **INCONCLUSIVE**; an HTTPS/remote/authenticated/multi-workflow scenario reports additional explicit mismatches. No passing fixture rate, including 100 arrivals/s, authorizes an unmeasured target or implies a universal maximum. `G0-03` will extend payload/transport reference matrices, and `G0-08` will enforce host, age and evidence-quality gates.
+
+A missing, failed, inconsistent, oversized, or unsupported calibration produces an inconclusive comparison, never acceptance. The output deliberately omits scenario names, URLs, routes, headers, credentials and extracted values. Treat the input and local calibration files as private.
+
 Repeat the healthy matrix three times to inspect short-run variability:
 
 ```powershell
