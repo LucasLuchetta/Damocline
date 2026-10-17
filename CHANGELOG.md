@@ -14,6 +14,8 @@ This project follows a human-maintained changelog. No release exists yet.
 - Removed third-party load-testing tool references from the interactive welcome banner.
 
 ### Added
+- Branded sword splash screen and English numbered home menu for bare `damocline` and `start.cmd`, with safe choices for new, saved, current, help and exit.
+- Terminal-aware ANSI color support with plain-text fallback. Non-interactive commands remain unchanged.
 - Interactive, opt-in source update notifications with fast-forward Git safety checks, local automatic-update preference, and automatic restart after installing a new version.
 - `damocline update` for manual checking and opting in/out; scripted load-testing commands remain unaffected.
 - English CLI slash commands `damocline /start` and `damocline /history` to create, list, select and repeat locally saved scenario configurations with renewed traffic authorization.

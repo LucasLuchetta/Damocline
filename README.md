@@ -99,6 +99,14 @@ It distinguishes **meeting your p95/error objectives** from **proving user capac
 
 See [Understand your results](docs/REPORT_EXPLAINER.md) for interpretation, sample-size and comparison warnings. The command never sends traffic.
 
+## Terminal home screen
+
+Run `damocline` or `.\\start.cmd` to open an original, compact terminal sword illustration and a numbered home menu. Select **New load test**, **Saved scenarios**, **Continue current**, **Help**, or **Exit** without remembering CLI flags. The interface uses optional ANSI colors and a no-color fallback for older terminals and redirected output. Typed number + Enter is supported everywhere; raw arrow-key navigation is not implemented.
+
+This is a presentation layer only: it does not change authorization, workload configuration, authentication handling, or the native Go load engine. For scripting, use explicit commands such as `damocline run`, `damocline /start`, or `damocline /history` as before.
+
+See [Terminal and guided CLI](docs/INTERACTIVE_START.md).
+
 ## Repeat a saved scenario
 
 The guided CLI now supports English slash commands:
