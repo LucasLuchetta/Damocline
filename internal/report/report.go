@@ -218,6 +218,8 @@ func roundMS(d time.Duration) float64 { return float64(d.Microseconds()) / 1000.
 
 type RunConfig struct {
 	WorkloadRevision    string          `json:"workload_revision,omitempty"`
+	ApplicationRevision string          `json:"application_revision,omitempty"`
+	WorkloadFingerprint string          `json:"workload_fingerprint,omitempty"`
 	Environment         string          `json:"environment,omitempty"`
 	ProfileMixBasis     string          `json:"profile_mix_basis,omitempty"`
 	ProfileMixReference string          `json:"profile_mix_reference,omitempty"`

@@ -18,6 +18,7 @@ import (
 type Scenario struct {
 	Name                   string    `json:"name"`
 	WorkloadRevision       string    `json:"workload_revision,omitempty"`
+	ApplicationRevision    string    `json:"application_revision,omitempty"`
 	Environment            string    `json:"environment,omitempty"`
 	ProfileMixBasis        string    `json:"profile_mix_basis,omitempty"`
 	ProfileMixReference    string    `json:"profile_mix_reference,omitempty"`
@@ -75,6 +76,7 @@ type Options struct {
 
 type Validated struct {
 	Scenario            Scenario
+	WorkloadFingerprint string
 	Base                *url.URL
 	Duration            time.Duration
 	RampUp              time.Duration
@@ -145,7 +147,7 @@ func Parse(s Scenario, o Options) (Validated, error) {
 	if strings.TrimSpace(s.Name) == "" {
 		return v, errors.New("name is required")
 	}
-	for field, value := range map[string]string{"workload_revision": s.WorkloadRevision, "environment": s.Environment} {
+	for field, value := range map[string]string{"workload_revision": s.WorkloadRevision, "application_revision": s.ApplicationRevision, "environment": s.Environment} {
 		if value != "" && !regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$`).MatchString(value) {
 			return v, fmt.Errorf("%s must be a safe 1-120 character label", field)
 		}
@@ -389,6 +391,7 @@ func Parse(s Scenario, o Options) (Validated, error) {
 		return v, err
 	}
 	v = Validated{Scenario: s, Base: u, Duration: duration, RampUp: ramp, ThinkTime: think, Timeout: timeout, Window: window, Steps: prepared, Profiles: preparedProfiles, Cookies: cookies, SyntheticDataPrefix: dataPrefix}
+	v.WorkloadFingerprint = WorkloadFingerprint(v)
 	return v, nil
 }
 

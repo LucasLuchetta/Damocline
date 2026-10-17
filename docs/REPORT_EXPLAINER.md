@@ -16,14 +16,20 @@ Compare two runs without repeating them:
 damocline report --file .damocline/reports/later-run.json --compare .damocline/reports/earlier-run.json
 ```
 
-For a controlled comparison, set `workload_revision` and `environment` in
-both scenarios. The revision identifies the same declared workflow and SLO
-inputs. The environment label records the tested deployment or hosting
-configuration. Missing or different workload revisions, targets, routes,
-authentication mode, timing, arrival settings, or acceptance criteria make
-the output explicitly non-controlled. A changed environment is evidence for a
-comparison experiment, never proof that a particular infrastructure component
-caused the difference.
+For a controlled comparison, set the same `workload_revision` and
+`environment` in both scenarios. Schema-v11 reports also carry a SHA-256
+fingerprint of the declared profile and step definitions, including routes,
+headers, assertions and response extraction rules. The comparator requires
+matching fingerprints, targets, authentication mode, timing, arrival settings,
+rate limits and acceptance criteria. Missing fingerprints in older reports or
+any declared-workload mismatch is labeled `NOT_COMPARABLE`. Matching declared
+conditions are labeled `MATCHED_DECLARED_WORKLOAD`, not a controlled or causal
+comparison. The fingerprint does not include resolved environment secrets,
+environment-backed body values or generator host identity. Application
+revision is shown as the observed treatment; different revisions receive a
+warning and do not establish a causal effect. Run reports do not embed
+loopback preflight evidence or authenticated generator host identity, so
+generator-condition equivalence remains unknown.
 
 If you independently captured Linux host telemetry using `damocline monitor`, add the optional host JSON:
 
