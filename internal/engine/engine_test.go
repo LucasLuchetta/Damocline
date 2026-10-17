@@ -38,8 +38,8 @@ func TestSuccess(t *testing.T) {
 	if result.Metrics.Success < 1 || result.Metrics.Failures != 0 || result.Outcome != "PASS" {
 		t.Fatalf("unexpected report: %+v", result)
 	}
-	if result.SchemaVersion != 7 || result.ObservationSeconds != v.Duration.Seconds() || result.Generator == nil || result.Generator.ProcessSamples < 2 {
-		t.Fatalf("report must include schema-v7 phase timing, observation window and generator process observations: %+v", result)
+	if result.SchemaVersion != 8 || result.ObservationSeconds != v.Duration.Seconds() || result.Generator == nil || result.Generator.ProcessSamples < 2 {
+		t.Fatalf("report must include schema-v8 HTTP diagnostics, observation window and generator process observations: %+v", result)
 	}
 }
 
@@ -174,6 +174,100 @@ func TestInterruptedMultiStepJourneyHasNoCompletedLatencySample(t *testing.T) {
 	}
 	if r.Quality == nil || r.Quality.State == report.QualityInvalid {
 		t.Fatalf("interrupted journey timing must remain arithmetically valid: %+v", r.Quality)
+	}
+}
+
+func TestHTTPDiagnosticsCountLocalFailureMatrix(t *testing.T) {
+	seen := map[string]int{}
+	var seenMu sync.Mutex
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenMu.Lock()
+		seen[r.URL.Path]++
+		seenMu.Unlock()
+		switch r.URL.Path {
+		case "/redirect":
+			http.Redirect(w, r, "/destination", http.StatusFound)
+		case "/limited":
+			w.WriteHeader(http.StatusTooManyRequests)
+		case "/server-error":
+			w.WriteHeader(http.StatusServiceUnavailable)
+		case "/assertion":
+			_, _ = w.Write([]byte("other body"))
+		case "/expected":
+			w.WriteHeader(http.StatusAccepted)
+		case "/timeout":
+			time.Sleep(100 * time.Millisecond)
+			_, _ = w.Write([]byte("late"))
+		case "/large":
+			_, _ = w.Write(make([]byte, maxResponseBytes+1))
+		default:
+			w.WriteHeader(http.StatusNoContent)
+		}
+	}))
+	defer server.Close()
+	s := config.Scenario{Name: "bounded local diagnostics", BaseURL: server.URL, Users: 1, Duration: "1s", WindowDuration: "1s", MaxRPS: 100, P95LimitMS: 1000, MaxErrorRate: 1, Timeout: "40ms", Steps: []config.Step{
+		{Name: "redirect", Path: "/redirect"}, {Name: "limited", Path: "/limited"}, {Name: "server error", Path: "/server-error"}, {Name: "assertion", Path: "/assertion", MustContain: "expected"}, {Name: "expected status", Path: "/expected", ExpectedStatus: []int{http.StatusNoContent}}, {Name: "timeout", Path: "/timeout"}, {Name: "large", Path: "/large"},
+	}}
+	v, err := config.Parse(s, config.Options{Authorized: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	v.Duration = 500 * time.Millisecond
+	r := Run(context.Background(), v)
+	seenMu.Lock()
+	ledger := map[string]int{}
+	for path, count := range seen {
+		ledger[path] = count
+	}
+	seenMu.Unlock()
+	if len(r.Steps) != 7 {
+		t.Fatalf("expected seven named steps: %+v", r.Steps)
+	}
+	for _, step := range r.Steps {
+		if step.Metrics.Total == 0 {
+			t.Fatalf("fixture step did not execute: %+v", step)
+		}
+	}
+	checks := []struct {
+		name      string
+		got, want int
+	}{
+		{"302 status", r.Metrics.HTTP.StatusCodes[http.StatusFound], ledger["/redirect"]},
+		{"redirect response", r.Metrics.HTTP.RedirectResponses, ledger["/redirect"]},
+		{"429 status", r.Metrics.HTTP.StatusCodes[http.StatusTooManyRequests], ledger["/limited"]},
+		{"rate-limited response", r.Metrics.HTTP.RateLimitedResponses, ledger["/limited"]},
+		{"503 status", r.Metrics.HTTP.StatusCodes[http.StatusServiceUnavailable], ledger["/server-error"]},
+		{"5xx family", r.Metrics.HTTP.Status5xx, ledger["/server-error"]},
+		{"assertion failure", r.Metrics.HTTP.AssertionFailures, ledger["/assertion"] + ledger["/expected"]},
+		{"network timeout", r.Metrics.HTTP.NetworkTimeouts, ledger["/timeout"]},
+		{"oversized response", r.Metrics.HTTP.UnexpectedResponseSizes, ledger["/large"]},
+	}
+	for _, check := range checks {
+		if check.got != check.want {
+			t.Errorf("%s: got %d want %d", check.name, check.got, check.want)
+		}
+	}
+	if len(r.Windows) == 0 || r.Windows[0].Metrics.HTTP.StatusCodes[http.StatusFound] == 0 || r.Windows[0].Metrics.HTTP.RateLimitedResponses == 0 {
+		t.Fatalf("observation window omitted structured HTTP outcomes: %+v", r.Windows)
+	}
+	if r.Metrics.HTTP.Status3xx != r.Metrics.HTTP.RedirectResponses || r.Metrics.HTTP.Status4xx != r.Metrics.HTTP.RateLimitedResponses || r.Quality == nil || r.Quality.State == report.QualityInvalid {
+		t.Fatalf("status family or outcome ledger mismatch: %+v quality=%+v", r.Metrics.HTTP, r.Quality)
+	}
+}
+
+func TestHTTPDiagnosticsIdentifyTLSHandshakeFailure(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
+	defer server.Close()
+	v := scenario(t, server.URL, []config.Step{{Name: "tls", Path: "/"}})
+	v.Duration = 250 * time.Millisecond
+	v.Scenario.Users = 1
+	v.Scenario.MaxRPS = 10
+	r := Run(context.Background(), v)
+	if r.Metrics.HTTP.TLSFailures == 0 || r.Metrics.HTTP.TransportFailures != 0 || r.Metrics.HTTP.Status2xx != 0 {
+		t.Fatalf("local TLS handshake failure was not classified without inventing a response: %+v", r.Metrics.HTTP)
+	}
+	if r.Quality == nil || r.Quality.State == report.QualityInvalid {
+		t.Fatalf("classified TLS failure should remain arithmetically valid: %+v", r.Quality)
 	}
 }
 

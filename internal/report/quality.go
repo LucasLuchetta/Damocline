@@ -100,6 +100,33 @@ func AssessQuality(r Result) *Quality {
 			invalidate("HTTP rate-wait observations do not reconcile with started step requests.")
 			break
 		}
+		if r.SchemaVersion >= 8 && !validHTTPDiagnostics(s.Metrics.HTTP, s.Metrics.Total, s.Metrics.Cancelled) {
+			invalidate("Named-step HTTP outcome counters are inconsistent.")
+			break
+		}
+	}
+	if r.SchemaVersion >= 8 && !validHTTPDiagnostics(r.Metrics.HTTP, r.Metrics.Total, r.Metrics.Cancelled) {
+		invalidate("Aggregate HTTP outcome counters are inconsistent.")
+	}
+	if r.SchemaVersion >= 8 && len(r.Steps) > 0 {
+		var summed HTTPDiagnostics
+		for _, step := range r.Steps {
+			if !addHTTPDiagnostics(&summed, step.Metrics.HTTP) {
+				invalidate("Named-step HTTP outcome counters overflow their aggregate.")
+				break
+			}
+		}
+		if !equalHTTPDiagnostics(summed, r.Metrics.HTTP) {
+			invalidate("Named-step HTTP outcome counters do not reconcile with aggregate outcomes.")
+		}
+	}
+	if r.SchemaVersion >= 8 {
+		for _, window := range r.Windows {
+			if !validHTTPDiagnostics(window.Metrics.HTTP, window.Metrics.Total, window.Metrics.Cancelled) {
+				invalidate("Observation-window HTTP outcome counters are inconsistent.")
+				break
+			}
+		}
 	}
 	// Check each independent ledger against the aggregate when its coverage is
 	// complete. A missing ledger is LIMITED (not invented), while a present
@@ -167,4 +194,86 @@ func validHTTPTrace(t HTTPTrace) bool {
 		}
 	}
 	return t.RequestAttemptCount == t.CompleteCount && t.WriteCount <= t.CompleteCount && t.WriteFailedCount <= t.CompleteCount-t.WriteCount && t.FirstByteCount <= t.CompleteCount && t.BodyCount <= t.FirstByteCount && t.BodyIncompleteCount == t.FirstByteCount-t.BodyCount && t.DNSCount <= t.DNSStartCount && t.ConnectCount <= t.ConnectStartCount && t.TLSCount <= t.TLSStartCount
+}
+
+func validHTTPDiagnostics(d HTTPDiagnostics, completed, cancelled int) bool {
+	maximum := int(^uint(0) >> 1)
+	if completed < 0 || cancelled < 0 || completed > maximum-cancelled {
+		return false
+	}
+	limit := completed + cancelled
+	if d.Status1xx < 0 || d.Status2xx < 0 || d.Status3xx < 0 || d.Status4xx < 0 || d.Status5xx < 0 ||
+		d.RedirectResponses < 0 || d.RateLimitedResponses < 0 || d.AssertionFailures < 0 || d.NetworkTimeouts < 0 ||
+		d.TLSFailures < 0 || d.TransportFailures < 0 || d.UnexpectedResponseSizes < 0 {
+		return false
+	}
+	counts := [5]int{}
+	for code, count := range d.StatusCodes {
+		if code < 100 || code > 599 || count < 0 || count > maximum-counts[code/100-1] {
+			return false
+		}
+		counts[code/100-1] += count
+	}
+	if counts[0] != d.Status1xx || counts[1] != d.Status2xx || counts[2] != d.Status3xx || counts[3] != d.Status4xx || counts[4] != d.Status5xx {
+		return false
+	}
+	var redirects, rateLimited, total int
+	for code, count := range d.StatusCodes {
+		if code == 300 || code == 301 || code == 302 || code == 303 || code == 305 || code == 307 || code == 308 {
+			redirects += count
+		}
+		if code == 429 {
+			rateLimited = count
+		}
+		if count > maximum-total {
+			return false
+		}
+		total += count
+	}
+	return redirects == d.RedirectResponses && rateLimited == d.RateLimitedResponses && total <= limit &&
+		d.RedirectResponses <= limit && d.RateLimitedResponses <= limit && d.AssertionFailures <= limit &&
+		d.NetworkTimeouts <= limit && d.TLSFailures <= limit && d.TransportFailures <= limit && d.UnexpectedResponseSizes <= limit
+}
+
+func addHTTPDiagnostics(dst *HTTPDiagnostics, src HTTPDiagnostics) bool {
+	maximum := int(^uint(0) >> 1)
+	add := func(a *int, b int) (int, bool) {
+		if b < 0 || *a < 0 || b > maximum-*a {
+			return 0, false
+		}
+		return *a + b, true
+	}
+	left := []*int{&dst.Status1xx, &dst.Status2xx, &dst.Status3xx, &dst.Status4xx, &dst.Status5xx, &dst.RedirectResponses, &dst.RateLimitedResponses, &dst.AssertionFailures, &dst.NetworkTimeouts, &dst.TLSFailures, &dst.TransportFailures, &dst.UnexpectedResponseSizes}
+	right := []int{src.Status1xx, src.Status2xx, src.Status3xx, src.Status4xx, src.Status5xx, src.RedirectResponses, src.RateLimitedResponses, src.AssertionFailures, src.NetworkTimeouts, src.TLSFailures, src.TransportFailures, src.UnexpectedResponseSizes}
+	for i := range left {
+		value, ok := add(left[i], right[i])
+		if !ok {
+			return false
+		}
+		*left[i] = value
+	}
+	if dst.StatusCodes == nil && len(src.StatusCodes) > 0 {
+		dst.StatusCodes = make(map[int]int, len(src.StatusCodes))
+	}
+	for code, count := range src.StatusCodes {
+		current := dst.StatusCodes[code]
+		value, ok := add(&current, count)
+		if !ok {
+			return false
+		}
+		dst.StatusCodes[code] = value
+	}
+	return true
+}
+
+func equalHTTPDiagnostics(a, b HTTPDiagnostics) bool {
+	if a.Status1xx != b.Status1xx || a.Status2xx != b.Status2xx || a.Status3xx != b.Status3xx || a.Status4xx != b.Status4xx || a.Status5xx != b.Status5xx || a.RedirectResponses != b.RedirectResponses || a.RateLimitedResponses != b.RateLimitedResponses || a.AssertionFailures != b.AssertionFailures || a.NetworkTimeouts != b.NetworkTimeouts || a.TLSFailures != b.TLSFailures || a.TransportFailures != b.TransportFailures || a.UnexpectedResponseSizes != b.UnexpectedResponseSizes || len(a.StatusCodes) != len(b.StatusCodes) {
+		return false
+	}
+	for code, count := range a.StatusCodes {
+		if b.StatusCodes[code] != count {
+			return false
+		}
+	}
+	return true
 }

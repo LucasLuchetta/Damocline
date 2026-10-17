@@ -175,6 +175,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	defer stop()
 	result := engine.Run(ctx, validated)
 	fmt.Fprintf(stdout, "Result: %s | requests: %d (%d passed, %d failed, %d cancelled) | p95: %.1f ms | error rate: %.2f%% | %.1f req/s\n", result.Outcome, result.Metrics.Total, result.Metrics.Success, result.Metrics.Failures, result.Metrics.Cancelled, result.Metrics.P95MS, result.ErrorsRate*100, float64(result.Metrics.Total)/result.WindowSeconds())
+	fmt.Fprintf(stdout, "HTTP responses: 1xx=%d 2xx=%d 3xx=%d 4xx=%d 5xx=%d; redirects=%d, 429=%d, assertions=%d, timeouts=%d, TLS failures=%d, transport failures=%d, oversized=%d.\n", result.Metrics.HTTP.Status1xx, result.Metrics.HTTP.Status2xx, result.Metrics.HTTP.Status3xx, result.Metrics.HTTP.Status4xx, result.Metrics.HTTP.Status5xx, result.Metrics.HTTP.RedirectResponses, result.Metrics.HTTP.RateLimitedResponses, result.Metrics.HTTP.AssertionFailures, result.Metrics.HTTP.NetworkTimeouts, result.Metrics.HTTP.TLSFailures, result.Metrics.HTTP.TransportFailures, result.Metrics.HTTP.UnexpectedResponseSizes)
 	if result.Metrics.P95IID95Approximation {
 		fmt.Fprintf(stdout, "P95 IID 95%% rank approximation: %.1f-%.1f ms; this assumes independent, stationary request latencies.\n", result.Metrics.P95IID95LowerMS, result.Metrics.P95IID95UpperMS)
 	}

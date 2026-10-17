@@ -64,7 +64,7 @@ HOST METRICS:   NOT MEASURED
 Each assessment also highlights:
 
 1. **HTTP request p95** against the configured request-latency objective, separately from **complete journey p95** (which includes think-time).
-2. Errors, number of samples, intermittent long-tail responses, cancelled operations and missed arrivals.
+2. Errors by HTTP status family, redirects, 429 responses, assertion/timeout/TLS/transport failures, oversized responses, sample counts, long-tail responses, cancellations and missed arrivals. A 429 is an observed application response; local `max_rps` waits are reported separately and do not suppress requests.
 3. Achieved requests per second compared with the **configured maximum** (`max_rps` is a cap, not actual throughput).
 4. Differences in duration, rate caps and achieved throughput that prevent treating two results as a controlled comparison.
 5. Suggested next experiments to answer the still-open capacity question.

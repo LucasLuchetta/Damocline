@@ -14,20 +14,82 @@ import (
 )
 
 type MetricSet struct {
-	Total                 int            `json:"total"`
-	Success               int            `json:"success"`
-	Failures              int            `json:"failures"`
-	Cancelled             int            `json:"cancelled"`
-	P50MS                 float64        `json:"p50_ms"`
-	MeanMS                float64        `json:"mean_ms"`
-	P95MS                 float64        `json:"p95_ms"`
-	P95IID95LowerMS       float64        `json:"p95_iid_95_lower_ms,omitempty"`
-	P95IID95UpperMS       float64        `json:"p95_iid_95_upper_ms,omitempty"`
-	P95IID95Approximation bool           `json:"p95_iid_95_approximation,omitempty"`
-	P99MS                 float64        `json:"p99_ms"`
-	Reasons               map[string]int `json:"failure_reasons,omitempty"`
+	Total                 int             `json:"total"`
+	Success               int             `json:"success"`
+	Failures              int             `json:"failures"`
+	Cancelled             int             `json:"cancelled"`
+	P50MS                 float64         `json:"p50_ms"`
+	MeanMS                float64         `json:"mean_ms"`
+	P95MS                 float64         `json:"p95_ms"`
+	P95IID95LowerMS       float64         `json:"p95_iid_95_lower_ms,omitempty"`
+	P95IID95UpperMS       float64         `json:"p95_iid_95_upper_ms,omitempty"`
+	P95IID95Approximation bool            `json:"p95_iid_95_approximation,omitempty"`
+	P99MS                 float64         `json:"p99_ms"`
+	Reasons               map[string]int  `json:"failure_reasons,omitempty"`
+	HTTP                  HTTPDiagnostics `json:"http_diagnostics,omitempty"`
 	durations             []time.Duration
 	totalDuration         time.Duration
+}
+
+// HTTPDiagnostics counts observed HTTP responses and classified client-side
+// outcomes. A zero status count is unknown/no response, not an HTTP status.
+type HTTPDiagnostics struct {
+	StatusCodes             map[int]int `json:"status_codes,omitempty"`
+	Status1xx               int         `json:"status_1xx"`
+	Status2xx               int         `json:"status_2xx"`
+	Status3xx               int         `json:"status_3xx"`
+	Status4xx               int         `json:"status_4xx"`
+	Status5xx               int         `json:"status_5xx"`
+	RedirectResponses       int         `json:"redirect_responses"`
+	RateLimitedResponses    int         `json:"rate_limited_responses"`
+	AssertionFailures       int         `json:"assertion_failures"`
+	NetworkTimeouts         int         `json:"network_timeouts"`
+	TLSFailures             int         `json:"tls_failures"`
+	TransportFailures       int         `json:"transport_failures"`
+	UnexpectedResponseSizes int         `json:"unexpected_response_sizes"`
+}
+
+func (d *HTTPDiagnostics) Record(statusCode int, reason string, assertionFailure, tlsFailure bool) {
+	if statusCode >= 100 && statusCode <= 599 {
+		if d.StatusCodes == nil {
+			d.StatusCodes = make(map[int]int)
+		}
+		d.StatusCodes[statusCode]++
+		switch statusCode / 100 {
+		case 1:
+			d.Status1xx++
+		case 2:
+			d.Status2xx++
+		case 3:
+			d.Status3xx++
+			if statusCode == 300 || statusCode == 301 || statusCode == 302 || statusCode == 303 || statusCode == 305 || statusCode == 307 || statusCode == 308 {
+				d.RedirectResponses++
+			}
+		case 4:
+			d.Status4xx++
+		case 5:
+			d.Status5xx++
+		}
+		if statusCode == 429 {
+			d.RateLimitedResponses++
+		}
+	}
+	if assertionFailure {
+		d.AssertionFailures++
+	}
+	if tlsFailure {
+		d.TLSFailures++
+	}
+	switch reason {
+	case "timeout":
+		d.NetworkTimeouts++
+	case "transport":
+		if !tlsFailure {
+			d.TransportFailures++
+		}
+	case "response_too_large":
+		d.UnexpectedResponseSizes++
+	}
 }
 
 // HTTPTrace records client-observed transport phases. A zero count means the
@@ -101,11 +163,19 @@ func (m *MetricSet) Record(latency time.Duration, success, cancelled bool, reaso
 	m.durations = append(m.durations, latency)
 	m.totalDuration += latency
 }
+
+func (m *MetricSet) RecordHTTPOutcome(statusCode int, reason string, assertionFailure, tlsFailure bool) {
+	m.HTTP.Record(statusCode, reason, assertionFailure, tlsFailure)
+}
 func (m *MetricSet) Snapshot() MetricSet {
 	v := *m
 	v.Reasons = make(map[string]int, len(m.Reasons))
 	for k, n := range m.Reasons {
 		v.Reasons[k] = n
+	}
+	v.HTTP.StatusCodes = make(map[int]int, len(m.HTTP.StatusCodes))
+	for code, count := range m.HTTP.StatusCodes {
+		v.HTTP.StatusCodes[code] = count
 	}
 	if len(m.durations) == 0 {
 		v.durations = nil
