@@ -40,7 +40,8 @@ First use creates private local files in the source checkout's working directory
 
 - **.damocline/scenario.local.json** — sanitized reusable scenario.
 - **.damocline/start.json** — guided mode settings.
-- **.damocline/reports/** — JSON reports after completed runs.\n- **.damocline/history/** — snapshots of previously replaced scenarios, without resolved secrets.
+- **.damocline/reports/** — JSON reports after completed runs.
+- **.damocline/history/** — snapshots of previously replaced scenarios, without resolved secrets.
 
 The .damocline folder is gitignored by the project. No cookie values are saved. When you type **damocline** again, press Enter to reuse the current profile, or choose `/start` or `/history` to create or select another scenario.
 
