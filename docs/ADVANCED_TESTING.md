@@ -40,6 +40,7 @@ Scenario fields:
 | `per_vu_cookie_env_prefix` | Optional prefix for independent session cookies. |
 | `profiles` | Optional replacement for `steps`: 2-10 named weighted workflows, each with `name`, `weight`, `steps`, and optional `think_time`. |
 | `extract` | Optional map of response values to capture using exactly one `json_pointer` or `header` selector. |
+| `window_duration` | Optional 1s-60s request-metric window. Every sampled window must meet the request p95 and error SLOs. |
 
 Use either top-level `steps` or `profiles`, never both. [`examples/weighted-profiles-readonly.json`](../examples/weighted-profiles-readonly.json) shows a three-profile read-only mix. Profile weights describe the planned mix. In closed mode, configure at least one VU per profile; in arrival mode, inspect actual profile starts in the report. HTTP redirects are not followed. A redirect to login is a failure unless explicitly listed as expected (not recommended for an authenticated page test).
 
@@ -94,7 +95,7 @@ Use a campaign when a short exploratory probe is insufficient. Each trial runs w
 .\damocline.exe campaign --config .\myapp.local.json --warmup 30s --observation 2m --recovery 30s --repeats 2 --authorized --out reports\campaign.json
 ```
 
-The whole campaign is bounded to 15 minutes, each phase is bounded to 3 minutes, and it stops at the first non-passing trial. It records phase reports for later comparison. It does not yet provide intra-window time-series thresholds, injected spikes, percentile confidence intervals, or a sustained-capacity certificate.
+The whole campaign is bounded to 15 minutes, each phase is bounded to 3 minutes, and it stops at the first non-passing trial. Configure `window_duration` in the scenario to evaluate request p95 and errors throughout an observation phase. It records phase reports for later comparison. It does not yet provide injected spikes, percentile confidence intervals, or a sustained-capacity certificate.
 
 ## 8. Monitor the Linux VPS independently
 

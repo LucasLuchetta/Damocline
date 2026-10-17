@@ -35,16 +35,20 @@ type sample struct {
 	reason             string
 }
 type collector struct {
-	mu        sync.Mutex
-	aggregate *report.MetricSet
-	steps     map[string]*report.MetricSet
-	journeys  *report.MetricSet
-	profiles  map[string]*report.MetricSet
+	mu          sync.Mutex
+	aggregate   *report.MetricSet
+	steps       map[string]*report.MetricSet
+	journeys    *report.MetricSet
+	profiles    map[string]*report.MetricSet
+	started     time.Time
+	window      time.Duration
+	observation time.Duration
+	windows     []*report.MetricSet
 }
 
-func newCollector(v config.Validated) *collector {
+func newCollector(v config.Validated, started time.Time) *collector {
 	c := &collector{aggregate: report.NewMetricSet(),
-		journeys: report.NewMetricSet(), steps: make(map[string]*report.MetricSet, len(v.Steps)), profiles: make(map[string]*report.MetricSet, len(v.Profiles))}
+		journeys: report.NewMetricSet(), steps: make(map[string]*report.MetricSet, len(v.Steps)), profiles: make(map[string]*report.MetricSet, len(v.Profiles)), started: started, window: v.Window, observation: v.Duration}
 	for _, s := range v.Steps {
 		c.steps[s.Name] = report.NewMetricSet()
 	}
@@ -94,6 +98,21 @@ func (c *collector) add(s sample) {
 	defer c.mu.Unlock()
 	c.aggregate.Record(s.latency, s.success, s.cancelled, s.reason)
 	c.steps[s.name].Record(s.latency, s.success, s.cancelled, s.reason)
+	if c.window <= 0 {
+		return
+	}
+	elapsed := time.Since(c.started)
+	if elapsed > c.observation {
+		return
+	}
+	index := int(elapsed / c.window)
+	if index < 0 {
+		return
+	}
+	for len(c.windows) <= index {
+		c.windows = append(c.windows, report.NewMetricSet())
+	}
+	c.windows[index].Record(s.latency, s.success, s.cancelled, s.reason)
 }
 
 func Run(parent context.Context, v config.Validated) report.Result {
@@ -106,7 +125,7 @@ func Run(parent context.Context, v config.Validated) report.Result {
 	defer cancel()
 	scheduleCtx, cancelSchedule := context.WithTimeout(parent, v.Duration)
 	defer cancelSchedule()
-	coll := newCollector(v)
+	coll := newCollector(v, started)
 	ticker := time.NewTicker(time.Second / time.Duration(v.Scenario.MaxRPS))
 	defer ticker.Stop()
 	tr := http.DefaultTransport.(*http.Transport).Clone()
@@ -241,6 +260,11 @@ func Run(parent context.Context, v config.Validated) report.Result {
 		}
 		steps = append(steps, report.StepResult{Profile: profileName, Name: st.Name, Method: st.Method, Path: safePath(st.Path), Metrics: coll.steps[st.Name].Snapshot()})
 	}
+	windows := make([]report.WindowResult, 0, len(coll.windows))
+	for index, metrics := range coll.windows {
+		startSeconds := float64(index) * v.Window.Seconds()
+		windows = append(windows, report.WindowResult{StartSeconds: round(startSeconds), EndSeconds: round(startSeconds + v.Window.Seconds()), Metrics: metrics.Snapshot()})
+	}
 	var profileResults []report.ProfileResult
 	var profileConfig []report.ProfileConfig
 	if len(v.Scenario.Profiles) > 0 {
@@ -258,8 +282,8 @@ func Run(parent context.Context, v config.Validated) report.Result {
 		errorsRate = float64(agg.Failures) / float64(agg.Total)
 	}
 	result := report.Result{SchemaVersion: 5, Name: v.Scenario.Name, Target: v.Base.Scheme + "://" + v.Base.Host, StartedAt: started.UTC().Format(time.RFC3339), ElapsedSeconds: round(elapsed.Seconds()), ObservationSeconds: round(v.Duration.Seconds()),
-		Config:  report.RunConfig{Users: v.Scenario.Users, Duration: v.Scenario.Duration, RampUp: v.Scenario.RampUp, ThinkTime: v.Scenario.ThinkTime, RequestTimeout: v.Timeout.String(), MaxRPS: v.Scenario.MaxRPS, P95LimitMS: v.Scenario.P95LimitMS, MaxErrorRate: v.Scenario.MaxErrorRate, Mode: v.Scenario.Mode, ArrivalRate: v.Scenario.ArrivalRate, SeparateSessions: len(v.Cookies) > 0, MinSamplesPerStep: v.Scenario.MinSamplesPerStep, Profiles: profileConfig},
-		Metrics: agg, Journeys: journeyMetrics, Steps: steps, Profiles: profileResults, Outcome: "PASS", ErrorsRate: round(errorsRate), IterationsStarted: startedIterations.Load(), IterationsCompleted: completedIterations.Load(), ArrivalsScheduled: scheduledIterations.Load(), ArrivalsDropped: droppedIterations.Load(), ArrivalsDroppedLate: arrivalStats.DroppedLate, ArrivalsDroppedBusy: arrivalStats.DroppedBusy, SchedulerLagP95MS: float64(arrivalStats.P95Lag.Microseconds()) / 1000, SchedulerLagMaxMS: float64(arrivalStats.MaxLag.Microseconds()) / 1000,
+		Config:  report.RunConfig{Users: v.Scenario.Users, Duration: v.Scenario.Duration, RampUp: v.Scenario.RampUp, ThinkTime: v.Scenario.ThinkTime, RequestTimeout: v.Timeout.String(), MaxRPS: v.Scenario.MaxRPS, P95LimitMS: v.Scenario.P95LimitMS, MaxErrorRate: v.Scenario.MaxErrorRate, Mode: v.Scenario.Mode, ArrivalRate: v.Scenario.ArrivalRate, SeparateSessions: len(v.Cookies) > 0, MinSamplesPerStep: v.Scenario.MinSamplesPerStep, Profiles: profileConfig, WindowDuration: v.Window.String()},
+		Metrics: agg, Journeys: journeyMetrics, Steps: steps, Profiles: profileResults, Windows: windows, Outcome: "PASS", ErrorsRate: round(errorsRate), IterationsStarted: startedIterations.Load(), IterationsCompleted: completedIterations.Load(), ArrivalsScheduled: scheduledIterations.Load(), ArrivalsDropped: droppedIterations.Load(), ArrivalsDroppedLate: arrivalStats.DroppedLate, ArrivalsDroppedBusy: arrivalStats.DroppedBusy, SchedulerLagP95MS: float64(arrivalStats.P95Lag.Microseconds()) / 1000, SchedulerLagMaxMS: float64(arrivalStats.MaxLag.Microseconds()) / 1000,
 		Note: "Measured synthetic HTTP actors under the configured workload; not a universal server capacity or a browser-user count.", Generator: &generatorSnapshot}
 	if agg.Total == 0 || agg.Success == 0 || errorsRate > v.Scenario.MaxErrorRate || agg.P95MS > v.Scenario.P95LimitMS || result.ArrivalsDropped > 0 {
 		result.Outcome = "FAIL"
@@ -267,6 +291,20 @@ func Run(parent context.Context, v config.Validated) report.Result {
 	for _, st := range steps {
 		if st.Metrics.Total < v.Scenario.MinSamplesPerStep || st.Metrics.Success == 0 || st.Metrics.P95MS > v.Scenario.P95LimitMS || (st.Metrics.Total > 0 && float64(st.Metrics.Failures)/float64(st.Metrics.Total) > v.Scenario.MaxErrorRate) {
 			result.Outcome = "FAIL"
+		}
+	}
+	for _, window := range windows {
+		if window.Metrics.Total < v.Scenario.MinSamplesPerStep {
+			if result.Outcome == "PASS" {
+				result.Outcome = "INCONCLUSIVE"
+			}
+			result.Warnings = append(result.Warnings, fmt.Sprintf("Observation window %.1f-%.1fs has only %d completed requests; interval evidence is insufficient.", window.StartSeconds, window.EndSeconds, window.Metrics.Total))
+			continue
+		}
+		windowErrorRate := float64(window.Metrics.Failures) / float64(window.Metrics.Total)
+		if window.Metrics.P95MS > v.Scenario.P95LimitMS || windowErrorRate > v.Scenario.MaxErrorRate {
+			result.Outcome = "FAIL"
+			result.Warnings = append(result.Warnings, fmt.Sprintf("Observation window %.1f-%.1fs breached an SLO.", window.StartSeconds, window.EndSeconds))
 		}
 	}
 	if arrivalStats.DroppedLate > 0 {

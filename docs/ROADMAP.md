@@ -44,7 +44,7 @@ This is a working plan for an open-source project in **pre-alpha**. The native l
 - [x] Report tested range, repeat results, client cap and telemetry limitations.
 - [x] Report a one-sided 95% error-rate bound under stated independent/stationary Bernoulli assumptions; percentile and repeat-to-repeat uncertainty remain open.
 - [x] Calculate business demand targets and directly probe exact target VU levels without raising safety ceilings; this does not predict capacity.
-- [ ] Sustained capacity campaigns with warm-up, steady windows, soak, spikes, recovery, independent repeats, and time-series pass criteria.
+- [ ] Sustained capacity campaigns with warm-up, steady windows, soak, spikes, recovery, independent repeats, and time-series pass criteria. Bounded warm-up/observation/recovery repeats and request time-window SLO checks are implemented; soak duration beyond 3m, injected spikes, and a full stability protocol remain open.
 - [ ] Statistical uncertainty for latency percentiles and repeat-to-repeat variation, with dependence-aware methods.
 - [ ] Repeatable comparisons between builds and hosting configurations.
 

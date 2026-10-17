@@ -29,6 +29,7 @@ type Scenario struct {
 	ArrivalRate          int       `json:"arrival_rate,omitempty"`
 	PerVUCookieEnvPrefix string    `json:"per_vu_cookie_env_prefix,omitempty"`
 	MinSamplesPerStep    int       `json:"min_samples_per_step,omitempty"`
+	WindowDuration       string    `json:"window_duration,omitempty"`
 	Steps                []Step    `json:"steps,omitempty"`
 	Profiles             []Profile `json:"profiles,omitempty"`
 }
@@ -73,6 +74,7 @@ type Validated struct {
 	RampUp    time.Duration
 	ThinkTime time.Duration
 	Timeout   time.Duration
+	Window    time.Duration
 	Steps     []PreparedStep
 	Profiles  []PreparedProfile
 	Cookies   []string
@@ -208,6 +210,13 @@ func Parse(s Scenario, o Options) (Validated, error) {
 	if err != nil {
 		return v, err
 	}
+	window, err := optionalDuration("window_duration", s.WindowDuration, 0, time.Minute)
+	if err != nil {
+		return v, err
+	}
+	if window > 0 && (window < time.Second || window > duration) {
+		return v, errors.New("window_duration must be at least 1s and no longer than duration")
+	}
 	timeout, err := optionalDuration("request_timeout", s.Timeout, 8*time.Second, 30*time.Second)
 	if err != nil {
 		return v, err
@@ -329,7 +338,7 @@ func Parse(s Scenario, o Options) (Validated, error) {
 	if err != nil {
 		return v, err
 	}
-	v = Validated{Scenario: s, Base: u, Duration: duration, RampUp: ramp, ThinkTime: think, Timeout: timeout, Steps: prepared, Profiles: preparedProfiles, Cookies: cookies}
+	v = Validated{Scenario: s, Base: u, Duration: duration, RampUp: ramp, ThinkTime: think, Timeout: timeout, Window: window, Steps: prepared, Profiles: preparedProfiles, Cookies: cookies}
 	return v, nil
 }
 

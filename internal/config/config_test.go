@@ -226,3 +226,15 @@ func TestRejectInvalidDynamicWorkflowReferences(t *testing.T) {
 		})
 	}
 }
+
+func TestWindowDurationValidation(t *testing.T) {
+	s := good()
+	s.WindowDuration = "500ms"
+	if _, err := Parse(s, Options{Authorized: true}); err == nil {
+		t.Fatal("sub-second window was accepted")
+	}
+	s.WindowDuration = "2s"
+	if _, err := Parse(s, Options{Authorized: true}); err == nil {
+		t.Fatal("window longer than scenario duration was accepted")
+	}
+}

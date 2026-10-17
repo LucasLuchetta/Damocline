@@ -123,6 +123,16 @@ func Evaluate(r report.Result, host *hostmon.Result) Assessment {
 	if r.Journeys.Total > 0 {
 		a.Findings = append(a.Findings, Finding{"INFO", fmt.Sprintf("Complete journey p95: %.0f ms, including configured think time; this is different from HTTP request p95.", r.Journeys.P95MS)})
 	}
+	for _, window := range r.Windows {
+		if window.Metrics.Total == 0 {
+			a.Findings = append(a.Findings, Finding{"CAUTION", fmt.Sprintf("Observation window %.1f-%.1fs has no completed requests.", window.StartSeconds, window.EndSeconds)})
+			continue
+		}
+		windowErrorRate := float64(window.Metrics.Failures) / float64(window.Metrics.Total)
+		if window.Metrics.P95MS > r.Config.P95LimitMS || windowErrorRate > r.Config.MaxErrorRate {
+			a.Findings = append(a.Findings, Finding{"CAUTION", fmt.Sprintf("Observation window %.1f-%.1fs breached an SLO: p95 %.0f ms, errors %.2f%%.", window.StartSeconds, window.EndSeconds, window.Metrics.P95MS, 100*windowErrorRate)})
+		}
+	}
 	for _, profile := range r.Profiles {
 		started := profile.Journeys.Total + profile.Journeys.Cancelled
 		if started == 0 {

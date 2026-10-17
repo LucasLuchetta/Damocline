@@ -91,6 +91,7 @@ type RunConfig struct {
 	SeparateSessions  bool            `json:"separate_sessions"`
 	MinSamplesPerStep int             `json:"min_samples_per_step"`
 	Profiles          []ProfileConfig `json:"profiles,omitempty"`
+	WindowDuration    string          `json:"window_duration,omitempty"`
 }
 
 // ProfileConfig records the intended workflow mix used for a run.
@@ -116,6 +117,11 @@ type ProfileResult struct {
 	AssignedVUs int       `json:"assigned_vus,omitempty"`
 	Journeys    MetricSet `json:"journeys"`
 }
+type WindowResult struct {
+	StartSeconds float64   `json:"start_seconds"`
+	EndSeconds   float64   `json:"end_seconds"`
+	Metrics      MetricSet `json:"metrics"`
+}
 type Result struct {
 	SchemaVersion       int                      `json:"schema_version"`
 	Name                string                   `json:"name"`
@@ -128,6 +134,7 @@ type Result struct {
 	Journeys            MetricSet                `json:"journeys"`
 	Steps               []StepResult             `json:"steps"`
 	Profiles            []ProfileResult          `json:"profiles,omitempty"`
+	Windows             []WindowResult           `json:"windows,omitempty"`
 	Outcome             string                   `json:"outcome"`
 	ErrorsRate          float64                  `json:"error_rate"`
 	Note                string                   `json:"note"`

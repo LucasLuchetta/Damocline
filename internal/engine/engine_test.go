@@ -127,6 +127,34 @@ func TestFailedExtractionFailsStep(t *testing.T) {
 	}
 }
 
+func TestObservationWindowsExposeLateSLOBreach(t *testing.T) {
+	started := time.Now()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if time.Since(started) > 150*time.Millisecond {
+			time.Sleep(60 * time.Millisecond)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	v := scenario(t, srv.URL, []config.Step{{Name: "page", Path: "/"}})
+	v.Duration = 350 * time.Millisecond
+	v.Window = 100 * time.Millisecond
+	v.Scenario.P95LimitMS = 20
+	r := Run(context.Background(), v)
+	if len(r.Windows) < 2 || r.Outcome != "FAIL" {
+		t.Fatalf("late window degradation was not visible: %+v", r)
+	}
+	found := false
+	for _, warning := range r.Warnings {
+		if strings.Contains(warning, "breached an SLO") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("window breach warning missing: %+v", r.Warnings)
+	}
+}
+
 func TestArrivalProfilesFollowConfiguredWeights(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
