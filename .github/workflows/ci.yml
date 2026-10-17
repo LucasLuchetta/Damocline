@@ -43,8 +43,12 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
-          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -o dist/damocline-windows-amd64.exe ./cmd/damocline
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o dist/damocline-linux-amd64 ./cmd/damocline
+          mkdir -p dist/windows-amd64 dist/linux-amd64 dist/linux-arm64 dist/macos-amd64 dist/macos-arm64
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -o dist/windows-amd64/damocline.exe ./cmd/damocline
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o dist/linux-amd64/damocline ./cmd/damocline
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -o dist/linux-arm64/damocline ./cmd/damocline
+          CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -trimpath -o dist/macos-amd64/damocline ./cmd/damocline
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -o dist/macos-arm64/damocline ./cmd/damocline
       - uses: actions/upload-artifact@v4
         with:
           name: damocline-preview-binaries
