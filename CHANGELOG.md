@@ -11,5 +11,5 @@ This project follows a human-maintained changelog. No release exists yet.
 
 - Session-cookie header references from environment variables, response assertions, read/write safeguards, JSON reports, and local examples.
 
-### Not yet available
-- Automatic capacity estimation, open-loop arrival scheduling, browser-based user journeys, infrastructure monitoring, dashboards, and distributed execution.
+- Native independent journey-arrival scheduling with dropped-start accounting and per-user isolated cookie sessions.\n- Repeated and bracket-refined capacity exploration with finite time budget, per-step thresholds, and conservative inconclusive outcomes.\n- Linux host CPU/RAM sampling and time-window correlation with load trials.\n- Advanced CLI examples and documentation for Windows and Linux.\n\n### Not yet available
+- Calibrated server-capacity certification, browser-based journeys, native login/CSRF recorder, per-container and DB telemetry, dashboards, and distributed load generation.

@@ -15,17 +15,21 @@ import (
 )
 
 type Scenario struct {
-	Name         string  `json:"name"`
-	BaseURL      string  `json:"base_url"`
-	Users        int     `json:"users"`
-	Duration     string  `json:"duration"`
-	RampUp       string  `json:"ramp_up"`
-	ThinkTime    string  `json:"think_time"`
-	Timeout      string  `json:"request_timeout"`
-	MaxRPS       int     `json:"max_rps"`
-	P95LimitMS   float64 `json:"p95_limit_ms"`
-	MaxErrorRate float64 `json:"max_error_rate"`
-	Steps        []Step  `json:"steps"`
+	Name                 string  `json:"name"`
+	BaseURL              string  `json:"base_url"`
+	Users                int     `json:"users"`
+	Duration             string  `json:"duration"`
+	RampUp               string  `json:"ramp_up"`
+	ThinkTime            string  `json:"think_time"`
+	Timeout              string  `json:"request_timeout"`
+	MaxRPS               int     `json:"max_rps"`
+	P95LimitMS           float64 `json:"p95_limit_ms"`
+	MaxErrorRate         float64 `json:"max_error_rate"`
+	Mode                 string  `json:"mode,omitempty"`
+	ArrivalRate          int     `json:"arrival_rate,omitempty"`
+	PerVUCookieEnvPrefix string  `json:"per_vu_cookie_env_prefix,omitempty"`
+	MinSamplesPerStep    int     `json:"min_samples_per_step,omitempty"`
+	Steps                []Step  `json:"steps"`
 }
 
 type Step struct {
@@ -52,6 +56,7 @@ type Validated struct {
 	ThinkTime time.Duration
 	Timeout   time.Duration
 	Steps     []PreparedStep
+	Cookies   []string
 }
 
 type PreparedStep struct {
@@ -95,6 +100,31 @@ func Parse(s Scenario, o Options) (Validated, error) {
 	}
 	if s.MaxRPS < 1 || s.MaxRPS > 100 {
 		return v, errors.New("max_rps must be between 1 and 100; use conservative limits on production")
+	}
+	if s.Mode == "" {
+		s.Mode = "closed"
+	}
+	if s.Mode != "closed" && s.Mode != "arrival" {
+		return v, errors.New("mode must be closed or arrival")
+	}
+	if s.Mode == "arrival" {
+		if s.ArrivalRate < 1 || s.ArrivalRate > 20 {
+			return v, errors.New("arrival_rate must be between 1 and 20 iterations/second")
+		}
+		if s.ArrivalRate*len(s.Steps) > s.MaxRPS {
+			return v, errors.New("arrival_rate multiplied by steps exceeds max_rps; increase max_rps or reduce arrival_rate")
+		}
+		if s.RampUp != "" && s.RampUp != "0s" {
+			return v, errors.New("ramp_up is not supported with arrival mode")
+		}
+	} else if s.ArrivalRate != 0 {
+		return v, errors.New("arrival_rate requires mode=arrival")
+	}
+	if s.MinSamplesPerStep == 0 {
+		s.MinSamplesPerStep = 1
+	}
+	if s.MinSamplesPerStep < 1 || s.MinSamplesPerStep > 10000 {
+		return v, errors.New("min_samples_per_step must be 1..10000")
 	}
 	if len(s.Steps) < 1 || len(s.Steps) > 20 {
 		return v, errors.New("steps must contain 1 to 20 entries")
@@ -140,6 +170,15 @@ func Parse(s Scenario, o Options) (Validated, error) {
 	}
 	seen := map[string]bool{}
 	prepared := make([]PreparedStep, 0, len(s.Steps))
+	if s.PerVUCookieEnvPrefix != "" {
+		for _, step := range s.Steps {
+			for k := range step.Headers {
+				if strings.EqualFold(k, "Cookie") {
+					return v, errors.New("cannot combine per_vu_cookie_env_prefix with a shared Cookie header")
+				}
+			}
+		}
+	}
 	for _, step := range s.Steps {
 		if step.Name == "" || len(step.Name) > 80 || seen[step.Name] {
 			return v, fmt.Errorf("step names must be non-empty, unique, and at most 80 characters: %q", step.Name)
@@ -165,7 +204,7 @@ func Parse(s Scenario, o Options) (Validated, error) {
 			return v, fmt.Errorf("step %q path must be a relative-to-origin absolute path", step.Name)
 		}
 		p, err := url.Parse(step.Path)
-		if err != nil || p.Host != "" || p.Scheme != "" || p.Fragment != "" || strings.Contains(p.EscapedPath(), "%2e") || strings.Contains(step.Path, "..") {
+		if err != nil || p.Host != "" || p.Scheme != "" || p.Fragment != "" || strings.Contains(strings.ToLower(p.EscapedPath()), "%2e") || strings.Contains(step.Path, "..") {
 			return v, fmt.Errorf("unsafe path in step %q", step.Name)
 		}
 		if len(step.ExpectedStatus) > 30 {
@@ -219,7 +258,11 @@ func Parse(s Scenario, o Options) (Validated, error) {
 		step.Method = method
 		prepared = append(prepared, PreparedStep{Step: step, URL: u.ResolveReference(p).String(), ResolvedHeaders: head, Body: body})
 	}
-	v = Validated{Scenario: s, Base: u, Duration: duration, RampUp: ramp, ThinkTime: think, Timeout: timeout, Steps: prepared}
+	cookies, err := ResolveSessions(s.PerVUCookieEnvPrefix, s.Users)
+	if err != nil {
+		return v, err
+	}
+	v = Validated{Scenario: s, Base: u, Duration: duration, RampUp: ramp, ThinkTime: think, Timeout: timeout, Steps: prepared, Cookies: cookies}
 	return v, nil
 }
 

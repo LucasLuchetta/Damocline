@@ -15,7 +15,7 @@
 The name evokes the **Sword of Damocles**: apparently stable systems can have limits hanging overhead. Damocline aims to find those limits *before users do*.
 
 > [!IMPORTANT]
-> **Experimental HTTP MVP:** bounded, closed-loop HTTP load testing now works in the CLI. Automatic capacity discovery, open-loop traffic, full-browser journeys, and infrastructure collectors are **not implemented**. Never interpret a single passing run as the maximum number of users your server supports.
+> **Experimental advanced HTTP engine:** native closed-loop and arrival-rate scheduling, repeated virtual-user capacity exploration, independent cookie sessions, Linux CPU/RAM sampling, and UTC report correlation are available. Browser-based journeys, per-container telemetry, automatic authentication, and rigorous generator-capacity calibration are not implemented. A passing test is **not** a universal maximum-users claim.
 
 ## The problem
 
@@ -32,13 +32,13 @@ Damocline will seek **scenario-specific sustainable capacity**, never claim one 
 
 | Component | Goal | Status |
 | --- | --- | --- |
-| Native Go load engine | Bounded HTTP requests with closed-loop VUs | **MVP implemented** |
-| Workload models | Closed-loop VUs supported; independent arrivals planned | **Partial** |
-| Capacity explorer | Automatically bracket, refine, and confirm passing load levels | Planned |
-| Per-workflow analysis | Evaluate pages, journeys, and concurrent workload mixes | Planned |
-| Infrastructure adapters | Optional host, Docker, database, and cloud telemetry | Planned |
-| Reporting | p50/p95/p99, error reasons, per-step results, JSON export; infrastructure correlation planned | **Partial** |
-| Local-first CLI | Work without requiring a cloud account | Scaffold only |
+| Native Go load engine | Bounded HTTP workloads with native Go scheduling | **Experimental** |
+| Workload models | Closed-loop virtual users and independent journey arrivals | **Experimental** |
+| Capacity explorer | Repeat passing stages, double load and refine failing brackets | **Experimental** |
+| Per-workflow analysis | Named HTTP steps, full journey counts and mixed journeys | **Partial** |
+| Infrastructure adapters | Native Linux host CPU/RAM monitor; Docker/cloud adapters planned | **Partial** |
+| Reporting | p50/p95/p99, per-step, journeys, dropped starts, JSON and host-time correlation | **Partial** |
+| Local-first CLI | Run, explore, monitor and correlate offline | **Experimental** |
 
 Damocline should apply to **authorized HTTP/HTTPS applications** hosted on VPSs, dedicated machines, containers, Kubernetes, PaaS, or serverless platforms. Internal resource metrics require optional instrumentation or permissions; an external URL alone cannot reveal a server's CPU or database bottlenecks.
 
@@ -77,6 +77,32 @@ go run ./cmd/damocline run --config examples/local-smoke.json --authorized --out
 For Windows/PowerShell, session-cookie authentication, and safely testing your own application, see **[Quick start](docs/QUICKSTART.md)**. Experimental Windows and Linux binaries are attached to successful CI runs as downloadable workflow artifacts (not signed releases).
 
 **Initial safety ceilings:** up to 50 virtual users, 100 requests/second, and three minutes per run; these are upper bounds, not recommendations for production. The example starts with **2 VUs and 5 RPS**. HTTP redirects are not followed, so a 302 to a login page is reported as a failure by default.
+
+## Advanced capacity exploration (experimental)
+
+Damocline has its **own native Go engine**. It does not invoke k6 or external load-testing engines.
+
+```bash
+# Copy and edit the example for a system you own or are authorized to test.
+cp examples/advanced-readonly.json myapp.local.json
+
+# Validation sends no traffic.
+go run ./cmd/damocline explore --config myapp.local.json --min-users 2 --max-users 10 --repeats 2 --stage-duration 20s --dry-run
+
+# Controlled, repeated closed-loop capacity experiments.
+go run ./cmd/damocline explore --config myapp.local.json --min-users 2 --max-users 10 --repeats 2 --stage-duration 20s --budget 5m --authorized --out reports/capacity.json
+```
+
+In addition to fixed closed-loop load, `mode: "arrival"` runs independently scheduled journey starts and exposes dropped arrivals. For independent authenticated identities, configure `per_vu_cookie_env_prefix` and supply **distinct, locally managed** session cookies (never commit them).
+
+To observe a Linux VPS during a test, run the separate native monitor **on the host**, then join samples by UTC timestamps:
+
+```bash
+damocline monitor --duration 10m --interval 2s --out reports/host.json
+damocline correlate --load reports/capacity.json --host reports/host.json --out reports/correlated.json
+```
+
+The monitor does not require an exposed metrics port and does not identify a root cause by itself. See the **[advanced testing guide](docs/ADVANCED_TESTING.md)** for PowerShell, production safety, per-VU sessions, calibration caveats and scenarios.
 
 ## Developer quick start
 
