@@ -95,7 +95,7 @@ damocline report --file .damocline/reports/later-run.json --compare .damocline/r
 damocline report --file .damocline/reports/your-run.json --host host.json
 ```
 
-It distinguishes **meeting your p95/error objectives** from **proving user capacity** and **having evidence that a bigger server is needed**. Achieved RPS is not the configured `max_rps` ceiling; HTTP request latency is not complete journey duration. A single PASS cannot certify infrastructure headroom.
+It distinguishes **meeting your p95/error objectives** from **proving user capacity** and **having evidence that a bigger server is needed**. Achieved RPS is not the configured `max_rps` ceiling; HTTP request latency is not complete journey duration. A single PASS cannot certify infrastructure headroom. Controlled comparisons require matching schema-v11 workload fingerprints and declared run conditions; older or mismatched reports are labeled `NOT_COMPARABLE`.
 
 See [Understand your results](docs/REPORT_EXPLAINER.md) for interpretation, sample-size and comparison warnings. The command never sends traffic.
 
@@ -141,12 +141,16 @@ damocline plan --campaign reports/campaign.json --peak-users 200 --growth-percen
 The command calculates the demand to validate and reports
 **GOAL_MET_UNDER_TESTED_CONDITIONS** only when a complete, passing, schema-v1
 repeated campaign exercised that exact base VU level and every required phase
-has `VALID_WITHIN_ENVELOPE` data quality. Missing, limited, invalid, or unknown
-phase quality returns `INSUFFICIENT_EVIDENCE`. The current engine does not yet
-emit `VALID_WITHIN_ENVELOPE`, so current campaigns remain insufficient until
-the workload-specific generator preflight gate is implemented. The command
-never makes a hardware prediction, identifies a bottleneck, or recommends an
-infrastructure purchase.
+has `VALID_WITHIN_ENVELOPE` data quality, adequate conditional p95/error
+bounds for aggregates, steps and every SLO window, continuous window coverage,
+and variability for every independent trial. Missing or insufficient evidence
+returns `INSUFFICIENT_EVIDENCE`; 50 error-free requests cannot substantiate a
+1% error budget at 95% under the stated binomial assumptions. Current engine
+reports remain `LIMITED` because workload-specific generator equivalence is
+not implemented. Existing statistical bounds assume independent, stationary
+observations; that assumption is not established, so the result is not a
+confidence-certified capacity claim. The command never makes a hardware
+prediction, identifies a bottleneck, or recommends an infrastructure purchase.
 
 ## Terminal home screen
 

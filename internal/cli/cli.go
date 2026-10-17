@@ -175,11 +175,13 @@ func run(args []string, stdout, stderr io.Writer) int {
 	defer stop()
 	result := engine.Run(ctx, validated)
 	fmt.Fprintf(stdout, "Result: %s | requests: %d (%d passed, %d failed, %d cancelled) | p95: %.1f ms | error rate: %.2f%% | %.1f req/s\n", result.Outcome, result.Metrics.Total, result.Metrics.Success, result.Metrics.Failures, result.Metrics.Cancelled, result.Metrics.P95MS, result.ErrorsRate*100, float64(result.Metrics.Total)/result.WindowSeconds())
+	fmt.Fprintf(stdout, "HTTP responses: 1xx=%d 2xx=%d 3xx=%d 4xx=%d 5xx=%d; redirects=%d, 429=%d, assertions=%d, timeouts=%d, TLS failures=%d, transport failures=%d, oversized=%d.\n", result.Metrics.HTTP.Status1xx, result.Metrics.HTTP.Status2xx, result.Metrics.HTTP.Status3xx, result.Metrics.HTTP.Status4xx, result.Metrics.HTTP.Status5xx, result.Metrics.HTTP.RedirectResponses, result.Metrics.HTTP.RateLimitedResponses, result.Metrics.HTTP.AssertionFailures, result.Metrics.HTTP.NetworkTimeouts, result.Metrics.HTTP.TLSFailures, result.Metrics.HTTP.TransportFailures, result.Metrics.HTTP.UnexpectedResponseSizes)
 	if result.Metrics.P95IID95Approximation {
 		fmt.Fprintf(stdout, "P95 IID 95%% rank approximation: %.1f-%.1f ms; this assumes independent, stationary request latencies.\n", result.Metrics.P95IID95LowerMS, result.Metrics.P95IID95UpperMS)
 	}
 	for _, st := range result.Steps {
 		fmt.Fprintf(stdout, "  - %s/%s: total=%d failures=%d p95=%.1f ms\n", st.Profile, st.Name, st.Metrics.Total, st.Metrics.Failures, st.Metrics.P95MS)
+		fmt.Fprintf(stdout, "    client timing totals: rate-wait=%.1f ms, DNS=%.1f ms (%d attempts), connect=%.1f ms (%d attempts), TLS=%.1f ms (%d attempts), request-write=%.1f ms (%d observations), first-byte=%.1f ms, body=%.1f ms, full=%.1f ms; first-byte is not server processing time.\n", st.HTTPTrace.RateWaitMS, st.HTTPTrace.DNSMS, st.HTTPTrace.DNSCount, st.HTTPTrace.ConnectMS, st.HTTPTrace.ConnectCount, st.HTTPTrace.TLSMS, st.HTTPTrace.TLSCount, st.HTTPTrace.WriteMS, st.HTTPTrace.WriteCount, st.HTTPTrace.FirstByteMS, st.HTTPTrace.BodyMS, st.HTTPTrace.CompleteMS)
 	}
 	for _, profile := range result.Profiles {
 		started := profile.Journeys.Total + profile.Journeys.Cancelled
@@ -190,6 +192,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "  Profile %s: configured weight=%d, started journeys=%d, completed=%d, cancelled=%d\n", profile.Name, profile.Weight, started, profile.Journeys.Total, profile.Journeys.Cancelled)
 	}
 	fmt.Fprintf(stdout, "Iterations: %d started / %d completed; arrivals dropped: %d\n", result.IterationsStarted, result.IterationsCompleted, result.ArrivalsDropped)
+	fmt.Fprintf(stdout, "Observed configured think-time waits: %.1f ms across %d intervals; journey latency includes rate-token waits and these intervals.\n", result.ObservedThinkTimeMS, result.ThinkTimeObservations)
 	for _, w := range result.Warnings {
 		fmt.Fprintf(stdout, "WARNING: %s\n", w)
 	}

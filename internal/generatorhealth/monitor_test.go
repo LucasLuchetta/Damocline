@@ -30,6 +30,22 @@ func TestAccumulatorPeakAndGoCPUOccupancy(t *testing.T) {
 	}
 }
 
+func TestAccumulatorRecordsSampleCostAndMaximumGap(t *testing.T) {
+	start := time.Unix(0, 0)
+	a := accumulator{}
+	a.summary.SamplingIntervalMS = 250
+	for _, sample := range []struct {
+		at   time.Duration
+		cost time.Duration
+	}{{0, time.Millisecond}, {250 * time.Millisecond, 2 * time.Millisecond}, {800 * time.Millisecond, 3 * time.Millisecond}} {
+		a.add(reading{at: start.Add(sample.at), collectionTime: sample.cost, maxProcs: 1})
+	}
+	s := a.finish()
+	if s.Samples != 3 || s.SamplingIntervalMS != 250 || s.SampleCollectionTotalMS != 6 || s.SampleCollectionMaxMS != 3 || s.MaxSampleGapMS != 550 {
+		t.Fatalf("sampling cost and gap were not retained: %+v", s)
+	}
+}
+
 func TestAccumulatorProcessHealthPeaks(t *testing.T) {
 	start := time.Unix(0, 0)
 	var a accumulator
@@ -107,6 +123,9 @@ func TestMonitorSamplesSupportedProcessMetrics(t *testing.T) {
 	s := m.Stop()
 	if s.ProcessSamples < 2 || s.ProcessCPUSamples < 1 || !s.ProcessCPUValid || s.PeakProcessRSSBytes == 0 {
 		t.Fatalf("supported OS process metrics missing: %+v", s)
+	}
+	if s.SamplingIntervalMS != 100 || s.MaxSampleGapMS <= 0 || s.SampleCollectionMaxMS < 0 || s.SampleCollectionTotalMS < s.SampleCollectionMaxMS {
+		t.Fatalf("sampling cadence or collection cost missing: %+v", s)
 	}
 }
 

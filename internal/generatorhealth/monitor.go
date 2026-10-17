@@ -17,6 +17,10 @@ import (
 type Summary struct {
 	Samples                        int     `json:"samples"`
 	ObservedSeconds                float64 `json:"observed_seconds"`
+	SamplingIntervalMS             float64 `json:"sampling_interval_ms,omitempty"`
+	SampleCollectionTotalMS        float64 `json:"sample_collection_total_ms,omitempty"`
+	SampleCollectionMaxMS          float64 `json:"sample_collection_max_ms,omitempty"`
+	MaxSampleGapMS                 float64 `json:"max_sample_gap_ms,omitempty"`
 	GOMAXPROCS                     int     `json:"gomaxprocs"`
 	PeakHeapAllocBytes             uint64  `json:"peak_heap_alloc_bytes"`
 	PeakGoroutines                 int     `json:"peak_goroutines"`
@@ -26,8 +30,8 @@ type Summary struct {
 	GoCPUUtilizationRatio          float64 `json:"go_cpu_utilization_ratio"`
 	GoCPUValid                     bool    `json:"go_cpu_valid"`
 	ProcessSamples                 int     `json:"process_samples"`
-	ProcessCPUSamples              int     `json:"process_cpu_samples"`
 	InvalidProcessSamples          int     `json:"invalid_process_samples,omitempty"`
+	ProcessCPUSamples              int     `json:"process_cpu_samples"`
 	PeakProcessRSSBytes            uint64  `json:"peak_process_rss_bytes,omitempty"`
 	PeakProcessCPUUtilizationRatio float64 `json:"peak_process_cpu_utilization_ratio"`
 	ProcessCPUValid                bool    `json:"process_cpu_valid"`
@@ -38,6 +42,7 @@ const note = "Generator-side Go runtime and supported OS process samples only; R
 
 type reading struct {
 	at                time.Time
+	collectionTime    time.Duration
 	heap              uint64
 	goroutines        int
 	gcCycles          uint32
@@ -51,6 +56,7 @@ type reading struct {
 }
 
 func sampleRuntime() reading {
+	started := time.Now()
 	var mem runtime.MemStats
 	runtime.ReadMemStats(&mem)
 	cpu := []metrics.Sample{
@@ -60,7 +66,7 @@ func sampleRuntime() reading {
 	metrics.Read(cpu)
 	valid := cpu[0].Value.Kind() == metrics.KindFloat64 && cpu[1].Value.Kind() == metrics.KindFloat64
 	s := reading{
-		at: time.Now(), heap: mem.HeapAlloc,
+		heap:         mem.HeapAlloc,
 		goroutines:   runtime.NumGoroutine(),
 		gcCycles:     mem.NumGC,
 		maxProcs:     runtime.GOMAXPROCS(0),
@@ -74,6 +80,8 @@ func sampleRuntime() reading {
 	s.processCPUSeconds = processCPU
 	s.processRSSBytes = processRSS
 	s.processAvailable = processOK
+	s.at = time.Now()
+	s.collectionTime = s.at.Sub(started)
 	return s
 }
 
@@ -85,6 +93,13 @@ type accumulator struct {
 }
 
 func (a *accumulator) add(r reading) {
+	if a.summary.Samples > 0 {
+		gap := r.at.Sub(a.latest.at)
+		gapMS := float64(gap.Microseconds()) / 1000
+		if gapMS > a.summary.MaxSampleGapMS {
+			a.summary.MaxSampleGapMS = gapMS
+		}
+	}
 	if a.summary.Samples == 0 {
 		a.base = r
 		a.summary.GOMAXPROCS = r.maxProcs
@@ -94,6 +109,11 @@ func (a *accumulator) add(r reading) {
 	if r.processAvailable && (math.IsNaN(r.processCPUSeconds) || math.IsInf(r.processCPUSeconds, 0) || r.processCPUSeconds < 0 || r.processRSSBytes == 0) {
 		a.summary.InvalidProcessSamples++
 		r.processAvailable = false
+	}
+	collectionMS := float64(r.collectionTime.Microseconds()) / 1000
+	a.summary.SampleCollectionTotalMS += collectionMS
+	if collectionMS > a.summary.SampleCollectionMaxMS {
+		a.summary.SampleCollectionMaxMS = collectionMS
 	}
 	if r.heap > a.summary.PeakHeapAllocBytes {
 		a.summary.PeakHeapAllocBytes = r.heap
@@ -173,6 +193,7 @@ func Start(interval time.Duration) *Monitor {
 		interval = 250 * time.Millisecond
 	}
 	m := &Monitor{stop: make(chan struct{}), done: make(chan struct{})}
+	m.acc.summary.SamplingIntervalMS = float64(interval.Microseconds()) / 1000
 	m.acc.add(sampleRuntime())
 	go func() {
 		defer close(m.done)

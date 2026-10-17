@@ -1,0 +1,82 @@
+package config
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"net/textproto"
+	"sort"
+	"strings"
+)
+
+type fingerprintProfile struct {
+	Name      string            `json:"name"`
+	Weight    int               `json:"weight"`
+	ThinkTime string            `json:"think_time,omitempty"`
+	Steps     []fingerprintStep `json:"steps"`
+}
+
+type fingerprintStep struct {
+	Name           string             `json:"name"`
+	Method         string             `json:"method"`
+	Path           string             `json:"path"`
+	Headers        map[string]string  `json:"headers,omitempty"`
+	ExpectedStatus []int              `json:"expected_status,omitempty"`
+	MustContain    string             `json:"must_contain,omitempty"`
+	BodyEnv        string             `json:"body_env,omitempty"`
+	BodyLength     int                `json:"body_length,omitempty"`
+	Extract        map[string]Extract `json:"extract,omitempty"`
+}
+
+type fingerprintInput struct {
+	Profiles             []fingerprintProfile `json:"profiles"`
+	PerVUCookieSessions  bool                 `json:"per_vu_cookie_sessions"`
+	SyntheticIdentifiers bool                 `json:"synthetic_identifiers"`
+	SyntheticPrefix      string               `json:"synthetic_prefix,omitempty"`
+	SessionCount         int                  `json:"session_count,omitempty"`
+}
+
+// WorkloadFingerprint returns a stable digest of the declared request and
+// journey shape. It hashes raw scenario templates, never resolved credentials,
+// environment-backed request body contents, extracted response values, or
+// generated synthetic identifiers. It includes only the byte length of a
+// configured environment-backed body. An empty result means the scenario
+// could not be encoded and must not be treated as comparable.
+func WorkloadFingerprint(v Validated) string {
+	input := fingerprintInput{
+		Profiles:             make([]fingerprintProfile, 0, len(v.Profiles)),
+		PerVUCookieSessions:  len(v.Cookies) > 0,
+		SyntheticIdentifiers: v.SyntheticDataPrefix != "",
+		SessionCount:         len(v.Cookies),
+	}
+	if v.SyntheticDataPrefix != "" {
+		input.SyntheticPrefix = v.Scenario.SyntheticDataPrefixEnv
+	}
+	for _, profile := range v.Profiles {
+		p := fingerprintProfile{Name: profile.Name, Weight: profile.Weight, ThinkTime: profile.ThinkTime.String(), Steps: make([]fingerprintStep, 0, len(profile.Steps))}
+		for _, step := range profile.Steps {
+			statuses := append([]int(nil), step.Step.ExpectedStatus...)
+			sort.Ints(statuses)
+			method := strings.ToUpper(step.Step.Method)
+			if method == "" {
+				method = "GET"
+			}
+			headers := make(map[string]string, len(step.Step.Headers))
+			for name, value := range step.Step.Headers {
+				headers[textproto.CanonicalMIMEHeaderKey(strings.TrimSpace(name))] = value
+			}
+			p.Steps = append(p.Steps, fingerprintStep{
+				Name: step.Step.Name, Method: method, Path: step.PathTemplate,
+				Headers: headers, ExpectedStatus: statuses, MustContain: step.Step.MustContain,
+				BodyEnv: step.Step.BodyEnv, BodyLength: len(step.Body), Extract: step.Step.Extract,
+			})
+		}
+		input.Profiles = append(input.Profiles, p)
+	}
+	data, err := json.Marshal(input)
+	if err != nil {
+		return ""
+	}
+	digest := sha256.Sum256(data)
+	return "sha256:" + hex.EncodeToString(digest[:])
+}

@@ -20,29 +20,29 @@ import (
 // A passing loopback smoke check does NOT establish client workload capacity.
 const (
 	coverageSchemaVersion = 1
-	coverageInconclusive = "INCONCLUSIVE"
-	coverageMatched = "MATCHED"
-	coverageOutside = "OUTSIDE_REFERENCE"
-	coverageUnknown = "UNVERIFIED"
-	maxCalibrationBytes = 16 << 20
+	coverageInconclusive  = "INCONCLUSIVE"
+	coverageMatched       = "MATCHED"
+	coverageOutside       = "OUTSIDE_REFERENCE"
+	coverageUnknown       = "UNVERIFIED"
+	maxCalibrationBytes   = 16 << 20
 )
 
 var errInconclusive = errors.New("preflight evidence is inconclusive; no application capacity can be certified")
 
 type coverageDimension struct {
-	Name string `json:"name"`
+	Name   string `json:"name"`
 	Status string `json:"status"`
 	Reason string `json:"reason"`
 }
 
 type coverageAssessment struct {
-	SchemaVersion int `json:"schema_version"`
-	Status string `json:"status"`
-	ReferenceStatus string `json:"reference_status"`
-	Shape string `json:"request_shape"`
-	TestedArrivalRates []int `json:"tested_arrival_rates,omitempty"`
-	Dimensions []coverageDimension `json:"dimensions"`
-	Note string `json:"note"`
+	SchemaVersion      int                 `json:"schema_version"`
+	Status             string              `json:"status"`
+	ReferenceStatus    string              `json:"reference_status"`
+	Shape              string              `json:"request_shape"`
+	TestedArrivalRates []int               `json:"tested_arrival_rates,omitempty"`
+	Dimensions         []coverageDimension `json:"dimensions"`
+	Note               string              `json:"note"`
 }
 
 const coverageCaveat = "REFERENCE_SMOKE_PASSED is local fixture evidence only. Neither configuration resemblance nor a rate below a tested maximum certifies generator headroom, a different payload/transport, or application capacity."
@@ -76,6 +76,10 @@ func loadCalibrationForCoverage(path string) (assessment, error) {
 		validatePreflightRecord(result.Preflight) != nil {
 		return result, errors.New("local calibration has an unsupported, inconsistent, or invalid preflight record")
 	}
+	if !validSchedulerLagCalibration(result.SchedulerLag) ||
+		(result.Status == "REFERENCE_SMOKE_PASSED" && result.SchedulerLag.Status != "PASSED") {
+		return result, errors.New("local calibration has missing or invalid scheduler-lag evidence")
+	}
 	if len(result.Runs) != len(result.Preflight.HealthyStages) {
 		return result, errors.New("local calibration stage evidence is incomplete")
 	}
@@ -106,13 +110,19 @@ func evaluatedReferenceRates(a assessment) []int {
 		unique[stage.ArrivalRate] = true
 	}
 	var rates []int
-	for r := range unique { rates = append(rates, r) }
+	for r := range unique {
+		rates = append(rates, r)
+	}
 	sort.Ints(rates)
 	return rates
 }
 
 func containsRate(rates []int, rate int) bool {
-	for _, r := range rates { if r == rate { return true } }
+	for _, r := range rates {
+		if r == rate {
+			return true
+		}
+	}
 	return false
 }
 
@@ -136,7 +146,9 @@ func compareScenarioToReference(s config.Scenario, a assessment, calibrationErr 
 	}
 
 	mode := s.Mode
-	if mode == "" { mode = "closed" }
+	if mode == "" {
+		mode = "closed"
+	}
 	if mode != "arrival" {
 		r.add("workload_model", coverageOutside, "Only independent open-loop journey arrivals were tested; closed-loop VUs were not covered by this fixture.")
 	} else {
@@ -163,7 +175,9 @@ func compareScenarioToReference(s config.Scenario, a assessment, calibrationErr 
 	if len(s.Profiles) > 0 {
 		maxSteps = 0
 		for _, profile := range s.Profiles {
-			if len(profile.Steps) > maxSteps { maxSteps = len(profile.Steps) }
+			if len(profile.Steps) > maxSteps {
+				maxSteps = len(profile.Steps)
+			}
 		}
 	}
 	if calibrationErr != nil {
@@ -179,7 +193,9 @@ func compareScenarioToReference(s config.Scenario, a assessment, calibrationErr 
 	if singleGET {
 		step := s.Steps[0]
 		method := strings.ToUpper(step.Method)
-		if method == "" { method = "GET" }
+		if method == "" {
+			method = "GET"
+		}
 		singleGET = method == "GET" && len(step.Headers) == 0 && step.BodyEnv == "" &&
 			len(step.Extract) == 0 && s.PerVUCookieEnvPrefix == "" &&
 			s.SyntheticDataPrefixEnv == ""
@@ -200,7 +216,10 @@ func compareScenarioToReference(s config.Scenario, a assessment, calibrationErr 
 	}
 
 	timeout, timeoutErr := time.ParseDuration(s.Timeout)
-	if s.Timeout == "" { timeout = 8*time.Second; timeoutErr = nil }
+	if s.Timeout == "" {
+		timeout = 8 * time.Second
+		timeoutErr = nil
+	}
 	if timeoutErr != nil || timeout != time.Second ||
 		(s.ThinkTime != "" && s.ThinkTime != "0s") ||
 		(s.RampUp != "" && s.RampUp != "0s") {
@@ -223,7 +242,12 @@ func compareScenarioToReference(s config.Scenario, a assessment, calibrationErr 
 	r.add("generator_equivalence", coverageUnknown, "The calibration source host, age and workload-specific generator headroom are not yet checked (G0-08).")
 
 	outside := false
-	for _, item := range r.Dimensions { if item.Status == coverageOutside { outside = true; break } }
+	for _, item := range r.Dimensions {
+		if item.Status == coverageOutside {
+			outside = true
+			break
+		}
+	}
 	if !outside && calibrationErr == nil && a.Status == "REFERENCE_SMOKE_PASSED" {
 		r.Shape = "DECLARED_SHAPE_RESEMBLES_REFERENCE"
 	} else {

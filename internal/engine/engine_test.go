@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/LucasLuchetta/Damocline/internal/config"
+	"github.com/LucasLuchetta/Damocline/internal/reference"
+	"github.com/LucasLuchetta/Damocline/internal/report"
 )
 
 func scenario(t *testing.T, url string, steps []config.Step) config.Validated {
@@ -37,8 +39,236 @@ func TestSuccess(t *testing.T) {
 	if result.Metrics.Success < 1 || result.Metrics.Failures != 0 || result.Outcome != "PASS" {
 		t.Fatalf("unexpected report: %+v", result)
 	}
-	if result.SchemaVersion != 6 || result.ObservationSeconds != v.Duration.Seconds() || result.Generator == nil || result.Generator.ProcessSamples < 2 {
-		t.Fatalf("report must include schema-v6 observation window and generator process observations: %+v", result)
+	if result.SchemaVersion != 11 || result.Config.WorkloadFingerprint == "" || result.ObservationSeconds != v.Duration.Seconds() || result.Generator == nil || result.Generator.ProcessSamples < 2 || result.Generator.SamplingIntervalMS != 250 || result.Generator.MaxSampleGapMS <= 0 || result.Generator.SampleCollectionTotalMS < result.Generator.SampleCollectionMaxMS {
+		t.Fatalf("report must include workload fingerprint, observation window and generator process observations: %+v", result)
+	}
+}
+
+func TestHTTPTraceMeasuresLoopbackPhasesAndConnectionReuse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("trace body"))
+	}))
+	defer server.Close()
+	v := scenario(t, server.URL, []config.Step{{Name: "page", Path: "/"}})
+	v.Duration = 180 * time.Millisecond
+	v.Scenario.Users = 1
+	v.Scenario.MaxRPS = 10
+	r := Run(context.Background(), v)
+	if len(r.Steps) != 1 {
+		t.Fatalf("expected one step: %+v", r.Steps)
+	}
+	trace := r.Steps[0].HTTPTrace
+	if trace.CompleteCount != trace.RequestAttemptCount || trace.FirstByteCount == 0 || trace.BodyCount == 0 {
+		t.Fatalf("expected first-byte, body and complete observations: %+v", trace)
+	}
+	if trace.FirstByteMS < 0 || trace.BodyMS < 0 || trace.CompleteMS < trace.FirstByteMS {
+		t.Fatalf("invalid phase boundaries: %+v", trace)
+	}
+	if trace.ConnectCount < 1 || trace.ConnectCount >= trace.CompleteCount {
+		t.Fatalf("expected initial connection plus reused connections, got %+v", trace)
+	}
+	if trace.WriteCount != trace.CompleteCount {
+		t.Fatalf("request-write callbacks did not reconcile: %+v", trace)
+	}
+	if trace.RateWaitCount < trace.CompleteCount || trace.RateWaitMS < 0 {
+		t.Fatalf("rate wait should be measured separately for each admitted step: %+v", trace)
+	}
+}
+
+func TestHTTPTraceReconcilesFailedWriteAndTransportError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	}))
+	url := server.URL
+	server.CloseClientConnections()
+	server.Close()
+	v := scenario(t, url, []config.Step{{Name: "gone", Path: "/"}})
+	v.Duration = 400 * time.Millisecond
+	v.Timeout = 50 * time.Millisecond
+	v.Scenario.Users = 1
+	v.Scenario.MaxRPS = 10
+	r := Run(context.Background(), v)
+	if len(r.Steps) != 1 || r.Steps[0].Metrics.Failures == 0 {
+		t.Fatalf("expected a recorded local transport failure: %+v", r.Steps)
+	}
+	step := r.Steps[0]
+	if step.HTTPTrace.CompleteCount != step.HTTPTrace.RequestAttemptCount || step.HTTPTrace.RateWaitCount < step.HTTPTrace.CompleteCount || step.HTTPTrace.CompleteMS <= 0 {
+		t.Fatalf("transport-failure phase counters did not reconcile: %+v", step.HTTPTrace)
+	}
+	if r.Quality == nil || r.Quality.State == report.QualityInvalid {
+		t.Fatalf("valid failed-request trace must not make accounting invalid: %+v", r.Quality)
+	}
+}
+
+func TestHTTPTraceBodyTimeoutIsMarkedIncomplete(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.(http.Flusher).Flush()
+		_, _ = w.Write([]byte("first"))
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+	v := scenario(t, server.URL, []config.Step{{Name: "stream", Path: "/"}})
+	v.Duration = 400 * time.Millisecond
+	v.Timeout = 50 * time.Millisecond
+	v.Scenario.Users = 1
+	v.Scenario.MaxRPS = 10
+	r := Run(context.Background(), v)
+	if len(r.Steps) != 1 || r.Steps[0].HTTPTrace.FirstByteCount == 0 || r.Steps[0].HTTPTrace.BodyIncompleteCount == 0 || r.Steps[0].Metrics.Reasons["timeout"] == 0 {
+		t.Fatalf("incomplete streamed body was not captured: %+v", r.Steps)
+	}
+}
+
+func TestJourneyTimingSeparatesRequestsAndObservedThinkTime(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(5 * time.Millisecond)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	s := config.Scenario{Name: "known journey timing", BaseURL: server.URL, Users: 1, Duration: "1s", MaxRPS: 50, P95LimitMS: 1000, MaxErrorRate: 0, ThinkTime: "60ms", Steps: []config.Step{{Name: "first", Path: "/first"}, {Name: "second", Path: "/second"}}}
+	v, err := config.Parse(s, config.Options{Authorized: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	v.Duration = 360 * time.Millisecond
+	r := Run(context.Background(), v)
+	if r.Journeys.Total == 0 || r.Journeys.MeanMS <= r.Steps[0].Metrics.MeanMS || r.Steps[0].Metrics.MeanMS > 100 || r.Steps[1].Metrics.MeanMS > 100 {
+		t.Fatalf("request and journey timing boundaries were not distinct: journey=%+v steps=%+v", r.Journeys, r.Steps)
+	}
+	if r.ThinkTimeObservations == 0 || r.ObservedThinkTimeMS < float64(r.ThinkTimeObservations)*50 || r.ObservedThinkTimeMS > float64(r.ThinkTimeObservations)*200 {
+		t.Fatalf("observed think-time accounting outside local fixture tolerance: total=%.1fms observations=%d", r.ObservedThinkTimeMS, r.ThinkTimeObservations)
+	}
+	if len(r.Profiles) != 0 {
+		t.Fatalf("legacy single-workflow reports should retain top-level think-time totals only: %+v", r.Profiles)
+	}
+	if r.Quality == nil || r.Quality.State == report.QualityInvalid {
+		t.Fatalf("well-formed journey timing must reconcile: %+v", r.Quality)
+	}
+}
+
+func TestInterruptedMultiStepJourneyHasNoCompletedLatencySample(t *testing.T) {
+	secondStarted := make(chan struct{}, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/second" {
+			secondStarted <- struct{}{}
+			<-r.Context().Done()
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	s := config.Scenario{Name: "interrupted journey", BaseURL: server.URL, Users: 1, Duration: "1s", MaxRPS: 50, P95LimitMS: 1000, MaxErrorRate: 0, ThinkTime: "40ms", Steps: []config.Step{{Name: "first", Path: "/first"}, {Name: "second", Path: "/second"}}}
+	v, err := config.Parse(s, config.Options{Authorized: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	v.Duration = 500 * time.Millisecond
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() { <-secondStarted; cancel() }()
+	r := Run(ctx, v)
+	if r.Metrics.Success != 1 || r.Metrics.Cancelled != 1 || r.Journeys.Total != 0 || r.Journeys.Cancelled != 1 || r.Journeys.P95MS != 0 || r.Outcome != "ABORTED" {
+		t.Fatalf("partial multi-step journey entered completed latency metrics: %+v", r)
+	}
+	if r.ThinkTimeObservations != 1 || r.ObservedThinkTimeMS < 20 {
+		t.Fatalf("completed think interval before interruption was not retained: %.1fms/%d", r.ObservedThinkTimeMS, r.ThinkTimeObservations)
+	}
+	if r.Quality == nil || r.Quality.State == report.QualityInvalid {
+		t.Fatalf("interrupted journey timing must remain arithmetically valid: %+v", r.Quality)
+	}
+}
+
+func TestHTTPDiagnosticsCountLocalFailureMatrix(t *testing.T) {
+	seen := map[string]int{}
+	var seenMu sync.Mutex
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenMu.Lock()
+		seen[r.URL.Path]++
+		seenMu.Unlock()
+		switch r.URL.Path {
+		case "/redirect":
+			http.Redirect(w, r, "/destination", http.StatusFound)
+		case "/limited":
+			w.WriteHeader(http.StatusTooManyRequests)
+		case "/server-error":
+			w.WriteHeader(http.StatusServiceUnavailable)
+		case "/assertion":
+			_, _ = w.Write([]byte("other body"))
+		case "/expected":
+			w.WriteHeader(http.StatusAccepted)
+		case "/timeout":
+			time.Sleep(100 * time.Millisecond)
+			_, _ = w.Write([]byte("late"))
+		case "/large":
+			_, _ = w.Write(make([]byte, maxResponseBytes+1))
+		default:
+			w.WriteHeader(http.StatusNoContent)
+		}
+	}))
+	defer server.Close()
+	s := config.Scenario{Name: "bounded local diagnostics", BaseURL: server.URL, Users: 1, Duration: "1s", WindowDuration: "1s", MaxRPS: 100, P95LimitMS: 1000, MaxErrorRate: 1, Timeout: "40ms", Steps: []config.Step{
+		{Name: "redirect", Path: "/redirect"}, {Name: "limited", Path: "/limited"}, {Name: "server error", Path: "/server-error"}, {Name: "assertion", Path: "/assertion", MustContain: "expected"}, {Name: "expected status", Path: "/expected", ExpectedStatus: []int{http.StatusNoContent}}, {Name: "timeout", Path: "/timeout"}, {Name: "large", Path: "/large"},
+	}}
+	v, err := config.Parse(s, config.Options{Authorized: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	v.Duration = 500 * time.Millisecond
+	r := Run(context.Background(), v)
+	seenMu.Lock()
+	ledger := map[string]int{}
+	for path, count := range seen {
+		ledger[path] = count
+	}
+	seenMu.Unlock()
+	if len(r.Steps) != 7 {
+		t.Fatalf("expected seven named steps: %+v", r.Steps)
+	}
+	for _, step := range r.Steps {
+		if step.Metrics.Total == 0 {
+			t.Fatalf("fixture step did not execute: %+v", step)
+		}
+	}
+	checks := []struct {
+		name      string
+		got, want int
+	}{
+		{"302 status", r.Metrics.HTTP.StatusCodes[http.StatusFound], ledger["/redirect"]},
+		{"redirect response", r.Metrics.HTTP.RedirectResponses, ledger["/redirect"]},
+		{"429 status", r.Metrics.HTTP.StatusCodes[http.StatusTooManyRequests], ledger["/limited"]},
+		{"rate-limited response", r.Metrics.HTTP.RateLimitedResponses, ledger["/limited"]},
+		{"503 status", r.Metrics.HTTP.StatusCodes[http.StatusServiceUnavailable], ledger["/server-error"]},
+		{"5xx family", r.Metrics.HTTP.Status5xx, ledger["/server-error"]},
+		{"assertion failure", r.Metrics.HTTP.AssertionFailures, ledger["/assertion"] + ledger["/expected"]},
+		{"network timeout", r.Metrics.HTTP.NetworkTimeouts, ledger["/timeout"]},
+		{"oversized response", r.Metrics.HTTP.UnexpectedResponseSizes, ledger["/large"]},
+	}
+	for _, check := range checks {
+		if check.got != check.want {
+			t.Errorf("%s: got %d want %d", check.name, check.got, check.want)
+		}
+	}
+	if len(r.Windows) == 0 || r.Windows[0].Metrics.HTTP.StatusCodes[http.StatusFound] == 0 || r.Windows[0].Metrics.HTTP.RateLimitedResponses == 0 {
+		t.Fatalf("observation window omitted structured HTTP outcomes: %+v", r.Windows)
+	}
+	if r.Metrics.HTTP.Status3xx != r.Metrics.HTTP.RedirectResponses || r.Metrics.HTTP.Status4xx != r.Metrics.HTTP.RateLimitedResponses || r.Quality == nil || r.Quality.State == report.QualityInvalid {
+		t.Fatalf("status family or outcome ledger mismatch: %+v quality=%+v", r.Metrics.HTTP, r.Quality)
+	}
+}
+
+func TestHTTPDiagnosticsIdentifyTLSHandshakeFailure(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
+	defer server.Close()
+	v := scenario(t, server.URL, []config.Step{{Name: "tls", Path: "/"}})
+	v.Duration = 250 * time.Millisecond
+	v.Scenario.Users = 1
+	v.Scenario.MaxRPS = 10
+	r := Run(context.Background(), v)
+	if r.Metrics.HTTP.TLSFailures == 0 || r.Metrics.HTTP.TransportFailures != 0 || r.Metrics.HTTP.Status2xx != 0 {
+		t.Fatalf("local TLS handshake failure was not classified without inventing a response: %+v", r.Metrics.HTTP)
+	}
+	if r.Quality == nil || r.Quality.State == report.QualityInvalid {
+		t.Fatalf("classified TLS failure should remain arithmetically valid: %+v", r.Quality)
 	}
 }
 
@@ -325,27 +555,33 @@ func TestPlannedArrivalAccountingWithSlowLocalServer(t *testing.T) {
 }
 
 func TestArrivalRunDrainsAdmittedWorkAfterScheduleWindow(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// A 160ms response spans several 50ms arrival intervals. The last
-		// admitted request must still be running at the 300ms cutoff,
-		// independent of Windows/Linux scheduling jitter.
-		time.Sleep(160 * time.Millisecond)
-		w.WriteHeader(http.StatusOK)
-	}))
+	// A 160ms response spans several 50ms arrival intervals. The last
+	// admitted request must still be running at the 300ms cutoff,
+	// independent of Windows/Linux scheduling jitter.
+	fixture, err := reference.New(reference.Config{Delay: 160 * time.Millisecond, MaxConcurrent: 10, MaxRequests: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(fixture)
 	defer server.Close()
 	s := config.Scenario{Name: "arrival drain", BaseURL: server.URL, Users: 10,
 		Duration: "1s", Mode: "arrival", ArrivalRate: 20, MaxRPS: 30, P95LimitMS: 1000,
-		Steps: []config.Step{{Name: "work", Method: "GET", Path: "/"}}}
+		Steps: []config.Step{{Name: "work", Method: "GET", Path: "/work"}}}
 	v, err := config.Parse(s, config.Options{Authorized: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	v.Duration = 300 * time.Millisecond
 	r := Run(context.Background(), v)
+	ledger := fixture.Snapshot()
 	if r.ArrivalsScheduled != 6 || r.ArrivalsDropped != 0 || r.IterationsCompleted != r.IterationsStarted ||
 		r.Metrics.Cancelled != 0 || r.Outcome != "PASS" || r.ObservationSeconds != v.Duration.Seconds() ||
 		r.ElapsedSeconds <= r.ObservationSeconds {
 		t.Fatalf("admitted arrivals should drain after scheduling stops: %+v", r)
+	}
+	if ledger.Received != 6 || ledger.Completed != 6 || ledger.Success != 6 || ledger.Failures != 0 || ledger.Cancelled != 0 || ledger.Rejected != 0 ||
+		ledger.Received != ledger.Completed+ledger.Cancelled+ledger.Rejected {
+		t.Fatalf("graceful-drain work did not reconcile with the independent server ledger: %+v", ledger)
 	}
 }
 
@@ -380,6 +616,95 @@ func TestInterruptedJourneyIsCountedAndCannotPass(t *testing.T) {
 	if r.Journeys.Cancelled == 0 || r.Metrics.Cancelled == 0 ||
 		r.Journeys.Total+r.Journeys.Cancelled != int(r.IterationsStarted) || r.Outcome != "ABORTED" {
 		t.Fatalf("interrupted journey was not counted explicitly: %+v", r)
+	}
+}
+
+func TestCancelledRequestReconcilesWithIndependentReferenceLedger(t *testing.T) {
+	fixture, err := reference.New(reference.Config{Delay: time.Second, MaxConcurrent: 1, MaxRequests: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	requestStarted := make(chan struct{}, 1)
+	requestFinished := make(chan struct{}, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestStarted <- struct{}{}
+		defer func() { requestFinished <- struct{}{} }()
+		fixture.ServeHTTP(w, r)
+	}))
+	defer server.Close()
+
+	v := scenario(t, server.URL, []config.Step{{Name: "slow", Path: "/work"}})
+	v.Scenario.Users = 1
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		<-requestStarted
+		cancel()
+	}()
+	run := Run(ctx, v)
+	defer cancel()
+	select {
+	case <-requestFinished:
+	case <-time.After(time.Second):
+		t.Fatal("reference handler did not finish after the client cancelled")
+	}
+	ledger := fixture.Snapshot()
+	if run.Metrics.Cancelled != 1 || run.Metrics.Success != 0 || run.Journeys.Cancelled != 1 || run.Outcome != "ABORTED" {
+		t.Fatalf("cancelled client work was not reported exactly: %+v", run)
+	}
+	if ledger.Received != 1 || ledger.Completed != 0 || ledger.Success != 0 || ledger.Failures != 0 || ledger.Cancelled != 1 || ledger.Rejected != 0 ||
+		ledger.Received != ledger.Completed+ledger.Cancelled+ledger.Rejected {
+		t.Fatalf("independent reference ledger did not reconcile cancellation: %+v", ledger)
+	}
+}
+
+func TestDrainDeadlineCancellationReconcilesWithIndependentReferenceLedger(t *testing.T) {
+	fixture, err := reference.New(reference.Config{Delay: 1500 * time.Millisecond, MaxConcurrent: 10, MaxRequests: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	requestStarted := make(chan struct{}, 10)
+	requestFinished := make(chan struct{}, 10)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestStarted <- struct{}{}
+		defer func() { requestFinished <- struct{}{} }()
+		fixture.ServeHTTP(w, r)
+	}))
+	defer server.Close()
+
+	v := scenario(t, server.URL, []config.Step{{Name: "slow", Path: "/work"}})
+	v.Scenario.Users = 10
+	v.Scenario.Mode = "arrival"
+	v.Scenario.ArrivalRate = 20
+	v.Scenario.MaxRPS = 30
+	v.Duration = 300 * time.Millisecond
+	v.Timeout = 2 * time.Second
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		for range 6 {
+			<-requestStarted
+		}
+		// All scheduled work is admitted before this delay expires; abort while
+		// the engine is draining in-flight journeys after the observation window.
+		time.Sleep(100 * time.Millisecond)
+		cancel()
+	}()
+	run := Run(ctx, v)
+	cancel()
+	for i := int64(0); i < run.IterationsStarted; i++ {
+		select {
+		case <-requestFinished:
+		case <-time.After(time.Second):
+			t.Fatalf("reference handler %d did not finish after cancellation during drain", i+1)
+		}
+	}
+	ledger := fixture.Snapshot()
+	if run.ArrivalsScheduled != 6 || run.IterationsStarted != 6 || run.IterationsCompleted != 0 ||
+		run.Metrics.Cancelled != 6 || run.Journeys.Cancelled != 6 || run.Outcome == "PASS" {
+		t.Fatalf("work interrupted during drain was not reported as incomplete: %+v", run)
+	}
+	if ledger.Received != 6 || ledger.Completed != 0 || ledger.Success != 0 || ledger.Failures != 0 || ledger.Cancelled != 6 || ledger.Rejected != 0 ||
+		ledger.Received != ledger.Completed+ledger.Cancelled+ledger.Rejected {
+		t.Fatalf("cancellation during drain did not reconcile with the independent server ledger: %+v", ledger)
 	}
 }
 

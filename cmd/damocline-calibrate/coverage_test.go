@@ -21,14 +21,16 @@ func validCoverageCalibration(t *testing.T, extended bool) assessment {
 	g, f, stages := testPreflightInputs(extended, 1)
 	start := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
 	p, err := newPreflightRecord(start, start.Add(time.Minute), g, f, stages, "REFERENCE_SMOKE_PASSED")
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	runs := make([]report.Result, len(stages))
 	for i, s := range stages {
 		runs[i] = report.Result{ArrivalsScheduled: s.Scheduled,
 			IterationsStarted: s.Started, IterationsCompleted: s.Completed,
 			ArrivalsDropped: s.Dropped, Outcome: s.Outcome}
 	}
-	return assessment{SchemaVersion: 1, Status: "REFERENCE_SMOKE_PASSED",
+	return assessment{SchemaVersion: 1, Status: "REFERENCE_SMOKE_PASSED", SchedulerLag: passedSchedulerLagCalibration(),
 		Preflight: p, Runs: runs}
 }
 
@@ -45,7 +47,9 @@ func findDimension(t *testing.T, got coverageAssessment, name, status string) {
 	t.Helper()
 	for _, item := range got.Dimensions {
 		if item.Name == name {
-			if item.Status != status { t.Fatalf("%s: got %s, want %s", name, item.Status, status) }
+			if item.Status != status {
+				t.Fatalf("%s: got %s, want %s", name, item.Status, status)
+			}
 			return
 		}
 	}
@@ -70,7 +74,10 @@ func TestOfflineReferenceShapeNeverBecomesCapacityApproval(t *testing.T) {
 }
 
 func TestUnobservedRateMustNotInterpolateOrBorrowExtendedEnvelope(t *testing.T) {
-	for _, tc := range []struct{ rate int; extended bool }{
+	for _, tc := range []struct {
+		rate     int
+		extended bool
+	}{
 		{1, true}, {3, true}, {25, true}, {50, false}, {100, false},
 	} {
 		s := referenceShapedScenario()
@@ -96,7 +103,7 @@ func TestCoverageLabelsUnsupportedDimensionsIndependently(t *testing.T) {
 	sc.Duration = "2m"
 	sc.Timeout = "8s"
 	sc.Profiles = []config.Profile{
-		{Name: "dashboard", Weight: 70, Steps: []config.Step{{Name: "dashboard", Method: "GET", Path: "/dashboard", Headers: map[string]string{"Authorization":"Bearer private-secret"}}}},
+		{Name: "dashboard", Weight: 70, Steps: []config.Step{{Name: "dashboard", Method: "GET", Path: "/dashboard", Headers: map[string]string{"Authorization": "Bearer private-secret"}}}},
 		{Name: "write", Weight: 30, Steps: []config.Step{{Name: "save", Method: "POST", Path: "/save", BodyEnv: "PRIVATE_DATA"}}},
 	}
 	sc.Steps = nil
@@ -111,7 +118,9 @@ func TestCoverageLabelsUnsupportedDimensionsIndependently(t *testing.T) {
 		t.Fatalf("a remote weighted workload cannot inherit the fixture PASS: %+v", got)
 	}
 	serialized, err := json.Marshal(got)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, secret := range []string{"private-secret", "PRIVATE_DATA", "example.invalid", "/dashboard", "/save"} {
 		if bytes.Contains(serialized, []byte(secret)) {
 			t.Fatalf("report leaked a scenario input: %s", secret)
@@ -148,7 +157,9 @@ func TestFailedAndMissingCalibrationNeverYieldPassingRates(t *testing.T) {
 	findDimension(t, missing, "arrival_rate", coverageUnknown)
 	findDimension(t, missing, "actor_budget", coverageUnknown)
 	findDimension(t, missing, "rate_ceiling", coverageUnknown)
-	if len(missing.TestedArrivalRates) != 0 { t.Fatal("missing calibration cannot certify any rate") }
+	if len(missing.TestedArrivalRates) != 0 {
+		t.Fatal("missing calibration cannot certify any rate")
+	}
 }
 
 func TestCalibrationFileLoaderValidatesConsistencyAndSize(t *testing.T) {
@@ -158,11 +169,23 @@ func TestCalibrationFileLoaderValidatesConsistencyAndSize(t *testing.T) {
 	write := func(a assessment) {
 		t.Helper()
 		b, err := json.Marshal(a)
-		if err != nil { t.Fatal(err) }
-		if err := os.WriteFile(path, b, 0600); err != nil { t.Fatal(err) }
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, b, 0600); err != nil {
+			t.Fatal(err)
+		}
 	}
 	write(cal)
-	if _, err := loadCalibrationForCoverage(path); err != nil { t.Fatal(err) }
+	if _, err := loadCalibrationForCoverage(path); err != nil {
+		t.Fatal(err)
+	}
+	cal.SchedulerLag = schedulerLagCalibration{}
+	write(cal)
+	if _, err := loadCalibrationForCoverage(path); err == nil {
+		t.Fatal("passing calibration without scheduler-lag evidence was trusted")
+	}
+	cal.SchedulerLag = passedSchedulerLagCalibration()
 	cal.Runs[0].IterationsStarted = 0
 	write(cal)
 	corrupted, readErr := loadCalibrationForCoverage(path)
@@ -180,8 +203,12 @@ func TestCalibrationFileLoaderValidatesConsistencyAndSize(t *testing.T) {
 	if _, err := loadCalibrationForCoverage(path); err == nil {
 		t.Fatal("PASS with discrepancies was trusted")
 	}
-	if err := os.WriteFile(path, bytes.Repeat([]byte("x"), maxCalibrationBytes+1), 0600); err != nil { t.Fatal(err) }
-	if _, err := loadCalibrationForCoverage(path); err == nil { t.Fatal("oversize calibration accepted") }
+	if err := os.WriteFile(path, bytes.Repeat([]byte("x"), maxCalibrationBytes+1), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadCalibrationForCoverage(path); err == nil {
+		t.Fatal("oversize calibration accepted")
+	}
 }
 
 func TestOfflineCheckDoesNotContactTargetOrPrintScenarioSecrets(t *testing.T) {
@@ -192,28 +219,44 @@ func TestOfflineCheckDoesNotContactTargetOrPrintScenarioSecrets(t *testing.T) {
 	cal := validCoverageCalibration(t, false)
 	calPath := filepath.Join(t.TempDir(), "calibration.json")
 	calData, err := json.Marshal(cal)
-	if err != nil { t.Fatal(err) }
-	if err := os.WriteFile(calPath, calData, 0600); err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(calPath, calData, 0600); err != nil {
+		t.Fatal(err)
+	}
 
 	sc := referenceShapedScenario()
 	sc.BaseURL = srv.URL
 	sc.Steps[0].Headers = map[string]string{"Authorization": "Bearer unique-private-marker"}
 	scPath := filepath.Join(t.TempDir(), "scenario.json")
 	scData, err := json.Marshal(sc)
-	if err != nil { t.Fatal(err) }
-	if err := os.WriteFile(scPath, scData, 0600); err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(scPath, scData, 0600); err != nil {
+		t.Fatal(err)
+	}
 
 	var out bytes.Buffer
 	err = runOfflineCoverage(calPath, scPath, &out)
-	if !errors.Is(err, errInconclusive) { t.Fatalf("should return inconclusive: %v", err) }
-	if hits != 0 { t.Fatal("offline scenario check made a network request") }
+	if !errors.Is(err, errInconclusive) {
+		t.Fatalf("should return inconclusive: %v", err)
+	}
+	if hits != 0 {
+		t.Fatal("offline scenario check made a network request")
+	}
 	if strings.Contains(out.String(), "unique-private-marker") || strings.Contains(out.String(), srv.URL) ||
 		strings.Contains(out.String(), scPath) {
 		t.Fatalf("offline assessment leaked scenario information: %s", out.String())
 	}
 	var got coverageAssessment
-	if err := json.Unmarshal(out.Bytes(), &got); err != nil { t.Fatal(err) }
-	if got.Status != coverageInconclusive { t.Fatalf("unexpected status: %+v", got) }
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != coverageInconclusive {
+		t.Fatalf("unexpected status: %+v", got)
+	}
 }
 
 func TestBadScenarioFailsWithoutNetwork(t *testing.T) {
