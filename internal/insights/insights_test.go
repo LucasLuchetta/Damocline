@@ -248,6 +248,18 @@ func TestReadRunAcceptsSchemaNineMixProvenance(t *testing.T) {
 	}
 }
 
+func TestReadRunAcceptsSchemaTenSamplerEvidence(t *testing.T) {
+	r := report.Result{SchemaVersion: 10, Name: "Synthetic example", Target: "https://app.example.com", StartedAt: "2026-10-01T12:00:00Z", ElapsedSeconds: 30, ObservationSeconds: 30, Config: report.RunConfig{Users: 1}, Generator: &generatorhealth.Summary{Samples: 5, SamplingIntervalMS: 250, MaxSampleGapMS: 251, SampleCollectionTotalMS: 1.2, SampleCollectionMaxMS: 0.4}}
+	path := filepath.Join(t.TempDir(), "schema-v10.json")
+	if err := report.WriteJSON(path, r); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ReadRun(path)
+	if err != nil || got.SchemaVersion != 10 || got.Generator.MaxSampleGapMS != 251 {
+		t.Fatalf("schema-v10 sampler report not readable: %+v err=%v", got, err)
+	}
+}
+
 func TestComparisonRequiresMatchingMixProvenance(t *testing.T) {
 	old, current := synthetic(), synthetic()
 	old.Config.WorkloadRevision, current.Config.WorkloadRevision = "rev-1", "rev-1"
@@ -268,16 +280,16 @@ func TestNoPrivateTargetInFixture(t *testing.T) {
 
 func TestGeneratorHealthReportedWithoutAssumingServerBottleneck(t *testing.T) {
 	r := synthetic()
-	r.SchemaVersion = 3
+	r.SchemaVersion = 10
 	r.Generator = &generatorhealth.Summary{
-		Samples: 6, ObservedSeconds: 2, PeakHeapAllocBytes: 32 << 20,
+		Samples: 6, ObservedSeconds: 2, SamplingIntervalMS: 250, MaxSampleGapMS: 251, SampleCollectionTotalMS: 2.4, SampleCollectionMaxMS: 0.5, PeakHeapAllocBytes: 32 << 20,
 		PeakGoroutines: 21, GCCycles: 1, GoCPUValid: true,
 		GoCPUUtilizationRatio: 0.96, ProcessSamples: 6, ProcessCPUSamples: 5, ProcessCPUValid: true,
 		PeakProcessRSSBytes: 64 << 20, PeakProcessCPUUtilizationRatio: 0.95,
 	}
 	var output bytes.Buffer
 	Write(&output, r, nil, nil)
-	for _, phrase := range []string{"Load-generator runtime", "Go runtime CPU activity", "Validate generator headroom", "Load-generator OS process", "Peak sampled generator process CPU", "Validate generator headroom", "SERVER UPGRADE: NOT JUSTIFIED"} {
+	for _, phrase := range []string{"Load-generator runtime", "Generator sampler", "maximum sample gap", "Go runtime CPU activity", "Validate generator headroom", "Load-generator OS process", "Peak sampled generator process CPU", "SERVER UPGRADE: NOT JUSTIFIED"} {
 		if !strings.Contains(output.String(), phrase) {
 			t.Fatalf("missing %q in output: %s", phrase, output.String())
 		}

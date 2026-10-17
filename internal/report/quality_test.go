@@ -35,6 +35,56 @@ func TestQualityNoLocalCapacityCertificateEvenForPerfectDelivery(t *testing.T) {
 	}
 }
 
+func TestQualityLimitsStaleGeneratorSamplingAndRejectsMalformedSampling(t *testing.T) {
+	base := validSyntheticQualityRun()
+	base.SchemaVersion = 10
+	base.Generator.ObservedSeconds = 10
+	base.Generator.GOMAXPROCS = 1
+	base.Generator.SamplingIntervalMS = 250
+	base.Generator.SampleCollectionTotalMS = 2
+	base.Generator.SampleCollectionMaxMS = 0.5
+	base.Generator.MaxSampleGapMS = 250
+	base.Generator.ProcessSamples = base.Generator.Samples
+	base.Generator.ProcessCPUSamples = base.Generator.ProcessSamples - 1
+	base.Generator.PeakProcessRSSBytes = 4096
+	base.Generator.GoCPUCapacitySeconds = 10
+	base.Generator.PeakHeapAllocBytes = 1024
+	base.Generator.PeakGoroutines = 2
+	if q := AssessQuality(base); q.State != QualityLimited {
+		t.Fatalf("valid bounded sampler should preserve the existing limited envelope: %+v", q)
+	}
+	stale := base
+	staleGenerator := *base.Generator
+	staleGenerator.MaxSampleGapMS = 501
+	stale.Generator = &staleGenerator
+	q := AssessQuality(stale)
+	if q.State != QualityLimited || !strings.Contains(strings.Join(q.Findings, " "), "sampling has a gap") {
+		t.Fatalf("stale sampling gap was not exposed: %+v", q)
+	}
+	zero := base
+	zeroGenerator := *base.Generator
+	zeroGenerator.PeakProcessRSSBytes = 0
+	zero.Generator = &zeroGenerator
+	if q := AssessQuality(zero); q.State != QualityLimited || !strings.Contains(strings.Join(q.Findings, " "), "no resident-memory value") {
+		t.Fatalf("zero process RSS was not exposed as limited evidence: %+v", q)
+	}
+	for name, mutate := range map[string]func(*generatorhealth.Summary){
+		"non-finite interval":               func(g *generatorhealth.Summary) { g.SamplingIntervalMS = math.NaN() },
+		"sample counts exceed observations": func(g *generatorhealth.Summary) { g.ProcessSamples = g.Samples + 1 },
+		"collection peak exceeds total":     func(g *generatorhealth.Summary) { g.SampleCollectionMaxMS = g.SampleCollectionTotalMS + 1 },
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := base
+			copy := *base.Generator
+			mutate(&copy)
+			r.Generator = &copy
+			if q := AssessQuality(r); q.State != QualityInvalid {
+				t.Fatalf("malformed sampler evidence was not INVALID: %+v", q)
+			}
+		})
+	}
+}
+
 func TestQualityRejectsCorruptedAccounting(t *testing.T) {
 	for _, mutate := range []func(*Result){
 		func(r *Result) { r.Metrics.Success++ },
