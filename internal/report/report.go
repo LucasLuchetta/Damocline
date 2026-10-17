@@ -166,6 +166,7 @@ type Result struct {
 	Warnings            []string                 `json:"warnings,omitempty"`
 	Generator           *generatorhealth.Summary `json:"generator,omitempty"`
 	Quality             *Quality                  `json:"data_quality,omitempty"`
+	Signals             []Signal                  `json:"diagnostic_signals,omitempty"`
 }
 
 // WindowSeconds returns the configured workload window when the report records

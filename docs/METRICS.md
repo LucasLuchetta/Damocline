@@ -28,6 +28,10 @@ Do not describe a request rate, open TCP connection count, or total logins as "s
 
 A **partly open session model**—independent session arrivals followed by dependent requests and think times within each session—is not implemented. Open-loop journey arrivals and closed-loop VUs answer different questions and are not interchangeable.
 
+## Evidence-aware bottleneck signals (G0-05 partial)
+
+`diagnostic_signals` identifies observable symptoms separately from causal conclusions. A client-side `max_rps` ceiling, missed journey starts, exhausted synthetic workers or high sampled generator CPU are not evidence of server saturation. `HTTP_ERROR_RESPONSE` means an observed 4xx/5xx status, not proof that CPU, a database or connection pool caused the failure. Missing telemetry is flagged explicitly; where no supported signal exists, `BOTTLENECK_NOT_ESTABLISHED` indicates that root cause is unknown. Full connection-pool and infrastructure-level attribution remains unimplemented.
+
 ## Measurement data quality (initial G0-16 slice)
 
 New run reports include `data_quality.state` and a bounded `data_quality.findings` list. The state is distinct from `outcome` (observed request/step SLO PASS/FAIL/INCONCLUSIVE). Arithmetic contradictions between scheduled/started/dropped work, negative counts, impossible request or journey totals, or invalid durations are `INVALID`. Missing generator process samples, dropped/cancelled work, client-rate saturation and the absence of workload-equivalent preflight evidence are described as `LIMITED`. Invalid accounting cannot remain an observed PASS.

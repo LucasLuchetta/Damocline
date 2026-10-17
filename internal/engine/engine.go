@@ -373,6 +373,7 @@ func Run(parent context.Context, v config.Validated) report.Result {
 	}
 
 	result.Quality = report.AssessQuality(result)
+	result.Signals = report.DetectSignals(result)
 	if result.Quality.State == report.QualityInvalid && result.Outcome == "PASS" {
 		result.Outcome = "INCONCLUSIVE"
 		result.Warnings = append(result.Warnings, "Inconsistent delivery/accounting evidence prevents a passing observation.")
