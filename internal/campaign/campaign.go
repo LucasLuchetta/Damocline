@@ -4,6 +4,7 @@ package campaign
 import (
 	"context"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/LucasLuchetta/Damocline/internal/config"
@@ -31,17 +32,30 @@ type Trial struct {
 }
 
 type Result struct {
-	SchemaVersion int      `json:"schema_version"`
-	Scenario      string   `json:"scenario"`
-	Target        string   `json:"target"`
-	StartedAt     string   `json:"started_at"`
-	Warmup        string   `json:"warmup"`
-	Observation   string   `json:"observation"`
-	Recovery      string   `json:"recovery"`
-	Repeats       int      `json:"repeats"`
-	Trials        []Trial  `json:"trials"`
-	Outcome       string   `json:"outcome"`
-	Notes         []string `json:"notes"`
+	SchemaVersion          int          `json:"schema_version"`
+	Scenario               string       `json:"scenario"`
+	Target                 string       `json:"target"`
+	StartedAt              string       `json:"started_at"`
+	Warmup                 string       `json:"warmup"`
+	Observation            string       `json:"observation"`
+	Recovery               string       `json:"recovery"`
+	Repeats                int          `json:"repeats"`
+	Trials                 []Trial      `json:"trials"`
+	ObservationVariability *Variability `json:"observation_variability,omitempty"`
+	Outcome                string       `json:"outcome"`
+	Notes                  []string     `json:"notes"`
+}
+
+// Variability summarizes the spread observed across independent observation
+// phases. It is descriptive and does not claim a confidence interval.
+type Variability struct {
+	Runs             int     `json:"runs"`
+	P95MinMS         float64 `json:"p95_min_ms"`
+	P95MaxMS         float64 `json:"p95_max_ms"`
+	ErrorRateMin     float64 `json:"error_rate_min"`
+	ErrorRateMax     float64 `json:"error_rate_max"`
+	ThroughputMinRPS float64 `json:"throughput_min_rps"`
+	ThroughputMaxRPS float64 `json:"throughput_max_rps"`
 }
 
 type Runner func(context.Context, config.Validated) report.Result
@@ -134,5 +148,29 @@ func WithRunner(ctx context.Context, base config.Validated, options Options, run
 		}
 	}
 	result.Outcome = "PASS"
+	result.ObservationVariability = summarizeObservationVariability(result.Trials)
 	return result, nil
+}
+
+func summarizeObservationVariability(trials []Trial) *Variability {
+	summary := Variability{P95MinMS: math.Inf(1), ErrorRateMin: math.Inf(1), ThroughputMinRPS: math.Inf(1)}
+	for _, trial := range trials {
+		for _, phase := range trial.Phases {
+			if phase.Name != "observation" || phase.Run.WindowSeconds() <= 0 {
+				continue
+			}
+			summary.Runs++
+			summary.P95MinMS = math.Min(summary.P95MinMS, phase.Run.Metrics.P95MS)
+			summary.P95MaxMS = math.Max(summary.P95MaxMS, phase.Run.Metrics.P95MS)
+			summary.ErrorRateMin = math.Min(summary.ErrorRateMin, phase.Run.ErrorsRate)
+			summary.ErrorRateMax = math.Max(summary.ErrorRateMax, phase.Run.ErrorsRate)
+			throughput := float64(phase.Run.Metrics.Total) / phase.Run.WindowSeconds()
+			summary.ThroughputMinRPS = math.Min(summary.ThroughputMinRPS, throughput)
+			summary.ThroughputMaxRPS = math.Max(summary.ThroughputMaxRPS, throughput)
+		}
+	}
+	if summary.Runs == 0 {
+		return nil
+	}
+	return &summary
 }

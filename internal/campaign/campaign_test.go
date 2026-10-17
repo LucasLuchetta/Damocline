@@ -22,9 +22,9 @@ func TestCampaignSeparatesWarmupObservationAndRecovery(t *testing.T) {
 	var durations []time.Duration
 	result, err := WithRunner(context.Background(), scenario(t), Options{Warmup: 10 * time.Second, Observation: 10 * time.Second, Recovery: 10 * time.Second, Repeats: 2}, func(_ context.Context, v config.Validated) report.Result {
 		durations = append(durations, v.Duration)
-		return report.Result{Outcome: "PASS"}
+		return report.Result{Outcome: "PASS", ElapsedSeconds: v.Duration.Seconds(), ObservationSeconds: v.Duration.Seconds(), Metrics: report.MetricSet{Total: 20, P95MS: 100}, ErrorsRate: 0.01}
 	})
-	if err != nil || result.Outcome != "PASS" || len(result.Trials) != 2 || len(durations) != 6 {
+	if err != nil || result.Outcome != "PASS" || len(result.Trials) != 2 || len(durations) != 6 || result.ObservationVariability == nil || result.ObservationVariability.Runs != 2 {
 		t.Fatalf("unexpected campaign: %+v err=%v durations=%v", result, err, durations)
 	}
 }

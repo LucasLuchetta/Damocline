@@ -243,6 +243,10 @@ func campaignCmd(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stdout, "  %s: %s | p95 %.0fms | errors %.2f%% | requests %d\n", phase.Name, phase.Run.Outcome, phase.Run.Metrics.P95MS, phase.Run.ErrorsRate*100, phase.Run.Metrics.Total)
 		}
 	}
+	if variability := result.ObservationVariability; variability != nil {
+		fmt.Fprintf(stdout, "Observation spread across %d trials: p95 %.0f-%.0fms | errors %.2f%%-%.2f%% | throughput %.2f-%.2f req/s\n", variability.Runs, variability.P95MinMS, variability.P95MaxMS, variability.ErrorRateMin*100, variability.ErrorRateMax*100, variability.ThroughputMinRPS, variability.ThroughputMaxRPS)
+		fmt.Fprintln(stdout, "This is observed run-to-run spread, not a statistical confidence interval.")
+	}
 	fmt.Fprintf(stdout, "Campaign outcome: %s\n", result.Outcome)
 	fmt.Fprintln(stdout, "This is repeated observed evidence under the configured workload. It is not a universal capacity certification or infrastructure recommendation.")
 	if *out != "" {
