@@ -1,6 +1,6 @@
 # Source-based installation and temporary browser login
 
-Damocline is an independent Go load-testing CLI. It is **not a k6 wrapper**.
+Damocline is an independent Go load-testing CLI with its own native scheduling and metrics engine.
 
 ## Clone once, type `damocline`
 
