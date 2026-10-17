@@ -10,7 +10,6 @@ import (
 	"regexp"
 	"sort"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/LucasLuchetta/Damocline/internal/config"
@@ -39,11 +38,8 @@ type historyOption struct {
 func preventSecretArchiving(s config.Scenario) error {
 	for _, step := range s.Steps {
 		for name, value := range step.Headers {
-			switch strings.ToLower(name) {
-			case "cookie", "authorization", "proxy-authorization", "x-api-key":
-				if !credentialReference.MatchString(value) {
-					return fmt.Errorf("cannot archive literal %s header; use an environment variable reference", name)
-				}
+			if !credentialReference.MatchString(value) {
+				return fmt.Errorf("cannot archive literal %s header; use an environment variable reference", name)
 			}
 		}
 	}
