@@ -115,6 +115,16 @@ To correlate host samples against staged loads:
 
 The correlation report shows mean/peak CPU and peak memory use during individual trials. It does **not** measure per-container usage, PostgreSQL waits, Redis, application traces or prove causality. Consider collecting `docker stats` and database metrics independently for further diagnosis.
 
+## 9. Collect application metrics explicitly
+
+For an application that exposes a permitted Prometheus-text metric endpoint, take a bounded snapshot with explicit authorization:
+
+```powershell
+.\damocline.exe metrics --endpoint https://app.example.com/metrics --authorized --out reports\application-metrics.json
+```
+
+The collector accepts only HTTP(S), follows no redirects, caps the response body, aggregates labeled samples by metric name, and does not preserve labels or credentials. It is a point-in-time observation. Correlate it with a named campaign manually; a high queue, error, or latency metric does not by itself prove which component caused a bottleneck.
+
 ## 8. Limitations and quality checks
 
 - A high VU count with a low RPS cap **does not prove** the server can support that count of active people.

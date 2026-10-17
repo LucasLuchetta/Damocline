@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/LucasLuchetta/Damocline/internal/appmetrics"
 	"github.com/LucasLuchetta/Damocline/internal/campaign"
 	"github.com/LucasLuchetta/Damocline/internal/capacitygoal"
 	"github.com/LucasLuchetta/Damocline/internal/config"
@@ -68,6 +69,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return campaignCmd(args[1:], stdout, stderr)
 	case "monitor":
 		return monitor(args[1:], stdout, stderr)
+	case "metrics":
+		return metricsCmd(args[1:], stdout, stderr)
 	case "correlate":
 		return correlateCmd(args[1:], stdout, stderr)
 	default:
@@ -91,6 +94,7 @@ Usage:
 	  damocline campaign --config scenario.json --warmup 30s --observation 2m --recovery 30s --repeats 2 --authorized
   damocline explore --config scenario.json --peak-users 10 --growth-percent 25 --reserve-percent 20 --authorized
   damocline monitor --duration 3m --interval 2s --out reports/host.json
+	  damocline metrics --endpoint https://app.example.com/metrics --authorized [--out reports/app-metrics.json]
   damocline correlate --load reports/load.json --host reports/host.json --out reports/correlated.json
   damocline update           # check and install source updates
   damocline update --auto    # enable automatic updates
@@ -393,6 +397,44 @@ func explore(args []string, stdout, stderr io.Writer) int {
 }
 
 // monitor reads host-level CPU and RAM without opening any network listener.
+func metricsCmd(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("metrics", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	endpoint := fs.String("endpoint", "", "explicit authorized application metrics endpoint")
+	authorized := fs.Bool("authorized", false, "confirm permission to access the metrics endpoint")
+	out := fs.String("out", "", "JSON snapshot output path")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if *endpoint == "" || len(fs.Args()) != 0 {
+		fmt.Fprintln(stderr, "--endpoint is required and positional arguments are not accepted")
+		return 2
+	}
+	if !*authorized {
+		fmt.Fprintln(stderr, "explicit --authorized confirmation is required before accessing metrics")
+		return 2
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	snapshot, err := appmetrics.Collect(ctx, *endpoint)
+	if err != nil {
+		fmt.Fprintf(stderr, "metrics error: %v\n", err)
+		return 2
+	}
+	fmt.Fprintf(stdout, "Application metrics: %s | %d metric names\n", snapshot.Source, len(snapshot.Samples))
+	for _, sample := range snapshot.Samples {
+		fmt.Fprintf(stdout, "  %s = %g\n", sample.Name, sample.Value)
+	}
+	fmt.Fprintln(stdout, snapshot.Note)
+	if *out != "" {
+		if err := report.WriteAnyJSON(*out, snapshot); err != nil {
+			fmt.Fprintf(stderr, "report error: %v\n", err)
+			return 2
+		}
+	}
+	return 0
+}
+
 func monitor(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("monitor", flag.ContinueOnError)
 	fs.SetOutput(stderr)
