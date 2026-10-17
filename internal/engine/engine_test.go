@@ -326,7 +326,10 @@ func TestPlannedArrivalAccountingWithSlowLocalServer(t *testing.T) {
 
 func TestArrivalRunDrainsAdmittedWorkAfterScheduleWindow(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		time.Sleep(25 * time.Millisecond)
+		// A 160ms response spans several 50ms arrival intervals. The last
+		// admitted request must still be running at the 300ms cutoff,
+		// independent of Windows/Linux scheduling jitter.
+		time.Sleep(160 * time.Millisecond)
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()

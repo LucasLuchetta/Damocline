@@ -30,6 +30,8 @@ jobs:
         run: go run ./cmd/damocline help
       - name: Reconcile extended local reference workload
         run: go run ./cmd/damocline-calibrate --extended --out .damocline/calibration/ci-reference.json
+      - name: Validate bounded transport fixtures
+        run: go run ./cmd/damocline-calibrate --transport-matrix --out .damocline/calibration/ci-transport.json
 
 # CI verifies source compatibility but intentionally does not publish prebuilt binaries.
 
@@ -90,3 +92,5 @@ jobs:
       - name: Reconcile extended local reference workload
         shell: pwsh
         run: go run ./cmd/damocline-calibrate --extended --out .damocline/calibration/ci-reference.json
+      - name: Validate bounded transport fixtures
+        run: go run ./cmd/damocline-calibrate --transport-matrix --out .damocline/calibration/ci-transport.json
