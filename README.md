@@ -101,7 +101,7 @@ See [Understand your results](docs/REPORT_EXPLAINER.md) for interpretation, samp
 
 ## Terminal home screen
 
-Run `damocline` or `.\\start.cmd` to open the **Eclipse** pixel-art splash (the Damocline sword crossing an eclipse-like horizon in Unicode block characters) and a numbered home menu. Select **New load test**, **Saved scenarios**, **Continue current**, **Help**, or **Exit** without remembering CLI flags. The interface uses optional ANSI colors and a no-color fallback for older terminals and redirected output. Typed number + Enter is supported everywhere; raw arrow-key navigation is not implemented.
+Run `damocline` or `.\\start.cmd` to open the **Eclipse** pixel-art splash (the Damocline sword crossing an eclipse-like horizon in Unicode block characters) and a numbered home menu. Select **New load test**, **Saved scenarios**, **Continue current**, **Help**, or **Exit** without remembering CLI flags. The interface uses optional ANSI colors and a no-color fallback for older terminals and redirected output. On a supported interactive Windows console, use **↑/↓ and Enter** (or number shortcuts) to navigate; redirected input and older terminals retain numbered input. The optional source update check now happens **before the splash and menu**, not after choosing a scenario.
 
 This is a presentation layer only: it does not change authorization, workload configuration, authentication handling, or the native Go load engine. For scripting, use explicit commands such as `damocline run`, `damocline /start`, or `damocline /history` as before.
 
