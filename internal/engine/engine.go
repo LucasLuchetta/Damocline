@@ -1,4 +1,4 @@
-// Package engine runs bounded, closed-loop HTTP workloads. It does not infer universal capacity.
+// Package engine implements Damocline's own bounded HTTP scheduling engine.
 package engine
 
 import (
@@ -8,7 +8,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/cookiejar"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/LucasLuchetta/Damocline/internal/config"
@@ -18,21 +21,21 @@ import (
 const maxResponseBytes = 2 << 20
 
 type sample struct {
-	name      string
-	latency   time.Duration
-	success   bool
-	cancelled bool
-	reason    string
+	name               string
+	latency            time.Duration
+	success, cancelled bool
+	reason             string
 }
-
 type collector struct {
 	mu        sync.Mutex
 	aggregate *report.MetricSet
 	steps     map[string]*report.MetricSet
+	journeys  *report.MetricSet
 }
 
 func newCollector(v config.Validated) *collector {
-	c := &collector{aggregate: report.NewMetricSet(), steps: make(map[string]*report.MetricSet, len(v.Steps))}
+	c := &collector{aggregate: report.NewMetricSet(),
+		journeys: report.NewMetricSet(), steps: make(map[string]*report.MetricSet, len(v.Steps))}
 	for _, s := range v.Steps {
 		c.steps[s.Name] = report.NewMetricSet()
 	}
@@ -50,7 +53,6 @@ func Run(parent context.Context, v config.Validated) report.Result {
 	ctx, cancel := context.WithTimeout(parent, v.Duration)
 	defer cancel()
 	coll := newCollector(v)
-	// The ticker imposes a process-wide start rate ceiling, even with many virtual users.
 	ticker := time.NewTicker(time.Second / time.Duration(v.Scenario.MaxRPS))
 	defer ticker.Stop()
 	tr := http.DefaultTransport.(*http.Transport).Clone()
@@ -60,59 +62,155 @@ func Run(parent context.Context, v config.Validated) report.Result {
 	tr.ResponseHeaderTimeout = v.Timeout
 	tr.IdleConnTimeout = 15 * time.Second
 	defer tr.CloseIdleConnections()
-	client := &http.Client{Transport: tr, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
+	var startedIterations, completedIterations, scheduledIterations, droppedIterations atomic.Int64
 	var wg sync.WaitGroup
-	for i := 0; i < v.Scenario.Users; i++ {
-		wg.Add(1)
-		go func(index int) {
-			defer wg.Done()
-			delay := time.Duration(index) * v.RampUp / time.Duration(v.Scenario.Users)
-			if !sleep(ctx, delay) {
-				return
-			}
-			for {
-				for _, step := range v.Steps {
-					if !waitToken(ctx, ticker.C) {
-						return
-					}
-					sample := execute(ctx, client, v.Timeout, step)
-					coll.add(sample)
-					if sample.cancelled {
-						return
-					}
-					if !sleep(ctx, v.ThinkTime) {
-						return
-					}
+	clients := make([]*http.Client, v.Scenario.Users)
+	for i := range clients {
+		jar, _ := cookiejar.New(nil)
+		if len(v.Cookies) > 0 {
+			for _, part := range strings.Split(v.Cookies[i], ";") {
+				part = strings.TrimSpace(part)
+				pair := strings.SplitN(part, "=", 2)
+				if len(pair) == 2 && strings.TrimSpace(pair[0]) != "" {
+					jar.SetCookies(v.Base, []*http.Cookie{{Name: strings.TrimSpace(pair[0]), Value: strings.TrimSpace(pair[1]), Path: "/"}})
 				}
 			}
-		}(i)
+		}
+		clients[i] = &http.Client{Transport: tr, Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	}
+	iteration := func(client *http.Client) {
+		startedIterations.Add(1)
+		journeyStart := time.Now()
+		journeyOk := true
+		fullyCompleted := true
+		for _, step := range v.Steps {
+			if !waitToken(ctx, ticker.C) {
+				fullyCompleted = false
+				break
+			}
+			s := execute(ctx, client, v.Timeout, step)
+			coll.add(s)
+			if !s.success {
+				journeyOk = false
+			}
+			if s.cancelled {
+				fullyCompleted = false
+				break
+			}
+			if !sleep(ctx, v.ThinkTime) {
+				fullyCompleted = false
+				break
+			}
+		}
+		if fullyCompleted {
+			completedIterations.Add(1)
+			coll.mu.Lock()
+			coll.journeys.Record(time.Since(journeyStart), journeyOk, false, func() string {
+				if journeyOk {
+					return ""
+				}
+				return "journey_step_failed"
+			}())
+			coll.mu.Unlock()
+		}
+	}
+	if v.Scenario.Mode == "arrival" {
+		arrivals := make(chan struct{}) // unbuffered: busy workers cannot hide dropped arrivals
+		for i := 0; i < v.Scenario.Users; i++ {
+			wg.Add(1)
+			go func(client *http.Client) {
+				defer wg.Done()
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case _, ok := <-arrivals:
+						if !ok {
+							return
+						}
+						iteration(client)
+					}
+				}
+			}(clients[i])
+		}
+		interval := time.Second / time.Duration(v.Scenario.ArrivalRate)
+		clock := time.NewTicker(interval)
+	loop:
+		for {
+			select {
+			case <-ctx.Done():
+				break loop
+			case <-clock.C:
+				if ctx.Err() != nil {
+					break loop
+				}
+				scheduledIterations.Add(1)
+				select {
+				case arrivals <- struct{}{}:
+				default:
+					droppedIterations.Add(1)
+				}
+			}
+		}
+		clock.Stop()
+		close(arrivals)
+	} else {
+		for i := 0; i < v.Scenario.Users; i++ {
+			wg.Add(1)
+			go func(index int) {
+				defer wg.Done()
+				delay := time.Duration(index) * v.RampUp / time.Duration(v.Scenario.Users)
+				if !sleep(ctx, delay) {
+					return
+				}
+				for ctx.Err() == nil {
+					scheduledIterations.Add(1)
+					iteration(clients[index])
+				}
+			}(i)
+		}
 	}
 	wg.Wait()
 	coll.mu.Lock()
-	aggregate := coll.aggregate.Snapshot()
+	agg := coll.aggregate.Snapshot()
+	journeyMetrics := coll.journeys.Snapshot()
 	steps := make([]report.StepResult, 0, len(v.Steps))
 	for _, st := range v.Steps {
 		steps = append(steps, report.StepResult{Name: st.Name, Method: st.Method, Path: safePath(st.Path), Metrics: coll.steps[st.Name].Snapshot()})
 	}
 	coll.mu.Unlock()
 	elapsed := time.Since(started)
-	thresholdErrors := 0.0
-	if aggregate.Total > 0 {
-		thresholdErrors = float64(aggregate.Failures) / float64(aggregate.Total)
+	errorsRate := 0.0
+	if agg.Total > 0 {
+		errorsRate = float64(agg.Failures) / float64(agg.Total)
 	}
-	passed := aggregate.Total > 0 && aggregate.Success > 0 && thresholdErrors <= v.Scenario.MaxErrorRate && aggregate.P95MS <= v.Scenario.P95LimitMS
-	result := report.Result{
-		SchemaVersion: 1, Name: v.Scenario.Name, Target: v.Base.Scheme + "://" + v.Base.Host,
-		StartedAt: started.UTC().Format(time.RFC3339), ElapsedSeconds: round(elapsed.Seconds()),
-		Config:  report.RunConfig{Users: v.Scenario.Users, Duration: v.Scenario.Duration, RampUp: v.Scenario.RampUp, ThinkTime: v.Scenario.ThinkTime, RequestTimeout: v.Timeout.String(), MaxRPS: v.Scenario.MaxRPS, P95LimitMS: v.Scenario.P95LimitMS, MaxErrorRate: v.Scenario.MaxErrorRate},
-		Metrics: aggregate, Steps: steps, Outcome: "FAIL", ErrorsRate: round(thresholdErrors),
-		Note: "A single closed-loop run is not a validated sustainable-capacity limit. VUs represent modeled actors, not all connected sessions.",
+	result := report.Result{SchemaVersion: 2, Name: v.Scenario.Name, Target: v.Base.Scheme + "://" + v.Base.Host, StartedAt: started.UTC().Format(time.RFC3339), ElapsedSeconds: round(elapsed.Seconds()),
+		Config:  report.RunConfig{Users: v.Scenario.Users, Duration: v.Scenario.Duration, RampUp: v.Scenario.RampUp, ThinkTime: v.Scenario.ThinkTime, RequestTimeout: v.Timeout.String(), MaxRPS: v.Scenario.MaxRPS, P95LimitMS: v.Scenario.P95LimitMS, MaxErrorRate: v.Scenario.MaxErrorRate, Mode: v.Scenario.Mode, ArrivalRate: v.Scenario.ArrivalRate, SeparateSessions: len(v.Cookies) > 0, MinSamplesPerStep: v.Scenario.MinSamplesPerStep},
+		Metrics: agg, Journeys: journeyMetrics, Steps: steps, Outcome: "PASS", ErrorsRate: round(errorsRate), IterationsStarted: startedIterations.Load(), IterationsCompleted: completedIterations.Load(), ArrivalsScheduled: scheduledIterations.Load(), ArrivalsDropped: droppedIterations.Load(),
+		Note: "Measured synthetic HTTP actors under the configured workload; not a universal server capacity or a browser-user count."}
+	if agg.Total == 0 || agg.Success == 0 || errorsRate > v.Scenario.MaxErrorRate || agg.P95MS > v.Scenario.P95LimitMS || result.ArrivalsDropped > 0 {
+		result.Outcome = "FAIL"
 	}
-	if passed {
-		result.Outcome = "PASS"
+	for _, st := range steps {
+		if st.Metrics.Total < v.Scenario.MinSamplesPerStep || st.Metrics.Success == 0 || st.Metrics.P95MS > v.Scenario.P95LimitMS || (st.Metrics.Total > 0 && float64(st.Metrics.Failures)/float64(st.Metrics.Total) > v.Scenario.MaxErrorRate) {
+			result.Outcome = "FAIL"
+		}
 	}
-	if ctx.Err() != nil && !errors.Is(ctx.Err(), context.DeadlineExceeded) {
+	if errors.Is(parent.Err(), context.Canceled) || errors.Is(parent.Err(), context.DeadlineExceeded) {
 		result.Outcome = "ABORTED"
+	}
+	if len(v.Cookies) == 0 && v.Scenario.Users > 1 {
+		result.Warnings = append(result.Warnings, "Multiple virtual users may share one login identity; configure per_vu_cookie_env_prefix to test independent authenticated sessions.")
+	}
+	// A saturated request-rate governor masks the offered capacity of added VUs.
+	if agg.Total > 0 && elapsed.Seconds() > 0 && float64(agg.Total)/elapsed.Seconds() > 0.9*float64(v.Scenario.MaxRPS) {
+		result.Warnings = append(result.Warnings, "Request throughput is near max_rps: the configured client-side rate ceiling may hide server capacity. This run alone cannot establish a user-count limit.")
+	}
+	if result.ArrivalsDropped > 0 {
+		result.Warnings = append(result.Warnings, "Arrival starts were dropped because all VU workers were busy. Offered load was not fully delivered.")
+	}
+	if agg.Cancelled > 0 {
+		result.Warnings = append(result.Warnings, "In-flight requests were cancelled at the test boundary; completion statistics exclude them.")
 	}
 	return result
 }
@@ -129,12 +227,12 @@ func sleep(ctx context.Context, d time.Duration) bool {
 	if d <= 0 {
 		return ctx.Err() == nil
 	}
-	timer := time.NewTimer(d)
-	defer timer.Stop()
+	t := time.NewTimer(d)
+	defer t.Stop()
 	select {
 	case <-ctx.Done():
 		return false
-	case <-timer.C:
+	case <-t.C:
 		return ctx.Err() == nil
 	}
 }
@@ -149,8 +247,8 @@ func execute(parent context.Context, client *http.Client, timeout time.Duration,
 	if err != nil {
 		return sample{name: s.Name, reason: "request_build"}
 	}
-	for key, value := range s.ResolvedHeaders {
-		req.Header.Set(key, value)
+	for k, v := range s.ResolvedHeaders {
+		req.Header.Set(k, v)
 	}
 	start := time.Now()
 	res, err := client.Do(req)
@@ -166,18 +264,18 @@ func execute(parent context.Context, client *http.Client, timeout time.Duration,
 	}
 	defer res.Body.Close()
 	data, readErr := io.ReadAll(io.LimitReader(res.Body, maxResponseBytes+1))
-	duration := time.Since(start)
+	d := time.Since(start)
 	if parent.Err() != nil {
-		return sample{name: s.Name, latency: duration, cancelled: true, reason: "run_cancelled"}
+		return sample{name: s.Name, latency: d, cancelled: true, reason: "run_cancelled"}
 	}
 	if readErr != nil {
 		if errors.Is(readErr, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return sample{name: s.Name, latency: duration, reason: "timeout"}
+			return sample{name: s.Name, latency: d, reason: "timeout"}
 		}
-		return sample{name: s.Name, latency: duration, reason: "body_read"}
+		return sample{name: s.Name, latency: d, reason: "body_read"}
 	}
 	if len(data) > maxResponseBytes {
-		return sample{name: s.Name, latency: duration, reason: "response_too_large"}
+		return sample{name: s.Name, latency: d, reason: "response_too_large"}
 	}
 	ok := res.StatusCode >= 200 && res.StatusCode <= 299
 	if len(s.ExpectedStatus) > 0 {
@@ -190,18 +288,16 @@ func execute(parent context.Context, client *http.Client, timeout time.Duration,
 		}
 	}
 	if !ok {
-		return sample{name: s.Name, latency: duration, reason: fmt.Sprintf("http_%d", res.StatusCode)}
+		return sample{name: s.Name, latency: d, reason: fmt.Sprintf("http_%d", res.StatusCode)}
 	}
 	if s.MustContain != "" && !bytes.Contains(data, []byte(s.MustContain)) {
-		return sample{name: s.Name, latency: duration, reason: "assertion_missing_text"}
+		return sample{name: s.Name, latency: d, reason: "assertion_missing_text"}
 	}
-	return sample{name: s.Name, latency: duration, success: true}
+	return sample{name: s.Name, latency: d, success: true}
 }
 func safePath(p string) string {
-	for i, ch := range p {
-		if ch == '?' {
-			return p[:i]
-		}
+	if i := strings.IndexByte(p, '?'); i >= 0 {
+		return p[:i]
 	}
 	return p
 }

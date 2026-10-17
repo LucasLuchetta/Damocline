@@ -76,14 +76,18 @@ func percentile(values []time.Duration, p float64) time.Duration {
 func roundMS(d time.Duration) float64 { return float64(d.Microseconds()) / 1000.0 }
 
 type RunConfig struct {
-	Users          int     `json:"users"`
-	Duration       string  `json:"duration"`
-	RampUp         string  `json:"ramp_up,omitempty"`
-	ThinkTime      string  `json:"think_time,omitempty"`
-	RequestTimeout string  `json:"request_timeout"`
-	MaxRPS         int     `json:"max_rps"`
-	P95LimitMS     float64 `json:"p95_limit_ms"`
-	MaxErrorRate   float64 `json:"max_error_rate"`
+	Users             int     `json:"users"`
+	Duration          string  `json:"duration"`
+	RampUp            string  `json:"ramp_up,omitempty"`
+	ThinkTime         string  `json:"think_time,omitempty"`
+	RequestTimeout    string  `json:"request_timeout"`
+	MaxRPS            int     `json:"max_rps"`
+	P95LimitMS        float64 `json:"p95_limit_ms"`
+	MaxErrorRate      float64 `json:"max_error_rate"`
+	Mode              string  `json:"mode"`
+	ArrivalRate       int     `json:"arrival_rate,omitempty"`
+	SeparateSessions  bool    `json:"separate_sessions"`
+	MinSamplesPerStep int     `json:"min_samples_per_step"`
 }
 type StepResult struct {
 	Name    string    `json:"name"`
@@ -92,20 +96,29 @@ type StepResult struct {
 	Metrics MetricSet `json:"metrics"`
 }
 type Result struct {
-	SchemaVersion  int          `json:"schema_version"`
-	Name           string       `json:"name"`
-	Target         string       `json:"target"`
-	StartedAt      string       `json:"started_at"`
-	ElapsedSeconds float64      `json:"elapsed_seconds"`
-	Config         RunConfig    `json:"config"`
-	Metrics        MetricSet    `json:"metrics"`
-	Steps          []StepResult `json:"steps"`
-	Outcome        string       `json:"outcome"`
-	ErrorsRate     float64      `json:"error_rate"`
-	Note           string       `json:"note"`
+	SchemaVersion       int          `json:"schema_version"`
+	Name                string       `json:"name"`
+	Target              string       `json:"target"`
+	StartedAt           string       `json:"started_at"`
+	ElapsedSeconds      float64      `json:"elapsed_seconds"`
+	Config              RunConfig    `json:"config"`
+	Metrics             MetricSet    `json:"metrics"`
+	Journeys            MetricSet    `json:"journeys"`
+	Steps               []StepResult `json:"steps"`
+	Outcome             string       `json:"outcome"`
+	ErrorsRate          float64      `json:"error_rate"`
+	Note                string       `json:"note"`
+	IterationsStarted   int64        `json:"iterations_started"`
+	IterationsCompleted int64        `json:"iterations_completed"`
+	ArrivalsScheduled   int64        `json:"arrivals_scheduled"`
+	ArrivalsDropped     int64        `json:"arrivals_dropped"`
+	Warnings            []string     `json:"warnings,omitempty"`
 }
 
-func WriteJSON(path string, r Result) error {
+func WriteJSON(path string, r Result) error { return WriteAnyJSON(path, r) }
+
+// WriteAnyJSON safely writes redacted report values to a restricted local file.
+func WriteAnyJSON(path string, r any) error {
 	d := filepath.Dir(path)
 	if err := os.MkdirAll(d, 0700); err != nil {
 		return fmt.Errorf("create report directory: %w", err)

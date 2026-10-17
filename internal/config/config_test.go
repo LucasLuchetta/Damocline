@@ -86,3 +86,36 @@ func TestMissingEnv(t *testing.T) {
 		t.Fatal("allowed missing environment variable")
 	}
 }
+
+func TestSeparateSessionsRequiredAndUnique(t *testing.T) {
+	t.Setenv("DAMOCLINE_TEST_VU_1", "session=alpha")
+	t.Setenv("DAMOCLINE_TEST_VU_2", "session=beta")
+	s := good()
+	s.PerVUCookieEnvPrefix = "DAMOCLINE_TEST_VU_"
+	v, err := Parse(s, Options{Authorized: true})
+	if err != nil || len(v.Cookies) != 2 || v.Cookies[0] == v.Cookies[1] {
+		t.Fatalf("cookies=%v err=%v", len(v.Cookies), err)
+	}
+	t.Setenv("DAMOCLINE_TEST_VU_2", "session=alpha")
+	if _, err := Parse(s, Options{Authorized: true}); err == nil {
+		t.Fatal("duplicate cookie accepted")
+	}
+}
+func TestArrivalValidation(t *testing.T) {
+	s := good()
+	s.Mode = "arrival"
+	s.ArrivalRate = 10
+	s.MaxRPS = 5
+	if _, err := Parse(s, Options{Authorized: true}); err == nil {
+		t.Fatal("accepted unschedulable workload")
+	}
+	s.MaxRPS = 20
+	s.RampUp = "1s"
+	if _, err := Parse(s, Options{Authorized: true}); err == nil {
+		t.Fatal("accepted arrival ramp")
+	}
+	s.RampUp = ""
+	if _, err := Parse(s, Options{Authorized: true}); err != nil {
+		t.Fatal(err)
+	}
+}

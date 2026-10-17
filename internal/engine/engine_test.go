@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -68,5 +69,48 @@ func TestSecretNeverAppearsInOutput(t *testing.T) {
 	r := Run(context.Background(), v)
 	if strings.Contains(r.Steps[0].Path, "private") || strings.Contains(r.Steps[0].Path, "secret") {
 		t.Fatalf("query leaked in path: %s", r.Steps[0].Path)
+	}
+}
+
+func TestDistinctCookieSessions(t *testing.T) {
+	t.Setenv("DAMOCLINE_VU_TEST_1", "sid=alpha")
+	t.Setenv("DAMOCLINE_VU_TEST_2", "sid=beta")
+	var mu sync.Mutex
+	observed := map[string]int{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ck, err := r.Cookie("sid")
+		if err != nil {
+			w.WriteHeader(401)
+			return
+		}
+		mu.Lock()
+		observed[ck.Value]++
+		mu.Unlock()
+		w.WriteHeader(200)
+	}))
+	defer srv.Close()
+	s := config.Scenario{Name: "distinct", BaseURL: srv.URL, Users: 2, Duration: "1s", MaxRPS: 30, P95LimitMS: 2000, MinSamplesPerStep: 2, PerVUCookieEnvPrefix: "DAMOCLINE_VU_TEST_", Steps: []config.Step{{Name: "page", Path: "/"}}}
+	v, err := config.Parse(s, config.Options{Authorized: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := Run(context.Background(), v)
+	mu.Lock()
+	defer mu.Unlock()
+	if r.Outcome != "PASS" || observed["alpha"] == 0 || observed["beta"] == 0 {
+		t.Fatalf("session isolation failed result=%+v observed=%v", r, observed)
+	}
+}
+func TestArrivalDropReporting(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { time.Sleep(250 * time.Millisecond); w.WriteHeader(200) }))
+	defer srv.Close()
+	s := config.Scenario{Name: "arrival", BaseURL: srv.URL, Users: 1, Duration: "1s", MaxRPS: 30, Mode: "arrival", ArrivalRate: 20, P95LimitMS: 1000, Steps: []config.Step{{Name: "slow", Path: "/"}}}
+	v, err := config.Parse(s, config.Options{Authorized: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := Run(context.Background(), v)
+	if result.ArrivalsDropped == 0 || result.Outcome != "FAIL" {
+		t.Fatalf("underdelivery must fail: %+v", result)
 	}
 }
