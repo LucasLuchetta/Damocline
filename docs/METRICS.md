@@ -56,7 +56,7 @@ Generator health samples Go heap allocation, goroutines, garbage-collection acti
 
 Arrival accounting and scheduler lag are also measurement-quality signals. Any unexplained reconciliation mismatch invalidates interpretation. A late scheduler start indicates generator timing error; a busy-worker drop indicates configured worker capacity prevented delivery. Neither should silently be counted as target capacity.
 
-The local reference fixture maintains an independent request ledger. Tests compare client-reported cancellations with server-observed cancellations and reconcile received requests as completed, cancelled, or rejected. A separate drain test verifies all six admitted requests complete at the server after scheduling ends. These checks validate controlled loopback success, cancellation, and drain paths; they do not prove ledger coverage for arbitrary handlers or cancellation specifically during graceful drain.
+The local reference fixture maintains an independent request ledger. Tests compare client-reported cancellations with server-observed cancellations and reconcile received requests as completed, cancelled, or rejected. A separate drain test verifies all six admitted requests complete at the server after scheduling ends; another cancels six in-flight requests after the observation window has ended but before the drain timeout. These checks validate controlled loopback success, cancellation, and external-abort-during-drain paths; they do not prove ledger coverage for arbitrary handlers or cancellation caused by the natural drain deadline.
 
 ## HTTP client timing boundaries (G0-12 partial)
 

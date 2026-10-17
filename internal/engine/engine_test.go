@@ -657,6 +657,57 @@ func TestCancelledRequestReconcilesWithIndependentReferenceLedger(t *testing.T) 
 	}
 }
 
+func TestDrainDeadlineCancellationReconcilesWithIndependentReferenceLedger(t *testing.T) {
+	fixture, err := reference.New(reference.Config{Delay: 1500 * time.Millisecond, MaxConcurrent: 10, MaxRequests: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	requestStarted := make(chan struct{}, 10)
+	requestFinished := make(chan struct{}, 10)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestStarted <- struct{}{}
+		defer func() { requestFinished <- struct{}{} }()
+		fixture.ServeHTTP(w, r)
+	}))
+	defer server.Close()
+
+	v := scenario(t, server.URL, []config.Step{{Name: "slow", Path: "/work"}})
+	v.Scenario.Users = 10
+	v.Scenario.Mode = "arrival"
+	v.Scenario.ArrivalRate = 20
+	v.Scenario.MaxRPS = 30
+	v.Duration = 300 * time.Millisecond
+	v.Timeout = 2 * time.Second
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		for range 6 {
+			<-requestStarted
+		}
+		// All scheduled work is admitted before this delay expires; abort while
+		// the engine is draining in-flight journeys after the observation window.
+		time.Sleep(100 * time.Millisecond)
+		cancel()
+	}()
+	run := Run(ctx, v)
+	cancel()
+	for i := int64(0); i < run.IterationsStarted; i++ {
+		select {
+		case <-requestFinished:
+		case <-time.After(time.Second):
+			t.Fatalf("reference handler %d did not finish after cancellation during drain", i+1)
+		}
+	}
+	ledger := fixture.Snapshot()
+	if run.ArrivalsScheduled != 6 || run.IterationsStarted != 6 || run.IterationsCompleted != 0 ||
+		run.Metrics.Cancelled != 6 || run.Journeys.Cancelled != 6 || run.Outcome == "PASS" {
+		t.Fatalf("work interrupted during drain was not reported as incomplete: %+v", run)
+	}
+	if ledger.Received != 6 || ledger.Completed != 0 || ledger.Success != 0 || ledger.Failures != 0 || ledger.Cancelled != 6 || ledger.Rejected != 0 ||
+		ledger.Received != ledger.Completed+ledger.Cancelled+ledger.Rejected {
+		t.Fatalf("cancellation during drain did not reconcile with the independent server ledger: %+v", ledger)
+	}
+}
+
 func TestRunIncludesLocalGeneratorHealth(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
