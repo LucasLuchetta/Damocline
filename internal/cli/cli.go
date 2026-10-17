@@ -56,6 +56,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return startWithMode(os.Stdin, stdout, stderr, "history")
 	case "report":
 		return reportCmd(args[1:], stdout, stderr)
+	case "goal":
+		return goalCmd(args[1:], stdout, stderr)
 	case "run":
 		return run(args[1:], stdout, stderr)
 	case "explore":
@@ -78,6 +80,7 @@ Usage:
   damocline /history # select and repeat a previous saved scenario
   damocline start    # original guided wizard
   damocline report --file run.json [--compare previous.json] [--host host.json]
+  damocline goal --file capacity.json --peak-users 20 [--growth-percent 25] [--reserve-percent 20]
   damocline run --config scenario.json --authorized [--out reports/run.json]
   damocline run --config scenario.json --dry-run
   damocline explore --config scenario.json --min-users 2 --max-users 20 --stage-duration 20s --repeats 2 --authorized

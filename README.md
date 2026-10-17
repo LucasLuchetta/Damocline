@@ -99,6 +99,23 @@ It distinguishes **meeting your p95/error objectives** from **proving user capac
 
 See [Understand your results](docs/REPORT_EXPLAINER.md) for interpretation, sample-size and comparison warnings. The command never sends traffic.
 
+## Check a customer's demand goal (offline preview)
+
+Use a previously recorded `explore --out` report to compare an explicit
+peak-demand goal, projected growth and operational reserve to the exact
+synthetic load levels tested:
+
+```powershell
+damocline goal --file reports/capacity.json --peak-users 20 --growth-percent 25 --reserve-percent 20
+```
+
+This command **never sends traffic**. It returns a target load to validate and
+cautious evidence labels: a short directly tested passing goal, a missed SLO
+at that load, insufficient evidence, or a goal outside the search range.
+It does **not** certify human-user capacity, sustained availability or a need
+for new infrastructure. The synthetic VU model, realistic journey mix and
+generator accuracy must still be independently validated.
+
 ## Terminal home screen
 
 Run `damocline` or `.\\start.cmd` to open the **Eclipse** pixel-art splash (the Damocline sword crossing an eclipse-like horizon in Unicode block characters) and a numbered home menu. Select **New load test**, **Saved scenarios**, **Continue current**, **Help**, or **Exit** without remembering CLI flags. The interface uses optional ANSI colors and a no-color fallback for older terminals and redirected output. On a supported interactive Windows console, use **↑/↓ and Enter** (or number shortcuts) to navigate; redirected input and older terminals retain numbered input. The optional source update check now happens **before the splash and menu**, not after choosing a scenario.
