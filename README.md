@@ -42,6 +42,20 @@ Damocline will seek **scenario-specific sustainable capacity**, never claim one 
 
 Damocline should apply to **authorized HTTP/HTTPS applications** hosted on VPSs, dedicated machines, containers, Kubernetes, PaaS, or serverless platforms. Internal resource metrics require optional instrumentation or permissions; an external URL alone cannot reveal a server's CPU or database bottlenecks.
 
+## Understand what your result means
+
+Damocline prints a human-readable **assessment** after every `run` and can explain previously saved reports offline:
+
+```powershell
+damocline report --file .damocline/reports/your-run.json
+damocline report --file .damocline/reports/later-run.json --compare .damocline/reports/earlier-run.json
+damocline report --file .damocline/reports/your-run.json --host host.json
+```
+
+It distinguishes **meeting your p95/error objectives** from **proving user capacity** and **having evidence that a bigger server is needed**. Achieved RPS is not the configured `max_rps` ceiling; HTTP request latency is not complete journey duration. A single PASS cannot certify infrastructure headroom.
+
+See [Understand your results](docs/REPORT_EXPLAINER.md) for interpretation, sample-size and comparison warnings. The command never sends traffic.
+
 ## How it is intended to work
 
 ```text
