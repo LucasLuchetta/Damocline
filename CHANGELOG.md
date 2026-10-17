@@ -9,6 +9,8 @@ This project follows a human-maintained changelog. No release exists yet.
 - Removed third-party load-testing tool references from the interactive welcome banner.
 
 ### Added
+- Branded sword splash screen and English numbered home menu for bare `damocline` and `start.cmd`, with safe choices for new, saved, current, help and exit.
+- Terminal-aware ANSI color support with plain-text fallback. Non-interactive commands remain unchanged.
 - English CLI slash commands `damocline /start` and `damocline /history` to create, list, select and repeat locally saved scenario configurations with renewed traffic authorization.
 - Duplicate-aware, private local scenario snapshots with safety checks that reject literal HTTP headers when archiving. No credential values or browser cookies are persisted by the history mechanism.
 - Source-based Windows CMD/PowerShell command launcher (`damocline` opens the wizard) and optional POSIX launcher.
