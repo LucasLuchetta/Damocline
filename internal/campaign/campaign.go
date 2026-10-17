@@ -36,6 +36,7 @@ type Trial struct {
 type Result struct {
 	SchemaVersion          int          `json:"schema_version"`
 	Scenario               string       `json:"scenario"`
+	BaseUsers              int          `json:"base_users"`
 	Target                 string       `json:"target"`
 	StartedAt              string       `json:"started_at"`
 	Warmup                 string       `json:"warmup"`
@@ -117,6 +118,7 @@ func WithRunner(ctx context.Context, base config.Validated, options Options, run
 	result := Result{
 		SchemaVersion: 1,
 		Scenario:      base.Scenario.Name,
+		BaseUsers:     base.Scenario.Users,
 		Target:        base.Base.Scheme + "://" + base.Base.Host,
 		StartedAt:     time.Now().UTC().Format(time.RFC3339),
 		Warmup:        options.Warmup.String(),

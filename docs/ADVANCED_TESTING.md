@@ -97,6 +97,20 @@ Use a campaign when a short exploratory probe is insufficient. Each trial runs w
 
 The whole campaign is bounded to 15 minutes. Observation can last up to 10 minutes; warm-up, spike, and recovery are bounded to 3 minutes. An optional spike must use more VUs than the base scenario and stays inside the existing 50-VU safety ceiling. The campaign stops at the first non-passing trial. Configure `window_duration` in the scenario to evaluate request p95 and errors throughout an observation phase. It records phase reports for later comparison. It does not yet provide percentile confidence intervals or a sustained-capacity certificate.
 
+Assess a completed campaign against an owner demand target without making HTTP
+requests:
+
+```powershell
+.\damocline.exe plan --campaign reports\campaign.json --peak-users 200 --growth-percent 30 --reserve-percent 30
+```
+
+`plan` accepts only a complete repeated campaign report with passing
+observation and recovery phases. It calculates the required synthetic
+workload-equivalent actor count and reports whether the recorded base VU level
+exactly matched that target **under the saved test conditions**. It is not a prediction of
+server capacity, a diagnosis of the limiting component, or a recommendation to
+buy infrastructure.
+
 ## 8. Monitor the Linux VPS independently
 
 Run Damocline natively on your Linux host (not inside a container whose procfs could refer to other scopes). The following collects host-wide CPU and available-memory estimates without opening any network port, launching Docker or requiring elevated privileges:
@@ -143,4 +157,4 @@ The dashboard binds only to `127.0.0.1` (or `localhost`/`::1`), reads one existi
 - Closed-loop VUs slow down their request rate when the application slows; use arrival mode to study offered traffic and dropped scheduling.
 - Synthetic sessions with shared cookies are not independent users.
 - Host CPU saturation correlating with response latency is a hypothesis, not an established bottleneck cause.
-- The engine still lacks browser measurement, automatic login/CSRF handling, response-driven variables, synthetic-data lifecycle controls, per-container metrics and calibrated capacity or generator limits. Weights are a declared synthetic assumption until validated against sanitized usage evidence. Go runtime and supported Windows/Linux process health samples are available, but the error-rate confidence bound assumes independent, stationary outcomes and does not describe percentile or run-to-run uncertainty. Read the [scientific foundations and validation contract](SCIENTIFIC_FOUNDATIONS.md) before interpreting a capacity result.
+- The engine still lacks browser measurement, automatic login/CSRF handling, synthetic-data lifecycle controls, continuous per-container metrics, and calibrated capacity or generator limits. Weights are a declared synthetic assumption until validated against sanitized usage evidence. Go runtime and supported Windows/Linux process health samples are available, but the error-rate confidence bound assumes independent, stationary outcomes and does not describe percentile or run-to-run uncertainty. Read the [scientific foundations and validation contract](SCIENTIFIC_FOUNDATIONS.md) before interpreting a capacity result.
