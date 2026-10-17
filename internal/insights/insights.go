@@ -3,6 +3,7 @@
 package insights
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -38,10 +39,18 @@ func ReadRun(path string) (report.Result, error) {
 	if err := readJSON(path, &r); err != nil {
 		return r, err
 	}
-	if r.SchemaVersion < 1 || r.SchemaVersion > 10 || r.Name == "" || r.Metrics.Total < 0 || r.Metrics.Success < 0 || r.Metrics.Failures < 0 || r.Metrics.Success+r.Metrics.Failures != r.Metrics.Total || r.Config.Users < 1 || r.ElapsedSeconds <= 0 || (r.SchemaVersion >= 4 && r.ObservationSeconds <= 0) {
+	if r.SchemaVersion < 1 || r.SchemaVersion > 11 || r.Name == "" || r.Metrics.Total < 0 || r.Metrics.Success < 0 || r.Metrics.Failures < 0 || r.Metrics.Success+r.Metrics.Failures != r.Metrics.Total || r.Config.Users < 1 || r.ElapsedSeconds <= 0 || (r.SchemaVersion >= 4 && r.ObservationSeconds <= 0) || (r.SchemaVersion >= 11 && !validFingerprint(r.Config.WorkloadFingerprint)) {
 		return report.Result{}, errors.New("not a valid Damocline HTTP run report")
 	}
 	return r, nil
+}
+
+func validFingerprint(value string) bool {
+	if !strings.HasPrefix(value, "sha256:") {
+		return false
+	}
+	digest, err := hex.DecodeString(strings.TrimPrefix(value, "sha256:"))
+	return err == nil && len(digest) == 32
 }
 func ReadHost(path string) (hostmon.Result, error) {
 	var r hostmon.Result
@@ -287,9 +296,21 @@ func Write(w io.Writer, r report.Result, host *hostmon.Result, previous *report.
 
 func writeComparison(w io.Writer, old, current report.Result) {
 	fmt.Fprintln(w, "\nComparison with previous run:")
-	compatible := old.Target == current.Target && old.Config.WorkloadRevision != "" && old.Config.WorkloadRevision == current.Config.WorkloadRevision && old.Config.ProfileMixBasis == current.Config.ProfileMixBasis && old.Config.ProfileMixReference == current.Config.ProfileMixReference && old.Config.Users == current.Config.Users && old.Config.Mode == current.Config.Mode && old.Config.ArrivalRate == current.Config.ArrivalRate && old.Config.SeparateSessions == current.Config.SeparateSessions && old.Config.ThinkTime == current.Config.ThinkTime && old.Config.RequestTimeout == current.Config.RequestTimeout && old.Config.P95LimitMS == current.Config.P95LimitMS && old.Config.MaxErrorRate == current.Config.MaxErrorRate && old.Config.MinSamplesPerStep == current.Config.MinSamplesPerStep && old.Config.WindowDuration == current.Config.WindowDuration && sameSteps(old.Steps, current.Steps) && sameProfiles(old.Config.Profiles, current.Config.Profiles)
+	compatible := old.Target == current.Target && old.SchemaVersion >= 11 && current.SchemaVersion >= 11 && validFingerprint(old.Config.WorkloadFingerprint) && old.Config.WorkloadFingerprint == current.Config.WorkloadFingerprint && old.Config.WorkloadRevision != "" && old.Config.WorkloadRevision == current.Config.WorkloadRevision && old.Config.Environment != "" && old.Config.Environment == current.Config.Environment && old.Config.ProfileMixBasis == current.Config.ProfileMixBasis && old.Config.ProfileMixReference == current.Config.ProfileMixReference && old.Config.Users == current.Config.Users && old.Config.Duration == current.Config.Duration && old.Config.RampUp == current.Config.RampUp && old.Config.MaxRPS == current.Config.MaxRPS && old.Config.Mode == current.Config.Mode && old.Config.ArrivalRate == current.Config.ArrivalRate && old.Config.SeparateSessions == current.Config.SeparateSessions && old.Config.ThinkTime == current.Config.ThinkTime && old.Config.RequestTimeout == current.Config.RequestTimeout && old.Config.P95LimitMS == current.Config.P95LimitMS && old.Config.MaxErrorRate == current.Config.MaxErrorRate && old.Config.MinSamplesPerStep == current.Config.MinSamplesPerStep && old.Config.WindowDuration == current.Config.WindowDuration && sameSteps(old.Steps, current.Steps) && sameProfiles(old.Config.Profiles, current.Config.Profiles)
 	if !compatible {
-		fmt.Fprintln(w, "  [LIMIT] Workload revision, acceptance criteria, authentication mode, target, or routes differ or are unrecorded. This is NOT a controlled comparison.")
+		fmt.Fprintln(w, "  Comparison eligibility: NOT_COMPARABLE.")
+		fmt.Fprintln(w, "  [LIMIT] Workload fingerprint, revision, environment, load controls, acceptance criteria, authentication mode, target, or routes differ, are malformed, or are unrecorded. This is NOT a controlled comparison.")
+	} else {
+		fmt.Fprintln(w, "  Comparison eligibility: MATCHED_DECLARED_WORKLOAD (observations only; no causal attribution).")
+	}
+	fmt.Fprintln(w, "  [LIMIT] Run reports do not embed loopback preflight/calibration evidence or authenticated generator host identity; generator-condition equivalence is not established.")
+	if old.Config.ApplicationRevision == "" || current.Config.ApplicationRevision == "" {
+		fmt.Fprintln(w, "  [LIMIT] Application revision is missing from one or both reports; application-build equivalence or the changed build cannot be established.")
+	} else {
+		fmt.Fprintf(w, "  Application revision: %s -> %s. A changed revision is an observed treatment; this comparison alone does not establish its causal effect.\n", old.Config.ApplicationRevision, current.Config.ApplicationRevision)
+	}
+	if old.Config.ApplicationRevision != current.Config.ApplicationRevision {
+		fmt.Fprintln(w, "  [LIMIT] Application revisions differ; the runs measure different application treatments, so this is not an equivalent-build comparison.")
 	}
 	if old.Config.Environment == "" || current.Config.Environment == "" {
 		fmt.Fprintln(w, "  [LIMIT] One or both environment labels are missing; record the deployment and hosting configuration for a reproducible comparison.")

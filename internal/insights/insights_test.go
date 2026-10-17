@@ -16,8 +16,8 @@ import (
 
 func synthetic() report.Result {
 	return report.Result{
-		SchemaVersion: 2, Name: "Synthetic example", Target: "https://app.example.com", StartedAt: "2026-10-01T12:00:00Z", ElapsedSeconds: 30,
-		Config:  report.RunConfig{Users: 1, Duration: "30s", ThinkTime: "1s", MaxRPS: 20, P95LimitMS: 1500, MaxErrorRate: 0.01, Mode: "closed", MinSamplesPerStep: 5},
+		SchemaVersion: 11, Name: "Synthetic example", Target: "https://app.example.com", StartedAt: "2026-10-01T12:00:00Z", ElapsedSeconds: 30,
+		Config:  report.RunConfig{WorkloadRevision: "workload-v1", ApplicationRevision: "app-build-1", WorkloadFingerprint: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Environment: "staging-small", Users: 1, Duration: "30s", ThinkTime: "1s", MaxRPS: 20, P95LimitMS: 1500, MaxErrorRate: 0.01, Mode: "closed", MinSamplesPerStep: 5},
 		Metrics: report.MetricSet{Total: 21, Success: 21, P50MS: 178, P95MS: 412, P99MS: 4804}, Journeys: report.MetricSet{Total: 20, Success: 20, P95MS: 1550},
 		Steps:   []report.StepResult{{Name: "Dashboard", Path: "/dashboard", Method: "GET", Metrics: report.MetricSet{Total: 21, Success: 21, P95MS: 412}}},
 		Outcome: "PASS", IterationsCompleted: 20,
@@ -108,11 +108,61 @@ func TestComparisonRequiresRevisionAndRecordsEnvironment(t *testing.T) {
 	now.Config.Environment = "staging-large"
 	var b bytes.Buffer
 	Write(&b, now, nil, &prev)
-	if strings.Contains(b.String(), "Workload revision, acceptance criteria") {
-		t.Fatalf("matched controlled inputs unexpectedly rejected: %s", b.String())
+	if !strings.Contains(b.String(), "Comparison eligibility: NOT_COMPARABLE") {
+		t.Fatalf("different environment labels must not be treated as comparable: %s", b.String())
 	}
-	if !strings.Contains(b.String(), "Environment: staging-small -> staging-large") || !strings.Contains(b.String(), "not proof of cause") {
+	if !strings.Contains(b.String(), "Environment: staging-small -> staging-large") || !strings.Contains(b.String(), "not proof of cause") || !strings.Contains(b.String(), "NOT_COMPARABLE") {
 		t.Fatalf("environment comparison missing limitation: %s", b.String())
+	}
+}
+
+func TestComparisonRequiresMatchingWorkloadFingerprint(t *testing.T) {
+	prev, current := synthetic(), synthetic()
+	current.Config.WorkloadFingerprint = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	var out strings.Builder
+	writeComparison(&out, prev, current)
+	if !strings.Contains(out.String(), "Comparison eligibility: NOT_COMPARABLE") || !strings.Contains(out.String(), "Workload fingerprint") {
+		t.Fatalf("different workload fingerprints must block controlled comparison: %s", out.String())
+	}
+}
+
+func TestComparisonOnlyMatchesDeclaredWorkload(t *testing.T) {
+	prev, current := synthetic(), synthetic()
+	var out strings.Builder
+	writeComparison(&out, prev, current)
+	if !strings.Contains(out.String(), "MATCHED_DECLARED_WORKLOAD") || !strings.Contains(out.String(), "do not embed loopback preflight/calibration evidence") || strings.Contains(out.String(), "MATCHED_DECLARED_CONDITIONS") {
+		t.Fatalf("matching declared workload was overstated as controlled evidence: %s", out.String())
+	}
+}
+
+func TestComparisonReportsApplicationRevisionAsTreatment(t *testing.T) {
+	prev, current := synthetic(), synthetic()
+	current.Config.ApplicationRevision = "app-build-2"
+	var out strings.Builder
+	writeComparison(&out, prev, current)
+	if !strings.Contains(out.String(), "Application revision: app-build-1 -> app-build-2") || !strings.Contains(out.String(), "does not establish its causal effect") {
+		t.Fatalf("application revision change was not recorded as an unproven treatment: %s", out.String())
+	}
+}
+
+func TestComparisonWarnsWhenApplicationRevisionIsMissing(t *testing.T) {
+	prev, current := synthetic(), synthetic()
+	current.Config.ApplicationRevision = ""
+	var out strings.Builder
+	writeComparison(&out, prev, current)
+	if !strings.Contains(out.String(), "Application revision is missing") {
+		t.Fatalf("missing application revision was not made explicit: %s", out.String())
+	}
+}
+
+func TestComparisonRequiresSchemaElevenFingerprint(t *testing.T) {
+	prev, current := synthetic(), synthetic()
+	prev.SchemaVersion = 10
+	current.SchemaVersion = 10
+	var out strings.Builder
+	writeComparison(&out, prev, current)
+	if !strings.Contains(out.String(), "Comparison eligibility: NOT_COMPARABLE") {
+		t.Fatalf("pre-fingerprint reports must not be treated as controlled comparisons: %s", out.String())
 	}
 }
 func TestReadRunRejectsBrokenInput(t *testing.T) {
@@ -257,6 +307,40 @@ func TestReadRunAcceptsSchemaTenSamplerEvidence(t *testing.T) {
 	got, err := ReadRun(path)
 	if err != nil || got.SchemaVersion != 10 || got.Generator.MaxSampleGapMS != 251 {
 		t.Fatalf("schema-v10 sampler report not readable: %+v err=%v", got, err)
+	}
+}
+
+func TestReadRunRequiresValidFingerprintForSchemaEleven(t *testing.T) {
+	r := synthetic()
+	r.ObservationSeconds = 30
+	r.Config.WorkloadFingerprint = "invalid"
+	data, err := json.Marshal(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "schema-v11-invalid-fingerprint.json")
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadRun(path); err == nil {
+		t.Fatal("schema-v11 report without a valid workload fingerprint was accepted")
+	}
+}
+
+func TestReadRunAcceptsSchemaElevenWorkloadFingerprint(t *testing.T) {
+	r := synthetic()
+	r.ObservationSeconds = 30
+	data, err := json.Marshal(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "schema-v11-workload-fingerprint.json")
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ReadRun(path)
+	if err != nil || got.SchemaVersion != 11 || got.Config.WorkloadFingerprint != r.Config.WorkloadFingerprint {
+		t.Fatalf("schema-v11 workload fingerprint report not readable: %+v err=%v", got, err)
 	}
 }
 

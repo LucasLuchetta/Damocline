@@ -95,7 +95,7 @@ damocline report --file .damocline/reports/later-run.json --compare .damocline/r
 damocline report --file .damocline/reports/your-run.json --host host.json
 ```
 
-It distinguishes **meeting your p95/error objectives** from **proving user capacity** and **having evidence that a bigger server is needed**. Achieved RPS is not the configured `max_rps` ceiling; HTTP request latency is not complete journey duration. A single PASS cannot certify infrastructure headroom.
+It distinguishes **meeting your p95/error objectives** from **proving user capacity** and **having evidence that a bigger server is needed**. Achieved RPS is not the configured `max_rps` ceiling; HTTP request latency is not complete journey duration. A single PASS cannot certify infrastructure headroom. Controlled comparisons require matching schema-v11 workload fingerprints and declared run conditions; older or mismatched reports are labeled `NOT_COMPARABLE`.
 
 See [Understand your results](docs/REPORT_EXPLAINER.md) for interpretation, sample-size and comparison warnings. The command never sends traffic.
 
