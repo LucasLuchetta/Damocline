@@ -49,7 +49,7 @@ func AssessQuality(r Result) *Quality {
 	if math.IsNaN(r.ObservationSeconds) || math.IsInf(r.ObservationSeconds,0) || math.IsNaN(r.ElapsedSeconds) || math.IsInf(r.ElapsedSeconds,0) || r.ObservationSeconds<0 || r.ElapsedSeconds<=0 {
 		invalidate("Observation or elapsed time is invalid.")
 	}
-	if r.Metrics.Cancelled>0 || r.Journeys.Cancelled>0 ||
+	if r.Metrics.Cancelled>0 || r.Journeys.Cancelled>0 || r.IterationsStarted>r.IterationsCompleted ||
 		r.ArrivalsDropped>0 || r.Outcome=="ABORTED" {
 		limit("Work was cancelled or offered demand was not completely delivered.")
 	}
@@ -65,11 +65,12 @@ func AssessQuality(r Result) *Quality {
 		float64(r.Metrics.Total)/r.WindowSeconds()>0.90*float64(r.Config.MaxRPS) {
 		limit("Observed request throughput is near the configured client rate limit.")
 	}
-	if r.Config.Users<1 || r.Config.MaxRPS<1 {
+	if r.Config.Users<1 || r.Config.MaxRPS<1 || r.Config.P95LimitMS<0 || math.IsNaN(r.Config.P95LimitMS) || math.IsInf(r.Config.P95LimitMS,0) || r.Config.MaxErrorRate<0 || r.Config.MaxErrorRate>1 || math.IsNaN(r.Config.MaxErrorRate) || math.IsInf(r.Config.MaxErrorRate,0) {
 		invalidate("Required bounded actor/rate configuration is absent.")
 	}
+	if math.IsNaN(r.ErrorsRate) || math.IsInf(r.ErrorsRate,0) || r.ErrorsRate<0 || r.ErrorsRate>1 || math.IsNaN(r.SchedulerLagP95MS) || math.IsInf(r.SchedulerLagP95MS,0) || math.IsNaN(r.SchedulerLagMaxMS) || math.IsInf(r.SchedulerLagMaxMS,0) || r.SchedulerLagP95MS<0 || r.SchedulerLagMaxMS<0 || r.SchedulerLagP95MS>r.SchedulerLagMaxMS { invalidate("Non-finite or inconsistent observed rate or scheduler lag.") }
 	for _,s:=range r.Steps {
-		if s.Metrics.Total<0 || s.Metrics.Success<0 || s.Metrics.Failures<0 || s.Metrics.Success>s.Metrics.Total || s.Metrics.Failures!=s.Metrics.Total-s.Metrics.Success {
+		if s.Metrics.Total<0 || s.Metrics.Success<0 || s.Metrics.Failures<0 || s.Metrics.Cancelled<0 || s.Metrics.Success>s.Metrics.Total || s.Metrics.Failures!=s.Metrics.Total-s.Metrics.Success {
 			invalidate("Named-step accounting is inconsistent (step identity intentionally omitted).")
 			break
 		}

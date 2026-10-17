@@ -16,6 +16,12 @@ func TestQualityRejectsOverflowAndNonFiniteDurations(t *testing.T) {
   {"elapsed NaN",func(r *Result){r.ElapsedSeconds=math.NaN()}},
   {"elapsed infinite",func(r *Result){r.ElapsedSeconds=math.Inf(1)}},
   {"observation NaN",func(r *Result){r.ObservationSeconds=math.NaN()}},
+  {"error rate infinite",func(r *Result){r.ErrorsRate=math.Inf(1)}},
+  {"scheduler lag negative",func(r *Result){r.SchedulerLagP95MS=-1}},
+  {"scheduler lag inconsistent",func(r *Result){r.SchedulerLagP95MS=5;r.SchedulerLagMaxMS=1}},
+  {"SLO threshold NaN",func(r *Result){r.Config.P95LimitMS=math.NaN()}},
+  {"error budget invalid",func(r *Result){r.Config.MaxErrorRate=1.5}},
+  {"step cancelled negative",func(r *Result){r.Steps=[]StepResult{{Metrics:MetricSet{Total:1,Success:1,Cancelled:-1}}}}},
  }
  for _,tc:=range tests {
   t.Run(tc.name,func(t *testing.T){
