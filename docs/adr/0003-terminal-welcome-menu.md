@@ -29,6 +29,8 @@ full-screen terminal UI dependency.
 
 ## Consequences
 
+**Follow-up (2026-10-17):** The home menu now uses native Windows console key events and temporary VT output to support Up/Down, Enter, Escape and numeric shortcuts. The terminal mode is restored when the user leaves the menu. If console setup fails or input is redirected, the original line-oriented numbered prompt remains available. The safe, interactive source-update check runs before rendering the home screen, and the choice handler does not check again; direct guided commands still check before setup. No third-party terminal dependency is introduced.
+
 The UI works without third-party dependencies and can be tested deterministically
 using `io.Reader`/`io.Writer` fixtures. Users choose with a number and Enter,
 not arrow keys. Existing scenarios and reports remain local. Showing the menu
