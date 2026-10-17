@@ -22,6 +22,8 @@ Do not describe a request rate, open TCP connection count, or total logins as "s
 
 **Open-loop journey arrivals:** planned journey starts are independent of previous response completion. Damocline reports scheduled, started, completed, dropped-late and dropped-busy arrivals, plus scheduler lag. A dropped or delayed start means offered demand was not fully delivered; a worker-busy drop is not evidence that the target itself saturated. Client-side limits can invalidate the intended load, so inspect generator observations too.
 
+**Weighted profiles:** a scenario can define two to ten named workflows, each with a positive integer weight, steps, and optional think time. Closed-loop VUs are allocated deterministically across profiles; arrival mode selects each planned journey with smooth weighted round-robin. The report records configured weights, assigned closed-loop VUs, and actual started/completed/cancelled journeys. A weight is an intended demand mix, not evidence that the mix represents production use; derive it from sanitized usage evidence and review the observed counts.
+
 A **partly open session model**—independent session arrivals followed by dependent requests and think times within each session—is not implemented. Open-loop journey arrivals and closed-loop VUs answer different questions and are not interchangeable.
 
 ## Statistical interpretation and generator health
@@ -30,7 +32,7 @@ The error-rate assessment includes a one-sided 95% upper bound. With zero observ
 
 Reported p50/p95/p99 values are point estimates. Counts accompany them, but the report does not calculate percentile confidence intervals or run-to-run uncertainty. A low sample count or correlated samples can make tail estimates especially unstable.
 
-Generator health samples Go heap allocation, goroutines, garbage-collection activity, Go runtime CPU occupancy, and (on Windows/Linux) process RSS and CPU time. HTTP run report schema v4 includes these process fields and separates `observation_seconds` (the configured workload window) from `elapsed_seconds` (including the bounded drain period for in-flight work). Throughput uses the observation window; time-series correlation uses the full elapsed interval. Process CPU is sampled between intervals and normalized to GOMAXPROCS; it is not host utilization, and RSS is not total host memory. Sampling may miss brief peaks. These metrics describe the load generator, not the application under test. Current 90% runtime/process CPU guards and request-rate-ceiling checks are provisional safeguards, not calibrated universal saturation thresholds.
+Generator health samples Go heap allocation, goroutines, garbage-collection activity, Go runtime CPU occupancy, and (on Windows/Linux) process RSS and CPU time. HTTP run report schema v5 includes these process fields and separates `observation_seconds` (the configured workload window) from `elapsed_seconds` (including the bounded drain period for in-flight work). Throughput uses the observation window; time-series correlation uses the full elapsed interval. Process CPU is sampled between intervals and normalized to GOMAXPROCS; it is not host utilization, and RSS is not total host memory. Sampling may miss brief peaks. These metrics describe the load generator, not the application under test. Current 90% runtime/process CPU guards and request-rate-ceiling checks are provisional safeguards, not calibrated universal saturation thresholds.
 
 Arrival accounting and scheduler lag are also measurement-quality signals. Any unexplained reconciliation mismatch invalidates interpretation. A late scheduler start indicates generator timing error; a busy-worker drop indicates configured worker capacity prevented delivery. Neither should silently be counted as target capacity.
 
@@ -41,7 +43,7 @@ Arrival accounting and scheduler lag are also measurement-quality signals. Any u
 - No latency estimate for incomplete journeys; they are counted as cancelled, and an otherwise passing run becomes inconclusive. Journey percentiles describe completed journeys only.
 - No Little's Law consistency check: average in-flight work is not retained over matching observation windows.
 - No fitted queueing or Universal Scalability Law model. Do not extrapolate beyond tested levels.
-- No partly open session arrivals, weighted workload profiles, or response-driven workflow dependencies.
+- No partly open session arrivals, response-driven workflow dependencies, synthetic-data lifecycle controls, or production-derived validation of workload weights.
 
 Closed-loop and open-loop models answer different questions and should be selected from the intended demand process.
 

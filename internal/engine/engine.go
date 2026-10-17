@@ -33,15 +33,55 @@ type collector struct {
 	aggregate *report.MetricSet
 	steps     map[string]*report.MetricSet
 	journeys  *report.MetricSet
+	profiles  map[string]*report.MetricSet
 }
 
 func newCollector(v config.Validated) *collector {
 	c := &collector{aggregate: report.NewMetricSet(),
-		journeys: report.NewMetricSet(), steps: make(map[string]*report.MetricSet, len(v.Steps))}
+		journeys: report.NewMetricSet(), steps: make(map[string]*report.MetricSet, len(v.Steps)), profiles: make(map[string]*report.MetricSet, len(v.Profiles))}
 	for _, s := range v.Steps {
 		c.steps[s.Name] = report.NewMetricSet()
 	}
+	for _, profile := range v.Profiles {
+		c.profiles[profile.Name] = report.NewMetricSet()
+	}
 	return c
+}
+
+func (c *collector) addJourney(profile string, latency time.Duration, success, cancelled bool, reason string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.journeys.Record(latency, success, cancelled, reason)
+	c.profiles[profile].Record(latency, success, cancelled, reason)
+}
+
+type profileSelector struct {
+	weights []int
+	current []int
+	total   int
+}
+
+func newProfileSelector(profiles []config.PreparedProfile) *profileSelector {
+	s := &profileSelector{weights: make([]int, len(profiles)), current: make([]int, len(profiles))}
+	for i, profile := range profiles {
+		s.weights[i] = profile.Weight
+		s.total += profile.Weight
+	}
+	return s
+}
+
+// next uses smooth weighted round-robin. For every prefix of selections, each
+// profile remains close to its requested weight without random sampling noise.
+func (s *profileSelector) next() int {
+	selected := 0
+	for i := range s.weights {
+		s.current[i] += s.weights[i]
+		if s.current[i] > s.current[selected] {
+			selected = i
+		}
+	}
+	s.current[selected] -= s.total
+	return selected
 }
 func (c *collector) add(s sample) {
 	c.mu.Lock()
@@ -55,7 +95,7 @@ func Run(parent context.Context, v config.Validated) report.Result {
 	generatorMonitor := generatorhealth.Start(250 * time.Millisecond)
 	// Stop admitting new work at the configured boundary, then allow any
 	// already-started journey a bounded time to finish.
-	drainAllowance := min(30*time.Second, v.Timeout*time.Duration(len(v.Steps))+v.ThinkTime*time.Duration(len(v.Steps)))
+	drainAllowance := drainDuration(v)
 	ctx, cancel := context.WithTimeout(parent, v.Duration+drainAllowance)
 	defer cancel()
 	scheduleCtx, cancelSchedule := context.WithTimeout(parent, v.Duration)
@@ -87,12 +127,12 @@ func Run(parent context.Context, v config.Validated) report.Result {
 		}
 		clients[i] = &http.Client{Transport: tr, Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	}
-	iteration := func(client *http.Client) {
+	iteration := func(client *http.Client, profile config.PreparedProfile) {
 		startedIterations.Add(1)
 		journeyStart := time.Now()
 		journeyOk := true
 		fullyCompleted := true
-		for stepIndex, step := range v.Steps {
+		for stepIndex, step := range profile.Steps {
 			if !waitToken(ctx, ticker.C) {
 				fullyCompleted = false
 				break
@@ -106,29 +146,27 @@ func Run(parent context.Context, v config.Validated) report.Result {
 				fullyCompleted = false
 				break
 			}
-			if stepIndex < len(v.Steps)-1 && !sleep(ctx, v.ThinkTime) {
+			if stepIndex < len(profile.Steps)-1 && !sleep(ctx, profile.ThinkTime) {
 				fullyCompleted = false
 				break
 			}
 		}
 		if fullyCompleted {
 			completedIterations.Add(1)
-			coll.mu.Lock()
-			coll.journeys.Record(time.Since(journeyStart), journeyOk, false, func() string {
+			coll.addJourney(profile.Name, time.Since(journeyStart), journeyOk, false, func() string {
 				if journeyOk {
 					return ""
 				}
 				return "journey_step_failed"
 			}())
-			coll.mu.Unlock()
 		} else {
-			coll.mu.Lock()
-			coll.journeys.Record(time.Since(journeyStart), false, true, "journey_cancelled")
-			coll.mu.Unlock()
+			coll.addJourney(profile.Name, time.Since(journeyStart), false, true, "journey_cancelled")
 		}
 	}
+	selector := newProfileSelector(v.Profiles)
+	assignedVUs := make([]int, len(v.Profiles))
 	if v.Scenario.Mode == "arrival" {
-		arrivals := make(chan struct{}) // unbuffered: busy workers cannot hide dropped arrivals
+		arrivals := make(chan int) // unbuffered: busy workers cannot hide dropped arrivals
 		for i := 0; i < v.Scenario.Users; i++ {
 			wg.Add(1)
 			go func(client *http.Client) {
@@ -137,18 +175,19 @@ func Run(parent context.Context, v config.Validated) report.Result {
 					select {
 					case <-ctx.Done():
 						return
-					case _, ok := <-arrivals:
+					case profileIndex, ok := <-arrivals:
 						if !ok {
 							return
 						}
-						iteration(client)
+						iteration(client, v.Profiles[profileIndex])
 					}
 				}
 			}(clients[i])
 		}
 		arrivalStats = scheduler.Drive(scheduleCtx, v.Duration, v.Scenario.ArrivalRate, func() bool {
+			profileIndex := selector.next()
 			select {
-			case arrivals <- struct{}{}:
+			case arrivals <- profileIndex:
 				return true
 			default:
 				return false
@@ -158,6 +197,11 @@ func Run(parent context.Context, v config.Validated) report.Result {
 		droppedIterations.Store(arrivalStats.Dropped())
 		close(arrivals)
 	} else {
+		closedProfiles := make([]int, v.Scenario.Users)
+		for i := range closedProfiles {
+			closedProfiles[i] = selector.next()
+			assignedVUs[closedProfiles[i]]++
+		}
 		for i := 0; i < v.Scenario.Users; i++ {
 			wg.Add(1)
 			go func(index int) {
@@ -166,9 +210,10 @@ func Run(parent context.Context, v config.Validated) report.Result {
 				if !sleep(scheduleCtx, delay) {
 					return
 				}
+				profileIndex := closedProfiles[index]
 				for scheduleCtx.Err() == nil {
 					scheduledIterations.Add(1)
-					iteration(clients[index])
+					iteration(clients[index], v.Profiles[profileIndex])
 				}
 			}(i)
 		}
@@ -180,7 +225,21 @@ func Run(parent context.Context, v config.Validated) report.Result {
 	journeyMetrics := coll.journeys.Snapshot()
 	steps := make([]report.StepResult, 0, len(v.Steps))
 	for _, st := range v.Steps {
-		steps = append(steps, report.StepResult{Name: st.Name, Method: st.Method, Path: safePath(st.Path), Metrics: coll.steps[st.Name].Snapshot()})
+		profileName := ""
+		if len(v.Scenario.Profiles) > 0 {
+			profileName = st.Profile
+		}
+		steps = append(steps, report.StepResult{Profile: profileName, Name: st.Name, Method: st.Method, Path: safePath(st.Path), Metrics: coll.steps[st.Name].Snapshot()})
+	}
+	var profileResults []report.ProfileResult
+	var profileConfig []report.ProfileConfig
+	if len(v.Scenario.Profiles) > 0 {
+		profileResults = make([]report.ProfileResult, 0, len(v.Profiles))
+		profileConfig = make([]report.ProfileConfig, 0, len(v.Profiles))
+		for i, profile := range v.Profiles {
+			profileResults = append(profileResults, report.ProfileResult{Name: profile.Name, Weight: profile.Weight, AssignedVUs: assignedVUs[i], Journeys: coll.profiles[profile.Name].Snapshot()})
+			profileConfig = append(profileConfig, report.ProfileConfig{Name: profile.Name, Weight: profile.Weight, ThinkTime: profile.ThinkTime.String()})
+		}
 	}
 	coll.mu.Unlock()
 	elapsed := time.Since(started)
@@ -188,9 +247,9 @@ func Run(parent context.Context, v config.Validated) report.Result {
 	if agg.Total > 0 {
 		errorsRate = float64(agg.Failures) / float64(agg.Total)
 	}
-	result := report.Result{SchemaVersion: 4, Name: v.Scenario.Name, Target: v.Base.Scheme + "://" + v.Base.Host, StartedAt: started.UTC().Format(time.RFC3339), ElapsedSeconds: round(elapsed.Seconds()), ObservationSeconds: round(v.Duration.Seconds()),
-		Config:  report.RunConfig{Users: v.Scenario.Users, Duration: v.Scenario.Duration, RampUp: v.Scenario.RampUp, ThinkTime: v.Scenario.ThinkTime, RequestTimeout: v.Timeout.String(), MaxRPS: v.Scenario.MaxRPS, P95LimitMS: v.Scenario.P95LimitMS, MaxErrorRate: v.Scenario.MaxErrorRate, Mode: v.Scenario.Mode, ArrivalRate: v.Scenario.ArrivalRate, SeparateSessions: len(v.Cookies) > 0, MinSamplesPerStep: v.Scenario.MinSamplesPerStep},
-		Metrics: agg, Journeys: journeyMetrics, Steps: steps, Outcome: "PASS", ErrorsRate: round(errorsRate), IterationsStarted: startedIterations.Load(), IterationsCompleted: completedIterations.Load(), ArrivalsScheduled: scheduledIterations.Load(), ArrivalsDropped: droppedIterations.Load(), ArrivalsDroppedLate: arrivalStats.DroppedLate, ArrivalsDroppedBusy: arrivalStats.DroppedBusy, SchedulerLagP95MS: float64(arrivalStats.P95Lag.Microseconds()) / 1000, SchedulerLagMaxMS: float64(arrivalStats.MaxLag.Microseconds()) / 1000,
+	result := report.Result{SchemaVersion: 5, Name: v.Scenario.Name, Target: v.Base.Scheme + "://" + v.Base.Host, StartedAt: started.UTC().Format(time.RFC3339), ElapsedSeconds: round(elapsed.Seconds()), ObservationSeconds: round(v.Duration.Seconds()),
+		Config:  report.RunConfig{Users: v.Scenario.Users, Duration: v.Scenario.Duration, RampUp: v.Scenario.RampUp, ThinkTime: v.Scenario.ThinkTime, RequestTimeout: v.Timeout.String(), MaxRPS: v.Scenario.MaxRPS, P95LimitMS: v.Scenario.P95LimitMS, MaxErrorRate: v.Scenario.MaxErrorRate, Mode: v.Scenario.Mode, ArrivalRate: v.Scenario.ArrivalRate, SeparateSessions: len(v.Cookies) > 0, MinSamplesPerStep: v.Scenario.MinSamplesPerStep, Profiles: profileConfig},
+		Metrics: agg, Journeys: journeyMetrics, Steps: steps, Profiles: profileResults, Outcome: "PASS", ErrorsRate: round(errorsRate), IterationsStarted: startedIterations.Load(), IterationsCompleted: completedIterations.Load(), ArrivalsScheduled: scheduledIterations.Load(), ArrivalsDropped: droppedIterations.Load(), ArrivalsDroppedLate: arrivalStats.DroppedLate, ArrivalsDroppedBusy: arrivalStats.DroppedBusy, SchedulerLagP95MS: float64(arrivalStats.P95Lag.Microseconds()) / 1000, SchedulerLagMaxMS: float64(arrivalStats.MaxLag.Microseconds()) / 1000,
 		Note: "Measured synthetic HTTP actors under the configured workload; not a universal server capacity or a browser-user count.", Generator: &generatorSnapshot}
 	if agg.Total == 0 || agg.Success == 0 || errorsRate > v.Scenario.MaxErrorRate || agg.P95MS > v.Scenario.P95LimitMS || result.ArrivalsDropped > 0 {
 		result.Outcome = "FAIL"
@@ -243,6 +302,18 @@ func waitToken(ctx context.Context, ch <-chan time.Time) bool {
 		return ctx.Err() == nil
 	}
 }
+
+func drainDuration(v config.Validated) time.Duration {
+	maximum := time.Duration(0)
+	for _, profile := range v.Profiles {
+		candidate := v.Timeout*time.Duration(len(profile.Steps)) + profile.ThinkTime*time.Duration(len(profile.Steps)-1)
+		if candidate > maximum {
+			maximum = candidate
+		}
+	}
+	return min(30*time.Second, maximum)
+}
+
 func sleep(ctx context.Context, d time.Duration) bool {
 	if d <= 0 {
 		return ctx.Err() == nil

@@ -38,7 +38,7 @@ func ReadRun(path string) (report.Result, error) {
 	if err := readJSON(path, &r); err != nil {
 		return r, err
 	}
-	if r.SchemaVersion < 1 || r.SchemaVersion > 4 || r.Name == "" || r.Metrics.Total < 0 || r.Metrics.Success < 0 || r.Metrics.Failures < 0 || r.Metrics.Success+r.Metrics.Failures != r.Metrics.Total || r.Config.Users < 1 || r.ElapsedSeconds <= 0 || (r.SchemaVersion >= 4 && r.ObservationSeconds <= 0) {
+	if r.SchemaVersion < 1 || r.SchemaVersion > 5 || r.Name == "" || r.Metrics.Total < 0 || r.Metrics.Success < 0 || r.Metrics.Failures < 0 || r.Metrics.Success+r.Metrics.Failures != r.Metrics.Total || r.Config.Users < 1 || r.ElapsedSeconds <= 0 || (r.SchemaVersion >= 4 && r.ObservationSeconds <= 0) {
 		return report.Result{}, errors.New("not a valid Damocline HTTP run report")
 	}
 	return r, nil
@@ -122,6 +122,14 @@ func Evaluate(r report.Result, host *hostmon.Result) Assessment {
 	}
 	if r.Journeys.Total > 0 {
 		a.Findings = append(a.Findings, Finding{"INFO", fmt.Sprintf("Complete journey p95: %.0f ms, including configured think time; this is different from HTTP request p95.", r.Journeys.P95MS)})
+	}
+	for _, profile := range r.Profiles {
+		started := profile.Journeys.Total + profile.Journeys.Cancelled
+		if started == 0 {
+			a.Findings = append(a.Findings, Finding{"CAUTION", fmt.Sprintf("Profile %q received no journey starts; its configured weight was not represented in this run.", profile.Name)})
+			continue
+		}
+		a.Findings = append(a.Findings, Finding{"INFO", fmt.Sprintf("Profile %q: configured weight %d, %d started journeys, %d completed, %d cancelled.", profile.Name, profile.Weight, started, profile.Journeys.Total, profile.Journeys.Cancelled)})
 	}
 	if r.Config.Users == 1 {
 		a.Findings = append(a.Findings, Finding{"LIMIT", "Only one virtual user was configured: this is a baseline, not a concurrent-user capacity test."})
@@ -262,7 +270,7 @@ func Write(w io.Writer, r report.Result, host *hostmon.Result, previous *report.
 
 func writeComparison(w io.Writer, old, current report.Result) {
 	fmt.Fprintln(w, "\nComparison with previous run:")
-	compatible := old.Target == current.Target && old.Config.Users == current.Config.Users && old.Config.Mode == current.Config.Mode && old.Config.SeparateSessions == current.Config.SeparateSessions && old.Config.ThinkTime == current.Config.ThinkTime && sameSteps(old.Steps, current.Steps)
+	compatible := old.Target == current.Target && old.Config.Users == current.Config.Users && old.Config.Mode == current.Config.Mode && old.Config.SeparateSessions == current.Config.SeparateSessions && old.Config.ThinkTime == current.Config.ThinkTime && sameSteps(old.Steps, current.Steps) && sameProfiles(old.Config.Profiles, current.Config.Profiles)
 	if !compatible {
 		fmt.Fprintln(w, "  [LIMIT] Workload settings, authentication mode, target, or routes differ. This is NOT a controlled comparison.")
 	}
@@ -288,7 +296,19 @@ func sameSteps(a, b []report.StepResult) bool {
 		return false
 	}
 	for i := range a {
-		if a[i].Path != b[i].Path || a[i].Method != b[i].Method {
+		if a[i].Profile != b[i].Profile || a[i].Path != b[i].Path || a[i].Method != b[i].Method {
+			return false
+		}
+	}
+	return true
+}
+
+func sameProfiles(a, b []report.ProfileConfig) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
 			return false
 		}
 	}

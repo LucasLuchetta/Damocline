@@ -157,6 +157,27 @@ func TestReadRunAcceptsSchemaFourObservationWindow(t *testing.T) {
 		t.Fatal("schema-v4 report without observation window was accepted")
 	}
 }
+
+func TestReadRunAcceptsSchemaFiveProfiles(t *testing.T) {
+	r := synthetic()
+	r.SchemaVersion = 5
+	r.ElapsedSeconds = 31
+	r.ObservationSeconds = 30
+	r.Config.Profiles = []report.ProfileConfig{{Name: "browse", Weight: 3, ThinkTime: "200ms"}, {Name: "search", Weight: 1, ThinkTime: "0s"}}
+	r.Profiles = []report.ProfileResult{{Name: "browse", Weight: 3, AssignedVUs: 3}, {Name: "search", Weight: 1, AssignedVUs: 1}}
+	data, err := json.Marshal(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "schema-v5.json")
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ReadRun(path)
+	if err != nil || got.SchemaVersion != 5 || len(got.Profiles) != 2 || got.Profiles[0].Name != "browse" {
+		t.Fatalf("schema-v5 profiles not readable: %+v err=%v", got, err)
+	}
+}
 func TestNoPrivateTargetInFixture(t *testing.T) {
 	r := synthetic()
 	if !strings.Contains(r.Target, "example.com") {

@@ -36,8 +36,68 @@ func TestSuccess(t *testing.T) {
 	if result.Metrics.Success < 1 || result.Metrics.Failures != 0 || result.Outcome != "PASS" {
 		t.Fatalf("unexpected report: %+v", result)
 	}
-	if result.SchemaVersion != 4 || result.ObservationSeconds != v.Duration.Seconds() || result.Generator == nil || result.Generator.ProcessSamples < 2 {
-		t.Fatalf("report must include schema-v4 observation window and generator process observations: %+v", result)
+	if result.SchemaVersion != 5 || result.ObservationSeconds != v.Duration.Seconds() || result.Generator == nil || result.Generator.ProcessSamples < 2 {
+		t.Fatalf("report must include schema-v5 observation window and generator process observations: %+v", result)
+	}
+}
+
+func TestWeightedProfilesAreMeasuredSeparately(t *testing.T) {
+	seen := map[string]int{}
+	var mu sync.Mutex
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		seen[r.URL.Path]++
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	s := config.Scenario{
+		Name: "weighted local profiles", BaseURL: srv.URL, Users: 4, Duration: "1s", MaxRPS: 50,
+		P95LimitMS: 1000, MaxErrorRate: 0,
+		Profiles: []config.Profile{
+			{Name: "browse", Weight: 3, Steps: []config.Step{{Name: "dashboard", Path: "/dashboard"}}},
+			{Name: "search", Weight: 1, Steps: []config.Step{{Name: "search", Path: "/search"}}},
+		},
+	}
+	v, err := config.Parse(s, config.Options{Authorized: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	v.Duration = 300 * time.Millisecond
+	r := Run(context.Background(), v)
+	if r.Outcome != "PASS" || len(r.Profiles) != 2 || r.Profiles[0].AssignedVUs != 3 || r.Profiles[1].AssignedVUs != 1 ||
+		r.Profiles[0].Journeys.Total == 0 || r.Profiles[1].Journeys.Total == 0 {
+		t.Fatalf("weighted profile evidence missing: %+v", r)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if seen["/dashboard"] == 0 || seen["/search"] == 0 {
+		t.Fatalf("expected both workflows, got %+v", seen)
+	}
+}
+
+func TestArrivalProfilesFollowConfiguredWeights(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	s := config.Scenario{
+		Name: "weighted arrival profiles", BaseURL: srv.URL, Users: 2, Duration: "1s", Mode: "arrival", ArrivalRate: 10, MaxRPS: 20,
+		P95LimitMS: 1000, MaxErrorRate: 0,
+		Profiles: []config.Profile{
+			{Name: "browse", Weight: 3, Steps: []config.Step{{Name: "dashboard", Path: "/dashboard"}}},
+			{Name: "search", Weight: 1, Steps: []config.Step{{Name: "search", Path: "/search"}}},
+		},
+	}
+	v, err := config.Parse(s, config.Options{Authorized: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := Run(context.Background(), v)
+	if r.Outcome != "PASS" || r.ArrivalsScheduled != 10 || r.ArrivalsDropped != 0 || len(r.Profiles) != 2 ||
+		r.Profiles[0].Journeys.Total != 8 || r.Profiles[1].Journeys.Total != 2 ||
+		r.Profiles[0].AssignedVUs != 0 || r.Profiles[1].AssignedVUs != 0 {
+		t.Fatalf("arrival profile mix was not measured deterministically: %+v", r)
 	}
 }
 func TestLoginRedirectIsFailure(t *testing.T) {

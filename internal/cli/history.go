@@ -36,10 +36,17 @@ type historyOption struct {
 // preventSecretArchiving avoids copying manually edited credential headers with
 // literal secret values into historical snapshots.
 func preventSecretArchiving(s config.Scenario) error {
-	for _, step := range s.Steps {
-		for name, value := range step.Headers {
-			if !credentialReference.MatchString(value) {
-				return fmt.Errorf("cannot archive literal %s header; use an environment variable reference", name)
+	workflows := make([][]config.Step, 0, len(s.Profiles)+1)
+	workflows = append(workflows, s.Steps)
+	for _, profile := range s.Profiles {
+		workflows = append(workflows, profile.Steps)
+	}
+	for _, steps := range workflows {
+		for _, step := range steps {
+			for name, value := range step.Headers {
+				if !credentialReference.MatchString(value) {
+					return fmt.Errorf("cannot archive literal %s header; use an environment variable reference", name)
+				}
 			}
 		}
 	}

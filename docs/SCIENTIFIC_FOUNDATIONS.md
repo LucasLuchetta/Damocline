@@ -34,7 +34,7 @@ The current owner-goal evaluator requires Go runtime and supported OS process CP
 
 | Method or capability | Current state |
 | --- | --- |
-| Open and closed workload execution | Implemented with explicit scheduling and delivery observations; a full partly open session-arrival model is not implemented. |
+| Open and closed workload execution | Implemented with explicit scheduling and delivery observations. Named weighted profiles are implemented as declared workload assumptions with deterministic selection and per-profile journey evidence; a full partly open session-arrival model is not implemented. |
 | Little's Law diagnostic | Not implemented. Reports do not yet retain average in-flight requests or journeys over matching steady-state windows, so the three terms cannot be checked consistently. |
 | Error-rate uncertainty | Implemented as a one-sided binomial upper bound under independent, stationary outcomes; dependence-aware confidence analysis is not implemented. |
 | Latency-percentile uncertainty | Not implemented. P50/P95/P99 are point estimates; sample counts are present, but there are no confidence intervals for percentiles or run-to-run variation. |

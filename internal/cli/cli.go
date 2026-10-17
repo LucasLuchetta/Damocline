@@ -134,6 +134,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	fmt.Fprintf(stdout, "Scenario: %s | target: %s://%s | users: %d | duration: %s | max RPS: %d\n", validated.Scenario.Name, validated.Base.Scheme, validated.Base.Host, validated.Scenario.Users, validated.Duration, validated.Scenario.MaxRPS)
+	if len(validated.Scenario.Profiles) > 0 {
+		for _, profile := range validated.Profiles {
+			fmt.Fprintf(stdout, "  Profile %s: weight=%d, think time=%s\n", profile.Name, profile.Weight, profile.ThinkTime)
+		}
+	}
 	for _, step := range validated.Steps {
 		path := step.Path
 		if i := strings.IndexByte(path, '?'); i >= 0 {
@@ -151,7 +156,15 @@ func run(args []string, stdout, stderr io.Writer) int {
 	result := engine.Run(ctx, validated)
 	fmt.Fprintf(stdout, "Result: %s | requests: %d (%d passed, %d failed, %d cancelled) | p95: %.1f ms | error rate: %.2f%% | %.1f req/s\n", result.Outcome, result.Metrics.Total, result.Metrics.Success, result.Metrics.Failures, result.Metrics.Cancelled, result.Metrics.P95MS, result.ErrorsRate*100, float64(result.Metrics.Total)/result.WindowSeconds())
 	for _, st := range result.Steps {
-		fmt.Fprintf(stdout, "  - %s: total=%d failures=%d p95=%.1f ms\n", st.Name, st.Metrics.Total, st.Metrics.Failures, st.Metrics.P95MS)
+		fmt.Fprintf(stdout, "  - %s/%s: total=%d failures=%d p95=%.1f ms\n", st.Profile, st.Name, st.Metrics.Total, st.Metrics.Failures, st.Metrics.P95MS)
+	}
+	for _, profile := range result.Profiles {
+		started := profile.Journeys.Total + profile.Journeys.Cancelled
+		if result.Config.Mode == "closed" {
+			fmt.Fprintf(stdout, "  Profile %s: configured weight=%d, assigned VUs=%d, started journeys=%d, completed=%d, cancelled=%d\n", profile.Name, profile.Weight, profile.AssignedVUs, started, profile.Journeys.Total, profile.Journeys.Cancelled)
+			continue
+		}
+		fmt.Fprintf(stdout, "  Profile %s: configured weight=%d, started journeys=%d, completed=%d, cancelled=%d\n", profile.Name, profile.Weight, started, profile.Journeys.Total, profile.Journeys.Cancelled)
 	}
 	fmt.Fprintf(stdout, "Iterations: %d started / %d completed; arrivals dropped: %d\n", result.IterationsStarted, result.IterationsCompleted, result.ArrivalsDropped)
 	for _, w := range result.Warnings {

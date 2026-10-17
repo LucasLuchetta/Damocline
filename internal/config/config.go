@@ -15,21 +15,31 @@ import (
 )
 
 type Scenario struct {
-	Name                 string  `json:"name"`
-	BaseURL              string  `json:"base_url"`
-	Users                int     `json:"users"`
-	Duration             string  `json:"duration"`
-	RampUp               string  `json:"ramp_up"`
-	ThinkTime            string  `json:"think_time"`
-	Timeout              string  `json:"request_timeout"`
-	MaxRPS               int     `json:"max_rps"`
-	P95LimitMS           float64 `json:"p95_limit_ms"`
-	MaxErrorRate         float64 `json:"max_error_rate"`
-	Mode                 string  `json:"mode,omitempty"`
-	ArrivalRate          int     `json:"arrival_rate,omitempty"`
-	PerVUCookieEnvPrefix string  `json:"per_vu_cookie_env_prefix,omitempty"`
-	MinSamplesPerStep    int     `json:"min_samples_per_step,omitempty"`
-	Steps                []Step  `json:"steps"`
+	Name                 string    `json:"name"`
+	BaseURL              string    `json:"base_url"`
+	Users                int       `json:"users"`
+	Duration             string    `json:"duration"`
+	RampUp               string    `json:"ramp_up"`
+	ThinkTime            string    `json:"think_time"`
+	Timeout              string    `json:"request_timeout"`
+	MaxRPS               int       `json:"max_rps"`
+	P95LimitMS           float64   `json:"p95_limit_ms"`
+	MaxErrorRate         float64   `json:"max_error_rate"`
+	Mode                 string    `json:"mode,omitempty"`
+	ArrivalRate          int       `json:"arrival_rate,omitempty"`
+	PerVUCookieEnvPrefix string    `json:"per_vu_cookie_env_prefix,omitempty"`
+	MinSamplesPerStep    int       `json:"min_samples_per_step,omitempty"`
+	Steps                []Step    `json:"steps,omitempty"`
+	Profiles             []Profile `json:"profiles,omitempty"`
+}
+
+// Profile is a weighted, named workflow. Its weight expresses the intended
+// share of journey starts, not a guarantee of completed journeys.
+type Profile struct {
+	Name      string `json:"name"`
+	Weight    int    `json:"weight"`
+	ThinkTime string `json:"think_time,omitempty"`
+	Steps     []Step `json:"steps"`
 }
 
 type Step struct {
@@ -56,11 +66,22 @@ type Validated struct {
 	ThinkTime time.Duration
 	Timeout   time.Duration
 	Steps     []PreparedStep
+	Profiles  []PreparedProfile
 	Cookies   []string
+}
+
+// PreparedProfile contains the safe, resolved workflow selected by the
+// scheduler. Steps remain flattened in Validated.Steps for aggregate metrics.
+type PreparedProfile struct {
+	Name      string
+	Weight    int
+	ThinkTime time.Duration
+	Steps     []PreparedStep
 }
 
 type PreparedStep struct {
 	Step
+	Profile         string
 	URL             string
 	ResolvedHeaders map[string]string
 	Body            []byte
@@ -101,6 +122,18 @@ func Parse(s Scenario, o Options) (Validated, error) {
 	if s.MaxRPS < 1 || s.MaxRPS > 100 {
 		return v, errors.New("max_rps must be between 1 and 100; use conservative limits on production")
 	}
+	profiles, err := workloadProfiles(s)
+	if err != nil {
+		return v, err
+	}
+	maxSteps := 0
+	totalSteps := 0
+	for _, profile := range profiles {
+		if len(profile.Steps) > maxSteps {
+			maxSteps = len(profile.Steps)
+		}
+		totalSteps += len(profile.Steps)
+	}
 	if s.Mode == "" {
 		s.Mode = "closed"
 	}
@@ -111,8 +144,8 @@ func Parse(s Scenario, o Options) (Validated, error) {
 		if s.ArrivalRate < 1 || s.ArrivalRate > 100 {
 			return v, errors.New("arrival_rate must be between 1 and 100 iterations/second")
 		}
-		if s.ArrivalRate*len(s.Steps) > s.MaxRPS {
-			return v, errors.New("arrival_rate multiplied by steps exceeds max_rps; increase max_rps or reduce arrival_rate")
+		if s.ArrivalRate*maxSteps > s.MaxRPS {
+			return v, errors.New("arrival_rate multiplied by the longest profile exceeds max_rps; increase max_rps or reduce arrival_rate")
 		}
 		if s.RampUp != "" && s.RampUp != "0s" {
 			return v, errors.New("ramp_up is not supported with arrival mode")
@@ -120,14 +153,14 @@ func Parse(s Scenario, o Options) (Validated, error) {
 	} else if s.ArrivalRate != 0 {
 		return v, errors.New("arrival_rate requires mode=arrival")
 	}
+	if s.Mode == "closed" && len(s.Profiles) > 0 && s.Users < len(s.Profiles) {
+		return v, errors.New("users must be at least the number of profiles so every profile is represented")
+	}
 	if s.MinSamplesPerStep == 0 {
 		s.MinSamplesPerStep = 1
 	}
 	if s.MinSamplesPerStep < 1 || s.MinSamplesPerStep > 10000 {
 		return v, errors.New("min_samples_per_step must be 1..10000")
-	}
-	if len(s.Steps) < 1 || len(s.Steps) > 20 {
-		return v, errors.New("steps must contain 1 to 20 entries")
 	}
 	if s.P95LimitMS <= 0 || s.P95LimitMS > 120000 {
 		return v, errors.New("p95_limit_ms must be in (0,120000]")
@@ -169,101 +202,164 @@ func Parse(s Scenario, o Options) (Validated, error) {
 		return v, err
 	}
 	seen := map[string]bool{}
-	prepared := make([]PreparedStep, 0, len(s.Steps))
+	prepared := make([]PreparedStep, 0, totalSteps)
+	preparedProfiles := make([]PreparedProfile, 0, len(profiles))
 	if s.PerVUCookieEnvPrefix != "" {
-		for _, step := range s.Steps {
-			for k := range step.Headers {
-				if strings.EqualFold(k, "Cookie") {
-					return v, errors.New("cannot combine per_vu_cookie_env_prefix with a shared Cookie header")
-				}
+		for _, profile := range profiles {
+			if containsCookieHeader(profile.Steps) {
+				return v, errors.New("cannot combine per_vu_cookie_env_prefix with a shared Cookie header")
 			}
 		}
 	}
-	for _, step := range s.Steps {
-		if step.Name == "" || len(step.Name) > 80 || seen[step.Name] {
-			return v, fmt.Errorf("step names must be non-empty, unique, and at most 80 characters: %q", step.Name)
+	for _, profile := range profiles {
+		profileThink, err := optionalDuration("profile think_time", profile.ThinkTime, think, 30*time.Second)
+		if err != nil {
+			return v, err
 		}
-		seen[step.Name] = true
-		method := strings.ToUpper(step.Method)
-		if method == "" {
-			method = "GET"
-		}
-		if method != "GET" && method != "HEAD" && method != "POST" && method != "PUT" && method != "PATCH" && method != "DELETE" {
-			return v, fmt.Errorf("unsupported method in %q", step.Name)
-		}
-		if method != "GET" && method != "HEAD" && !o.AllowWrites {
-			return v, fmt.Errorf("step %q uses %s: --allow-writes is required", step.Name, method)
-		}
-		if step.BodyEnv != "" && method != "POST" && method != "PUT" && method != "PATCH" {
-			return v, fmt.Errorf("body_env requires POST, PUT, or PATCH in %q", step.Name)
-		}
-		if step.BodyEnv != "" && !regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`).MatchString(step.BodyEnv) {
-			return v, fmt.Errorf("invalid body_env in %q", step.Name)
-		}
-		if step.Path == "" || !strings.HasPrefix(step.Path, "/") || strings.HasPrefix(step.Path, "//") || strings.ContainsAny(step.Path, "\r\n\\") {
-			return v, fmt.Errorf("step %q path must be a relative-to-origin absolute path", step.Name)
-		}
-		p, err := url.Parse(step.Path)
-		if err != nil || p.Host != "" || p.Scheme != "" || p.Fragment != "" || strings.Contains(strings.ToLower(p.EscapedPath()), "%2e") || strings.Contains(step.Path, "..") {
-			return v, fmt.Errorf("unsafe path in step %q", step.Name)
-		}
-		if len(step.ExpectedStatus) > 30 {
-			return v, fmt.Errorf("too many expected_status values in %q", step.Name)
-		}
-		for _, code := range step.ExpectedStatus {
-			if code < 100 || code > 599 {
-				return v, fmt.Errorf("invalid expected_status in %q", step.Name)
+		profileSteps := make([]PreparedStep, 0, len(profile.Steps))
+		for _, step := range profile.Steps {
+			if step.Name == "" || len(step.Name) > 80 || seen[step.Name] {
+				return v, fmt.Errorf("step names must be non-empty, unique, and at most 80 characters: %q", step.Name)
 			}
-		}
-		if len(step.MustContain) > 256 {
-			return v, fmt.Errorf("must_contain is limited to 256 bytes in %q", step.Name)
-		}
-		head := make(map[string]string, len(step.Headers))
-		for key, value := range step.Headers {
-			canonical := strings.ToLower(strings.TrimSpace(key))
-			if canonical == "" || strings.ContainsAny(key+value, "\r\n") || canonical == "host" || canonical == "content-length" {
-				return v, fmt.Errorf("invalid/forbidden header in %q", step.Name)
+			seen[step.Name] = true
+			method := strings.ToUpper(step.Method)
+			if method == "" {
+				method = "GET"
 			}
-			if len(value) > 8192 {
-				return v, fmt.Errorf("header value too large in %q", step.Name)
+			if method != "GET" && method != "HEAD" && method != "POST" && method != "PUT" && method != "PATCH" && method != "DELETE" {
+				return v, fmt.Errorf("unsupported method in %q", step.Name)
 			}
-			found := envPattern.FindStringSubmatch(value)
-			if found != nil {
-				secret, ok := os.LookupEnv(found[1])
-				if !ok || secret == "" {
-					return v, fmt.Errorf("missing required environment variable %s", found[1])
+			if method != "GET" && method != "HEAD" && !o.AllowWrites {
+				return v, fmt.Errorf("step %q uses %s: --allow-writes is required", step.Name, method)
+			}
+			if step.BodyEnv != "" && method != "POST" && method != "PUT" && method != "PATCH" {
+				return v, fmt.Errorf("body_env requires POST, PUT, or PATCH in %q", step.Name)
+			}
+			if step.BodyEnv != "" && !regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`).MatchString(step.BodyEnv) {
+				return v, fmt.Errorf("invalid body_env in %q", step.Name)
+			}
+			if step.Path == "" || !strings.HasPrefix(step.Path, "/") || strings.HasPrefix(step.Path, "//") || strings.ContainsAny(step.Path, "\r\n\\") {
+				return v, fmt.Errorf("step %q path must be a relative-to-origin absolute path", step.Name)
+			}
+			p, err := url.Parse(step.Path)
+			if err != nil || p.Host != "" || p.Scheme != "" || p.Fragment != "" || strings.Contains(strings.ToLower(p.EscapedPath()), "%2e") || strings.Contains(step.Path, "..") {
+				return v, fmt.Errorf("unsafe path in step %q", step.Name)
+			}
+			if len(step.ExpectedStatus) > 30 {
+				return v, fmt.Errorf("too many expected_status values in %q", step.Name)
+			}
+			for _, code := range step.ExpectedStatus {
+				if code < 100 || code > 599 {
+					return v, fmt.Errorf("invalid expected_status in %q", step.Name)
 				}
-				if strings.ContainsAny(secret, "\r\n") {
-					return v, fmt.Errorf("environment variable %s contains an invalid header character", found[1])
+			}
+			if len(step.MustContain) > 256 {
+				return v, fmt.Errorf("must_contain is limited to 256 bytes in %q", step.Name)
+			}
+			head := make(map[string]string, len(step.Headers))
+			for key, value := range step.Headers {
+				canonical := strings.ToLower(strings.TrimSpace(key))
+				if canonical == "" || strings.ContainsAny(key+value, "\r\n") || canonical == "host" || canonical == "content-length" {
+					return v, fmt.Errorf("invalid/forbidden header in %q", step.Name)
 				}
-				head[key] = secret
-			} else {
-				if canonical == "authorization" || canonical == "cookie" || canonical == "proxy-authorization" || strings.Contains(canonical, "api-key") {
-					return v, fmt.Errorf("sensitive header %q must reference an environment variable like ${DAMOCLINE_COOKIE}", key)
+				if len(value) > 8192 {
+					return v, fmt.Errorf("header value too large in %q", step.Name)
 				}
-				head[key] = value
+				found := envPattern.FindStringSubmatch(value)
+				if found != nil {
+					secret, ok := os.LookupEnv(found[1])
+					if !ok || secret == "" {
+						return v, fmt.Errorf("missing required environment variable %s", found[1])
+					}
+					if strings.ContainsAny(secret, "\r\n") {
+						return v, fmt.Errorf("environment variable %s contains an invalid header character", found[1])
+					}
+					head[key] = secret
+				} else {
+					if canonical == "authorization" || canonical == "cookie" || canonical == "proxy-authorization" || strings.Contains(canonical, "api-key") {
+						return v, fmt.Errorf("sensitive header %q must reference an environment variable like ${DAMOCLINE_COOKIE}", key)
+					}
+					head[key] = value
+				}
 			}
+			var body []byte
+			if step.BodyEnv != "" {
+				secret, ok := os.LookupEnv(step.BodyEnv)
+				if !ok {
+					return v, fmt.Errorf("missing body environment variable %s", step.BodyEnv)
+				}
+				if len(secret) > 65536 {
+					return v, fmt.Errorf("body_env %s exceeds 64 KiB", step.BodyEnv)
+				}
+				body = []byte(secret)
+			}
+			step.Method = method
+			preparedStep := PreparedStep{Step: step, Profile: profile.Name, URL: u.ResolveReference(p).String(), ResolvedHeaders: head, Body: body}
+			prepared = append(prepared, preparedStep)
+			profileSteps = append(profileSteps, preparedStep)
 		}
-		var body []byte
-		if step.BodyEnv != "" {
-			secret, ok := os.LookupEnv(step.BodyEnv)
-			if !ok {
-				return v, fmt.Errorf("missing body environment variable %s", step.BodyEnv)
-			}
-			if len(secret) > 65536 {
-				return v, fmt.Errorf("body_env %s exceeds 64 KiB", step.BodyEnv)
-			}
-			body = []byte(secret)
-		}
-		step.Method = method
-		prepared = append(prepared, PreparedStep{Step: step, URL: u.ResolveReference(p).String(), ResolvedHeaders: head, Body: body})
+		preparedProfiles = append(preparedProfiles, PreparedProfile{Name: profile.Name, Weight: profile.Weight, ThinkTime: profileThink, Steps: profileSteps})
 	}
 	cookies, err := ResolveSessions(s.PerVUCookieEnvPrefix, s.Users)
 	if err != nil {
 		return v, err
 	}
-	v = Validated{Scenario: s, Base: u, Duration: duration, RampUp: ramp, ThinkTime: think, Timeout: timeout, Steps: prepared, Cookies: cookies}
+	v = Validated{Scenario: s, Base: u, Duration: duration, RampUp: ramp, ThinkTime: think, Timeout: timeout, Steps: prepared, Profiles: preparedProfiles, Cookies: cookies}
 	return v, nil
+}
+
+func workloadProfiles(s Scenario) ([]Profile, error) {
+	if len(s.Profiles) == 0 {
+		if len(s.Steps) < 1 || len(s.Steps) > 20 {
+			return nil, errors.New("steps must contain 1 to 20 entries when profiles are absent")
+		}
+		return []Profile{{Name: "default", Weight: 1, Steps: s.Steps}}, nil
+	}
+	if len(s.Steps) > 0 {
+		return nil, errors.New("steps and profiles cannot be combined")
+	}
+	if len(s.Profiles) < 2 || len(s.Profiles) > 10 {
+		return nil, errors.New("profiles must contain 2 to 10 entries")
+	}
+	seen := map[string]bool{}
+	totalWeight := 0
+	totalSteps := 0
+	profiles := make([]Profile, 0, len(s.Profiles))
+	for _, profile := range s.Profiles {
+		name := strings.TrimSpace(profile.Name)
+		if name == "" || len(name) > 80 || seen[name] {
+			return nil, fmt.Errorf("profile names must be non-empty, unique, and at most 80 characters: %q", profile.Name)
+		}
+		if profile.Weight < 1 || profile.Weight > 1000 {
+			return nil, fmt.Errorf("profile %q weight must be between 1 and 1000", name)
+		}
+		if len(profile.Steps) < 1 || len(profile.Steps) > 20 {
+			return nil, fmt.Errorf("profile %q steps must contain 1 to 20 entries", name)
+		}
+		profile.Name = name
+		seen[name] = true
+		totalWeight += profile.Weight
+		totalSteps += len(profile.Steps)
+		profiles = append(profiles, profile)
+	}
+	if totalWeight > 10000 {
+		return nil, errors.New("profile weights must total at most 10000")
+	}
+	if totalSteps > 20 {
+		return nil, errors.New("profiles may contain at most 20 total steps")
+	}
+	return profiles, nil
+}
+
+func containsCookieHeader(steps []Step) bool {
+	for _, step := range steps {
+		for key := range step.Headers {
+			if strings.EqualFold(key, "Cookie") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func isLoopback(h string) bool {

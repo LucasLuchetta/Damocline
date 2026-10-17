@@ -38,8 +38,9 @@ Scenario fields:
 | `max_error_rate` | Maximum completed-request error fraction. |
 | `think_time` | Delay between steps in a VU journey. |
 | `per_vu_cookie_env_prefix` | Optional prefix for independent session cookies. |
+| `profiles` | Optional replacement for `steps`: 2-10 named weighted workflows, each with `name`, `weight`, `steps`, and optional `think_time`. |
 
-HTTP redirects are not followed. A redirect to login is a failure unless explicitly listed as expected (not recommended for an authenticated page test).
+Use either top-level `steps` or `profiles`, never both. [`examples/weighted-profiles-readonly.json`](../examples/weighted-profiles-readonly.json) shows a three-profile read-only mix. Profile weights describe the planned mix. In closed mode, configure at least one VU per profile; in arrival mode, inspect actual profile starts in the report. HTTP redirects are not followed. A redirect to login is a failure unless explicitly listed as expected (not recommended for an authenticated page test).
 
 ## 3. Independent test users
 
@@ -108,4 +109,4 @@ The correlation report shows mean/peak CPU and peak memory use during individual
 - Closed-loop VUs slow down their request rate when the application slows; use arrival mode to study offered traffic and dropped scheduling.
 - Synthetic sessions with shared cookies are not independent users.
 - Host CPU saturation correlating with response latency is a hypothesis, not an established bottleneck cause.
-- The engine still lacks browser measurement, automatic login/CSRF handling, response-driven variables, per-container metrics and calibrated capacity or generator limits. Go runtime and supported Windows/Linux process health samples are available, but the error-rate confidence bound assumes independent, stationary outcomes and does not describe percentile or run-to-run uncertainty. Read the [scientific foundations and validation contract](SCIENTIFIC_FOUNDATIONS.md) before interpreting a capacity result.
+- The engine still lacks browser measurement, automatic login/CSRF handling, response-driven variables, synthetic-data lifecycle controls, per-container metrics and calibrated capacity or generator limits. Weights are a declared synthetic assumption until validated against sanitized usage evidence. Go runtime and supported Windows/Linux process health samples are available, but the error-rate confidence bound assumes independent, stationary outcomes and does not describe percentile or run-to-run uncertainty. Read the [scientific foundations and validation contract](SCIENTIFIC_FOUNDATIONS.md) before interpreting a capacity result.

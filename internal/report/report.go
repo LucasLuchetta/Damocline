@@ -78,24 +78,43 @@ func percentile(values []time.Duration, p float64) time.Duration {
 func roundMS(d time.Duration) float64 { return float64(d.Microseconds()) / 1000.0 }
 
 type RunConfig struct {
-	Users             int     `json:"users"`
-	Duration          string  `json:"duration"`
-	RampUp            string  `json:"ramp_up,omitempty"`
-	ThinkTime         string  `json:"think_time,omitempty"`
-	RequestTimeout    string  `json:"request_timeout"`
-	MaxRPS            int     `json:"max_rps"`
-	P95LimitMS        float64 `json:"p95_limit_ms"`
-	MaxErrorRate      float64 `json:"max_error_rate"`
-	Mode              string  `json:"mode"`
-	ArrivalRate       int     `json:"arrival_rate,omitempty"`
-	SeparateSessions  bool    `json:"separate_sessions"`
-	MinSamplesPerStep int     `json:"min_samples_per_step"`
+	Users             int             `json:"users"`
+	Duration          string          `json:"duration"`
+	RampUp            string          `json:"ramp_up,omitempty"`
+	ThinkTime         string          `json:"think_time,omitempty"`
+	RequestTimeout    string          `json:"request_timeout"`
+	MaxRPS            int             `json:"max_rps"`
+	P95LimitMS        float64         `json:"p95_limit_ms"`
+	MaxErrorRate      float64         `json:"max_error_rate"`
+	Mode              string          `json:"mode"`
+	ArrivalRate       int             `json:"arrival_rate,omitempty"`
+	SeparateSessions  bool            `json:"separate_sessions"`
+	MinSamplesPerStep int             `json:"min_samples_per_step"`
+	Profiles          []ProfileConfig `json:"profiles,omitempty"`
+}
+
+// ProfileConfig records the intended workflow mix used for a run.
+type ProfileConfig struct {
+	Name      string `json:"name"`
+	Weight    int    `json:"weight"`
+	ThinkTime string `json:"think_time"`
 }
 type StepResult struct {
+	Profile string    `json:"profile,omitempty"`
 	Name    string    `json:"name"`
 	Method  string    `json:"method"`
 	Path    string    `json:"path"`
 	Metrics MetricSet `json:"metrics"`
+}
+
+// ProfileResult records completed and interrupted journeys by workflow. Its
+// actual share is based on starts, because failures and cancellation can alter
+// the share of completed journeys.
+type ProfileResult struct {
+	Name        string    `json:"name"`
+	Weight      int       `json:"weight"`
+	AssignedVUs int       `json:"assigned_vus,omitempty"`
+	Journeys    MetricSet `json:"journeys"`
 }
 type Result struct {
 	SchemaVersion       int                      `json:"schema_version"`
@@ -108,6 +127,7 @@ type Result struct {
 	Metrics             MetricSet                `json:"metrics"`
 	Journeys            MetricSet                `json:"journeys"`
 	Steps               []StepResult             `json:"steps"`
+	Profiles            []ProfileResult          `json:"profiles,omitempty"`
 	Outcome             string                   `json:"outcome"`
 	ErrorsRate          float64                  `json:"error_rate"`
 	Note                string                   `json:"note"`
