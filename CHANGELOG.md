@@ -5,6 +5,9 @@ This project follows a human-maintained changelog. No release exists yet.
 ## [Unreleased]
 
 ### Added
+- Source-based Windows CMD/PowerShell command launcher (`damocline` opens the wizard) and optional POSIX launcher.
+- Temporary Chrome/Edge login session borrowing for authenticated read-only HTTP tests; reviewed page suggestions, no credential persistence.
+- CI no longer publishes executable release artifacts.
 - Initial open-source repository structure, Apache-2.0 license, and contributor guidelines.
 - Bounded, single-process, closed-loop HTTP CLI (`run`, `help`, and `version`) with unit tests and CI.
 - Architecture, measurement model, design decision, and phased roadmap documents.

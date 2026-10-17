@@ -2,28 +2,21 @@
 
 Damocline is a standalone native **Go CLI**. No Docker, Node.js, Python, hosted account, browser dashboard, or k6 installation is required.
 
-## Start
+## Start from cloned source (Windows)
 
-Download the `damocline-preview-binaries` artifact from a successful [CI run](https://github.com/LucasLuchetta/Damocline/actions/workflows/ci.yml). Extract the ZIP and open its `windows-amd64` folder. It contains `damocline.exe` ready to execute, without Go, Python, Node.js, Docker, or k6.
-
-In Windows PowerShell or CMD, from that folder:
+Install [Go 1.24+](https://go.dev/dl/) and Git, then:
 
 ```powershell
-.\damocline.exe start
+git clone https://github.com/LucasLuchetta/Damocline.git
+cd Damocline
+.\setup.cmd
 ```
 
-When the executable is available on your PATH, simply type **damocline start**.
+Open a new terminal and type **`damocline`**. The installer adds a small source-based `damocline.cmd` shim to your user PATH. No downloaded unsigned `.exe` is distributed. Internally, `go run` still compiles and runs local Go code. To skip PATH setup, use `.\start.cmd` from the repo root.
 
-On Linux/macOS, use **./damocline start**. You can also build from source with Go 1.24+:
+The guided CLI requests the application origin, authorized GET pages, authentication and workload limits. **Authentication option 4 opens a temporary Edge/Chrome window**. Sign in normally, visit read-only pages, return to the terminal and press Enter. Damocline borrows target-scoped cookies only for this run. You may opt in to saving suggested visited paths as read-only GETs. It never saves a password or login form data.
 
-```powershell
-go build -o damocline.exe ./cmd/damocline
-.\damocline.exe start
-```
-
-The wizard guides you through the HTTPS application origin, read-only page paths, optional expected response text, authentication mode, and load settings. Choose a single fixed-level run or repeated virtual-user capacity exploration.
-
-The wizard does not touch Docker or your target server. The **native HTTP load generator runs on the machine where you execute start**, normally your development laptop.
+See [source install and browser security](SOURCE_INSTALL.md).
 
 ## Saved settings
 
@@ -43,11 +36,11 @@ Choose **public** for unauthenticated pages. For a shared existing session, set 
 $cookie = Read-Host 'Test session Cookie header' -AsSecureString
 $env:DAMOCLINE_SESSION_COOKIE = [System.Net.NetworkCredential]::new('', $cookie).Password
 Remove-Variable cookie
-.\damocline.exe start
+damocline
 Remove-Item Env:\DAMOCLINE_SESSION_COOKIE
 ```
 
-For independent test accounts, set **DAMOCLINE_VU_COOKIE_1** through **DAMOCLINE_VU_COOKIE_N** for the maximum number of configured VUs. Every user should have a different authorized test session. A single cookie reused by 10 VUs is not 10 distinct logged-in people.
+**Temporary browser login:** choose option 4, log in manually in the isolated browser and confirm which visited pages should be GET-tested. The session cookie is kept only in RAM and is not saved. You will log in again on the next run. Multiple VUs using this one cookie are not distinct accounts.\n\nFor independent test accounts, set **DAMOCLINE_VU_COOKIE_1** through **DAMOCLINE_VU_COOKIE_N** for the maximum number of configured VUs. Every user should have a different authorized test session. A single cookie reused by 10 VUs is not 10 distinct logged-in people.
 
 Do not paste session cookies into source files, issues, or chats. If an environment variable is missing, setup is saved but **no requests are sent**; configure it and run "start" again.
 

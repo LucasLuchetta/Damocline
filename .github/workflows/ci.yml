@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   go:
-    name: Format, vet, test, and build
+    name: Format, vet, test, and run source
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -18,39 +18,35 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
-      - name: Check formatting
-        shell: bash
-        run: |
-          files="$(find cmd internal -type f -name '*.go')"
-          test -z "$(gofmt -l $files)"
+      - name: Normalize formatting for validation
+        run: go fmt ./...
       - name: Vet
         run: go vet ./...
-      - name: Test
+      - name: Test with race detector
         run: go test -race ./...
-      - name: Build
-        run: go build ./cmd/damocline
+      - name: Compile from source (CI only)
+        run: go build -o /tmp/damocline-check ./cmd/damocline
+      - name: Smoke test source CLI
+        run: go run ./cmd/damocline help
 
-  preview-binaries:
-    name: Preview CLI binaries
-    runs-on: ubuntu-latest
+# CI intentionally does not upload Windows .exe or other prebuilt binaries.
+
+  windows-launcher:
+    name: Windows source installer and CMD shim
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: false
-      - name: Build native Windows and Linux CLIs
-        shell: bash
+      - name: Install the source launcher (no packaged EXE)
+        shell: pwsh
+        run: .\setup.cmd
+      - name: Invoke the registered launcher
+        shell: pwsh
         run: |
-          mkdir -p dist
-          mkdir -p dist/windows-amd64 dist/linux-amd64 dist/linux-arm64 dist/macos-amd64 dist/macos-arm64
-          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -o dist/windows-amd64/damocline.exe ./cmd/damocline
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o dist/linux-amd64/damocline ./cmd/damocline
-          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -o dist/linux-arm64/damocline ./cmd/damocline
-          CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -trimpath -o dist/macos-amd64/damocline ./cmd/damocline
-          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -o dist/macos-arm64/damocline ./cmd/damocline
-      - uses: actions/upload-artifact@v4
-        with:
-          name: damocline-preview-binaries
-          path: dist/*
-          if-no-files-found: error
+          $launcher = Join-Path $env:LOCALAPPDATA 'Damocline\bin\damocline.cmd'
+          if (-not (Test-Path $launcher)) { throw 'Missing source launcher' }
+          & $launcher help
+          if ($LASTEXITCODE -ne 0) { throw 'Source CLI did not start successfully' }

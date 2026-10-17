@@ -15,7 +15,7 @@
 The name evokes the **Sword of Damocles**: apparently stable systems can have limits hanging overhead. Damocline aims to find those limits *before users do*.
 
 > [!IMPORTANT]
-> **Experimental advanced HTTP engine:** native closed-loop and arrival-rate scheduling, repeated virtual-user capacity exploration, independent cookie sessions, Linux CPU/RAM sampling, and UTC report correlation are available. Browser-based journeys, per-container telemetry, automatic authentication, and rigorous generator-capacity calibration are not implemented. A passing test is **not** a universal maximum-users claim.
+> **Experimental advanced HTTP engine:** native closed-loop and arrival-rate scheduling, repeated virtual-user capacity exploration, independent cookie sessions, Linux CPU/RAM sampling, and UTC report correlation are available. Manual temporary browser login is experimental. Automatic login replay, full-browser load tests, per-container telemetry, and rigorous generator-capacity calibration are not implemented. A passing test is **not** a universal maximum-users claim.
 
 ## The problem
 
@@ -61,17 +61,29 @@ Scenario + goals + permitted target
 
 Idle sessions, active virtual users, requests in flight, and arrivals per second are different concepts. See [Measurement model](docs/METRICS.md) for the intended definitions and reporting requirements.
 
-## Run guided tests from the terminal
+## Source install: type `damocline` from any terminal
 
-The easiest way to get started is with the interactive CLI wizard:
+**No downloaded unsigned release executable is required.** Clone the repository with Go 1.24+ and Git installed:
 
 ```powershell
-.\damocline.exe start
+git clone https://github.com/LucasLuchetta/Damocline.git
+cd Damocline
+.\setup.cmd
 ```
 
-Once `damocline.exe` is on your PATH, type `damocline start` in PowerShell or CMD. The wizard asks for an authorized target, read-only routes, authentication mode, and test limits, then saves a reusable local scenario. Every execution requires explicit permission and confirmation before any traffic starts.
+Open a **new** PowerShell or CMD terminal. Then just type:
 
-See **[Guided terminal setup](docs/INTERACTIVE_START.md)** for setup, repeat runs, and session-cookie guidance. The advanced `run` and `explore` commands remain available for scripted workflows.
+```powershell
+damocline
+```
+
+This launches the guided setup. It asks for your authorized HTTPS origin, read-only pages, authentication, and safe load settings. Select **temporary browser login** to sign in through a fresh Edge/Chrome window: Damocline borrows the target session cookies in process memory and proposes visited pages for *manual* selection. It saves route definitions, **not passwords or cookies**. Every run still requires explicit authorization.
+
+You can alternatively run `.\start.cmd` directly in the cloned directory, or `go run ./cmd/damocline start`. The `damocline` command registered by setup is a tiny `.cmd` launcher running the checked-out Go sources, so `git pull` updates the tool without downloading release binaries. **Go still compiles a temporary native program locally**, and Windows security software may inspect it.
+
+Browser login session reuse **does not replay login forms**, create distinct user accounts, or measure browser rendering. The load engine remains Damocline's own Go implementation, not k6.
+
+See [Source installation and browser login](docs/SOURCE_INSTALL.md) and [Guided CLI](docs/INTERACTIVE_START.md).
 
 ## Run your first bounded test
 
@@ -86,7 +98,7 @@ go run ./cmd/damocline run --config examples/local-smoke.json --dry-run
 go run ./cmd/damocline run --config examples/local-smoke.json --authorized --out reports/local.json
 ```
 
-For Windows/PowerShell, session-cookie authentication, and safely testing your own application, see **[Quick start](docs/QUICKSTART.md)**. Experimental Windows and Linux binaries are attached to successful CI runs as downloadable workflow artifacts (not signed releases).
+For Windows/PowerShell, session-cookie authentication, and safely testing your own application, see **[Quick start](docs/QUICKSTART.md)**. GitHub Actions tests the source code but no longer publishes downloadable release binaries.
 
 **Initial safety ceilings:** up to 50 virtual users, 100 requests/second, and three minutes per run; these are upper bounds, not recommendations for production. The example starts with **2 VUs and 5 RPS**. HTTP redirects are not followed, so a 302 to a login page is reported as a failure by default.
 

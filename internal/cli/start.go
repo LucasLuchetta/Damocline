@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/LucasLuchetta/Damocline/internal/config"
+	"github.com/LucasLuchetta/Damocline/internal/browserauth"
 )
 
 const (
@@ -25,6 +26,8 @@ const (
 
 type startPreferences struct {
 	Kind          string `json:"kind"`
+	AuthMode      string `json:"auth_mode,omitempty"`
+	LoginPath     string `json:"login_path,omitempty"`
 	MinUsers      int    `json:"min_users"`
 	MaxUsers      int    `json:"max_users"`
 	StageDuration string `json:"stage_duration"`
@@ -145,12 +148,20 @@ func (w *wizard) configure() (config.Scenario, startPreferences, error) {
 		s.Steps[i].MustContain = marker
 	}
 	fmt.Fprintln(w.out, "\n3 / Authentication")
-	fmt.Fprintln(w.out, "  1 = public; 2 = shared session cookie; 3 = separate test-account cookies")
-	auth, err := w.choose("Authentication mode", "1", "1", "2", "3")
+	fmt.Fprintln(w.out, "  1 = public; 2 = shared session cookie; 3 = separate test-account cookies; 4 = temporary browser login")
+	auth, err := w.choose("Authentication mode", "4", "1", "2", "3", "4")
 	if err != nil {
 		return s, p, err
 	}
 	switch auth {
+	case "4":
+		p.AuthMode = "browser"
+		p.LoginPath, err = w.ask("Login page path", "/login")
+		if err != nil { return s,p,err }
+		for i := range s.Steps {
+			s.Steps[i].Headers = map[string]string{"Cookie":"${DAMOCLINE_SESSION_COOKIE}"}
+		}
+		fmt.Fprintln(w.out,"An isolated Edge/Chrome browser will open. You sign in manually. No password is captured or saved.")
 	case "2":
 		for i := range s.Steps {
 			s.Steps[i].Headers = map[string]string{"Cookie": "${DAMOCLINE_SESSION_COOKIE}"}
@@ -288,6 +299,34 @@ func start(input io.Reader, output, errOutput io.Writer) int {
 			return 2
 		}
 		fmt.Fprintf(output, "Scenario saved in %s (no credentials stored).\n", scenarioPath)
+	}
+	if p.AuthMode == "browser" {
+		fmt.Fprintln(output, "\nSign in to the temporary Edge/Chrome window using a test account, then visit read-only pages to test.")
+		captured, captureErr := browserauth.Capture(s.BaseURL, p.LoginPath, func() error {
+			_, err := w.ask("Press Enter after logging in and visiting your pages", "")
+			return err
+		})
+		if captureErr != nil {
+			fmt.Fprintf(errOutput, "Browser login failed: %v\n", captureErr)
+			return 2
+		}
+		known := make(map[string]bool)
+		for _, step := range s.Steps { known[step.Path]=true }
+		for _, path := range captured.Paths {
+			if known[path] || len(s.Steps) >= 20 || !strings.HasPrefix(path,"/") || strings.HasPrefix(path,"//") || strings.ContainsAny(path,"?\\r\\n") { continue }
+			choice, err := w.choose("Add visited page "+path+" as an explicitly approved GET? (y/n)","n","y","n")
+			if err != nil {fmt.Fprintf(errOutput,"Page review interrupted: %v\n",err);return 2}
+			if choice=="y" {
+				s.Steps=append(s.Steps,config.Step{Name:fmt.Sprintf("Page %d",len(s.Steps)+1),Method:"GET",Path:path,ExpectedStatus:[]int{200}})
+				known[path]=true
+			}
+		}
+		if err:=writePrivateJSON(scenarioPath,s);err!=nil {fmt.Fprintf(errOutput,"Could not save routes: %v\n",err);return 2}
+		previous, wasSet := os.LookupEnv("DAMOCLINE_SESSION_COOKIE")
+		if err:=os.Setenv("DAMOCLINE_SESSION_COOKIE",captured.CookieHeader);err!=nil {fmt.Fprintln(errOutput,"Could not store temporary session in process memory");return 2}
+		defer func(){if wasSet {_=os.Setenv("DAMOCLINE_SESSION_COOKIE",previous)} else {_=os.Unsetenv("DAMOCLINE_SESSION_COOKIE")}}()
+		fmt.Fprintln(output,"Session loaded in memory only. Browser closed. No credentials were saved in the scenario.")
+		if p.MaxUsers>1 {fmt.Fprintln(output,"WARNING: All virtual users will SHARE this one login; they are not separate user identities.")}
 	}
 	if p.Kind == "explore" && (p.MinUsers < 1 || p.MaxUsers < p.MinUsers || p.MaxUsers > 50) {
 		fmt.Fprintln(errOutput, "Invalid capacity exploration bounds")
