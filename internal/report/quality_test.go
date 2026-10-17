@@ -110,3 +110,18 @@ func TestQualityRejectsInvalidObservedThinkTime(t *testing.T) {
 		t.Fatalf("non-finite think time must invalidate v7 evidence: %+v", q)
 	}
 }
+
+func TestQualityRejectsInconsistentHTTPDiagnostics(t *testing.T) {
+	base := Result{SchemaVersion: 8, ElapsedSeconds: 1, ObservationSeconds: 1, Config: RunConfig{Users: 1, MaxRPS: 10}, Metrics: MetricSet{Total: 1, Success: 1}, Journeys: MetricSet{Total: 1, Success: 1}}
+	for name, diagnostics := range map[string]HTTPDiagnostics{
+		"status family mismatch":  {StatusCodes: map[int]int{302: 1}, Status2xx: 1},
+		"invalid status code":     {StatusCodes: map[int]int{99: 1}},
+		"negative classification": {NetworkTimeouts: -1},
+	} {
+		r := base
+		r.Metrics.HTTP = diagnostics
+		if q := AssessQuality(r); q.State != QualityInvalid {
+			t.Errorf("%s: expected INVALID, got %+v", name, q)
+		}
+	}
+}

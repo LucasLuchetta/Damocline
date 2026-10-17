@@ -34,6 +34,9 @@ type sample struct {
 	name               string
 	latency            time.Duration
 	trace              report.HTTPTrace
+	statusCode         int
+	assertionFailure   bool
+	tlsFailure         bool
 	success, cancelled bool
 	reason             string
 }
@@ -122,6 +125,8 @@ func (c *collector) add(s sample) {
 	defer c.mu.Unlock()
 	c.aggregate.Record(s.latency, s.success, s.cancelled, s.reason)
 	c.steps[s.name].Record(s.latency, s.success, s.cancelled, s.reason)
+	c.aggregate.RecordHTTPOutcome(s.statusCode, s.reason, s.assertionFailure, s.tlsFailure)
+	c.steps[s.name].RecordHTTPOutcome(s.statusCode, s.reason, s.assertionFailure, s.tlsFailure)
 	c.stepTraces[s.name].Record(s.trace)
 	if c.window <= 0 {
 		return
@@ -138,6 +143,7 @@ func (c *collector) add(s sample) {
 		c.windows = append(c.windows, report.NewMetricSet())
 	}
 	c.windows[index].Record(s.latency, s.success, s.cancelled, s.reason)
+	c.windows[index].RecordHTTPOutcome(s.statusCode, s.reason, s.assertionFailure, s.tlsFailure)
 }
 
 func Run(parent context.Context, v config.Validated) report.Result {
@@ -348,7 +354,7 @@ func Run(parent context.Context, v config.Validated) report.Result {
 	if v.Duration > 0 {
 		littleLawEstimate = float64(agg.Total) / v.Duration.Seconds() * agg.MeanMS / 1000
 	}
-	result := report.Result{SchemaVersion: 7, Name: v.Scenario.Name, Target: v.Base.Scheme + "://" + v.Base.Host, StartedAt: started.UTC().Format(time.RFC3339), ElapsedSeconds: round(elapsed.Seconds()), ObservationSeconds: round(v.Duration.Seconds()),
+	result := report.Result{SchemaVersion: 8, Name: v.Scenario.Name, Target: v.Base.Scheme + "://" + v.Base.Host, StartedAt: started.UTC().Format(time.RFC3339), ElapsedSeconds: round(elapsed.Seconds()), ObservationSeconds: round(v.Duration.Seconds()),
 		Config:  report.RunConfig{WorkloadRevision: v.Scenario.WorkloadRevision, Environment: v.Scenario.Environment, Users: v.Scenario.Users, Duration: v.Scenario.Duration, RampUp: v.Scenario.RampUp, ThinkTime: v.Scenario.ThinkTime, RequestTimeout: v.Timeout.String(), MaxRPS: v.Scenario.MaxRPS, P95LimitMS: v.Scenario.P95LimitMS, MaxErrorRate: v.Scenario.MaxErrorRate, Mode: v.Scenario.Mode, ArrivalRate: v.Scenario.ArrivalRate, SeparateSessions: len(v.Cookies) > 0, MinSamplesPerStep: v.Scenario.MinSamplesPerStep, Profiles: profileConfig, WindowDuration: v.Window.String()},
 		Metrics: agg, Journeys: journeyMetrics, Steps: steps, Profiles: profileResults, Windows: windows, Outcome: "PASS", ErrorsRate: round(errorsRate), IterationsStarted: startedIterations.Load(), IterationsCompleted: completedIterations.Load(), ArrivalsScheduled: scheduledIterations.Load(), ArrivalsDropped: droppedIterations.Load(), ArrivalsDroppedLate: arrivalStats.DroppedLate, ArrivalsDroppedBusy: arrivalStats.DroppedBusy, SchedulerLagP95MS: float64(arrivalStats.P95Lag.Microseconds()) / 1000, SchedulerLagMaxMS: float64(arrivalStats.MaxLag.Microseconds()) / 1000, AverageInFlight: round(averageInFlight), LittleLawEstimate: round(littleLawEstimate), ObservedThinkTimeMS: ms(coll.thinkTime), ThinkTimeObservations: coll.thinkSamples,
 		Note: "Measured synthetic HTTP actors under the configured workload; not a universal server capacity or a browser-user count.", Generator: &generatorSnapshot}
@@ -565,6 +571,9 @@ func execute(parent context.Context, client *http.Client, base *url.URL, timeout
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			return sample{name: s.Name, latency: d, trace: observedTrace, reason: "timeout"}, nil
 		}
+		if isTLSFailure(err) {
+			return sample{name: s.Name, latency: d, trace: observedTrace, reason: "transport", tlsFailure: true}, nil
+		}
 		return sample{name: s.Name, latency: d, trace: observedTrace, reason: "transport"}, nil
 	}
 	defer res.Body.Close()
@@ -583,16 +592,16 @@ func execute(parent context.Context, client *http.Client, base *url.URL, timeout
 	observedTrace := trace
 	traceMu.Unlock()
 	if parent.Err() != nil {
-		return sample{name: s.Name, latency: d, trace: observedTrace, cancelled: true, reason: "run_cancelled"}, nil
+		return sample{name: s.Name, latency: d, trace: observedTrace, statusCode: res.StatusCode, cancelled: true, reason: "run_cancelled"}, nil
 	}
 	if readErr != nil {
 		if errors.Is(readErr, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return sample{name: s.Name, latency: d, trace: observedTrace, reason: "timeout"}, nil
+			return sample{name: s.Name, latency: d, trace: observedTrace, statusCode: res.StatusCode, reason: "timeout"}, nil
 		}
-		return sample{name: s.Name, latency: d, trace: observedTrace, reason: "body_read"}, nil
+		return sample{name: s.Name, latency: d, trace: observedTrace, statusCode: res.StatusCode, reason: "body_read"}, nil
 	}
 	if len(data) > maxResponseBytes {
-		return sample{name: s.Name, latency: d, trace: observedTrace, reason: "response_too_large"}, nil
+		return sample{name: s.Name, latency: d, trace: observedTrace, statusCode: res.StatusCode, reason: "response_too_large"}, nil
 	}
 	ok := res.StatusCode >= 200 && res.StatusCode <= 299
 	if len(s.ExpectedStatus) > 0 {
@@ -605,16 +614,29 @@ func execute(parent context.Context, client *http.Client, base *url.URL, timeout
 		}
 	}
 	if !ok {
-		return sample{name: s.Name, latency: d, trace: observedTrace, reason: fmt.Sprintf("http_%d", res.StatusCode)}, nil
+		return sample{name: s.Name, latency: d, trace: observedTrace, statusCode: res.StatusCode, assertionFailure: len(s.ExpectedStatus) > 0, reason: fmt.Sprintf("http_%d", res.StatusCode)}, nil
 	}
 	if s.MustContain != "" && !bytes.Contains(data, []byte(s.MustContain)) {
-		return sample{name: s.Name, latency: d, trace: observedTrace, reason: "assertion_missing_text"}, nil
+		return sample{name: s.Name, latency: d, trace: observedTrace, statusCode: res.StatusCode, assertionFailure: true, reason: "assertion_missing_text"}, nil
 	}
 	extracted, err := extractValues(s.Extract, res.Header, data)
 	if err != nil {
-		return sample{name: s.Name, latency: d, trace: observedTrace, reason: "extraction_failed"}, nil
+		return sample{name: s.Name, latency: d, trace: observedTrace, statusCode: res.StatusCode, reason: "extraction_failed"}, nil
 	}
-	return sample{name: s.Name, latency: d, trace: observedTrace, success: true}, extracted
+	return sample{name: s.Name, latency: d, trace: observedTrace, statusCode: res.StatusCode, success: true}, extracted
+}
+
+func isTLSFailure(err error) bool {
+	if err == nil {
+		return false
+	}
+	var recordHeader tls.RecordHeaderError
+	var certificateVerification *tls.CertificateVerificationError
+	if errors.As(err, &recordHeader) || errors.As(err, &certificateVerification) {
+		return true
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "tls") || strings.Contains(message, "x509") || strings.Contains(message, "certificate")
 }
 
 func ms(d time.Duration) float64 { return float64(d.Microseconds()) / 1000 }

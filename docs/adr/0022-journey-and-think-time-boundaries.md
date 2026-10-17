@@ -10,7 +10,7 @@ Per-step HTTP timing and completed journey elapsed time answer different questio
 
 ## Decision
 
-Continue recording HTTP request latency around the client request and bounded response read, and journey latency from journey start through its last completed step. Add per-run and per-profile totals and counts for actual wall time spent in configured between-step sleeps. If a sleep is interrupted, record the elapsed partial interval while keeping the journey in the cancelled count. Never add cancelled partial journey duration to completed journey percentile samples.
+Continue recording HTTP request latency around the client request and bounded response read, and journey latency from journey start through its last completed step. Add per-run and per-profile totals and counts for actual wall time spent in configured between-step sleeps. Schema v8 includes these observations. If a sleep is interrupted, record the elapsed partial interval while keeping the journey in the cancelled count. Never add cancelled partial journey duration to completed journey percentile samples.
 
 ## Consequences and limitations
 

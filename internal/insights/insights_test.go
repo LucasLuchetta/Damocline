@@ -223,6 +223,18 @@ func TestReadRunAcceptsSchemaSevenHTTPTrace(t *testing.T) {
 		t.Fatalf("schema-v7 timing report not readable: %+v err=%v", got, err)
 	}
 }
+
+func TestReadRunAcceptsSchemaEightHTTPDiagnostics(t *testing.T) {
+	r := report.Result{SchemaVersion: 8, Name: "Synthetic example", Target: "https://app.example.com", StartedAt: "2026-10-01T12:00:00Z", ElapsedSeconds: 30, ObservationSeconds: 30, Config: report.RunConfig{Users: 1}, Metrics: report.MetricSet{HTTP: report.HTTPDiagnostics{StatusCodes: map[int]int{302: 1}, Status3xx: 1, RedirectResponses: 1}}}
+	path := filepath.Join(t.TempDir(), "schema-v8.json")
+	if err := report.WriteJSON(path, r); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ReadRun(path)
+	if err != nil || got.SchemaVersion != 8 || got.Metrics.HTTP.RedirectResponses != 1 {
+		t.Fatalf("schema-v8 HTTP diagnostics report not readable: %+v err=%v", got, err)
+	}
+}
 func TestNoPrivateTargetInFixture(t *testing.T) {
 	r := synthetic()
 	if !strings.Contains(r.Target, "example.com") {
