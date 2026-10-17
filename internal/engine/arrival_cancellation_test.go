@@ -60,6 +60,10 @@ func TestArrivalCancellationReconcilesIndependentLedgers(t *testing.T) {
 		result.ArrivalsDropped != result.ArrivalsDroppedBusy+result.ArrivalsDroppedLate {
 		t.Fatalf("planned arrivals did not reconcile after cancellation: %+v", result)
 	}
+	if result.SchedulerLagSamples != result.ArrivalsScheduled || result.SchedulerLagMethod == "" ||
+		result.SchedulerLagP50MS > result.SchedulerLagP95MS || result.SchedulerLagP95MS > result.SchedulerLagMaxMS {
+		t.Fatalf("scheduler timing evidence is incomplete or inconsistent: %+v", result)
+	}
 	if result.IterationsStarted != result.IterationsCompleted+int64(result.Journeys.Total+result.Journeys.Cancelled) ||
 		result.Journeys.Cancelled != 1 || result.Metrics.Cancelled != 1 || result.Outcome != "ABORTED" {
 		t.Fatalf("client work did not preserve incomplete journey/request accounting: %+v", result)

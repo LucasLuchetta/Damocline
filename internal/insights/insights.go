@@ -192,8 +192,8 @@ func Evaluate(r report.Result, host *hostmon.Result) Assessment {
 	if r.ArrivalsDroppedBusy > 0 {
 		a.Findings = append(a.Findings, Finding{"LIMIT", fmt.Sprintf("%d arrivals had no idle synthetic worker; server bottleneck is not established.", r.ArrivalsDroppedBusy)})
 	}
-	if r.SchedulerLagMaxMS > 0 {
-		a.Findings = append(a.Findings, Finding{"INFO", fmt.Sprintf("Generator scheduling lag p95 %.1f ms, peak %.1f ms.", r.SchedulerLagP95MS, r.SchedulerLagMaxMS)})
+	if r.SchedulerLagSamples > 0 {
+		a.Findings = append(a.Findings, Finding{"INFO", fmt.Sprintf("Generator scheduling lag over %d planned arrivals: p50 %.1f ms, p95 %.1f ms, max %.1f ms (monotonic slot-to-admission; includes timer wake-up and callback admission). This is observed dispatch delay, not a calibrated clock-accuracy bound.", r.SchedulerLagSamples, r.SchedulerLagP50MS, r.SchedulerLagP95MS, r.SchedulerLagMaxMS)})
 	}
 	if r.Metrics.Cancelled > 0 {
 		a.Findings = append(a.Findings, Finding{"CAUTION", fmt.Sprintf("%d requests were cancelled at the run boundary and excluded from completed-request percentiles.", r.Metrics.Cancelled)})

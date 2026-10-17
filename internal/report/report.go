@@ -159,14 +159,17 @@ type Result struct {
 	ArrivalsDropped     int64                    `json:"arrivals_dropped"`
 	ArrivalsDroppedLate int64                    `json:"arrivals_dropped_late,omitempty"`
 	ArrivalsDroppedBusy int64                    `json:"arrivals_dropped_busy,omitempty"`
+	SchedulerLagSamples int64                    `json:"scheduler_lag_samples,omitempty"`
+	SchedulerLagP50MS   float64                  `json:"scheduler_lag_p50_ms,omitempty"`
 	SchedulerLagP95MS   float64                  `json:"scheduler_lag_p95_ms,omitempty"`
 	SchedulerLagMaxMS   float64                  `json:"scheduler_lag_max_ms,omitempty"`
+	SchedulerLagMethod  string                   `json:"scheduler_lag_method,omitempty"`
 	AverageInFlight     float64                  `json:"average_in_flight_requests,omitempty"`
 	LittleLawEstimate   float64                  `json:"little_law_in_flight_estimate,omitempty"`
 	Warnings            []string                 `json:"warnings,omitempty"`
 	Generator           *generatorhealth.Summary `json:"generator,omitempty"`
-	Quality             *Quality                  `json:"data_quality,omitempty"`
-	Signals             []Signal                  `json:"diagnostic_signals,omitempty"`
+	Quality             *Quality                 `json:"data_quality,omitempty"`
+	Signals             []Signal                 `json:"diagnostic_signals,omitempty"`
 }
 
 // WindowSeconds returns the configured workload window when the report records

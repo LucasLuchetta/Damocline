@@ -41,6 +41,10 @@ func TestArrivalWorkerExhaustionReconcilesIndependentLedger(t *testing.T) {
 		result.ArrivalsDropped != result.ArrivalsDroppedBusy+result.ArrivalsDroppedLate {
 		t.Fatalf("arrival counters do not reconcile: %+v", result)
 	}
+	if result.SchedulerLagSamples != result.ArrivalsScheduled || result.SchedulerLagMethod == "" ||
+		result.SchedulerLagP50MS > result.SchedulerLagP95MS || result.SchedulerLagP95MS > result.SchedulerLagMaxMS {
+		t.Fatalf("scheduler timing evidence is incomplete or inconsistent: %+v", result)
+	}
 	if result.IterationsCompleted != 1 || result.Metrics.Total != 1 || result.Metrics.Success != 1 || result.Metrics.Cancelled != 0 || result.Outcome != "FAIL" {
 		t.Fatalf("only admitted work should reach completion, and underdelivery cannot pass: %+v", result)
 	}
