@@ -10,7 +10,7 @@ The existing separate-process calibration validates one fixed 4 KiB, 20 ms plain
 
 ## Decisions
 
-1. Introduce a separate, short, loopback-only HTTP **transport** matrix for known response sizes, delayed responses, streaming, explicit HTTP 503, keep-alive enabled/disabled, and fixture-only TLS. Its JSON schema and success label are explicitly separate from the load-scheduler calibration. Every case has an independently reconciled client/server request ledger and bounded response size, request count and time.
+1. Introduce a separate, short, loopback-only HTTP **transport** matrix for known response sizes, delayed responses, streaming, explicit HTTP 503, keep-alive enabled/disabled, and fixture-only TLS. Its JSON schema and success label are explicitly separate from the load-scheduler calibration. Every case has an independently reconciled client/server request ledger and bounded response size, request count and time. Add separate native-engine regression tests for fixed 1/4/64 KiB HTTP responses, latency tails and closed connections against an independent server ledger, within a deliberately small 5-arrivals/s, two-second stage.
 2. Extend the **offline** scenario coverage report with calibration age, runtime compatibility and host-identity uncertainty. An operational 24-hour review threshold and five-minute future-clock guard flag unsuitable artifacts. OS, Go and CPU equivalence are weak compatibility signals, **not** evidence that the same machine ran both workloads. Runner source revisions may be unknown; absence is not equality.
 3. Add request/report **data quality** separately from SLO outcomes. Impossible counters are INVALID; missing generator evidence, incomplete arrivals or no equivalent calibration are LIMITED. VALID_WITHIN_ENVELOPE remains reserved and must **not** be emitted before a defensible workload-specific preflight and authenticated host evidence are available. An invalid ledger must not retain an observed PASS.
 
@@ -20,7 +20,7 @@ All new network traffic is restricted to ephemeral httptest loopback servers, wi
 
 ## Explicit limitations / remaining work
 
-- The expanded matrix uses standard Go HTTP clients, **not** Damocline's native load-scheduling and delivery loop. It does not calibrate its throughput or latency accuracy on these new shapes.
+- The optional CLI transport matrix uses standard Go HTTP clients, **not** Damocline's native load-scheduling and delivery loop. Separate unit/integration regressions exercise the native loop for a few new HTTP reference shapes, but do not calibrate its maximum throughput, remote latency accuracy or full statistical delivery envelope.
 - DNS/connect errors, true variable-size distributions, arbitrary server body behavior, HTTP/2, and remote TLS remain outside the measured envelope.
 - A 24-hour threshold is a safety review heuristic, not a statistically justified calibration expiry.
 - The v1 preflight has no host identity attestation, cross-host clock offset or workload-equivalent fingerprint. It cannot approve a target.
