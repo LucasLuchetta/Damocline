@@ -50,7 +50,7 @@ func sameProfile(a historyEntry, s config.Scenario, p startPreferences) bool {
 	return reflect.DeepEqual(a.Scenario, s) && reflect.DeepEqual(a.Preferences, p)
 }
 
-func savedHistory() ([]historyOption, error) {
+func readArchivedHistory() ([]historyOption, error) {
 	var options []historyOption
 	files, err := os.ReadDir(historyDir)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -76,13 +76,28 @@ func savedHistory() ([]historyOption, error) {
 			options = append(options, historyOption{historyEntry: entry})
 		}
 	}
+	return options, nil
+}
+
+func savedHistory() ([]historyOption, error) {
+	options, err := readArchivedHistory()
+	if err != nil {
+		return nil, err
+	}
 	if stat, statErr := os.Stat(scenarioPath); statErr == nil {
 		s, p, loadErr := loadStartProfile()
 		if loadErr != nil {
 			return nil, fmt.Errorf("read current scenario: %w", loadErr)
 		}
-		current := historyEntry{SavedAt: stat.ModTime(), Scenario: s, Preferences: p}
-		options = append(options, historyOption{historyEntry: current, Current: true})
+		filtered := options[:0]
+		for _, option := range options {
+			if !sameProfile(option.historyEntry, s, p) {
+				filtered = append(filtered, option)
+			}
+		}
+		options = append(filtered, historyOption{historyEntry: historyEntry{
+			SavedAt: stat.ModTime(), Scenario: s, Preferences: p,
+		}, Current: true})
 	} else if !errors.Is(statErr, os.ErrNotExist) {
 		return nil, statErr
 	}
@@ -109,7 +124,7 @@ func archiveCurrentProfile() error {
 		return err
 	}
 	// Avoid storing duplicate snapshots when switching between older scenarios.
-	options, err := savedHistory()
+	options, err := readArchivedHistory()
 	if err != nil {
 		return err
 	}
