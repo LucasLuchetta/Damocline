@@ -102,8 +102,10 @@ func savedHistory() ([]historyOption, error) {
 		return nil, statErr
 	}
 	sort.SliceStable(options, func(i, j int) bool {
-		if options[i].SavedAt.Equal(options[j].SavedAt) {
-			return options[i].Current && !options[j].Current
+		// The active scenario is always shown first, even if an archived
+		// timestamp has finer precision than the filesystem modification time.
+		if options[i].Current != options[j].Current {
+			return options[i].Current
 		}
 		return options[i].SavedAt.After(options[j].SavedAt)
 	})
