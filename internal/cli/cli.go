@@ -17,6 +17,7 @@ import (
 	"github.com/LucasLuchetta/Damocline/internal/engine"
 	"github.com/LucasLuchetta/Damocline/internal/explorer"
 	"github.com/LucasLuchetta/Damocline/internal/hostmon"
+	"github.com/LucasLuchetta/Damocline/internal/insights"
 	"github.com/LucasLuchetta/Damocline/internal/report"
 )
 
@@ -33,6 +34,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	case "version", "--version", "-v":
 		fmt.Fprintf(stdout, "damocline %s (advanced HTTP pre-alpha)\n", Version)
 		return 0
+	case "update":
+		return updateCmd(args[1:], stdout, stderr)
 	case "start":
 		if len(args) != 1 {
 			fmt.Fprintln(stderr, "usage: damocline start")
@@ -51,6 +54,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 			return 2
 		}
 		return startWithMode(os.Stdin, stdout, stderr, "history")
+	case "report":
+		return reportCmd(args[1:], stdout, stderr)
 	case "run":
 		return run(args[1:], stdout, stderr)
 	case "explore":
@@ -72,11 +77,15 @@ Usage:
   damocline /start   # create a new saved scenario (archives the previous one)
   damocline /history # select and repeat a previous saved scenario
   damocline start    # original guided wizard
+  damocline report --file run.json [--compare previous.json] [--host host.json]
   damocline run --config scenario.json --authorized [--out reports/run.json]
   damocline run --config scenario.json --dry-run
   damocline explore --config scenario.json --min-users 2 --max-users 20 --stage-duration 20s --repeats 2 --authorized
   damocline monitor --duration 3m --interval 2s --out reports/host.json
   damocline correlate --load reports/load.json --host reports/host.json --out reports/correlated.json
+  damocline update           # check and install source updates
+  damocline update --auto    # enable automatic updates
+  damocline update --off     # disable automatic updates
   damocline version
 
 For read/write steps, add --allow-writes. For non-local plaintext HTTP,
@@ -144,6 +153,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "WARNING: %s\n", w)
 	}
 	fmt.Fprintln(stdout, "Note: PASS means thresholds passed in this run, not a validated sustainable capacity ceiling.")
+	insights.Write(stdout, result, nil, nil)
 	if *out != "" {
 		if err := report.WriteJSON(*out, result); err != nil {
 			fmt.Fprintf(stderr, "report error: %v\n", err)
@@ -225,6 +235,7 @@ func explore(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout)
 	}
 	fmt.Fprintf(stdout, "Outcome: %s\n", result.Outcome)
+	fmt.Fprintln(stdout, "Server upgrade recommendation: NOT ESTABLISHED. Explore measures workload-specific passing levels, not server headroom; collect host/container/database metrics before sizing infrastructure.")
 	if result.HighestPassingUsers != nil {
 		fmt.Fprintf(stdout, "Highest repeatedly passing tested level: %d VUs (not a universal server limit)\n", *result.HighestPassingUsers)
 	}

@@ -85,6 +85,20 @@ Browser login session reuse **does not replay login forms**, create distinct use
 
 See [Source installation and browser login](docs/SOURCE_INSTALL.md) and [Guided CLI](docs/INTERACTIVE_START.md).
 
+## Understand what your result means
+
+Damocline prints a human-readable **assessment** after every `run` and can explain previously saved reports offline:
+
+```powershell
+damocline report --file .damocline/reports/your-run.json
+damocline report --file .damocline/reports/later-run.json --compare .damocline/reports/earlier-run.json
+damocline report --file .damocline/reports/your-run.json --host host.json
+```
+
+It distinguishes **meeting your p95/error objectives** from **proving user capacity** and **having evidence that a bigger server is needed**. Achieved RPS is not the configured `max_rps` ceiling; HTTP request latency is not complete journey duration. A single PASS cannot certify infrastructure headroom.
+
+See [Understand your results](docs/REPORT_EXPLAINER.md) for interpretation, sample-size and comparison warnings. The command never sends traffic.
+
 ## Terminal home screen
 
 Run `damocline` or `.\\start.cmd` to open an original, compact terminal sword illustration and a numbered home menu. Select **New load test**, **Saved scenarios**, **Continue current**, **Help**, or **Exit** without remembering CLI flags. The interface uses optional ANSI colors and a no-color fallback for older terminals and redirected output. Typed number + Enter is supported everywhere; raw arrow-key navigation is not implemented.
@@ -179,6 +193,7 @@ For safe local testing, real authenticated application testing, and Windows inst
 - [Roadmap](docs/ROADMAP.md)
 - [Measurement model](docs/METRICS.md)
 - [MVP quick start](docs/QUICKSTART.md)
+- [Source updates](docs/UPDATES.md)
 - [Decision records](docs/adr/0001-go-core.md)
 - [Contributing](CONTRIBUTING.md)
 - [Security](SECURITY.md)

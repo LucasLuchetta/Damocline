@@ -314,6 +314,9 @@ func startWithModeNoBanner(input io.Reader, output, errOutput io.Writer, mode st
 
 func startWithModeAndHeader(input io.Reader, output, errOutput io.Writer, mode string, showHeader bool) int {
 	w := wizard{input: bufio.NewReader(input), out: output}
+	if handled, exitCode := promptUpdate(&w, errOutput, mode); handled {
+		return exitCode
+	}
 	if showHeader {
 		fmt.Fprintln(output, "DAMOCLINE")
 		fmt.Fprintln(output, "Find the limit before it finds you.")
