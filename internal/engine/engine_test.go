@@ -36,6 +36,9 @@ func TestSuccess(t *testing.T) {
 	if result.Metrics.Success < 1 || result.Metrics.Failures != 0 || result.Outcome != "PASS" {
 		t.Fatalf("unexpected report: %+v", result)
 	}
+	if result.SchemaVersion != 4 || result.ObservationSeconds != v.Duration.Seconds() || result.Generator == nil || result.Generator.ProcessSamples < 2 {
+		t.Fatalf("report must include schema-v4 observation window and generator process observations: %+v", result)
+	}
 }
 func TestLoginRedirectIsFailure(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, "/login", 302) }))
@@ -116,31 +119,89 @@ func TestArrivalDropReporting(t *testing.T) {
 }
 
 func TestPlannedArrivalAccountingWithSlowLocalServer(t *testing.T) {
-    server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-        time.Sleep(220 * time.Millisecond)
-        w.WriteHeader(http.StatusOK)
-    }))
-    defer server.Close()
-    s := config.Scenario{
-        Name: "local arrival fixture", BaseURL: server.URL, Users: 1,
-        Duration: "1s", Mode: "arrival", ArrivalRate: 20, MaxRPS: 30,
-        P95LimitMS: 1500, Steps: []config.Step{{Name: "page", Method: "GET", Path: "/"}},
-    }
-    v, err := config.Parse(s, config.Options{Authorized: true})
-    if err != nil {t.Fatal(err)}
-    out := Run(context.Background(), v)
-    if out.ArrivalsScheduled != 20 {
-        t.Fatalf("lost planned events: expected 20, got %d: %+v", out.ArrivalsScheduled, out)
-    }
-    if out.ArrivalsScheduled != out.IterationsStarted+out.ArrivalsDropped {
-        t.Fatalf("planned events do not reconcile: %+v", out)
-    }
-    if out.ArrivalsDropped != out.ArrivalsDroppedBusy+out.ArrivalsDroppedLate {
-        t.Fatalf("dropped event reasons do not reconcile: %+v", out)
-    }
-    if out.ArrivalsDropped == 0 || out.Outcome == "PASS" {
-        t.Fatalf("undelivered workload must not pass: %+v",out)
-    }
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(220 * time.Millisecond)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+	s := config.Scenario{
+		Name: "local arrival fixture", BaseURL: server.URL, Users: 1,
+		Duration: "1s", Mode: "arrival", ArrivalRate: 20, MaxRPS: 30,
+		P95LimitMS: 1500, Steps: []config.Step{{Name: "page", Method: "GET", Path: "/"}},
+	}
+	v, err := config.Parse(s, config.Options{Authorized: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := Run(context.Background(), v)
+	if out.ArrivalsScheduled != 20 {
+		t.Fatalf("lost planned events: expected 20, got %d: %+v", out.ArrivalsScheduled, out)
+	}
+	if out.ArrivalsScheduled != out.IterationsStarted+out.ArrivalsDropped {
+		t.Fatalf("planned events do not reconcile: %+v", out)
+	}
+	if out.ArrivalsDropped != out.ArrivalsDroppedBusy+out.ArrivalsDroppedLate {
+		t.Fatalf("dropped event reasons do not reconcile: %+v", out)
+	}
+	if out.ArrivalsDropped == 0 || out.Outcome == "PASS" {
+		t.Fatalf("undelivered workload must not pass: %+v", out)
+	}
+}
+
+func TestArrivalRunDrainsAdmittedWorkAfterScheduleWindow(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(25 * time.Millisecond)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+	s := config.Scenario{Name: "arrival drain", BaseURL: server.URL, Users: 10,
+		Duration: "1s", Mode: "arrival", ArrivalRate: 20, MaxRPS: 30, P95LimitMS: 1000,
+		Steps: []config.Step{{Name: "work", Method: "GET", Path: "/"}}}
+	v, err := config.Parse(s, config.Options{Authorized: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	v.Duration = 300 * time.Millisecond
+	r := Run(context.Background(), v)
+	if r.ArrivalsScheduled != 6 || r.ArrivalsDropped != 0 || r.IterationsCompleted != r.IterationsStarted ||
+		r.Metrics.Cancelled != 0 || r.Outcome != "PASS" || r.ObservationSeconds != v.Duration.Seconds() ||
+		r.ElapsedSeconds <= r.ObservationSeconds {
+		t.Fatalf("admitted arrivals should drain after scheduling stops: %+v", r)
+	}
+}
+
+func TestCancelledRunCannotPass(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(500 * time.Millisecond)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+	v := scenario(t, server.URL, []config.Step{{Name: "slow", Path: "/"}})
+	v.Duration = 50 * time.Millisecond
+	r := Run(context.Background(), v)
+	if r.Metrics.Cancelled == 0 || r.Outcome == "PASS" {
+		t.Fatalf("a run with cancelled requests must not pass: %+v", r)
+	}
+}
+
+func TestInterruptedJourneyIsCountedAndCannotPass(t *testing.T) {
+	requestStarted := make(chan struct{}, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestStarted <- struct{}{}
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+	v := scenario(t, server.URL, []config.Step{{Name: "slow", Path: "/"}})
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		<-requestStarted
+		cancel()
+	}()
+	r := Run(ctx, v)
+	if r.Journeys.Cancelled == 0 || r.Metrics.Cancelled == 0 ||
+		r.Journeys.Total+r.Journeys.Cancelled != int(r.IterationsStarted) || r.Outcome != "ABORTED" {
+		t.Fatalf("interrupted journey was not counted explicitly: %+v", r)
+	}
 }
 
 func TestRunIncludesLocalGeneratorHealth(t *testing.T) {
@@ -156,5 +217,28 @@ func TestRunIncludesLocalGeneratorHealth(t *testing.T) {
 	}
 	if result.Outcome != "PASS" {
 		t.Fatalf("monitoring changed successful workload: %+v", result)
+	}
+}
+
+func TestInsufficientSamplesCannotPass(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) }))
+	defer srv.Close()
+	v := scenario(t, srv.URL, []config.Step{{Name: "page", Path: "/"}})
+	v.Scenario.MinSamplesPerStep = 1000
+	r := Run(context.Background(), v)
+	if r.Metrics.Success == 0 || r.Metrics.Total >= 1000 || r.Outcome == "PASS" {
+		t.Fatalf("insufficient samples must not pass: %+v", r)
+	}
+}
+
+func TestResponseBodyLimitIsReported(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(make([]byte, maxResponseBytes+1))
+	}))
+	defer srv.Close()
+	v := scenario(t, srv.URL, []config.Step{{Name: "large", Path: "/"}})
+	r := Run(context.Background(), v)
+	if r.Metrics.Reasons["response_too_large"] == 0 || r.Outcome == "PASS" {
+		t.Fatalf("oversized responses must be bounded and fail visibly: %+v", r)
 	}
 }

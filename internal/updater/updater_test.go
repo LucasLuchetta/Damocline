@@ -41,10 +41,11 @@ func setupLocalGit(t *testing.T) (source, checkout string) {
 	runGit(t, source, "commit", "-m", "initial")
 	runGit(t, source, "remote", "add", "origin", remote)
 	runGit(t, source, "push", "-u", "origin", "master")
-	cmd = exec.Command("git", "clone", "--quiet", remote, checkout)
+	cmd = exec.Command("git", "-c", "core.autocrlf=false", "clone", "--quiet", remote, checkout)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("clone: %v %s", err, out)
 	}
+	runGit(t, checkout, "config", "core.autocrlf", "false")
 	return source, checkout
 }
 

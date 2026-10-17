@@ -1,6 +1,6 @@
 # Architecture
 
-> This is the **proposed architecture**, not a description of currently implemented load testing.
+This document describes the current architecture and planned extensions. The measurement contract and roadmap identify which capabilities are implemented and which remain unvalidated or planned.
 
 ## The boundary
 
@@ -28,17 +28,17 @@ Damocline measures observed application behavior under a defined synthetic workl
 
 ## Logical components
 
-**Scenario specification.** Versioned target, request or journey steps, authentication references, think times, workload mix, acceptance criteria, traffic limits, and output options.
+**Scenario specification.** Versioned target, request or journey steps, authentication references, think times, workload mode, acceptance criteria, traffic limits, and output options. Weighted profiles and response-driven extraction are planned, not currently implemented.
 
-**Workload scheduler.** Two execution models: closed-loop virtual users and open-loop arrivals. Track scheduled starts, actual starts, dropped starts, iteration completion, and concurrent requests. A slow target must not silently reduce load in an open-loop test without the report explaining that shortfall.
+**Workload scheduler.** The engine supports closed-loop virtual users and open-loop journey arrivals. It tracks scheduled starts, actual starts, late and worker-busy drops, scheduler lag, and iteration completion. A partly open model with independently arriving sessions and dependent steps within each session is not implemented.
 
-**Virtual-user runtime.** Each actor maintains its own cookies, values extracted from responses, and place in the workflow. Sessions, steps, and scenario failures must be isolated and measurable.
+**Virtual-user runtime.** Each actor can maintain its own configured cookie and place in the sequential workflow. Response assertions are supported. Response-driven value extraction, dependent request construction, and dynamic multi-step sessions remain planned.
 
 **HTTP execution.** Use Go's networking primitives for HTTP/TLS. Damocline itself owns the load-control logic, sequencing, timing, measurement, failure accounting, and safety guards. Handle keep-alive, redirects, deadlines, and response-body cleanup explicitly.
 
-**Capacity explorer.** Run bounded, reproducible experiments to find the highest *validated passing* level against explicit error and latency targets. Refine brackets, confirm candidates across runs, and stop on safety limits or generator saturation.
+**Capacity explorer.** Run bounded repeated probes against explicit error and latency targets, and optionally attempt an exact business target. Its short experiments report observed passing and failing levels; they do not establish a sustained or statistically certified capacity boundary.
 
-**Metrics pipeline.** Separately report connection, protocol, status-code, assertion, and journey failures; distributions for requests and whole workflows; offered vs achieved traffic; generator telemetry; time windows, including warm-up and cool-down.
+**Metrics pipeline.** Report request and completed-journey distributions, failures, arrival accounting, scheduler lag, and sampled Go-runtime plus supported OS process health for the generator. Interrupted journeys are counted as cancelled and make an otherwise passing run inconclusive; their partial duration is not presented as a completed journey latency. The current report is aggregate: it does not provide aligned steady-state time series or percentile confidence intervals.
 
 **Optional telemetry adapters.** Collect host, Docker, database, or cloud metrics with consent and configured permissions. An absent metric is unknown, not proof of health. Avoid transferring secrets or unrestricted production logs.
 
@@ -55,7 +55,7 @@ The application-under-test may comprise multiple services. There is no single ph
 
 ## Safety must precede load generation
 
-Before an actual test command ships, require explicit targets, strict duration/concurrency/rate ceilings, deadlines, stop conditions, redaction, and opt-in write operations. Default to test environments and synthetic data.
+The shipped test commands require explicit authorization for traffic and enforce configured duration, concurrency/rate ceilings, request deadlines, and opt-in write operations. Prefer staging and synthetic data; these controls bound tests but do not establish target ownership or guarantee that every workload is safe for every application.
 
 ## Development boundaries
 

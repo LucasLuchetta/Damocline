@@ -1,6 +1,6 @@
-// Package generatorhealth samples Go runtime resource use of the local load
-// generator. These observations cannot identify server-side bottlenecks and
-// are not equivalent to OS process RSS or total process CPU utilization.
+// Package generatorhealth samples Go runtime and supported OS process resource
+// use of the local load generator. These observations cannot identify
+// server-side bottlenecks or host-level resource saturation.
 package generatorhealth
 
 import (
@@ -10,34 +10,42 @@ import (
 	"time"
 )
 
-// Summary describes the load-generator process during one measurement window.
-// GoCPUUtilizationRatio is the Go scheduler's active P time divided by the
-// sampled GOMAXPROCS capacity. It is not the OS process CPU percentage.
+// Summary describes the load generator during one measurement window.
+// GoCPUUtilizationRatio is based on Go runtime accounting. The process CPU
+// ratio is process CPU time divided by elapsed time and GOMAXPROCS capacity.
 type Summary struct {
-	Samples               int     `json:"samples"`
-	ObservedSeconds       float64 `json:"observed_seconds"`
-	GOMAXPROCS            int     `json:"gomaxprocs"`
-	PeakHeapAllocBytes    uint64  `json:"peak_heap_alloc_bytes"`
-	PeakGoroutines        int     `json:"peak_goroutines"`
-	GCCycles              uint32  `json:"gc_cycles"`
-	GoCPUBusySeconds      float64 `json:"go_cpu_busy_seconds,omitempty"`
-	GoCPUCapacitySeconds  float64 `json:"go_cpu_capacity_seconds,omitempty"`
-	GoCPUUtilizationRatio float64 `json:"go_cpu_utilization_ratio,omitempty"`
-	GoCPUValid            bool    `json:"go_cpu_valid"`
-	Note                  string  `json:"note"`
+	Samples                        int     `json:"samples"`
+	ObservedSeconds                float64 `json:"observed_seconds"`
+	GOMAXPROCS                     int     `json:"gomaxprocs"`
+	PeakHeapAllocBytes             uint64  `json:"peak_heap_alloc_bytes"`
+	PeakGoroutines                 int     `json:"peak_goroutines"`
+	GCCycles                       uint32  `json:"gc_cycles"`
+	GoCPUBusySeconds               float64 `json:"go_cpu_busy_seconds"`
+	GoCPUCapacitySeconds           float64 `json:"go_cpu_capacity_seconds"`
+	GoCPUUtilizationRatio          float64 `json:"go_cpu_utilization_ratio"`
+	GoCPUValid                     bool    `json:"go_cpu_valid"`
+	ProcessSamples                 int     `json:"process_samples"`
+	ProcessCPUSamples              int     `json:"process_cpu_samples"`
+	PeakProcessRSSBytes            uint64  `json:"peak_process_rss_bytes,omitempty"`
+	PeakProcessCPUUtilizationRatio float64 `json:"peak_process_cpu_utilization_ratio"`
+	ProcessCPUValid                bool    `json:"process_cpu_valid"`
+	Note                           string  `json:"note"`
 }
 
-const note = "Generator-side Go runtime measurements only. Heap is not process RSS; Go CPU utilization is not the host or full process CPU utilization. Samples may miss brief peaks."
+const note = "Generator-side Go runtime and supported OS process samples only; RSS is not total host memory and process CPU is normalized to GOMAXPROCS. Sampling may miss brief peaks and does not describe the target application."
 
 type reading struct {
-	at          time.Time
-	heap        uint64
-	goroutines  int
-	gcCycles    uint32
-	maxProcs    int
-	cpuTotal    float64
-	cpuIdle     float64
-	cpuAvailable bool
+	at                time.Time
+	heap              uint64
+	goroutines        int
+	gcCycles          uint32
+	maxProcs          int
+	cpuTotal          float64
+	cpuIdle           float64
+	cpuAvailable      bool
+	processCPUSeconds float64
+	processRSSBytes   uint64
+	processAvailable  bool
 }
 
 func sampleRuntime() reading {
@@ -51,21 +59,27 @@ func sampleRuntime() reading {
 	valid := cpu[0].Value.Kind() == metrics.KindFloat64 && cpu[1].Value.Kind() == metrics.KindFloat64
 	s := reading{
 		at: time.Now(), heap: mem.HeapAlloc,
-		goroutines: runtime.NumGoroutine(),
-		gcCycles: mem.NumGC,
-		maxProcs: runtime.GOMAXPROCS(0),
+		goroutines:   runtime.NumGoroutine(),
+		gcCycles:     mem.NumGC,
+		maxProcs:     runtime.GOMAXPROCS(0),
 		cpuAvailable: valid,
 	}
 	if valid {
 		s.cpuTotal = cpu[0].Value.Float64()
 		s.cpuIdle = cpu[1].Value.Float64()
 	}
+	processCPU, processRSS, processOK := readProcessHealth()
+	s.processCPUSeconds = processCPU
+	s.processRSSBytes = processRSS
+	s.processAvailable = processOK
 	return s
 }
 
 type accumulator struct {
-	base, latest reading
-	summary Summary
+	base, latest       reading
+	summary            Summary
+	previousProcess    reading
+	hasPreviousProcess bool
 }
 
 func (a *accumulator) add(r reading) {
@@ -80,6 +94,30 @@ func (a *accumulator) add(r reading) {
 	}
 	if r.goroutines > a.summary.PeakGoroutines {
 		a.summary.PeakGoroutines = r.goroutines
+	}
+	if r.processAvailable {
+		a.summary.ProcessSamples++
+		if r.processRSSBytes > a.summary.PeakProcessRSSBytes {
+			a.summary.PeakProcessRSSBytes = r.processRSSBytes
+		}
+		if a.hasPreviousProcess && r.at.After(a.previousProcess.at) && r.maxProcs == a.previousProcess.maxProcs && r.maxProcs > 0 && r.processCPUSeconds >= a.previousProcess.processCPUSeconds {
+			deltaSeconds := r.at.Sub(a.previousProcess.at).Seconds()
+			cpuCapacity := deltaSeconds * float64(r.maxProcs)
+			if cpuCapacity > 0 {
+				ratio := (r.processCPUSeconds - a.previousProcess.processCPUSeconds) / cpuCapacity
+				if ratio >= 0 {
+					a.summary.ProcessCPUSamples++
+					a.summary.ProcessCPUValid = true
+					if ratio > a.summary.PeakProcessCPUUtilizationRatio {
+						a.summary.PeakProcessCPUUtilizationRatio = ratio
+					}
+				}
+			}
+		}
+		a.previousProcess = r
+		a.hasPreviousProcess = true
+	} else {
+		a.hasPreviousProcess = false
 	}
 }
 
@@ -119,14 +157,14 @@ type Monitor struct {
 	stop chan struct{}
 	done chan struct{}
 	once sync.Once
-	acc accumulator
+	acc  accumulator
 }
 
 // Start begins self-monitoring. Sampling runs separately from request workers.
 // Call Stop after test workers finish; Stop is safe to call more than once.
 func Start(interval time.Duration) *Monitor {
 	if interval < 100*time.Millisecond {
-		interval = 250*time.Millisecond
+		interval = 250 * time.Millisecond
 	}
 	m := &Monitor{stop: make(chan struct{}), done: make(chan struct{})}
 	m.acc.add(sampleRuntime())
@@ -149,7 +187,7 @@ func Start(interval time.Duration) *Monitor {
 
 // Stop completes sampling and returns a consistent value snapshot.
 func (m *Monitor) Stop() Summary {
-	m.once.Do(func(){ close(m.stop) })
+	m.once.Do(func() { close(m.stop) })
 	<-m.done
 	return m.acc.finish()
 }

@@ -38,7 +38,7 @@ func ReadRun(path string) (report.Result, error) {
 	if err := readJSON(path, &r); err != nil {
 		return r, err
 	}
-	if r.SchemaVersion < 1 || r.SchemaVersion > 2 || r.Name == "" || r.Metrics.Total < 0 || r.Metrics.Success < 0 || r.Metrics.Failures < 0 || r.Metrics.Success+r.Metrics.Failures != r.Metrics.Total || r.Config.Users < 1 || r.ElapsedSeconds <= 0 {
+	if r.SchemaVersion < 1 || r.SchemaVersion > 4 || r.Name == "" || r.Metrics.Total < 0 || r.Metrics.Success < 0 || r.Metrics.Failures < 0 || r.Metrics.Success+r.Metrics.Failures != r.Metrics.Total || r.Config.Users < 1 || r.ElapsedSeconds <= 0 || (r.SchemaVersion >= 4 && r.ObservationSeconds <= 0) {
 		return report.Result{}, errors.New("not a valid Damocline HTTP run report")
 	}
 	return r, nil
@@ -128,9 +128,9 @@ func Evaluate(r report.Result, host *hostmon.Result) Assessment {
 	} else if !r.Config.SeparateSessions {
 		a.Findings = append(a.Findings, Finding{"LIMIT", fmt.Sprintf("%d virtual users were configured, but independent authenticated sessions were not verified; they are not necessarily %d distinct people.", r.Config.Users, r.Config.Users)})
 	}
-	if r.ElapsedSeconds > 0 {
-		actual := float64(r.Metrics.Total) / r.ElapsedSeconds
-		a.Findings = append(a.Findings, Finding{"INFO", fmt.Sprintf("Observed HTTP request throughput: %.2f requests/s. The max_rps setting (%d) is only a ceiling, not achieved traffic.", actual, r.Config.MaxRPS)})
+	if r.WindowSeconds() > 0 {
+		actual := float64(r.Metrics.Total) / r.WindowSeconds()
+		a.Findings = append(a.Findings, Finding{"INFO", fmt.Sprintf("Observed HTTP request throughput over the workload window: %.2f requests/s. The max_rps setting (%d) is only a ceiling, not achieved traffic.", actual, r.Config.MaxRPS)})
 		if r.Config.MaxRPS > 0 && actual >= 0.90*float64(r.Config.MaxRPS) {
 			a.Findings = append(a.Findings, Finding{"LIMIT", "Traffic approached the generator's max_rps setting. This run cannot separate a client-side rate cap from application capacity."})
 		}
@@ -146,7 +146,20 @@ func Evaluate(r report.Result, host *hostmon.Result) Assessment {
 		} else {
 			a.Findings = append(a.Findings, Finding{"CAUTION", "Go runtime CPU activity was not measurable consistently in this run; generator CPU headroom is unknown."})
 		}
-		a.Findings = append(a.Findings, Finding{"LIMIT", "Generator heap allocation is not operating-system process RSS; sampled peaks can miss short spikes."})
+		if g.ProcessSamples > 0 {
+			a.Findings = append(a.Findings, Finding{"INFO", fmt.Sprintf("Load-generator OS process: peak sampled resident memory %.1f MiB across %d samples.", float64(g.PeakProcessRSSBytes)/(1024*1024), g.ProcessSamples)})
+			if g.ProcessCPUValid {
+				a.Findings = append(a.Findings, Finding{"INFO", fmt.Sprintf("Peak sampled generator process CPU activity: %.1f%% of GOMAXPROCS capacity; this is not host or server CPU utilization.", 100*g.PeakProcessCPUUtilizationRatio)})
+				if g.ProcessCPUSamples >= 2 && g.PeakProcessCPUUtilizationRatio >= 0.90 {
+					a.Findings = append(a.Findings, Finding{"CAUTION", "The load generator showed a high sampled process CPU window. Validate generator headroom before making a server-capacity claim."})
+				}
+			} else {
+				a.Findings = append(a.Findings, Finding{"CAUTION", "Load-generator process CPU could not be measured consistently; process CPU headroom is unknown."})
+			}
+		} else {
+			a.Findings = append(a.Findings, Finding{"CAUTION", "OS process CPU and resident-memory samples are unavailable on this platform; generator process headroom is unknown."})
+		}
+		a.Findings = append(a.Findings, Finding{"LIMIT", "Generator samples may miss brief resource peaks and do not describe host or target resources."})
 	}
 	if r.ArrivalsDropped > 0 {
 		a.Findings = append(a.Findings, Finding{"LIMIT", fmt.Sprintf("%d scheduled journey starts were dropped: offered load was not delivered.", r.ArrivalsDropped)})
@@ -259,9 +272,9 @@ func writeComparison(w io.Writer, old, current report.Result) {
 	if old.Config.Duration != current.Config.Duration {
 		fmt.Fprintf(w, "  [LIMIT] Test durations differ (%s vs %s).\n", old.Config.Duration, current.Config.Duration)
 	}
-	if old.ElapsedSeconds > 0 && current.ElapsedSeconds > 0 {
-		a := float64(old.Metrics.Total) / old.ElapsedSeconds
-		b := float64(current.Metrics.Total) / current.ElapsedSeconds
+	if old.WindowSeconds() > 0 && current.WindowSeconds() > 0 {
+		a := float64(old.Metrics.Total) / old.WindowSeconds()
+		b := float64(current.Metrics.Total) / current.WindowSeconds()
 		fmt.Fprintf(w, "  Achieved throughput: %.2f -> %.2f requests/s.\n", a, b)
 		if a > 0 && math.Abs(b-a)/a > 0.15 {
 			fmt.Fprintln(w, "  [LIMIT] Achieved throughput differs by more than 15%, so latency changes cannot be attributed to an application improvement.")

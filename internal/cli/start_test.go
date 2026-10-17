@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -48,7 +49,7 @@ func TestStartNeverSendsUnapprovedTraffic(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if info.Mode().Perm()&0077 != 0 {
+		if runtime.GOOS != "windows" && info.Mode().Perm()&0077 != 0 {
 			t.Fatalf("scenario permissions=%s", info.Mode())
 		}
 	})
@@ -107,9 +108,9 @@ func TestStartDoesNotStoreAuthenticationCookie(t *testing.T) {
 
 func TestNormalizeApplicationOrigin(t *testing.T) {
 	tests := []struct {
-		name string
+		name  string
 		input string
-		want string
+		want  string
 	}{
 		{"bare domain", "app.example.com", "https://app.example.com"},
 		{"bare domain with slash", "app.example.com/", "https://app.example.com"},
@@ -150,7 +151,7 @@ func TestWizardPromptsAgainAfterInvalidOrigin(t *testing.T) {
 	runInTempDir(t, func() {
 		input := strings.Join([]string{
 			"https://app.example.com/dashboard", // must not exit the wizard
-			"app.example.com/", // this is accepted
+			"app.example.com/",                  // this is accepted
 			"Example smoke", "/dashboard", "", "1", "1", "2", "1s", "5", "DENIED",
 		}, "\n") + "\n"
 		var out, errOut bytes.Buffer

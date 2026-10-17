@@ -2,6 +2,7 @@ package insights
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -107,6 +108,55 @@ func TestReadRunRejectsBrokenInput(t *testing.T) {
 		t.Fatal("invalid report accepted")
 	}
 }
+
+func TestReadRunAcceptsSchemaThreeGeneratorHealth(t *testing.T) {
+	r := synthetic()
+	r.SchemaVersion = 3
+	r.Generator = &generatorhealth.Summary{ProcessSamples: 4, ProcessCPUSamples: 3,
+		PeakProcessRSSBytes: 1 << 20, PeakProcessCPUUtilizationRatio: 0.1, ProcessCPUValid: true}
+	data, err := json.Marshal(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "schema-v3.json")
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ReadRun(path)
+	if err != nil || got.SchemaVersion != 3 || got.Generator == nil || !got.Generator.ProcessCPUValid {
+		t.Fatalf("schema-v3 generator health not readable: %+v err=%v", got, err)
+	}
+}
+
+func TestReadRunAcceptsSchemaFourObservationWindow(t *testing.T) {
+	r := synthetic()
+	r.SchemaVersion = 4
+	r.ElapsedSeconds = 31
+	r.ObservationSeconds = 30
+	data, err := json.Marshal(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "schema-v4.json")
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ReadRun(path)
+	if err != nil || got.SchemaVersion != 4 || got.WindowSeconds() != 30 {
+		t.Fatalf("schema-v4 workload window not readable: %+v err=%v", got, err)
+	}
+	got.ObservationSeconds = 0
+	bad, err := json.Marshal(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, bad, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadRun(path); err == nil {
+		t.Fatal("schema-v4 report without observation window was accepted")
+	}
+}
 func TestNoPrivateTargetInFixture(t *testing.T) {
 	r := synthetic()
 	if !strings.Contains(r.Target, "example.com") {
@@ -116,14 +166,16 @@ func TestNoPrivateTargetInFixture(t *testing.T) {
 
 func TestGeneratorHealthReportedWithoutAssumingServerBottleneck(t *testing.T) {
 	r := synthetic()
+	r.SchemaVersion = 3
 	r.Generator = &generatorhealth.Summary{
 		Samples: 6, ObservedSeconds: 2, PeakHeapAllocBytes: 32 << 20,
 		PeakGoroutines: 21, GCCycles: 1, GoCPUValid: true,
-		GoCPUUtilizationRatio: 0.96,
+		GoCPUUtilizationRatio: 0.96, ProcessSamples: 6, ProcessCPUSamples: 5, ProcessCPUValid: true,
+		PeakProcessRSSBytes: 64 << 20, PeakProcessCPUUtilizationRatio: 0.95,
 	}
 	var output bytes.Buffer
 	Write(&output, r, nil, nil)
-	for _, phrase := range []string{"Load-generator runtime", "Go runtime CPU activity", "Validate generator headroom", "not operating-system process RSS", "SERVER UPGRADE: NOT JUSTIFIED"} {
+	for _, phrase := range []string{"Load-generator runtime", "Go runtime CPU activity", "Validate generator headroom", "Load-generator OS process", "Peak sampled generator process CPU", "Validate generator headroom", "SERVER UPGRADE: NOT JUSTIFIED"} {
 		if !strings.Contains(output.String(), phrase) {
 			t.Fatalf("missing %q in output: %s", phrase, output.String())
 		}
