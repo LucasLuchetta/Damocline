@@ -14,6 +14,7 @@ import (
 
 	"github.com/LucasLuchetta/Damocline/internal/hostmon"
 	"github.com/LucasLuchetta/Damocline/internal/report"
+	"github.com/LucasLuchetta/Damocline/internal/statistics"
 )
 
 const maxReportFile = 16 << 20
@@ -95,6 +96,23 @@ func Evaluate(r report.Result, host *hostmon.Result) Assessment {
 		a.Findings = append(a.Findings, Finding{"INFO", fmt.Sprintf("HTTP requests: %d successful / %d total; %d failures, %.2f%% error rate.", r.Metrics.Success, r.Metrics.Total, r.Metrics.Failures, 100*float64(r.Metrics.Failures)/float64(r.Metrics.Total))})
 	} else {
 		a.Findings = append(a.Findings, Finding{"CAUTION", "No completed HTTP requests were measured."})
+	}
+	if r.Metrics.Total > 0 && r.Config.MaxErrorRate >= 0 && r.Config.MaxErrorRate <= 1 {
+		upper, err := statistics.UpperFailureRate95(r.Metrics.Failures, r.Metrics.Total)
+		if err == nil {
+			observed := float64(r.Metrics.Failures) / float64(r.Metrics.Total)
+			a.Findings = append(a.Findings, Finding{"INFO", fmt.Sprintf("Observed HTTP error rate %.2f%%; one-sided 95%% upper bound %.2f%% under independent, stationary Bernoulli outcomes (an assumption that may not hold for web traffic).", 100*observed, 100*upper)})
+			if upper > r.Config.MaxErrorRate {
+				a.Findings = append(a.Findings, Finding{"LIMIT", fmt.Sprintf("The configured %.2f%% error budget is NOT statistically established by this sample, even if the empirical error-rate threshold passed. A run PASS remains an observed outcome, not a confidence-certified service reliability result.", 100*r.Config.MaxErrorRate)})
+				if r.Metrics.Failures == 0 && r.Config.MaxErrorRate > 0 && r.Config.MaxErrorRate < 1 {
+					if required, err := statistics.ZeroFailureSamples95(r.Config.MaxErrorRate); err == nil {
+						a.Findings = append(a.Findings, Finding{"INFO", fmt.Sprintf("Illustration: at least %d independent error-free operations would be required for that 95%% binomial bound alone. Temporal dependence and load variability require additional controlled trials.", required)})
+					}
+				}
+			} else {
+				a.Findings = append(a.Findings, Finding{"CAUTION", "This per-request binomial bound assumes independence and stationarity; it does not validate sustained capacity or account for correlated failures. Repeat time-separated trials and measure complete business journeys."})
+			}
+		}
 	}
 	if r.Metrics.Total < 100 {
 		a.Findings = append(a.Findings, Finding{"CAUTION", fmt.Sprintf("Only %d completed requests: percentile estimates, especially p99, are sensitive to individual samples. Repeat with more observations.", r.Metrics.Total)})
