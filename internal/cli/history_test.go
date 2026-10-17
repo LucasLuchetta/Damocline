@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/LucasLuchetta/Damocline/internal/config"
 )
@@ -134,5 +135,32 @@ func TestHistorySelectionCancelError(t *testing.T) {
 		w := wizard{input: bufioReader("0\n"), out: &bytes.Buffer{}}
 		_, _, err := w.selectHistory()
 		if !errors.Is(err, errHistoryCancelled) { t.Fatalf("expected cancel, got %v", err) }
+	})
+}
+
+func TestCurrentHistoryPrecedesNewerArchiveTimestamp(t *testing.T) {
+	runInTempDir(t, func() {
+		p := startPreferences{Kind: "run", MinUsers: 1, MaxUsers: 1}
+		first := exampleHistoryScenario("http://127.0.0.1:12345", "old archived")
+		current := exampleHistoryScenario("http://127.0.0.1:12345", "current")
+		if err := saveActiveProfile(first, p); err != nil {
+			t.Fatal(err)
+		}
+		if err := saveActiveProfile(current, p); err != nil {
+			t.Fatal(err)
+		}
+		// Simulate a filesystem with coarse/stale scenario modification times.
+		// Display order must be semantic, not dependent on timestamp precision.
+		past := time.Now().Add(-24 * time.Hour)
+		if err := os.Chtimes(scenarioPath, past, past); err != nil {
+			t.Fatal(err)
+		}
+		options, err := savedHistory()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(options) != 2 || !options[0].Current || options[0].Scenario.Name != "current" {
+			t.Fatalf("active scenario should always appear first: %+v", options)
+		}
 	})
 }
