@@ -103,3 +103,10 @@ func TestQualityTreatsPreTraceSchemaAsUnknown(t *testing.T) {
 		t.Fatalf("historical report without HTTP phase fields must remain unknown, not invalid: %+v", q)
 	}
 }
+
+func TestQualityRejectsInvalidObservedThinkTime(t *testing.T) {
+	r := Result{SchemaVersion: 7, ElapsedSeconds: 1, ObservationSeconds: 1, Config: RunConfig{Users: 1, MaxRPS: 1}, ObservedThinkTimeMS: math.Inf(1), ThinkTimeObservations: 1}
+	if q := AssessQuality(r); q.State != QualityInvalid {
+		t.Fatalf("non-finite think time must invalidate v7 evidence: %+v", q)
+	}
+}

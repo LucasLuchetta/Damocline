@@ -191,6 +191,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "  Profile %s: configured weight=%d, started journeys=%d, completed=%d, cancelled=%d\n", profile.Name, profile.Weight, started, profile.Journeys.Total, profile.Journeys.Cancelled)
 	}
 	fmt.Fprintf(stdout, "Iterations: %d started / %d completed; arrivals dropped: %d\n", result.IterationsStarted, result.IterationsCompleted, result.ArrivalsDropped)
+	fmt.Fprintf(stdout, "Observed configured think-time waits: %.1f ms across %d intervals; journey latency includes rate-token waits and these intervals.\n", result.ObservedThinkTimeMS, result.ThinkTimeObservations)
 	for _, w := range result.Warnings {
 		fmt.Fprintf(stdout, "WARNING: %s\n", w)
 	}

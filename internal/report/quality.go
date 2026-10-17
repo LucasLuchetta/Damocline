@@ -71,6 +71,9 @@ func AssessQuality(r Result) *Quality {
 	if math.IsNaN(r.ErrorsRate) || math.IsInf(r.ErrorsRate, 0) || r.ErrorsRate < 0 || r.ErrorsRate > 1 || math.IsNaN(r.SchedulerLagP95MS) || math.IsInf(r.SchedulerLagP95MS, 0) || math.IsNaN(r.SchedulerLagMaxMS) || math.IsInf(r.SchedulerLagMaxMS, 0) || r.SchedulerLagP95MS < 0 || r.SchedulerLagMaxMS < 0 || r.SchedulerLagP95MS > r.SchedulerLagMaxMS {
 		invalidate("Non-finite or inconsistent observed rate or scheduler lag.")
 	}
+	if r.SchemaVersion >= 7 && (math.IsNaN(r.ObservedThinkTimeMS) || math.IsInf(r.ObservedThinkTimeMS, 0) || r.ObservedThinkTimeMS < 0 || r.ThinkTimeObservations < 0) {
+		invalidate("Observed think-time totals or counts are invalid.")
+	}
 	for _, s := range r.Steps {
 		if s.Metrics.Total < 0 || s.Metrics.Success < 0 || s.Metrics.Failures < 0 || s.Metrics.Cancelled < 0 || s.Metrics.Success > s.Metrics.Total || s.Metrics.Failures != s.Metrics.Total-s.Metrics.Success {
 			invalidate("Named-step accounting is inconsistent (step identity intentionally omitted).")
@@ -88,11 +91,12 @@ func AssessQuality(r Result) *Quality {
 			invalidate("HTTP client full-duration observations do not reconcile with started step requests.")
 			break
 		}
-		if t.RequestAttemptCount > s.Metrics.Total+s.Metrics.Cancelled || t.FirstByteCount > t.CompleteCount || t.BodyCount+t.BodyIncompleteCount != t.FirstByteCount || t.WriteCount+t.WriteFailedCount > t.CompleteCount || t.DNSCount > t.DNSStartCount || t.ConnectCount > t.ConnectStartCount || t.TLSCount > t.TLSStartCount {
+		if t.RequestAttemptCount > s.Metrics.Total && t.RequestAttemptCount-s.Metrics.Total > s.Metrics.Cancelled || t.FirstByteCount > t.CompleteCount || t.BodyCount > t.FirstByteCount || t.BodyIncompleteCount != t.FirstByteCount-t.BodyCount || t.WriteCount > t.CompleteCount || t.WriteFailedCount > t.CompleteCount-t.WriteCount || t.DNSCount > t.DNSStartCount || t.ConnectCount > t.ConnectStartCount || t.TLSCount > t.TLSStartCount {
 			invalidate("HTTP client phase callback counts are inconsistent.")
 			break
 		}
-		if t.RateWaitCount < t.RequestAttemptCount || t.RateWaitCount+t.RateWaitCancelledCount > s.Metrics.Total+s.Metrics.Cancelled {
+		admittedCancelled := t.RateWaitCount - s.Metrics.Total
+		if t.RateWaitCount < s.Metrics.Total || admittedCancelled > s.Metrics.Cancelled || t.RateWaitCancelledCount > s.Metrics.Cancelled-admittedCancelled || t.RateWaitCount < t.RequestAttemptCount {
 			invalidate("HTTP rate-wait observations do not reconcile with started step requests.")
 			break
 		}
@@ -125,6 +129,9 @@ func AssessQuality(r Result) *Quality {
 	if len(r.Profiles) > 0 {
 		var total, success, failures, cancelled int
 		for _, profile := range r.Profiles {
+			if r.SchemaVersion >= 7 && (math.IsNaN(profile.ObservedThinkTimeMS) || math.IsInf(profile.ObservedThinkTimeMS, 0) || profile.ObservedThinkTimeMS < 0 || profile.ThinkTimeObservations < 0) {
+				invalidate("Profile think-time totals or counts are invalid.")
+			}
 			m := profile.Journeys
 			if m.Total < 0 || m.Success < 0 || m.Failures < 0 || m.Cancelled < 0 ||
 				m.Total > r.Journeys.Total-total || m.Success > r.Journeys.Success-success ||
@@ -159,5 +166,5 @@ func validHTTPTrace(t HTTPTrace) bool {
 			return false
 		}
 	}
-	return t.RequestAttemptCount == t.CompleteCount && t.WriteCount+t.WriteFailedCount <= t.CompleteCount && t.FirstByteCount <= t.CompleteCount && t.BodyCount+t.BodyIncompleteCount == t.FirstByteCount && t.DNSCount <= t.DNSStartCount && t.ConnectCount <= t.ConnectStartCount && t.TLSCount <= t.TLSStartCount
+	return t.RequestAttemptCount == t.CompleteCount && t.WriteCount <= t.CompleteCount && t.WriteFailedCount <= t.CompleteCount-t.WriteCount && t.FirstByteCount <= t.CompleteCount && t.BodyCount <= t.FirstByteCount && t.BodyIncompleteCount == t.FirstByteCount-t.BodyCount && t.DNSCount <= t.DNSStartCount && t.ConnectCount <= t.ConnectStartCount && t.TLSCount <= t.TLSStartCount
 }
