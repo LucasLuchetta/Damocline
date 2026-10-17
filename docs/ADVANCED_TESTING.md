@@ -44,6 +44,8 @@ Scenario fields:
 
 Use either top-level `steps` or `profiles`, never both. [`examples/weighted-profiles-readonly.json`](../examples/weighted-profiles-readonly.json) shows a three-profile read-only mix. Profile weights describe the planned mix. In closed mode, configure at least one VU per profile; in arrival mode, inspect actual profile starts in the report. HTTP redirects are not followed. A redirect to login is a failure unless explicitly listed as expected (not recommended for an authenticated page test).
 
+Optionally declare `profile_mix_basis` as `sanitized_analytics` or `business_estimate` and provide a short safe `profile_mix_reference` identifier. The default basis is `assumption`. This metadata is self-reported provenance, not proof that the mix is representative; do not put domains, paths, credentials, customer identifiers, or raw events in the reference.
+
 A later step may use a value extracted by an earlier one in the same journey. Path variables must occupy a whole path segment, which prevents a response value from changing origin or query semantics. Header and body templates use `{{variable_name}}`. Extracted values are not placed in report output.
 
 ## 3. Independent test users

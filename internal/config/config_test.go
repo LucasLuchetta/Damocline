@@ -152,6 +152,36 @@ func TestWeightedProfilesArePrepared(t *testing.T) {
 	}
 }
 
+func TestProfileMixProvenanceDefaultsAndValidates(t *testing.T) {
+	s := good()
+	v, err := Parse(s, Options{Authorized: true})
+	if err != nil || v.Scenario.ProfileMixBasis != "assumption" {
+		t.Fatalf("default basis=%q err=%v", v.Scenario.ProfileMixBasis, err)
+	}
+	tests := []struct {
+		basis, reference string
+		valid            bool
+	}{
+		{"sanitized_analytics", "weekly-summary-v2", true},
+		{"business_estimate", "planning-review", true},
+		{"unknown", "source-1", false},
+		{"sanitized_analytics", "", false},
+		{"assumption", "source-1", false},
+		{"sanitized_analytics", "https://private.example", false},
+		{"sanitized_analytics", "source with spaces", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.basis+"/"+tt.reference, func(t *testing.T) {
+			s := good()
+			s.ProfileMixBasis, s.ProfileMixReference = tt.basis, tt.reference
+			_, err := Parse(s, Options{Authorized: true})
+			if (err == nil) != tt.valid {
+				t.Fatalf("valid=%v err=%v", tt.valid, err)
+			}
+		})
+	}
+}
+
 func TestRejectInvalidWeightedProfiles(t *testing.T) {
 	tests := []struct {
 		name     string

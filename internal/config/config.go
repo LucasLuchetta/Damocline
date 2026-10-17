@@ -18,6 +18,8 @@ type Scenario struct {
 	Name                   string    `json:"name"`
 	WorkloadRevision       string    `json:"workload_revision,omitempty"`
 	Environment            string    `json:"environment,omitempty"`
+	ProfileMixBasis        string    `json:"profile_mix_basis,omitempty"`
+	ProfileMixReference    string    `json:"profile_mix_reference,omitempty"`
 	BaseURL                string    `json:"base_url"`
 	Users                  int       `json:"users"`
 	Duration               string    `json:"duration"`
@@ -137,6 +139,21 @@ func Parse(s Scenario, o Options) (Validated, error) {
 		if value != "" && !regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$`).MatchString(value) {
 			return v, fmt.Errorf("%s must be a safe 1-120 character label", field)
 		}
+	}
+	if s.ProfileMixBasis == "" {
+		s.ProfileMixBasis = "assumption"
+	}
+	if s.ProfileMixBasis != "assumption" && s.ProfileMixBasis != "sanitized_analytics" && s.ProfileMixBasis != "business_estimate" {
+		return v, errors.New("profile_mix_basis must be assumption, sanitized_analytics, or business_estimate")
+	}
+	if s.ProfileMixReference != "" && !regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$`).MatchString(s.ProfileMixReference) {
+		return v, errors.New("profile_mix_reference must be a safe 1-80 character label")
+	}
+	if s.ProfileMixBasis == "assumption" && s.ProfileMixReference != "" {
+		return v, errors.New("profile_mix_reference requires a non-assumption profile_mix_basis")
+	}
+	if s.ProfileMixBasis != "assumption" && s.ProfileMixReference == "" {
+		return v, errors.New("profile_mix_reference is required for a non-assumption profile_mix_basis")
 	}
 	if s.Users < 1 || s.Users > 50 {
 		return v, errors.New("users must be between 1 and 50 for this initial release")

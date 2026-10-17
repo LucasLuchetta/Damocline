@@ -38,7 +38,7 @@ func TestSuccess(t *testing.T) {
 	if result.Metrics.Success < 1 || result.Metrics.Failures != 0 || result.Outcome != "PASS" {
 		t.Fatalf("unexpected report: %+v", result)
 	}
-	if result.SchemaVersion != 8 || result.ObservationSeconds != v.Duration.Seconds() || result.Generator == nil || result.Generator.ProcessSamples < 2 {
+	if result.SchemaVersion != 9 || result.ObservationSeconds != v.Duration.Seconds() || result.Generator == nil || result.Generator.ProcessSamples < 2 {
 		t.Fatalf("report must include schema-v8 HTTP diagnostics, observation window and generator process observations: %+v", result)
 	}
 }
