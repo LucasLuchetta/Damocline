@@ -15,7 +15,7 @@ import (
 )
 
 // Interactive starts check for updates; scripted load jobs never contact Git.
-func promptUpdate(w *wizard, stderr io.Writer) (bool, int) {
+func promptUpdate(w *wizard, stderr io.Writer, mode string) (bool, int) {
 	root, err := os.Getwd()
 	if err != nil || !updater.IsCheckout(root) {
 		return false, 0
@@ -61,7 +61,14 @@ func promptUpdate(w *wizard, stderr io.Writer) (bool, int) {
 		return false, 0
 	}
 	fmt.Fprint(w.out, "Source updated. Starting the new version...\n\n")
-	cmd := exec.Command("go", "run", "./cmd/damocline")
+	restartArgs := []string{"run", "./cmd/damocline"}
+	switch mode {
+	case "new":
+		restartArgs = append(restartArgs, "/start")
+	case "history":
+		restartArgs = append(restartArgs, "/history")
+	}
+	cmd := exec.Command("go", restartArgs...)
 	cmd.Dir = filepath.Clean(root)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = w.out

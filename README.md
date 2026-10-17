@@ -85,6 +85,20 @@ Browser login session reuse **does not replay login forms**, create distinct use
 
 See [Source installation and browser login](docs/SOURCE_INSTALL.md) and [Guided CLI](docs/INTERACTIVE_START.md).
 
+## Repeat a saved scenario
+
+The guided CLI now supports English slash commands:
+
+```powershell
+damocline /start    # create a new scenario; keep the previous one in local history
+damocline /history  # select a saved scenario by number and review it before rerun
+damocline           # show the guided setup and current-profile choices
+```
+
+Scenario configurations are stored only in `.damocline/` alongside your source checkout. The current profile stays in `.damocline/scenario.local.json`, older distinct configurations are stored in `.damocline/history/`, and result reports remain in `.damocline/reports/`. These are scenario snapshots, not a report-history viewer. Do not commit private scenarios or reports. Browser authentication must be repeated for each rerun; traffic still requires explicit `AUTHORIZE` and a separate start confirmation.
+
+See [Guided CLI](docs/INTERACTIVE_START.md) for selection, persistence, and security details.
+
 ## Run your first bounded test
 
 ```bash
