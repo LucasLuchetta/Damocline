@@ -25,6 +25,35 @@ func TestWelcomeArtIsReadableWithoutANSI(t *testing.T) {
 	}
 }
 
+func TestWelcomeEclipsePixelsAreTerminalFriendly(t *testing.T) {
+	lines := strings.Split(eclipseArt, "\n")
+	if len(lines) != 13 {
+		t.Fatalf("unexpected Eclipse artwork height: %d", len(lines))
+	}
+	for _, line := range lines {
+		if strings.ContainsAny(line, "\t\r") || strings.TrimRight(line, " ") != line {
+			t.Fatalf("art line uses unstable terminal spacing: %q", line)
+		}
+		if len([]rune(line)) > 48 {
+			t.Fatalf("art line is too wide for a compact terminal: %q", line)
+		}
+	}
+	var plain, colored bytes.Buffer
+	welcomeArt(&plain, false)
+	welcomeArt(&colored, true)
+	for _, fragment := range []string{"▄████████", "▀▀▀▀▀▀▀▀▀", "▼", "LOCAL-FIRST HTTP CAPACITY EXPLORER"} {
+		if !strings.Contains(plain.String(), fragment) {
+			t.Fatalf("missing Eclipse motif %q in: %s", fragment, plain.String())
+		}
+	}
+	if strings.Contains(plain.String(), "\x1b[") {
+		t.Fatal("plain welcome contains ANSI escape codes")
+	}
+	if !strings.Contains(colored.String(), "\x1b[1;97m") || !strings.Contains(colored.String(), "\x1b[0m") {
+		t.Fatalf("colored welcome missing ANSI formatting: %q", colored.String())
+	}
+}
+
 func TestWelcomeMenuChoices(t *testing.T) {
 	for _, tt := range []struct {
 		name, input, want string
