@@ -16,6 +16,7 @@ import (
 type Options struct {
 	MinUsers      int           `json:"min_users"`
 	MaxUsers      int           `json:"max_users"`
+	TargetUsers   int           `json:"target_users,omitempty"`
 	Repeats       int           `json:"repeats"`
 	StageDuration time.Duration `json:"-"`
 	Budget        time.Duration `json:"-"`
@@ -46,6 +47,9 @@ type Runner func(context.Context, config.Validated) report.Result
 func Validate(o Options) error {
 	if o.MinUsers < 1 || o.MaxUsers > 50 || o.MinUsers > o.MaxUsers {
 		return fmt.Errorf("min-users must be at least 1 and max-users at most 50, with min <= max")
+	}
+	if o.TargetUsers < 0 {
+		return fmt.Errorf("target users cannot be negative")
 	}
 	if o.Repeats < 2 || o.Repeats > 4 {
 		return fmt.Errorf("repeats must be between 2 and 4 for reliable confirmation")
@@ -151,6 +155,14 @@ func WithRunner(ctx context.Context, base config.Validated, opt Options, runner 
 			}
 			if next > opt.MaxUsers {
 				next = opt.MaxUsers
+			}
+			// A business capacity target must be exercised at its exact
+			// workload level instead of interpolating from nearby probes.
+			// Preserve the normal bounded exploration when the target is
+			// outside the configured range or cannot be reached safely.
+			if opt.TargetUsers > candidate && opt.TargetUsers < next &&
+				opt.TargetUsers <= opt.MaxUsers {
+				next = opt.TargetUsers
 			}
 			candidate = next
 			continue

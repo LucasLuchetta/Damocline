@@ -101,7 +101,19 @@ See [Understand your results](docs/REPORT_EXPLAINER.md) for interpretation, samp
 
 ## Check a customer's demand goal (offline preview)
 
-Use a previously recorded `explore --out` report to compare an explicit
+For a guided one-command capacity campaign, add an explicit demand goal to
+`explore`. The explorer will attempt the **exact** required workload level
+when its bounded search reaches that point, then print a cautious assessment:
+
+```powershell
+damocline explore --config myapp.local.json --min-users 2 --max-users 20 --peak-users 12 --growth-percent 25 --reserve-percent 0 --repeats 2 --authorized --out reports/capacity.json
+```
+
+Use `--dry-run` first. The required load never overrides the configured
+`--max-users` safety ceiling. Neither passing short tests nor a predicted
+user goal proves that the deployment can sustainably serve that many humans.
+
+Alternatively, use a previously recorded `explore --out` report to compare an explicit
 peak-demand goal, projected growth and operational reserve to the exact
 synthetic load levels tested:
 

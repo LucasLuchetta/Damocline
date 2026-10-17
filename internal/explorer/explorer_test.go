@@ -77,3 +77,43 @@ func TestInconclusiveGeneratorCannotBecomeApplicationFailure(t *testing.T) {
         t.Fatalf("generator limitations must not be branded as server capacity failure: %+v err=%v",r,err)
     }
 }
+
+func TestBusinessTargetIsTestedAtExactLoad(t *testing.T) {
+	v, err := config.Parse(config.Scenario{
+		Name: "synthetic goal", BaseURL: "https://example.com",
+		Users: 2, Duration: "10s", MaxRPS: 100, P95LimitMS: 1000,
+		Steps: []config.Step{{Name: "page", Path: "/"}},
+	}, config.Options{Authorized: true})
+	if err != nil {t.Fatal(err)}
+	counts:=map[int]int{}
+	out,err:=WithRunner(context.Background(),v,Options{
+		MinUsers:2, MaxUsers:20, TargetUsers:15, Repeats:2,
+		StageDuration:10*time.Second,
+	},func(_ context.Context,c config.Validated)report.Result{
+		counts[c.Scenario.Users]++
+		return report.Result{Outcome:"PASS"}
+	})
+	if err != nil {t.Fatal(err)}
+	if counts[15] != 2 || out.Outcome!="PASSED_TO_CONFIGURED_CEILING"{
+		t.Fatalf("exact business goal stage missing: %+v counts=%v",out,counts)
+	}
+}
+func TestOutOfRangeBusinessTargetNeverRaisesSafetyCeiling(t *testing.T) {
+	v, err := config.Parse(config.Scenario{
+		Name: "synthetic goal", BaseURL: "https://example.com",
+		Users: 2, Duration: "10s", MaxRPS: 100, P95LimitMS: 1000,
+		Steps: []config.Step{{Name: "page", Path: "/"}},
+	}, config.Options{Authorized: true})
+	if err != nil {t.Fatal(err)}
+	counts:=map[int]int{}
+	_,err=WithRunner(context.Background(),v,Options{
+		MinUsers:2,MaxUsers:16,TargetUsers:250,Repeats:2,StageDuration:10*time.Second,
+	},func(_ context.Context,c config.Validated)report.Result{
+		counts[c.Scenario.Users]++
+		return report.Result{Outcome:"PASS"}
+	})
+	if err!=nil{t.Fatal(err)}
+	if counts[250]!=0 || counts[16]==0 {
+		t.Fatalf("exceeded safety range: %v",counts)
+	}
+}

@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/LucasLuchetta/Damocline/internal/capacitygoal"
 	"github.com/LucasLuchetta/Damocline/internal/config"
 	"github.com/LucasLuchetta/Damocline/internal/correlate"
 	"github.com/LucasLuchetta/Damocline/internal/engine"
@@ -84,6 +85,7 @@ Usage:
   damocline run --config scenario.json --authorized [--out reports/run.json]
   damocline run --config scenario.json --dry-run
   damocline explore --config scenario.json --min-users 2 --max-users 20 --stage-duration 20s --repeats 2 --authorized
+  damocline explore --config scenario.json --peak-users 10 --growth-percent 25 --reserve-percent 20 --authorized
   damocline monitor --duration 3m --interval 2s --out reports/host.json
   damocline correlate --load reports/load.json --host reports/host.json --out reports/correlated.json
   damocline update           # check and install source updates
@@ -185,6 +187,9 @@ func explore(args []string, stdout, stderr io.Writer) int {
 	writes := fs.Bool("allow-writes", false, "explicitly opt in to HTTP mutation methods")
 	insecure := fs.Bool("allow-insecure-http", false, "permit intentional plaintext HTTP to a non-loopback host")
 	out := fs.String("out", "", "JSON report output path")
+	peak := fs.Int("peak-users", 0, "planned peak active-equivalent virtual-user demand")
+	growth := fs.Float64("growth-percent", 0, "projected demand growth, percent")
+	reserve := fs.Float64("reserve-percent", 0, "reserve on grown demand, percent")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -193,6 +198,21 @@ func explore(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	options := explorer.Options{MinUsers: *min, MaxUsers: *max, Repeats: *repeats, StageDuration: *stage, Budget: *budget}
+	goalRequested := *peak != 0 || *growth != 0 || *reserve != 0
+	var goal capacitygoal.Goal
+	var requiredUsers int
+	if goalRequested {
+		goal = capacitygoal.Goal{PeakUsers: *peak, GrowthPercent: *growth, ReservePercent: *reserve}
+		var goalErr error
+		requiredUsers, goalErr = capacitygoal.EvaluatedUsers(goal)
+		if goalErr != nil {
+			fmt.Fprintf(stderr, "invalid business capacity goal: %v\n", goalErr)
+			return 2
+		}
+		if requiredUsers >= *min && requiredUsers <= *max {
+			options.TargetUsers = requiredUsers
+		}
+	}
 	if err := explorer.Validate(options); err != nil {
 		fmt.Fprintf(stderr, "invalid exploration: %v\n", err)
 		return 2
@@ -219,6 +239,14 @@ func explore(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	fmt.Fprintf(stdout, "Explore: %s | %s://%s | %d–%d virtual users | %s per trial | %d repetitions | rate cap: %d RPS\n", scenario.Name, validated.Base.Scheme, validated.Base.Host, *min, *max, stage.String(), *repeats, scenario.MaxRPS)
+	if goalRequested {
+		fmt.Fprintf(stdout, "Business workload target: %d active-equivalent VUs (peak %d, growth %.1f%%, reserve %.1f%%).\n", requiredUsers, *peak, *growth, *reserve)
+		if requiredUsers > *max || requiredUsers < *min {
+			fmt.Fprintln(stdout, "WARNING: target is outside configured search bounds; this command will NOT lift safe test limits.")
+		} else {
+			fmt.Fprintln(stdout, "The explorer will attempt the exact target as a separate stage if its normal bounded search reaches that workload.")
+		}
+	}
 	if *dry {
 		fmt.Fprintln(stdout, "DRY RUN: no traffic generated. Tests will increase geometrically and refine a failing bracket if found.")
 		return 0
@@ -247,6 +275,17 @@ func explore(args []string, stdout, stderr io.Writer) int {
 	}
 	for _, note := range result.Notes {
 		fmt.Fprintf(stdout, "Note: %s\n", note)
+	}
+	if goalRequested {
+		assessment, assessmentErr := capacitygoal.Evaluate(result, goal)
+		if assessmentErr != nil {
+			fmt.Fprintf(stdout, "BUSINESS GOAL: INCONCLUSIVE (%v). No server sizing decision is justified.\n", assessmentErr)
+		} else {
+			fmt.Fprintf(stdout, "BUSINESS GOAL: %s | required %d active-equivalent VUs.\n", assessment.State, assessment.TargetUsers)
+			for _, finding := range assessment.Findings {
+				fmt.Fprintf(stdout, "  - %s\n", finding)
+			}
+		}
 	}
 	if *out != "" {
 		if err := report.WriteAnyJSON(*out, result); err != nil {
