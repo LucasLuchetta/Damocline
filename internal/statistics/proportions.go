@@ -43,7 +43,7 @@ func ZeroFailureSamples95(maxFailureRate float64) (int, error) {
 		return 0, errors.New("error budget must be greater than 0 and less than 1")
 	}
 	required := math.Ceil(math.Log(0.05) / math.Log1p(-maxFailureRate))
-	if math.IsInf(required, 0) || required > float64(math.MaxInt) {
+	if math.IsInf(required, 0) || required > float64(int(^uint(0)>>1)) {
 		return 0, errors.New("error budget requires too many independent samples")
 	}
 	return int(required), nil
