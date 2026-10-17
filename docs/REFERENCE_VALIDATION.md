@@ -10,6 +10,17 @@ go run ./cmd/damocline-calibrate --out .damocline/calibration/reference.json
 
 The command has a 160-second hard deadline and includes a 30-second sustained stage at 10 journey arrivals per second. It runs three five-second healthy stages at 2, 5, and 10 arrivals per second, then the soak, a deliberately slow single-worker stage, and a known-error/recovery stage. In the healthy matrix, each stage has exactly `rate * 5` scheduled arrivals: 10, 25, and 50 (85 total). The soak must reconcile all 300 arrivals and retain at least 100 generator/process samples. The controlled error stage returns two HTTP 503 responses followed by eight successes. The overload stage must report worker-busy drops, refuse PASS, and reconcile requests that were received, completed, or cancelled at the run boundary.
 
+To run the automated Go suite and all four local calibration artifacts with
+fail-fast status checking, use:
+
+```powershell
+.\scripts\validate-local.ps1
+```
+
+The script prints `LOCAL VALIDATION PASSED` only after every command succeeds
+and each report has the expected status. A failure stops the script before
+that final message.
+
 The reference response delay is 20 ms with a 4 KiB body. The check accepts observed request and journey p50/p95 values between 15 and 150 ms, scheduler p95 lag below half of the arrival interval, and maximum lag below one interval. It rejects sampled generator CPU at or above 90%, heap above 256 MiB, or process RSS above 512 MiB. These broad bounds catch gross timing/accounting mistakes and an obviously saturated generator; they are not calibrated precision tolerances or universal performance guarantees. Go-runtime and OS process CPU/RSS samples must be present on Windows/Linux. Their readings describe only the generator; CPU is normalized to its GOMAXPROCS value, not the host or target.
 
 `REFERENCE_SMOKE_PASSED` means only that these bounded local cases reconciled on this host. It does not establish maximum generator throughput, cross-platform accuracy, sustained capacity, or application capacity. Keep the JSON private under the gitignored `.damocline/` directory; it records local environment metadata and timing evidence.
