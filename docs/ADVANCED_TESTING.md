@@ -111,6 +111,33 @@ exactly matched that target **under the saved test conditions**. It is not a pre
 server capacity, a diagnosis of the limiting component, or a recommendation to
 buy infrastructure.
 
+## Synthetic write data and explicit cleanup
+
+For an authorized write workflow, declare an environment-backed data prefix and
+use `{{synthetic_id}}` in complete path segments, headers, or `body_env`
+content. Damocline generates a fresh identifier for every journey and never
+writes that identifier to a report.
+
+```powershell
+$env:DAMOCLINE_TEST_DATA_PREFIX = "damocline-check"
+.\damocline.exe run --config .\write-workflow.json --authorized --allow-writes
+```
+
+```json
+{
+  "synthetic_data_prefix_env": "DAMOCLINE_TEST_DATA_PREFIX",
+  "steps": [
+    {"name": "create", "method": "POST", "path": "/records/{{synthetic_id}}"},
+    {"name": "cleanup", "method": "DELETE", "path": "/records/{{synthetic_id}}"}
+  ]
+}
+```
+
+Cleanup is an explicit workflow step, so a failed or cancelled journey can
+leave test data behind. Use an isolated test namespace, validate cleanup in
+staging, and retain an application-specific cleanup procedure; Damocline does
+not delete resources outside the configured, authorized journey.
+
 ## 8. Monitor the Linux VPS independently
 
 Run Damocline natively on your Linux host (not inside a container whose procfs could refer to other scopes). The following collects host-wide CPU and available-memory estimates without opening any network port, launching Docker or requiring elevated privileges:

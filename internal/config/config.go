@@ -15,23 +15,24 @@ import (
 )
 
 type Scenario struct {
-	Name                 string    `json:"name"`
-	BaseURL              string    `json:"base_url"`
-	Users                int       `json:"users"`
-	Duration             string    `json:"duration"`
-	RampUp               string    `json:"ramp_up"`
-	ThinkTime            string    `json:"think_time"`
-	Timeout              string    `json:"request_timeout"`
-	MaxRPS               int       `json:"max_rps"`
-	P95LimitMS           float64   `json:"p95_limit_ms"`
-	MaxErrorRate         float64   `json:"max_error_rate"`
-	Mode                 string    `json:"mode,omitempty"`
-	ArrivalRate          int       `json:"arrival_rate,omitempty"`
-	PerVUCookieEnvPrefix string    `json:"per_vu_cookie_env_prefix,omitempty"`
-	MinSamplesPerStep    int       `json:"min_samples_per_step,omitempty"`
-	WindowDuration       string    `json:"window_duration,omitempty"`
-	Steps                []Step    `json:"steps,omitempty"`
-	Profiles             []Profile `json:"profiles,omitempty"`
+	Name                   string    `json:"name"`
+	BaseURL                string    `json:"base_url"`
+	Users                  int       `json:"users"`
+	Duration               string    `json:"duration"`
+	RampUp                 string    `json:"ramp_up"`
+	ThinkTime              string    `json:"think_time"`
+	Timeout                string    `json:"request_timeout"`
+	MaxRPS                 int       `json:"max_rps"`
+	P95LimitMS             float64   `json:"p95_limit_ms"`
+	MaxErrorRate           float64   `json:"max_error_rate"`
+	Mode                   string    `json:"mode,omitempty"`
+	ArrivalRate            int       `json:"arrival_rate,omitempty"`
+	PerVUCookieEnvPrefix   string    `json:"per_vu_cookie_env_prefix,omitempty"`
+	SyntheticDataPrefixEnv string    `json:"synthetic_data_prefix_env,omitempty"`
+	MinSamplesPerStep      int       `json:"min_samples_per_step,omitempty"`
+	WindowDuration         string    `json:"window_duration,omitempty"`
+	Steps                  []Step    `json:"steps,omitempty"`
+	Profiles               []Profile `json:"profiles,omitempty"`
 }
 
 // Profile is a weighted, named workflow. Its weight expresses the intended
@@ -68,16 +69,17 @@ type Options struct {
 }
 
 type Validated struct {
-	Scenario  Scenario
-	Base      *url.URL
-	Duration  time.Duration
-	RampUp    time.Duration
-	ThinkTime time.Duration
-	Timeout   time.Duration
-	Window    time.Duration
-	Steps     []PreparedStep
-	Profiles  []PreparedProfile
-	Cookies   []string
+	Scenario            Scenario
+	Base                *url.URL
+	Duration            time.Duration
+	RampUp              time.Duration
+	ThinkTime           time.Duration
+	Timeout             time.Duration
+	Window              time.Duration
+	Steps               []PreparedStep
+	Profiles            []PreparedProfile
+	Cookies             []string
+	SyntheticDataPrefix string
 }
 
 // PreparedProfile contains the safe, resolved workflow selected by the
@@ -231,6 +233,17 @@ func Parse(s Scenario, o Options) (Validated, error) {
 			}
 		}
 	}
+	dataPrefix := ""
+	if s.SyntheticDataPrefixEnv != "" {
+		if !regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`).MatchString(s.SyntheticDataPrefixEnv) {
+			return v, errors.New("synthetic_data_prefix_env must be an environment variable name")
+		}
+		var ok bool
+		dataPrefix, ok = os.LookupEnv(s.SyntheticDataPrefixEnv)
+		if !ok || !regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`).MatchString(dataPrefix) {
+			return v, fmt.Errorf("synthetic data prefix environment variable %s must contain 1-64 letters, digits, underscores, or hyphens", s.SyntheticDataPrefixEnv)
+		}
+	}
 	for _, profile := range profiles {
 		profileThink, err := optionalDuration("profile think_time", profile.ThinkTime, think, 30*time.Second)
 		if err != nil {
@@ -238,6 +251,9 @@ func Parse(s Scenario, o Options) (Validated, error) {
 		}
 		profileSteps := make([]PreparedStep, 0, len(profile.Steps))
 		available := map[string]bool{}
+		if dataPrefix != "" {
+			available["synthetic_id"] = true
+		}
 		for _, step := range profile.Steps {
 			if step.Name == "" || len(step.Name) > 80 || seen[step.Name] {
 				return v, fmt.Errorf("step names must be non-empty, unique, and at most 80 characters: %q", step.Name)
@@ -338,7 +354,7 @@ func Parse(s Scenario, o Options) (Validated, error) {
 	if err != nil {
 		return v, err
 	}
-	v = Validated{Scenario: s, Base: u, Duration: duration, RampUp: ramp, ThinkTime: think, Timeout: timeout, Window: window, Steps: prepared, Profiles: preparedProfiles, Cookies: cookies}
+	v = Validated{Scenario: s, Base: u, Duration: duration, RampUp: ramp, ThinkTime: think, Timeout: timeout, Window: window, Steps: prepared, Profiles: preparedProfiles, Cookies: cookies, SyntheticDataPrefix: dataPrefix}
 	return v, nil
 }
 

@@ -238,3 +238,18 @@ func TestWindowDurationValidation(t *testing.T) {
 		t.Fatal("window longer than scenario duration was accepted")
 	}
 }
+
+func TestSyntheticDataPrefixEnablesOnlyTheSyntheticIDTemplate(t *testing.T) {
+	t.Setenv("DAMOCLINE_TEST_DATA_PREFIX", "damocline-test")
+	s := good()
+	s.SyntheticDataPrefixEnv = "DAMOCLINE_TEST_DATA_PREFIX"
+	s.Steps = []Step{{Name: "create", Method: "POST", Path: "/records/{{synthetic_id}}"}}
+	v, err := Parse(s, Options{Authorized: true, AllowWrites: true})
+	if err != nil || v.SyntheticDataPrefix != "damocline-test" {
+		t.Fatalf("synthetic prefix was not prepared: %+v err=%v", v, err)
+	}
+	s.SyntheticDataPrefixEnv = "bad-name"
+	if _, err := Parse(s, Options{Authorized: true, AllowWrites: true}); err == nil {
+		t.Fatal("invalid synthetic prefix environment name was accepted")
+	}
+}

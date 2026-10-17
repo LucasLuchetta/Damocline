@@ -171,12 +171,17 @@ func Run(parent context.Context, v config.Validated) report.Result {
 		}
 		clients[i] = &http.Client{Transport: tr, Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	}
-	iteration := func(client *http.Client, profile config.PreparedProfile) {
+	var syntheticSequence atomic.Int64
+	iteration := func(client *http.Client, profile config.PreparedProfile, actor int) {
 		startedIterations.Add(1)
 		journeyStart := time.Now()
 		journeyOk := true
 		fullyCompleted := true
 		variables := map[string]string{}
+		if v.SyntheticDataPrefix != "" {
+			sequence := syntheticSequence.Add(1)
+			variables["synthetic_id"] = fmt.Sprintf("%s-%x-%d-%d", v.SyntheticDataPrefix, started.UnixNano(), actor+1, sequence)
+		}
 		for stepIndex, step := range profile.Steps {
 			if !waitToken(ctx, ticker.C) {
 				fullyCompleted = false
@@ -217,7 +222,7 @@ func Run(parent context.Context, v config.Validated) report.Result {
 		arrivals := make(chan int) // unbuffered: busy workers cannot hide dropped arrivals
 		for i := 0; i < v.Scenario.Users; i++ {
 			wg.Add(1)
-			go func(client *http.Client) {
+			go func(client *http.Client, actor int) {
 				defer wg.Done()
 				for {
 					select {
@@ -227,10 +232,10 @@ func Run(parent context.Context, v config.Validated) report.Result {
 						if !ok {
 							return
 						}
-						iteration(client, v.Profiles[profileIndex])
+						iteration(client, v.Profiles[profileIndex], actor)
 					}
 				}
-			}(clients[i])
+			}(clients[i], i)
 		}
 		arrivalStats = scheduler.Drive(scheduleCtx, v.Duration, v.Scenario.ArrivalRate, func() bool {
 			profileIndex := selector.next()
@@ -261,7 +266,7 @@ func Run(parent context.Context, v config.Validated) report.Result {
 				profileIndex := closedProfiles[index]
 				for scheduleCtx.Err() == nil {
 					scheduledIterations.Add(1)
-					iteration(clients[index], v.Profiles[profileIndex])
+					iteration(clients[index], v.Profiles[profileIndex], index)
 				}
 			}(i)
 		}

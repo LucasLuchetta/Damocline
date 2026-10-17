@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -73,6 +74,42 @@ func TestWeightedProfilesAreMeasuredSeparately(t *testing.T) {
 	defer mu.Unlock()
 	if seen["/dashboard"] == 0 || seen["/search"] == 0 {
 		t.Fatalf("expected both workflows, got %+v", seen)
+	}
+}
+
+func TestSyntheticDataIDsAreUniqueAndNeverReported(t *testing.T) {
+	var mu sync.Mutex
+	seen := map[string]bool{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost && r.Method != http.MethodDelete {
+			t.Errorf("unexpected method %s", r.Method)
+		}
+		mu.Lock()
+		seen[r.URL.Path] = true
+		mu.Unlock()
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+	t.Setenv("DAMOCLINE_TEST_DATA_PREFIX", "damocline-test")
+	s := config.Scenario{Name: "synthetic write", BaseURL: srv.URL, Users: 2, Duration: "1s", MaxRPS: 30, P95LimitMS: 1000, MaxErrorRate: 0,
+		SyntheticDataPrefixEnv: "DAMOCLINE_TEST_DATA_PREFIX", Steps: []config.Step{{Name: "create", Method: "POST", Path: "/records/{{synthetic_id}}", ExpectedStatus: []int{204}}, {Name: "cleanup", Method: "DELETE", Path: "/records/{{synthetic_id}}", ExpectedStatus: []int{204}}}}
+	v, err := config.Parse(s, config.Options{Authorized: true, AllowWrites: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	v.Duration = 300 * time.Millisecond
+	r := Run(context.Background(), v)
+	if r.Metrics.Success == 0 || len(seen) < 2 {
+		t.Fatalf("synthetic workflow did not execute: %+v paths=%v", r, seen)
+	}
+	for path := range seen {
+		if !strings.HasPrefix(path, "/records/damocline-test-") {
+			t.Fatalf("unexpected synthetic path %q", path)
+		}
+	}
+	encoded, err := json.Marshal(r)
+	if err != nil || strings.Contains(string(encoded), "damocline-test-") {
+		t.Fatalf("synthetic IDs must not be reported: %s err=%v", encoded, err)
 	}
 }
 

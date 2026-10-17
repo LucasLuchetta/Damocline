@@ -31,7 +31,7 @@ This is a working plan for an open-source project in **pre-alpha**. The native l
 - [x] Environment-backed cookie/header references, cookie jars, HTTP response assertions, bounded JSON Pointer/header extraction, and dependent steps within one journey; dynamic login/CSRF recording remains open.
 - [x] Closed-loop VUs with configurable think times.
 - [x] Open-loop journey arrivals with scheduled/admitted/busy-dropped/late-dropped accounting; model/session representativeness remains open.
-- [ ] Isolated read/write workflows with explicit synthetic test data.
+- [ ] Isolated read/write workflows with explicit synthetic test data. Environment-backed prefixes and per-journey `{{synthetic_id}}` values are implemented; application-specific setup, cleanup verification, and lifecycle controls remain open.
 - [x] Weighted named workload profiles with deterministic closed-loop assignment, weighted arrival selection, per-profile journey accounting, and explicit configuration limits; production-derived weights and stateful response-driven sessions remain open.
 
 **Exit:** target slowdowns and failures cannot silently make observed delivery diverge from scheduled load.
