@@ -306,6 +306,9 @@ func start(input io.Reader, output, errOutput io.Writer) int {
 
 func startWithMode(input io.Reader, output, errOutput io.Writer, mode string) int {
 	w := wizard{input: bufio.NewReader(input), out: output}
+	if handled, exitCode := promptUpdate(&w, errOutput, mode); handled {
+		return exitCode
+	}
 	fmt.Fprintln(output, "DAMOCLINE")
 	fmt.Fprintln(output, "Find the limit before it finds you.")
 	fmt.Fprintln(output, "Native Load Testing & Capacity Exploration")

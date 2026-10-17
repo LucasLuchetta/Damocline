@@ -171,6 +171,7 @@ For safe local testing, real authenticated application testing, and Windows inst
 - [Roadmap](docs/ROADMAP.md)
 - [Measurement model](docs/METRICS.md)
 - [MVP quick start](docs/QUICKSTART.md)
+- [Source updates](docs/UPDATES.md)
 - [Decision records](docs/adr/0001-go-core.md)
 - [Contributing](CONTRIBUTING.md)
 - [Security](SECURITY.md)
