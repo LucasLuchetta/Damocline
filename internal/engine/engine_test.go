@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/LucasLuchetta/Damocline/internal/config"
+	"github.com/LucasLuchetta/Damocline/internal/reference"
 	"github.com/LucasLuchetta/Damocline/internal/report"
 )
 
@@ -609,6 +610,44 @@ func TestInterruptedJourneyIsCountedAndCannotPass(t *testing.T) {
 	if r.Journeys.Cancelled == 0 || r.Metrics.Cancelled == 0 ||
 		r.Journeys.Total+r.Journeys.Cancelled != int(r.IterationsStarted) || r.Outcome != "ABORTED" {
 		t.Fatalf("interrupted journey was not counted explicitly: %+v", r)
+	}
+}
+
+func TestCancelledRequestReconcilesWithIndependentReferenceLedger(t *testing.T) {
+	fixture, err := reference.New(reference.Config{Delay: time.Second, MaxConcurrent: 1, MaxRequests: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	requestStarted := make(chan struct{}, 1)
+	requestFinished := make(chan struct{}, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestStarted <- struct{}{}
+		defer func() { requestFinished <- struct{}{} }()
+		fixture.ServeHTTP(w, r)
+	}))
+	defer server.Close()
+
+	v := scenario(t, server.URL, []config.Step{{Name: "slow", Path: "/work"}})
+	v.Scenario.Users = 1
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		<-requestStarted
+		cancel()
+	}()
+	run := Run(ctx, v)
+	defer cancel()
+	select {
+	case <-requestFinished:
+	case <-time.After(time.Second):
+		t.Fatal("reference handler did not finish after the client cancelled")
+	}
+	ledger := fixture.Snapshot()
+	if run.Metrics.Cancelled != 1 || run.Metrics.Success != 0 || run.Journeys.Cancelled != 1 || run.Outcome != "ABORTED" {
+		t.Fatalf("cancelled client work was not reported exactly: %+v", run)
+	}
+	if ledger.Received != 1 || ledger.Completed != 0 || ledger.Success != 0 || ledger.Failures != 0 || ledger.Cancelled != 1 || ledger.Rejected != 0 ||
+		ledger.Received != ledger.Completed+ledger.Cancelled+ledger.Rejected {
+		t.Fatalf("independent reference ledger did not reconcile cancellation: %+v", ledger)
 	}
 }
 
