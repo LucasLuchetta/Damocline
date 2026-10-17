@@ -46,7 +46,7 @@ This is a working plan for an open-source project in **pre-alpha**. The native l
 - [x] Calculate business demand targets and directly probe exact target VU levels without raising safety ceilings; this does not predict capacity.
 - [x] Assess a completed repeated campaign against a calculated business demand target while requiring complete passing observation/recovery evidence; the conclusion remains limited to the recorded conditions and never recommends infrastructure.
 - [ ] Sustained capacity campaigns with warm-up, steady windows, soak, spikes, recovery, independent repeats, and time-series pass criteria. Bounded warm-up/observation/recovery repeats and request time-window SLO checks are implemented; soak duration beyond 3m, injected spikes, and a full stability protocol remain open.
-- [ ] Statistical uncertainty for latency percentiles and repeat-to-repeat variation, with dependence-aware methods. Reports now expose an empirical repeat spread and a bounded Little's Law consistency signal; confidence intervals and dependence-aware methods remain open.
+- [ ] Statistical uncertainty for latency percentiles and repeat-to-repeat variation, with dependence-aware methods. Reports expose an IID-assumption P95 rank interval, empirical repeat spread, and a bounded Little's Law consistency signal; confidence intervals with dependence-aware methods remain open.
 - [ ] Repeatable comparisons between builds and hosting configurations.
 
 **Exit:** reports explain *what* passed, *under which conditions*, and *what remains uncertain*. Goal assessment and exact target probing are implemented as short observations; they do not close the certification gate.

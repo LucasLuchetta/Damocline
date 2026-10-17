@@ -178,6 +178,22 @@ func TestReadRunAcceptsSchemaFiveProfiles(t *testing.T) {
 		t.Fatalf("schema-v5 profiles not readable: %+v err=%v", got, err)
 	}
 }
+
+func TestReadRunAcceptsSchemaSixP95RankInterval(t *testing.T) {
+	r := report.Result{
+		SchemaVersion: 6, Name: "Synthetic example", Target: "https://app.example.com", StartedAt: "2026-10-01T12:00:00Z",
+		ElapsedSeconds: 30, ObservationSeconds: 30, Config: report.RunConfig{Users: 1},
+		Metrics: report.MetricSet{Total: 1, Success: 1, P95IID95Approximation: true, P95IID95LowerMS: 10, P95IID95UpperMS: 20},
+	}
+	path := filepath.Join(t.TempDir(), "schema-v6.json")
+	if err := report.WriteJSON(path, r); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ReadRun(path)
+	if err != nil || got.SchemaVersion != 6 || !got.Metrics.P95IID95Approximation {
+		t.Fatalf("schema-v6 report not readable: %+v err=%v", got, err)
+	}
+}
 func TestNoPrivateTargetInFixture(t *testing.T) {
 	r := synthetic()
 	if !strings.Contains(r.Target, "example.com") {

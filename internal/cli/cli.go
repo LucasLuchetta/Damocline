@@ -175,6 +175,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 	defer stop()
 	result := engine.Run(ctx, validated)
 	fmt.Fprintf(stdout, "Result: %s | requests: %d (%d passed, %d failed, %d cancelled) | p95: %.1f ms | error rate: %.2f%% | %.1f req/s\n", result.Outcome, result.Metrics.Total, result.Metrics.Success, result.Metrics.Failures, result.Metrics.Cancelled, result.Metrics.P95MS, result.ErrorsRate*100, float64(result.Metrics.Total)/result.WindowSeconds())
+	if result.Metrics.P95IID95Approximation {
+		fmt.Fprintf(stdout, "P95 IID 95%% rank approximation: %.1f-%.1f ms; this assumes independent, stationary request latencies.\n", result.Metrics.P95IID95LowerMS, result.Metrics.P95IID95UpperMS)
+	}
 	for _, st := range result.Steps {
 		fmt.Fprintf(stdout, "  - %s/%s: total=%d failures=%d p95=%.1f ms\n", st.Profile, st.Name, st.Metrics.Total, st.Metrics.Failures, st.Metrics.P95MS)
 	}

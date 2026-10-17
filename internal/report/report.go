@@ -10,20 +10,24 @@ import (
 	"time"
 
 	"github.com/LucasLuchetta/Damocline/internal/generatorhealth"
+	"github.com/LucasLuchetta/Damocline/internal/statistics"
 )
 
 type MetricSet struct {
-	Total         int            `json:"total"`
-	Success       int            `json:"success"`
-	Failures      int            `json:"failures"`
-	Cancelled     int            `json:"cancelled"`
-	P50MS         float64        `json:"p50_ms"`
-	MeanMS        float64        `json:"mean_ms"`
-	P95MS         float64        `json:"p95_ms"`
-	P99MS         float64        `json:"p99_ms"`
-	Reasons       map[string]int `json:"failure_reasons,omitempty"`
-	durations     []time.Duration
-	totalDuration time.Duration
+	Total                 int            `json:"total"`
+	Success               int            `json:"success"`
+	Failures              int            `json:"failures"`
+	Cancelled             int            `json:"cancelled"`
+	P50MS                 float64        `json:"p50_ms"`
+	MeanMS                float64        `json:"mean_ms"`
+	P95MS                 float64        `json:"p95_ms"`
+	P95IID95LowerMS       float64        `json:"p95_iid_95_lower_ms,omitempty"`
+	P95IID95UpperMS       float64        `json:"p95_iid_95_upper_ms,omitempty"`
+	P95IID95Approximation bool           `json:"p95_iid_95_approximation,omitempty"`
+	P99MS                 float64        `json:"p99_ms"`
+	Reasons               map[string]int `json:"failure_reasons,omitempty"`
+	durations             []time.Duration
+	totalDuration         time.Duration
 }
 
 func NewMetricSet() *MetricSet { return &MetricSet{Reasons: make(map[string]int)} }
@@ -57,6 +61,11 @@ func (m *MetricSet) Snapshot() MetricSet {
 	v.P50MS = roundMS(percentile(d, 0.50))
 	v.MeanMS = roundMS(m.totalDuration / time.Duration(len(m.durations)))
 	v.P95MS = roundMS(percentile(d, 0.95))
+	if low, high, err := statistics.PercentileRankInterval95(len(d), 0.95); err == nil {
+		v.P95IID95LowerMS = roundMS(d[low-1])
+		v.P95IID95UpperMS = roundMS(d[high-1])
+		v.P95IID95Approximation = true
+	}
 	v.P99MS = roundMS(percentile(d, 0.99))
 	v.durations = nil
 	return v
