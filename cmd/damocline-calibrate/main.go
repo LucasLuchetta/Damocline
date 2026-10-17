@@ -9,6 +9,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"math"
 	"net"
 	"net/http"
 	"os"
@@ -338,7 +339,11 @@ func runMatrix(path string, repeats int, extended bool) error {
 	result.Checks = append(result.Checks, checkOverload(result.OverloadRun, result.OverloadServer)...)
 	result.Checks = append(result.Checks, checkFailures(result.FailureRun, result.FailureServer)...)
 	if result.SchedulerLag.Status != "PASSED" {
-		result.Checks = append(result.Checks, "injected scheduler pause was not measured within the fixture tolerance")
+		for i, observation := range result.SchedulerLag.Observations {
+			if observation.Outcome != "PASSED" {
+				result.Checks = append(result.Checks, fmt.Sprintf("scheduler-lag observation %d: expected max %.3fms, observed %.3fms, tolerance ±%.3fms; planned=%d admitted=%d dropped=%d", i+1, observation.ExpectedMaxLagMS, observation.ObservedMaxLagMS, result.SchedulerLag.ToleranceMS, observation.Planned, observation.Admitted, observation.Dropped))
+			}
+		}
 	}
 	if len(result.Checks) == 0 {
 		result.Status = "REFERENCE_SMOKE_PASSED"
@@ -381,7 +386,7 @@ func runMatrix(path string, repeats int, extended bool) error {
 		result.OverloadRun.ArrivalsDropped, result.OverloadRun.ArrivalsScheduled,
 		result.FailureRun.Metrics.Success, result.FailureRun.Metrics.Total, len(result.Checks), path)
 	if len(result.Checks) > 0 {
-		return fmt.Errorf("reference check found %d discrepancies; inspect the local report", len(result.Checks))
+		return fmt.Errorf("reference check found %d discrepancies: %s", len(result.Checks), strings.Join(result.Checks, "; "))
 	}
 	return nil
 }
@@ -396,7 +401,7 @@ func checkSoak(run report.Result) []string {
 		!run.Generator.GoCPUValid || !run.Generator.ProcessCPUValid ||
 		run.Generator.GoCPUUtilizationRatio >= 0.9 || run.Generator.PeakProcessCPUUtilizationRatio >= 0.9 ||
 		run.Generator.PeakHeapAllocBytes > 256<<20 || run.Generator.PeakProcessRSSBytes > 512<<20 {
-		return []string{"sustained reference workload did not reconcile or retain generator health samples"}
+		return []string{fmt.Sprintf("soak reconciliation failed: planned=%d started=%d completed_iterations=%d requests=%d/%d succeeded failures=%d dropped=%d outcome=%s generator_samples=%d process_samples=%d process_rss=%d go_cpu_valid=%t process_cpu_valid=%t go_cpu=%.3f process_cpu=%.3f heap=%d", planned, run.IterationsStarted, run.IterationsCompleted, run.Metrics.Success, run.Metrics.Total, run.Metrics.Failures, run.ArrivalsDropped, run.Outcome, generatorSamples(run), generatorProcessSamples(run), generatorRSS(run), generatorGoCPUValid(run), generatorProcessCPUValid(run), generatorGoCPU(run), generatorProcessCPU(run), generatorHeap(run))}
 	}
 	return nil
 }
@@ -407,7 +412,7 @@ func checkFailures(run report.Result, server reference.Snapshot) []string {
 		run.Metrics.Failures != 2 || run.Metrics.Success != 8 || run.Outcome != "FAIL" ||
 		server.Received != 10 || server.Completed != 10 || server.Failures != 2 || server.Success != 8 ||
 		server.Cancelled != 0 || server.Rejected != 0 {
-		return []string{"controlled errors and recovery did not reconcile"}
+		return []string{fmt.Sprintf("failure/recovery ledger mismatch: expected scheduled/started/completed=10/10/10, requests=8 success/2 failures, server received/completed=10/10; actual scheduled/started/completed=%d/%d/%d requests=%d success/%d failures server received/completed=%d/%d success=%d failures=%d cancelled=%d rejected=%d outcome=%s", run.ArrivalsScheduled, run.IterationsStarted, run.IterationsCompleted, run.Metrics.Success, run.Metrics.Failures, server.Received, server.Completed, server.Success, server.Failures, server.Cancelled, server.Rejected, run.Outcome)}
 	}
 	return nil
 }
@@ -418,7 +423,7 @@ func checkOverload(run report.Result, server reference.Snapshot) []string {
 		run.Outcome == "PASS" || server.Received != run.IterationsStarted ||
 		server.Completed != int64(run.Metrics.Total) || server.Success != server.Completed ||
 		server.Cancelled != int64(run.Metrics.Cancelled) || server.Failures != 0 || server.Rejected != 0 {
-		return []string{"controlled overload did not expose and reconcile dropped starts"}
+		return []string{fmt.Sprintf("overload ledger mismatch: expected scheduled=50, drops>0 including busy workers, server received=started and completed=requests; actual scheduled=%d started=%d dropped=%d late=%d busy=%d requests=%d cancelled=%d server received=%d completed=%d success=%d failures=%d cancelled=%d rejected=%d outcome=%s", run.ArrivalsScheduled, run.IterationsStarted, run.ArrivalsDropped, run.ArrivalsDroppedLate, run.ArrivalsDroppedBusy, run.Metrics.Total, run.Metrics.Cancelled, server.Received, server.Completed, server.Success, server.Failures, server.Cancelled, server.Rejected, run.Outcome)}
 	}
 	return nil
 }
@@ -434,26 +439,93 @@ func check(runs []report.Result, server reference.Snapshot, rates []int) []strin
 		expected += planned
 		started += run.IterationsStarted
 		completed += int64(run.Metrics.Total)
-		if run.ArrivalsScheduled != planned || run.ArrivalsDropped != 0 ||
-			run.IterationsStarted != planned || run.IterationsCompleted != planned || run.Metrics.Total != int(planned) ||
-			run.Metrics.Success != int(planned) || run.Metrics.Failures != 0 ||
-			run.Journeys.Total != int(planned) || run.Journeys.Success != int(planned) ||
-			run.Outcome != "PASS" || run.Metrics.P50MS < 15 || run.Metrics.P50MS > 150 ||
-			run.Metrics.P95MS < 15 || run.Metrics.P95MS > 150 ||
-			run.Journeys.P50MS < 15 || run.Journeys.P50MS > 150 ||
-			run.Journeys.P95MS < 15 || run.Journeys.P95MS > 150 ||
-			run.Generator == nil || run.Generator.Samples < 2 || !run.Generator.GoCPUValid ||
-			run.Generator.ProcessSamples < 2 || !run.Generator.ProcessCPUValid || run.Generator.PeakProcessRSSBytes == 0 ||
-			run.Generator.GoCPUUtilizationRatio >= 0.9 || run.Generator.PeakProcessCPUUtilizationRatio >= 0.9 ||
-			run.Generator.PeakHeapAllocBytes > 256<<20 || run.Generator.PeakProcessRSSBytes > 512<<20 ||
-			run.SchedulerLagP95MS > 500/float64(rates[i]) || run.SchedulerLagMaxMS >= 1000/float64(rates[i]) {
-			issues = append(issues, fmt.Sprintf("stage %d did not reconcile planned, started, completed, and timed work", rates[i]))
-		}
+		issues = append(issues, checkStage(rates[i], planned, run)...)
 	}
 	serverExpected := expected + int64(10*(soakDuration/time.Second))
 	if server.Received != serverExpected || server.Completed != serverExpected || server.Success != serverExpected ||
 		server.Failures != 0 || server.Rejected != 0 || server.Cancelled != 0 || started != expected || completed != expected {
-		issues = append(issues, "fixture and generator counters differ")
+		issues = append(issues, fmt.Sprintf("aggregate fixture/generator ledger mismatch: expected_stage_requests=%d expected_including_soak=%d started=%d completed=%d; server received=%d completed=%d success=%d failures=%d cancelled=%d rejected=%d", expected, serverExpected, started, completed, server.Received, server.Completed, server.Success, server.Failures, server.Cancelled, server.Rejected))
 	}
 	return issues
+}
+
+func checkStage(rate int, planned int64, run report.Result) []string {
+	var issues []string
+	if run.ArrivalsScheduled != planned || run.ArrivalsDropped != 0 || run.IterationsStarted != planned || run.IterationsCompleted != planned {
+		issues = append(issues, fmt.Sprintf("stage %d arrivals: expected scheduled/started/completed/dropped=%d/%d/%d/0, got %d/%d/%d/%d (late=%d busy=%d)", rate, planned, planned, planned, run.ArrivalsScheduled, run.IterationsStarted, run.IterationsCompleted, run.ArrivalsDropped, run.ArrivalsDroppedLate, run.ArrivalsDroppedBusy))
+	}
+	if run.Metrics.Total != int(planned) || run.Metrics.Success != int(planned) || run.Metrics.Failures != 0 {
+		issues = append(issues, fmt.Sprintf("stage %d request outcomes: expected total/success/failures=%d/%d/0, got %d/%d/%d", rate, planned, planned, run.Metrics.Total, run.Metrics.Success, run.Metrics.Failures))
+	}
+	if run.Journeys.Total != int(planned) || run.Journeys.Success != int(planned) || run.Journeys.Failures != 0 || run.Journeys.Cancelled != 0 {
+		issues = append(issues, fmt.Sprintf("stage %d journey outcomes: expected total/success/failures/cancelled=%d/%d/0/0, got %d/%d/%d/%d", rate, planned, planned, run.Journeys.Total, run.Journeys.Success, run.Journeys.Failures, run.Journeys.Cancelled))
+	}
+	if run.Outcome != "PASS" {
+		issues = append(issues, fmt.Sprintf("stage %d outcome: expected PASS, got %s", rate, run.Outcome))
+	}
+	if !inLatencyEnvelope(run.Metrics.P50MS) || !inLatencyEnvelope(run.Metrics.P95MS) ||
+		!inLatencyEnvelope(run.Journeys.P50MS) || !inLatencyEnvelope(run.Journeys.P95MS) {
+		issues = append(issues, fmt.Sprintf("stage %d latency envelope: expected request/journey p50 and p95 in [15,150]ms, got request=%.3f/%.3fms journey=%.3f/%.3fms", rate, run.Metrics.P50MS, run.Metrics.P95MS, run.Journeys.P50MS, run.Journeys.P95MS))
+	}
+	g := run.Generator
+	if g == nil || g.Samples < 2 || !g.GoCPUValid || g.ProcessSamples < 2 || !g.ProcessCPUValid || g.PeakProcessRSSBytes == 0 ||
+		!below(g.GoCPUUtilizationRatio, 0.9) || !below(g.PeakProcessCPUUtilizationRatio, 0.9) || g.PeakHeapAllocBytes > 256<<20 || g.PeakProcessRSSBytes > 512<<20 {
+		issues = append(issues, fmt.Sprintf("stage %d generator envelope: expected valid runtime/process samples, CPU < 0.90 and heap/RSS <= 256/512MiB; got samples=%d process_samples=%d rss=%d go_cpu_valid=%t process_cpu_valid=%t go_cpu=%.3f process_cpu=%.3f heap=%d", rate, generatorSamples(run), generatorProcessSamples(run), generatorRSS(run), generatorGoCPUValid(run), generatorProcessCPUValid(run), generatorGoCPU(run), generatorProcessCPU(run), generatorHeap(run)))
+	}
+	lagP95Limit, lagMaxLimit := 500/float64(rate), 1000/float64(rate)
+	if run.SchedulerLagP95MS > lagP95Limit || run.SchedulerLagMaxMS >= lagMaxLimit {
+		issues = append(issues, fmt.Sprintf("stage %d scheduler lag: expected p95 <= %.3fms and max < %.3fms, got p95=%.3fms max=%.3fms", rate, lagP95Limit, lagMaxLimit, run.SchedulerLagP95MS, run.SchedulerLagMaxMS))
+	}
+	return issues
+}
+
+func inLatencyEnvelope(value float64) bool {
+	return !math.IsNaN(value) && !math.IsInf(value, 0) && value >= 15 && value <= 150
+}
+
+func below(value, limit float64) bool {
+	return !math.IsNaN(value) && !math.IsInf(value, 0) && value >= 0 && value < limit
+}
+
+func generatorSamples(run report.Result) int {
+	if run.Generator == nil {
+		return 0
+	}
+	return run.Generator.Samples
+}
+func generatorProcessSamples(run report.Result) int {
+	if run.Generator == nil {
+		return 0
+	}
+	return run.Generator.ProcessSamples
+}
+func generatorRSS(run report.Result) uint64 {
+	if run.Generator == nil {
+		return 0
+	}
+	return run.Generator.PeakProcessRSSBytes
+}
+func generatorGoCPUValid(run report.Result) bool {
+	return run.Generator != nil && run.Generator.GoCPUValid
+}
+func generatorProcessCPUValid(run report.Result) bool {
+	return run.Generator != nil && run.Generator.ProcessCPUValid
+}
+func generatorGoCPU(run report.Result) float64 {
+	if run.Generator == nil {
+		return 0
+	}
+	return run.Generator.GoCPUUtilizationRatio
+}
+func generatorProcessCPU(run report.Result) float64 {
+	if run.Generator == nil {
+		return 0
+	}
+	return run.Generator.PeakProcessCPUUtilizationRatio
+}
+func generatorHeap(run report.Result) uint64 {
+	if run.Generator == nil {
+		return 0
+	}
+	return run.Generator.PeakHeapAllocBytes
 }
