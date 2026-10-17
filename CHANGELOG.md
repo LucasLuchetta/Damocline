@@ -5,6 +5,7 @@ This project follows a human-maintained changelog. No release exists yet.
 ## [Unreleased]
 
 ### Added
+- Reconcile six in-flight requests cancelled by an external abort during the graceful-drain interval with the independent loopback server ledger.
 - Compare six requests that finish after the schedule cutoff against the independent loopback ledger, extending G0-15 evidence to graceful drain.
 - Reconcile an interrupted native-engine request with the independent loopback server ledger, including received/completed/cancelled/rejected conservation.
 - Upgrade HTTP run reports to schema v10 with generator sampler interval, maximum sample gap, and total/maximum sample-collection wall time; flag inconsistent sample data as INVALID and long gaps as LIMITED.
