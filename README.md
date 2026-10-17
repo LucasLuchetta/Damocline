@@ -61,6 +61,18 @@ Scenario + goals + permitted target
 
 Idle sessions, active virtual users, requests in flight, and arrivals per second are different concepts. See [Measurement model](docs/METRICS.md) for the intended definitions and reporting requirements.
 
+## Run guided tests from the terminal
+
+The easiest way to get started is with the interactive CLI wizard:
+
+```powershell
+.\damocline.exe start
+```
+
+Once `damocline.exe` is on your PATH, type `damocline start` in PowerShell or CMD. The wizard asks for an authorized target, read-only routes, authentication mode, and test limits, then saves a reusable local scenario. Every execution requires explicit permission and confirmation before any traffic starts.
+
+See **[Guided terminal setup](docs/INTERACTIVE_START.md)** for setup, repeat runs, and session-cookie guidance. The advanced `run` and `explore` commands remain available for scripted workflows.
+
 ## Run your first bounded test
 
 ```bash

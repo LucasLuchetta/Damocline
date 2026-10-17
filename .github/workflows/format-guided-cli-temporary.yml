@@ -1,0 +1,27 @@
+name: format-guided-cli-temporary
+
+on:
+  push:
+    branches: [feat/interactive-start-wizard]
+
+permissions:
+  contents: write
+
+jobs:
+  format:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - name: Format Go source on this feature branch
+        run: |
+          gofmt -w internal/cli/start.go internal/cli/start_test.go internal/cli/cli.go
+          if ! git diff --quiet; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add internal/cli/start.go internal/cli/start_test.go internal/cli/cli.go
+            git commit -m "style: gofmt guided start command"
+            git push origin HEAD:feat/interactive-start-wizard
+          fi
