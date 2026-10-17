@@ -18,6 +18,7 @@ Build a local-first, open-source system to measure sustainable application capac
 - Separate measured facts from hypotheses about root causes.
 - Verify generator health, dropped starts, and scheduling accuracy. Avoid coordinated omission.
 - Never run unbounded or destructive tests, scan arbitrary hosts, or leak target credentials.
+- Source updates must not overwrite local edits, reset branches or automatically update non-interactive benchmark commands. Only safe fast-forward updates from an explicit Git remote may run after opt-in.
 - Never embed real user-specific or customer application domains, production IP addresses, internal paths, test identities, or infrastructure details in public tests, documentation, commits, issues, or PR descriptions. Use reserved documentation domains (for example `app.example.com`), loopback addresses, and synthetic fixtures. Keep private scenarios and reports local and gitignored.
 - Do not copy implementation code from other tools without license review and attribution.
 

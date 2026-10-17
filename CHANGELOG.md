@@ -9,6 +9,8 @@ This project follows a human-maintained changelog. No release exists yet.
 - Removed third-party load-testing tool references from the interactive welcome banner.
 
 ### Added
+- Interactive, opt-in source update notifications with fast-forward Git safety checks, local automatic-update preference, and automatic restart after installing a new version.
+- `damocline update` for manual checking and opting in/out; scripted load-testing commands remain unaffected.
 - Source-based Windows CMD/PowerShell command launcher (`damocline` opens the wizard) and optional POSIX launcher.
 - Temporary Chrome/Edge login session borrowing for authenticated read-only HTTP tests; reviewed page suggestions, no credential persistence.
 - CI no longer publishes executable release artifacts.
