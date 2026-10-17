@@ -153,6 +153,10 @@ func Evaluate(r report.Result, host *hostmon.Result) Assessment {
 			a.Findings = append(a.Findings, Finding{"LIMIT", "Traffic approached the generator's max_rps setting. This run cannot separate a client-side rate cap from application capacity."})
 		}
 	}
+	if r.AverageInFlight > 0 || r.LittleLawEstimate > 0 {
+		a.Findings = append(a.Findings, Finding{"INFO", fmt.Sprintf("Request-boundary concurrency check: sampled average in-flight %.2f; throughput × mean request time estimate %.2f.", r.AverageInFlight, r.LittleLawEstimate)})
+		a.Findings = append(a.Findings, Finding{"CAUTION", "This is a finite-window Little's Law consistency signal. Sampling, drain boundaries, non-stationarity, and request correlation can explain differences; it does not predict capacity."})
+	}
 	if r.Generator != nil {
 		g := r.Generator
 		a.Findings = append(a.Findings, Finding{"INFO", fmt.Sprintf("Load-generator runtime: %d samples over %.1fs, peak Go heap %.1f MiB, peak goroutines %d, GC cycles %d.", g.Samples, g.ObservedSeconds, float64(g.PeakHeapAllocBytes)/(1024*1024), g.PeakGoroutines, g.GCCycles)})

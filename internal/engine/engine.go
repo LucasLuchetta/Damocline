@@ -136,9 +136,28 @@ func Run(parent context.Context, v config.Validated) report.Result {
 	tr.IdleConnTimeout = 15 * time.Second
 	defer tr.CloseIdleConnections()
 	var startedIterations, completedIterations, scheduledIterations, droppedIterations atomic.Int64
+	var inFlight, inFlightTotal, inFlightSamples atomic.Int64
 	var wg sync.WaitGroup
 	var arrivalStats scheduler.Stats
 	clients := make([]*http.Client, v.Scenario.Users)
+	sampleDone := make(chan struct{})
+	go func() {
+		<-scheduleCtx.Done()
+		close(sampleDone)
+	}()
+	go func() {
+		ticker := time.NewTicker(50 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-sampleDone:
+				return
+			case <-ticker.C:
+				inFlightTotal.Add(inFlight.Load())
+				inFlightSamples.Add(1)
+			}
+		}
+	}()
 	for i := range clients {
 		jar, _ := cookiejar.New(nil)
 		if len(v.Cookies) > 0 {
@@ -163,7 +182,7 @@ func Run(parent context.Context, v config.Validated) report.Result {
 				fullyCompleted = false
 				break
 			}
-			s, extracted := execute(ctx, client, v.Base, v.Timeout, step, variables)
+			s, extracted := execute(ctx, client, v.Base, v.Timeout, step, variables, &inFlight)
 			coll.add(s)
 			for name, value := range extracted {
 				variables[name] = value
@@ -281,9 +300,17 @@ func Run(parent context.Context, v config.Validated) report.Result {
 	if agg.Total > 0 {
 		errorsRate = float64(agg.Failures) / float64(agg.Total)
 	}
+	averageInFlight := 0.0
+	if samples := inFlightSamples.Load(); samples > 0 {
+		averageInFlight = float64(inFlightTotal.Load()) / float64(samples)
+	}
+	littleLawEstimate := 0.0
+	if v.Duration > 0 {
+		littleLawEstimate = float64(agg.Total) / v.Duration.Seconds() * agg.MeanMS / 1000
+	}
 	result := report.Result{SchemaVersion: 5, Name: v.Scenario.Name, Target: v.Base.Scheme + "://" + v.Base.Host, StartedAt: started.UTC().Format(time.RFC3339), ElapsedSeconds: round(elapsed.Seconds()), ObservationSeconds: round(v.Duration.Seconds()),
 		Config:  report.RunConfig{Users: v.Scenario.Users, Duration: v.Scenario.Duration, RampUp: v.Scenario.RampUp, ThinkTime: v.Scenario.ThinkTime, RequestTimeout: v.Timeout.String(), MaxRPS: v.Scenario.MaxRPS, P95LimitMS: v.Scenario.P95LimitMS, MaxErrorRate: v.Scenario.MaxErrorRate, Mode: v.Scenario.Mode, ArrivalRate: v.Scenario.ArrivalRate, SeparateSessions: len(v.Cookies) > 0, MinSamplesPerStep: v.Scenario.MinSamplesPerStep, Profiles: profileConfig, WindowDuration: v.Window.String()},
-		Metrics: agg, Journeys: journeyMetrics, Steps: steps, Profiles: profileResults, Windows: windows, Outcome: "PASS", ErrorsRate: round(errorsRate), IterationsStarted: startedIterations.Load(), IterationsCompleted: completedIterations.Load(), ArrivalsScheduled: scheduledIterations.Load(), ArrivalsDropped: droppedIterations.Load(), ArrivalsDroppedLate: arrivalStats.DroppedLate, ArrivalsDroppedBusy: arrivalStats.DroppedBusy, SchedulerLagP95MS: float64(arrivalStats.P95Lag.Microseconds()) / 1000, SchedulerLagMaxMS: float64(arrivalStats.MaxLag.Microseconds()) / 1000,
+		Metrics: agg, Journeys: journeyMetrics, Steps: steps, Profiles: profileResults, Windows: windows, Outcome: "PASS", ErrorsRate: round(errorsRate), IterationsStarted: startedIterations.Load(), IterationsCompleted: completedIterations.Load(), ArrivalsScheduled: scheduledIterations.Load(), ArrivalsDropped: droppedIterations.Load(), ArrivalsDroppedLate: arrivalStats.DroppedLate, ArrivalsDroppedBusy: arrivalStats.DroppedBusy, SchedulerLagP95MS: float64(arrivalStats.P95Lag.Microseconds()) / 1000, SchedulerLagMaxMS: float64(arrivalStats.MaxLag.Microseconds()) / 1000, AverageInFlight: round(averageInFlight), LittleLawEstimate: round(littleLawEstimate),
 		Note: "Measured synthetic HTTP actors under the configured workload; not a universal server capacity or a browser-user count.", Generator: &generatorSnapshot}
 	if agg.Total == 0 || agg.Success == 0 || errorsRate > v.Scenario.MaxErrorRate || agg.P95MS > v.Scenario.P95LimitMS || result.ArrivalsDropped > 0 {
 		result.Outcome = "FAIL"
@@ -375,7 +402,7 @@ func sleep(ctx context.Context, d time.Duration) bool {
 		return ctx.Err() == nil
 	}
 }
-func execute(parent context.Context, client *http.Client, base *url.URL, timeout time.Duration, s config.PreparedStep, variables map[string]string) (sample, map[string]string) {
+func execute(parent context.Context, client *http.Client, base *url.URL, timeout time.Duration, s config.PreparedStep, variables map[string]string, inFlight *atomic.Int64) (sample, map[string]string) {
 	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
 	requestURL, err := interpolateURL(base, s.PathTemplate, variables)
@@ -398,6 +425,8 @@ func execute(parent context.Context, client *http.Client, base *url.URL, timeout
 		req.Header.Set(k, value)
 	}
 	start := time.Now()
+	inFlight.Add(1)
+	defer inFlight.Add(-1)
 	res, err := client.Do(req)
 	if err != nil {
 		d := time.Since(start)

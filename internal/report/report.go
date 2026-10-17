@@ -13,15 +13,17 @@ import (
 )
 
 type MetricSet struct {
-	Total     int            `json:"total"`
-	Success   int            `json:"success"`
-	Failures  int            `json:"failures"`
-	Cancelled int            `json:"cancelled"`
-	P50MS     float64        `json:"p50_ms"`
-	P95MS     float64        `json:"p95_ms"`
-	P99MS     float64        `json:"p99_ms"`
-	Reasons   map[string]int `json:"failure_reasons,omitempty"`
-	durations []time.Duration
+	Total         int            `json:"total"`
+	Success       int            `json:"success"`
+	Failures      int            `json:"failures"`
+	Cancelled     int            `json:"cancelled"`
+	P50MS         float64        `json:"p50_ms"`
+	MeanMS        float64        `json:"mean_ms"`
+	P95MS         float64        `json:"p95_ms"`
+	P99MS         float64        `json:"p99_ms"`
+	Reasons       map[string]int `json:"failure_reasons,omitempty"`
+	durations     []time.Duration
+	totalDuration time.Duration
 }
 
 func NewMetricSet() *MetricSet { return &MetricSet{Reasons: make(map[string]int)} }
@@ -38,6 +40,7 @@ func (m *MetricSet) Record(latency time.Duration, success, cancelled bool, reaso
 		m.Reasons[reason]++
 	}
 	m.durations = append(m.durations, latency)
+	m.totalDuration += latency
 }
 func (m *MetricSet) Snapshot() MetricSet {
 	v := *m
@@ -52,6 +55,7 @@ func (m *MetricSet) Snapshot() MetricSet {
 	d := append([]time.Duration(nil), m.durations...)
 	sort.Slice(d, func(i, j int) bool { return d[i] < d[j] })
 	v.P50MS = roundMS(percentile(d, 0.50))
+	v.MeanMS = roundMS(m.totalDuration / time.Duration(len(m.durations)))
 	v.P95MS = roundMS(percentile(d, 0.95))
 	v.P99MS = roundMS(percentile(d, 0.99))
 	v.durations = nil
@@ -146,6 +150,8 @@ type Result struct {
 	ArrivalsDroppedBusy int64                    `json:"arrivals_dropped_busy,omitempty"`
 	SchedulerLagP95MS   float64                  `json:"scheduler_lag_p95_ms,omitempty"`
 	SchedulerLagMaxMS   float64                  `json:"scheduler_lag_max_ms,omitempty"`
+	AverageInFlight     float64                  `json:"average_in_flight_requests,omitempty"`
+	LittleLawEstimate   float64                  `json:"little_law_in_flight_estimate,omitempty"`
 	Warnings            []string                 `json:"warnings,omitempty"`
 	Generator           *generatorhealth.Summary `json:"generator,omitempty"`
 }
