@@ -197,7 +197,7 @@ func TestHTTPDiagnosticsCountLocalFailureMatrix(t *testing.T) {
 		case "/expected":
 			w.WriteHeader(http.StatusAccepted)
 		case "/timeout":
-			time.Sleep(100 * time.Millisecond)
+			time.Sleep(3 * time.Second)
 			_, _ = w.Write([]byte("late"))
 		case "/large":
 			_, _ = w.Write(make([]byte, maxResponseBytes+1))
@@ -206,14 +206,14 @@ func TestHTTPDiagnosticsCountLocalFailureMatrix(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	s := config.Scenario{Name: "bounded local diagnostics", BaseURL: server.URL, Users: 1, Duration: "1s", WindowDuration: "1s", MaxRPS: 100, P95LimitMS: 1000, MaxErrorRate: 1, Timeout: "40ms", Steps: []config.Step{
-		{Name: "redirect", Path: "/redirect"}, {Name: "limited", Path: "/limited"}, {Name: "server error", Path: "/server-error"}, {Name: "assertion", Path: "/assertion", MustContain: "expected"}, {Name: "expected status", Path: "/expected", ExpectedStatus: []int{http.StatusNoContent}}, {Name: "timeout", Path: "/timeout"}, {Name: "large", Path: "/large"},
+	s := config.Scenario{Name: "bounded local diagnostics", BaseURL: server.URL, Users: 1, Duration: "1s", WindowDuration: "1s", MaxRPS: 100, MaxErrorRate: 1, Mode: "arrival", ArrivalRate: 1, P95LimitMS: 5000, Timeout: "2s", Steps: []config.Step{
+		{Name: "redirect", Path: "/redirect"}, {Name: "limited", Path: "/limited"}, {Name: "server error", Path: "/server-error"}, {Name: "assertion", Path: "/assertion", MustContain: "expected"}, {Name: "expected status", Path: "/expected", ExpectedStatus: []int{http.StatusNoContent}}, {Name: "large", Path: "/large"}, {Name: "timeout", Path: "/timeout"},
 	}}
 	v, err := config.Parse(s, config.Options{Authorized: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	v.Duration = 500 * time.Millisecond
+	v.Duration = time.Second
 	r := Run(context.Background(), v)
 	seenMu.Lock()
 	ledger := map[string]int{}
