@@ -52,3 +52,7 @@ The next run reuses the scenario but opens the temporary browser **again** to ac
 - Temporary browser profile removal can fail if the browser or Windows locks files. Do not use a sensitive production admin account for exploratory tests. Manually remove abandoned `damocline-browser-*` temporary folders if needed.
 - The native motor generates HTTP traffic from **your development machine**, not the VPS. Linux host metrics still require the optional `monitor` command on the remote host.
 - Capacity findings are scenario-specific passing levels, not a universal server maximum.
+
+## Automatic source updates
+
+The installed source launcher checks for a newer `origin/master` when you start Damocline interactively. It offers to fast-forward and restart, or you can opt in to future automatic updates with `damocline update --auto`. Changes in your checkout and feature branches are never overwritten. See [Source updates](UPDATES.md).

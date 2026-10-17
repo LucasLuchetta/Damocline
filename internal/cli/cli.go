@@ -33,6 +33,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	case "version", "--version", "-v":
 		fmt.Fprintf(stdout, "damocline %s (advanced HTTP pre-alpha)\n", Version)
 		return 0
+	case "update":
+		return updateCmd(args[1:], stdout, stderr)
 	case "start":
 		if len(args) != 1 {
 			fmt.Fprintln(stderr, "usage: damocline start")
@@ -63,6 +65,9 @@ Usage:
   damocline explore --config scenario.json --min-users 2 --max-users 20 --stage-duration 20s --repeats 2 --authorized
   damocline monitor --duration 3m --interval 2s --out reports/host.json
   damocline correlate --load reports/load.json --host reports/host.json --out reports/correlated.json
+  damocline update           # check and install source updates
+  damocline update --auto    # enable automatic updates
+  damocline update --off     # disable automatic updates
   damocline version
 
 For read/write steps, add --allow-writes. For non-local plaintext HTTP,

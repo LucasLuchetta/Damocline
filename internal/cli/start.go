@@ -302,6 +302,9 @@ func loadStartProfile() (config.Scenario, startPreferences, error) {
 // Every actual test needs explicit confirmation; setup never sends traffic.
 func start(input io.Reader, output, errOutput io.Writer) int {
 	w := wizard{input: bufio.NewReader(input), out: output}
+	if handled, exitCode := promptUpdate(&w, errOutput); handled {
+		return exitCode
+	}
 	fmt.Fprintln(output, "DAMOCLINE")
 	fmt.Fprintln(output, "Find the limit before it finds you.")
 	fmt.Fprintln(output, "Native Load Testing & Capacity Exploration")
