@@ -64,16 +64,26 @@ func welcomeArt(out io.Writer, color bool) {
 	fmt.Fprintf(out, "\n  %s%s%s\n\n", muted, strings.Repeat("─", 45), reset)
 }
 
-func welcomeMenu(w *wizard, hasCurrent bool, color bool) (string, error) {
-	fmt.Fprintln(w.out, "  What would you like to do?")
-	fmt.Fprintln(w.out)
-	options := []struct{ key, label, detail string }{
+type homeMenuOption struct{ key, label, detail string }
+
+func homeMenuOptions(hasCurrent bool) []homeMenuOption {
+	options := []homeMenuOption{
 		{"1", "New load test", "Create a new scenario"},
 		{"2", "Saved scenarios", "Select a previous configuration"},
 		{"3", "Continue current", "Reuse the active scenario"},
 		{"4", "Help", "Commands and documentation"},
 		{"0", "Exit", "Leave without generating traffic"},
 	}
+	if !hasCurrent {
+		options[2].detail = "No active scenario yet"
+	}
+	return options
+}
+
+func welcomeMenu(w *wizard, hasCurrent bool, color bool) (string, error) {
+	fmt.Fprintln(w.out, "  What would you like to do?")
+	fmt.Fprintln(w.out)
+	options := homeMenuOptions(hasCurrent)
 	for _, option := range options {
 		detail := option.detail
 		if option.key == "3" && !hasCurrent {
@@ -116,13 +126,22 @@ func welcomeMenu(w *wizard, hasCurrent bool, color bool) (string, error) {
 // welcome is used only for the no-argument CLI entrypoint. Explicit commands
 // (run, explore, /start, /history, update) remain script-friendly and unaltered.
 func welcome(input io.Reader, output, errOutput io.Writer) int {
+	return welcomeWithUpdateCheck(input, output, errOutput, promptUpdate)
+}
+
+// Check source updates before drawing the splash or consuming menu input.
+// This wrapper allows tests to assert startup ordering without Git/network calls.
+func welcomeWithUpdateCheck(input io.Reader, output, errOutput io.Writer, check func(*wizard, io.Writer, string) (bool, int)) int {
 	w := wizard{input: bufio.NewReader(input), out: output}
+	if handled, exitCode := check(&w, errOutput, "default"); handled {
+		return exitCode
+	}
 	welcomeArt(output, terminalColors(output))
 	for {
 		_, scenarioErr := os.Stat(scenarioPath)
 		_, preferencesErr := os.Stat(preferencesPath)
 		hasCurrent := scenarioErr == nil && preferencesErr == nil
-		selected, err := welcomeMenu(&w, hasCurrent, terminalColors(output))
+		selected, err := selectWelcomeMenu(&w, hasCurrent, terminalColors(output), input == os.Stdin && output == os.Stdout)
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				fmt.Fprintln(output, "\nGoodbye.")
