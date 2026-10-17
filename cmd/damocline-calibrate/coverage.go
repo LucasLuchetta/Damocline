@@ -123,6 +123,8 @@ func compareScenarioToReference(s config.Scenario, a assessment, calibrationErr 
 	r := newCoverageAssessment()
 	rates := evaluatedReferenceRates(a)
 	if calibrationErr != nil {
+		// Never reuse rate evidence from an artifact rejected for inconsistency.
+		rates = nil
 		r.add("calibration", coverageUnknown, "A compatible and internally consistent reference artifact was not available.")
 	} else if a.Status != "REFERENCE_SMOKE_PASSED" || len(a.Checks) != 0 {
 		r.ReferenceStatus = "CHECKS_FAILED"
@@ -149,7 +151,9 @@ func compareScenarioToReference(s config.Scenario, a assessment, calibrationErr 
 		r.add("arrival_rate", coverageMatched, "The requested journey arrival rate is one of the exact locally tested rates.")
 	}
 
-	if s.Users != a.Preflight.Fixture.StageUsers || s.Users < 1 {
+	if calibrationErr != nil {
+		r.add("actor_budget", coverageUnknown, "The local worker budget could not be verified from a valid reference artifact.")
+	} else if s.Users != a.Preflight.Fixture.StageUsers || s.Users < 1 {
 		r.add("actor_budget", coverageOutside, "The requested worker/VU count differs from the fixture's ten workers.")
 	} else {
 		r.add("actor_budget", coverageMatched, "The actor budget matches the ten-worker reference configuration.")
@@ -162,7 +166,9 @@ func compareScenarioToReference(s config.Scenario, a assessment, calibrationErr 
 			if len(profile.Steps) > maxSteps { maxSteps = len(profile.Steps) }
 		}
 	}
-	if s.MaxRPS < 1 || s.MaxRPS > a.Preflight.Fixture.MaximumRPS ||
+	if calibrationErr != nil {
+		r.add("rate_ceiling", coverageUnknown, "The fixture rate ceiling could not be verified from a valid reference artifact.")
+	} else if s.MaxRPS < 1 || s.MaxRPS > a.Preflight.Fixture.MaximumRPS ||
 		(mode == "arrival" && (s.ArrivalRate < 1 || int64(s.ArrivalRate)*int64(maxSteps) > int64(s.MaxRPS))) {
 		r.add("rate_ceiling", coverageOutside, "The request rate ceiling is invalid, outside the fixture bound, or too low for the proposed journey starts.")
 	} else {
@@ -204,7 +210,8 @@ func compareScenarioToReference(s config.Scenario, a assessment, calibrationErr 
 	}
 
 	u, err := url.Parse(s.BaseURL)
-	if err != nil || u == nil || u.Host == "" || u.Scheme != "http" || net.ParseIP(u.Hostname()) == nil ||
+	if err != nil || u == nil || u.Host == "" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" ||
+		u.Scheme != "http" || net.ParseIP(u.Hostname()) == nil ||
 		!net.ParseIP(u.Hostname()).Equal(net.ParseIP("127.0.0.1")) {
 		r.add("transport", coverageOutside, "The fixture used unencrypted IPv4 loopback; HTTPS, DNS and remote networking were not validated.")
 	} else {

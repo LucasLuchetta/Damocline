@@ -145,6 +145,9 @@ func TestFailedAndMissingCalibrationNeverYieldPassingRates(t *testing.T) {
 	findDimension(t, got, "calibration", coverageOutside)
 	missing := compareScenarioToReference(referenceShapedScenario(), assessment{}, errors.New("missing"))
 	findDimension(t, missing, "calibration", coverageUnknown)
+	findDimension(t, missing, "arrival_rate", coverageUnknown)
+	findDimension(t, missing, "actor_budget", coverageUnknown)
+	findDimension(t, missing, "rate_ceiling", coverageUnknown)
 	if len(missing.TestedArrivalRates) != 0 { t.Fatal("missing calibration cannot certify any rate") }
 }
 
@@ -162,9 +165,15 @@ func TestCalibrationFileLoaderValidatesConsistencyAndSize(t *testing.T) {
 	if _, err := loadCalibrationForCoverage(path); err != nil { t.Fatal(err) }
 	cal.Runs[0].IterationsStarted = 0
 	write(cal)
-	if _, err := loadCalibrationForCoverage(path); err == nil {
+	corrupted, readErr := loadCalibrationForCoverage(path)
+	if readErr == nil {
 		t.Fatal("calibration stage counters disagree with run but were trusted")
 	}
+	coverage := compareScenarioToReference(referenceShapedScenario(), corrupted, readErr)
+	if len(coverage.TestedArrivalRates) != 0 {
+		t.Fatal("inconsistent artifact must not report measured rates")
+	}
+	findDimension(t, coverage, "arrival_rate", coverageUnknown)
 	cal.Runs[0].IterationsStarted = cal.Preflight.HealthyStages[0].Started
 	cal.Checks = []string{"known discrepancy"}
 	write(cal)
