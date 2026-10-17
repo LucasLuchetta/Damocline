@@ -55,3 +55,16 @@ Do not paste session cookies into source files, issues, or chats. If an environm
 - Linux CPU/RAM collection currently requires the separate "damocline monitor" command on the VPS. One-command remote SSH monitoring remains planned, not implemented.
 
 For automated workloads, skip the wizard and use **damocline run --config ...** or **damocline explore --config ...** with explicit authorization flags.
+
+## Application addresses
+
+The wizard accepts a plain hostname or an origin with or without a trailing slash. All three inputs below are equivalent:
+
+```text
+app.example.com
+https://app.example.com
+https://app.example.com/
+```
+
+It normalizes them to `https://app.example.com` before writing the scenario. If an address is invalid, the wizard **asks again** rather than terminating. Enter page paths separately in the next step. HTTPS is required except for localhost and loopback targets. Credentials in URLs, query parameters, and fragments are rejected.
+

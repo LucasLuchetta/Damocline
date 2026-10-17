@@ -98,24 +98,62 @@ func (w *wizard) choose(question, def string, answers ...string) (string, error)
 		fmt.Fprintf(w.out, "Choose %s.\n", strings.Join(answers, ", "))
 	}
 }
+// normalizeApplicationOrigin accepts a domain, a full HTTP(S) origin, or an origin
+// with a trailing slash. The underlying load engine requires the canonical origin.
+func normalizeApplicationOrigin(input string) (string, error) {
+	value := strings.TrimSpace(input)
+	if value == "" {
+		return "", errors.New("enter a website address, such as app.example.com")
+	}
+	if strings.ContainsAny(value, " \t\r\n") {
+		return "", errors.New("the address cannot contain spaces or line breaks")
+	}
+	if !strings.Contains(value, "://") {
+		if strings.Contains(value, ":/") || strings.Contains(value, "@") {
+			return "", errors.New("enter a hostname or a complete https:// URL")
+		}
+		value = "https://" + value
+	}
+	u, err := url.Parse(value)
+	if err != nil || u == nil || u.Host == "" || u.Opaque != "" || (u.Scheme != "https" && u.Scheme != "http") {
+		return "", errors.New("enter a valid HTTP(S) website address")
+	}
+	if u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.RawFragment != "" {
+		return "", errors.New("remove credentials, query parameters, and fragments from the address")
+	}
+	if u.Path != "" && u.Path != "/" {
+		return "", errors.New("enter only the website address; you can choose page paths in the next step")
+	}
+	hostname := strings.ToLower(u.Hostname())
+	if hostname == "" {
+		return "", errors.New("invalid hostname")
+	}
+	ip := net.ParseIP(hostname)
+	if u.Scheme == "http" && hostname != "localhost" && (ip == nil || !ip.IsLoopback()) {
+		return "", errors.New("HTTPS is required except for localhost or loopback addresses")
+	}
+	return u.Scheme + "://" + u.Host, nil
+}
+
 func (w *wizard) configure() (config.Scenario, startPreferences, error) {
 	var s config.Scenario
 	var p startPreferences
 	fmt.Fprintln(w.out, "\n1 / Application")
-	base, err := w.ask("HTTPS origin (e.g., https://app.example.com)", "")
-	if err != nil {
-		return s, p, err
+	var err error
+	for {
+		input, err := w.ask("Application address (e.g., app.example.com or https://app.example.com/)", "")
+		if err != nil {
+			return s, p, err
+		}
+		origin, err := normalizeApplicationOrigin(input)
+		if err != nil {
+			fmt.Fprintf(w.out, "Invalid address: %v\nPlease try again, or press Ctrl+C to exit.\n", err)
+			continue
+		}
+		s.BaseURL = origin
+		fmt.Fprintf(w.out, "Using %s\n", origin)
+		break
 	}
-	u, err := url.Parse(base)
-	if err != nil || u == nil || u.Host == "" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" || (u.Scheme != "https" && u.Scheme != "http") {
-		return s, p, errors.New("expected an HTTPS origin without any path or credentials")
-	}
-	hostname := u.Hostname()
-	ip := net.ParseIP(hostname)
-	if u.Scheme == "http" && hostname != "localhost" && (ip == nil || !ip.IsLoopback()) {
-		return s, p, errors.New("guided mode requires HTTPS except for localhost/loopback")
-	}
-	s.BaseURL = base
 	s.Name, err = w.ask("Scenario name", "Read-only web app")
 	if err != nil {
 		return s, p, err
@@ -264,8 +302,10 @@ func loadStartProfile() (config.Scenario, startPreferences, error) {
 // Every actual test needs explicit confirmation; setup never sends traffic.
 func start(input io.Reader, output, errOutput io.Writer) int {
 	w := wizard{input: bufio.NewReader(input), out: output}
-	fmt.Fprintln(output, "Damocline | Guided capacity testing")
-	fmt.Fprintln(output, "Built-in Go load engine. No k6 or hosted account required.")
+	fmt.Fprintln(output, "DAMOCLINE")
+	fmt.Fprintln(output, "Find the limit before it finds you.")
+	fmt.Fprintln(output, "Native Load Testing & Capacity Exploration")
+	fmt.Fprintln(output, "Open Source | Local First")
 	var s config.Scenario
 	var p startPreferences
 	var err error

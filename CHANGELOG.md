@@ -4,6 +4,10 @@ This project follows a human-maintained changelog. No release exists yet.
 
 ## [Unreleased]
 
+### Fixed
+- Guided setup accepts bare domains and HTTPS origins with a trailing slash, and retries invalid addresses instead of aborting.
+- Removed third-party load-testing tool references from the interactive welcome banner.
+
 ### Added
 - Source-based Windows CMD/PowerShell command launcher (`damocline` opens the wizard) and optional POSIX launcher.
 - Temporary Chrome/Edge login session borrowing for authenticated read-only HTTP tests; reviewed page suggestions, no credential persistence.

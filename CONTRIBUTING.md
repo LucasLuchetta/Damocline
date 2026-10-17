@@ -35,6 +35,9 @@ Scheduling/metrics changes may require dedicated benchmark and failure-injection
 
 ## Responsible use and data protection
 
+- Use reserved documentation names (such as `app.example.com` and `localhost`) and synthetic data in all public examples. Do not publish a customer's real application address, internal route, IP, test account, or private benchmark configuration in commits, issues, or pull requests.
+
+
 Only run authorized tests. Do not commit tokens, production data, logs containing credentials, personal information, or proprietary fixtures. All write-oriented scenarios must be explicit and reversible where practical.
 
 ## Licensing
