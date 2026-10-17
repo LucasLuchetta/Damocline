@@ -31,7 +31,40 @@ jobs:
       - name: Reconcile extended local reference workload
         run: go run ./cmd/damocline-calibrate --extended --out .damocline/calibration/ci-reference.json
 
-# CI intentionally does not upload Windows .exe or other prebuilt binaries.
+# CI verifies source compatibility but intentionally does not publish prebuilt binaries.
+
+  cross-platform-build:
+    name: Cross-platform source build
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            output: damocline-linux-amd64
+          - goos: windows
+            goarch: amd64
+            output: damocline-windows-amd64.exe
+          - goos: darwin
+            goarch: amd64
+            output: damocline-darwin-amd64
+          - goos: darwin
+            goarch: arm64
+            output: damocline-darwin-arm64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Compile command for target platform
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: go build -o /tmp/${{ matrix.output }} ./cmd/damocline
+      - name: Verify compiled output exists
+        run: test -s /tmp/${{ matrix.output }}
 
   windows-launcher:
     name: Windows source installer and CMD shim

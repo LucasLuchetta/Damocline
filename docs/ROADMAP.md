@@ -62,7 +62,7 @@ This is a working plan for an open-source project in **pre-alpha**. The native l
 - [ ] Local web UI for scenario building and report exploration. A loopback-only read-only report dashboard is implemented; scenario building remains terminal-based.
 - [ ] Browser journey recording and browser-vs-HTTP result distinctions.
 - [ ] Distributed generators and reproducible coordinated execution.
-- [ ] Multi-OS release artifacts and compatibility guarantees.
+- [ ] Multi-OS release artifacts and compatibility guarantees. CI compiles the source CLI for Linux amd64, Windows amd64, macOS amd64, and macOS arm64; signed releases and runtime guarantees remain open.
 
 ## Explicit non-goals
 
