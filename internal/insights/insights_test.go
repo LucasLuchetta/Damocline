@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/LucasLuchetta/Damocline/internal/generatorhealth"
 	"github.com/LucasLuchetta/Damocline/internal/hostmon"
 	"github.com/LucasLuchetta/Damocline/internal/report"
 )
@@ -110,5 +111,21 @@ func TestNoPrivateTargetInFixture(t *testing.T) {
 	r := synthetic()
 	if !strings.Contains(r.Target, "example.com") {
 		t.Fatal("fixture must use reserved documentation domain")
+	}
+}
+
+func TestGeneratorHealthReportedWithoutAssumingServerBottleneck(t *testing.T) {
+	r := synthetic()
+	r.Generator = &generatorhealth.Summary{
+		Samples: 6, ObservedSeconds: 2, PeakHeapAllocBytes: 32 << 20,
+		PeakGoroutines: 21, GCCycles: 1, GoCPUValid: true,
+		GoCPUUtilizationRatio: 0.96,
+	}
+	var output bytes.Buffer
+	Write(&output, r, nil, nil)
+	for _, phrase := range []string{"Load-generator runtime", "Go runtime CPU activity", "Validate generator headroom", "not operating-system process RSS", "SERVER UPGRADE: NOT JUSTIFIED"} {
+		if !strings.Contains(output.String(), phrase) {
+			t.Fatalf("missing %q in output: %s", phrase, output.String())
+		}
 	}
 }

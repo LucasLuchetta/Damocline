@@ -142,3 +142,19 @@ func TestPlannedArrivalAccountingWithSlowLocalServer(t *testing.T) {
         t.Fatalf("undelivered workload must not pass: %+v",out)
     }
 }
+
+func TestRunIncludesLocalGeneratorHealth(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	v := scenario(t, srv.URL, []config.Step{{Name: "page", Path: "/"}})
+	result := Run(context.Background(), v)
+	if result.Generator == nil || result.Generator.Samples < 2 ||
+		result.Generator.PeakGoroutines < 1 || result.Generator.PeakHeapAllocBytes == 0 {
+		t.Fatalf("generator health not sampled: %+v", result.Generator)
+	}
+	if result.Outcome != "PASS" {
+		t.Fatalf("monitoring changed successful workload: %+v", result)
+	}
+}

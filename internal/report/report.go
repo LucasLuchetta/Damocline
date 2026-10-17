@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"sort"
 	"time"
+
+	"github.com/LucasLuchetta/Damocline/internal/generatorhealth"
 )
 
 type MetricSet struct {
@@ -117,6 +119,7 @@ type Result struct {
 	SchedulerLagP95MS   float64      `json:"scheduler_lag_p95_ms,omitempty"`
 	SchedulerLagMaxMS   float64      `json:"scheduler_lag_max_ms,omitempty"`
 	Warnings            []string     `json:"warnings,omitempty"`
+	Generator           *generatorhealth.Summary `json:"generator,omitempty"`
 }
 
 func WriteJSON(path string, r Result) error { return WriteAnyJSON(path, r) }
