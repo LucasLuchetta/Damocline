@@ -189,6 +189,9 @@ For safe local testing, real authenticated application testing, and Windows inst
 
 ## Documentation
 
+- [Research-backed capacity engineering plan](docs/RESEARCH_TO_CAPACITY_PLAN.md)
+- [k6 reference validation matrix](docs/K6_VALIDATION_MATRIX.md)
+- [Evidence-gated capacity ADR](docs/adr/0004-evidence-gated-capacity-recommendations.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Roadmap](docs/ROADMAP.md)
 - [Measurement model](docs/METRICS.md)

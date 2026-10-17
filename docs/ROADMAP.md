@@ -2,6 +2,20 @@
 
 This is a working plan for an open-source project in **pre-alpha**. The native load-test runner is experimental; there is no stable release yet. Items listed below are not implemented unless checked.
 
+## Research-backed capacity engineering implementation (proposed)
+
+See the [evidence-based capacity engineering plan](RESEARCH_TO_CAPACITY_PLAN.md), [k6 validation behavior matrix](K6_VALIDATION_MATRIX.md), and [ADR 0004](adr/0004-evidence-gated-capacity-recommendations.md). This is a sequenced plan with acceptance criteria, **not** a claim that these features are already implemented.
+
+- [ ] **G0 / P0:** Independent reference benchmarks and calibrated scheduler: exact offered/admitted/dropped accounting, monotonic timing, generator CPU/RAM health, no false PASS when client is saturated.
+- [ ] **G1 / P0:** Standardized HTTP timing boundaries, correct request/journey SLOs, bounded timeseries, rigorous sample adequacy and versioned reports.
+- [ ] **G2 / P1:** Representative mixed business workflows, dynamic data extraction, independently authenticated actors, safe synthetic read/write test fixtures.
+- [ ] **G3 / P1–P2:** Warm-up, steady/soak/recovery runs, graceful drain, repeated independent trials, uncertainty and cross-version comparisons.
+- [ ] **G4 / P2:** Little's Law consistency checks, constrained USL curve fitting with holdouts, guarded forecasting and unknown-state behavior.
+- [ ] **G5 / P2–P3:** Permissioned generator/host/Docker/PostgreSQL/Redis observability and controlled cost/performance comparisons.
+- [ ] **G6 / P3–P4:** Business demand, peak-active users, growth and reserve translated to a **target to validate**; evidence-gated Capacity Planner and executive reports.
+
+**Non-negotiable:** scientific methods do not certify Damocline code; no hard-capacity or VPS-upgrade recommendation may be made without calibrated representative tests, appropriate evidence and stated uncertainty.
+
 ## Foundation
 
 - [x] Core product definition and boundaries.
