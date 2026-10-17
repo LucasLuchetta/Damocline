@@ -192,6 +192,8 @@ For safe local testing, real authenticated application testing, and Windows inst
 - [Architecture](docs/ARCHITECTURE.md)
 - [Roadmap](docs/ROADMAP.md)
 - [Measurement model](docs/METRICS.md)
+- [Scientific foundations for capacity assessment](docs/RESEARCH_FOUNDATIONS.md)
+- [k6 engineering validation gap map](docs/K6_VALIDATION_GAP_MAP.md)
 - [MVP quick start](docs/QUICKSTART.md)
 - [Source updates](docs/UPDATES.md)
 - [Decision records](docs/adr/0001-go-core.md)
