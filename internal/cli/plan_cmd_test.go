@@ -12,7 +12,7 @@ import (
 
 func TestPlanCommandAssessesSavedCampaignWithoutGeneratingTraffic(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "campaign.json")
-	passed := report.Result{Outcome: "PASS"}
+	passed := report.Result{Outcome: "PASS", Quality: &report.Quality{State: report.QualityValid}}
 	evidence := campaign.Result{
 		SchemaVersion: 1, Scenario: "synthetic app", BaseUsers: 30, Repeats: 2, Outcome: "PASS",
 		Trials: []campaign.Trial{
@@ -32,6 +32,33 @@ func TestPlanCommandAssessesSavedCampaignWithoutGeneratingTraffic(t *testing.T) 
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("expected %q: %s", want, out.String())
 		}
+	}
+}
+
+func TestPlanCommandKeepsLimitedCampaignInsufficient(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "campaign.json")
+	limited := report.Result{Outcome: "PASS", Quality: &report.Quality{State: report.QualityLimited}}
+	evidence := campaign.Result{
+		SchemaVersion: 1, Scenario: "synthetic app", BaseUsers: 20, Repeats: 2, Outcome: "PASS",
+		Trials: []campaign.Trial{
+			{Number: 1, Outcome: "PASS", Phases: []campaign.Phase{{Name: "observation", Run: limited}, {Name: "recovery", Run: limited}}},
+			{Number: 2, Outcome: "PASS", Phases: []campaign.Phase{{Name: "observation", Run: limited}, {Name: "recovery", Run: limited}}},
+		},
+	}
+	if err := report.WriteAnyJSON(file, evidence); err != nil {
+		t.Fatal(err)
+	}
+	var out, errOut bytes.Buffer
+	if exit := Run([]string{"plan", "--campaign", file, "--peak-users", "20"}, &out, &errOut); exit != 0 {
+		t.Fatalf("exit %d: %s", exit, errOut.String())
+	}
+	for _, want := range []string{"INSUFFICIENT_EVIDENCE", "LIMITED measurement quality"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("expected %q: %s", want, out.String())
+		}
+	}
+	if strings.Contains(out.String(), "GOAL_MET_UNDER_TESTED_CONDITIONS") {
+		t.Fatalf("limited evidence produced a positive demand result: %s", out.String())
 	}
 }
 

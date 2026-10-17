@@ -33,6 +33,14 @@ damocline report --file .damocline/reports/your-run.json --host host.json
 
 The command is entirely offline: it does **not** call or probe the target application.
 
+The offline `plan` command also requires every observation, spike, and recovery
+phase in a complete repeated campaign to carry explicit
+`VALID_WITHIN_ENVELOPE` data quality before it can say
+`GOAL_MET_UNDER_TESTED_CONDITIONS`. Missing, `LIMITED`, `INVALID`, or unknown
+quality remains `INSUFFICIENT_EVIDENCE`. Current runs are `LIMITED` while the
+workload-specific generator preflight gate is unfinished, so this positive
+demand assessment is intentionally unavailable from current campaign reports.
+
 ## Understand the four answers
 
 ```text

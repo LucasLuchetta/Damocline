@@ -9,13 +9,18 @@ Accepted.
 Provide an offline `plan` command that applies the existing peak-demand,
 growth, and reserve calculation to a saved campaign report. The command
 accepts a positive conclusion only when the report has the expected schema,
-scenario, exact target virtual-user level, two to five complete trials, and passing
-observation plus recovery phases in every trial.
+scenario, exact target virtual-user level, two to five complete trials, passing
+observation plus recovery phases in every trial, and `VALID_WITHIN_ENVELOPE`
+measurement quality for every required observation, spike, and recovery phase.
+Missing, `LIMITED`, `INVALID`, or unknown quality remains
+`INSUFFICIENT_EVIDENCE`.
 
 The resulting state is `GOAL_MET_UNDER_TESTED_CONDITIONS`. It means that the
 recorded synthetic workload met the calculated demand under the saved
 workflow, environment, SLOs, observation windows, generator evidence, and
-variation. It does not estimate a hardware limit, establish equivalence to
+variation after the positive generator-equivalence quality gate is available.
+Current engine reports remain `LIMITED`, so they cannot produce this positive
+state. It does not estimate a hardware limit, establish equivalence to
 people, identify a bottleneck, or recommend an infrastructure change.
 
 ## Consequences
