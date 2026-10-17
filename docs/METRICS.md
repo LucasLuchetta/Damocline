@@ -52,7 +52,7 @@ Run reports also sample average in-flight HTTP requests over the workload window
 
 Generator health samples Go heap allocation, goroutines, garbage-collection activity, Go runtime CPU occupancy, and (on Windows/Linux) process RSS and CPU time. HTTP run report schema v6 includes these process fields, the conditional P95 rank interval, and separates `observation_seconds` (the configured workload window) from `elapsed_seconds` (including the bounded drain period for in-flight work). Throughput uses the observation window; time-series correlation uses the full elapsed interval. Process CPU is sampled between intervals and normalized to GOMAXPROCS; it is not host utilization, and RSS is not total host memory. Sampling may miss brief peaks. These metrics describe the load generator, not the application under test. Current 90% runtime/process CPU guards and request-rate-ceiling checks are provisional safeguards, not calibrated universal saturation thresholds.
 
-Arrival accounting and scheduler lag are also measurement-quality signals. Any unexplained reconciliation mismatch invalidates interpretation. A late scheduler start indicates generator timing error; a busy-worker drop indicates configured worker capacity prevented delivery. Neither should silently be counted as target capacity.
+Arrival accounting and scheduler lag are also measurement-quality signals. For open-arrival runs, the report records one monotonic planned-slot-to-admission lag sample per planned start, with p50, p95, maximum, sample count, and timing method. The lag includes timer wake-up and callback admission overhead; it does not separate OS timer delay from scheduler work, measure request/network latency, or establish clock accuracy. No validated accuracy tolerance is currently claimed, so these values are diagnostic evidence only. Any unexplained reconciliation mismatch invalidates interpretation. A late scheduler start indicates generator timing error; a busy-worker drop indicates configured worker capacity prevented delivery. Neither should silently be counted as target capacity.
 
 ## What is not yet measured
 
@@ -73,6 +73,7 @@ Closed-loop and open-loop models answer different questions and should be select
 - Request and journey p50/p95/p99 latency, counts, error rates, and timeouts.
 - Criteria for passing, including latency and business-operation error budgets.
 - Generator health and limitations, including resource use and timing accuracy.
+- For open-arrival workloads, scheduler lag sample count, p50/p95/maximum, and timing method; these are not a calibrated clock-accuracy guarantee.
 - Repetition count and the range actually tested. Campaign reports provide observed min/max spread across observation trials, not run-to-run variance, a confidence interval, or a dependence-aware analysis.
 - Telemetry correlation only when the relevant evidence was collected.
 

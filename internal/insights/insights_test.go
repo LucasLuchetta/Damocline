@@ -37,6 +37,25 @@ func TestReportCallsOutSingleVUAndTailNotServerUpgrade(t *testing.T) {
 		}
 	}
 }
+
+func TestReportExplainsArrivalSchedulerLagDistribution(t *testing.T) {
+	r := synthetic()
+	r.Config.Mode = "arrival"
+	r.SchedulerLagSamples = 4
+	r.SchedulerLagP50MS = 1
+	r.SchedulerLagP95MS = 2
+	r.SchedulerLagMaxMS = 3
+	var output bytes.Buffer
+	Write(&output, r, nil, nil)
+	for _, expected := range []string{
+		"over 4 planned arrivals", "p50 1.0 ms", "p95 2.0 ms", "max 3.0 ms",
+		"monotonic slot-to-admission", "not a calibrated clock-accuracy bound",
+	} {
+		if !strings.Contains(output.String(), expected) {
+			t.Fatalf("report is missing %q: %s", expected, output.String())
+		}
+	}
+}
 func TestFailureAndDroppedArrivals(t *testing.T) {
 	r := synthetic()
 	r.Outcome = "FAIL"

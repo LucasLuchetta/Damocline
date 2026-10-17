@@ -52,16 +52,30 @@ func TestDriveAccountsForSchedulerStall(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	calls := 0
+	const injectedPause = 130 * time.Millisecond
 	s := Drive(ctx, 500*time.Millisecond, 20, func() bool {
 		calls++
 		if calls == 1 {
 			// Fault-inject a delayed callback to verify that late arrivals are
 			// counted rather than silently erased after a scheduler stall.
-			time.Sleep(130 * time.Millisecond)
+			time.Sleep(injectedPause)
 		}
 		return true
 	})
-	if !s.Consistent() || s.Planned != 10 || s.DroppedLate == 0 || s.P95Lag <= 0 {
+	if !s.Consistent() || s.Planned != 10 || s.DroppedLate == 0 || s.LagSamples != s.Planned || s.P95Lag <= 0 || s.MaxLag < injectedPause/3 {
 		t.Fatalf("scheduler stall was not reconciled as late arrivals: %+v", s)
+	}
+}
+
+func TestFinishSummarizesEveryPlannedLagSample(t *testing.T) {
+	var stats Stats
+	for _, lag := range []time.Duration{40, 10, 30, 20} {
+		stats.Planned++
+		stats.observe(lag * time.Millisecond)
+	}
+	got := stats.finish()
+	if got.LagSamples != 4 || got.P50Lag != 20*time.Millisecond ||
+		got.P95Lag != 40*time.Millisecond || got.MaxLag != 40*time.Millisecond {
+		t.Fatalf("unexpected lag summary: %+v", got)
 	}
 }
