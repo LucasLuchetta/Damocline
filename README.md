@@ -1,6 +1,6 @@
-# Damocline
-
-> **Find the limit before it finds you.**
+<p align="center">
+  <img src="assets/brand/damocline-logo.webp" alt="Damocline — a suspended sword. Find the limit before it finds you." width="380" />
+</p>
 
 [![CI](https://github.com/LucasLuchetta/Damocline/actions/workflows/ci.yml/badge.svg)](https://github.com/LucasLuchetta/Damocline/actions/workflows/ci.yml)
 [![Apache License 2.0](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
