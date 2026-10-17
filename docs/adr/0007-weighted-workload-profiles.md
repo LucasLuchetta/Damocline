@@ -17,3 +17,5 @@ Reports preserve configured weights and record per-profile completed and cancell
 ## Consequences
 
 Weights are an explicit synthetic assumption, not a statement about production behavior. Users must derive and review them from sanitized usage evidence. The feature does not provide response-driven variables, synthetic-data setup or cleanup, browser execution, or a partly open session model.
+
+ADR 0024 adds bounded, self-declared provenance labels for a mix. These labels do not establish representativeness or validate source evidence.

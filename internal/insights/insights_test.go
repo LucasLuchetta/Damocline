@@ -235,6 +235,30 @@ func TestReadRunAcceptsSchemaEightHTTPDiagnostics(t *testing.T) {
 		t.Fatalf("schema-v8 HTTP diagnostics report not readable: %+v err=%v", got, err)
 	}
 }
+
+func TestReadRunAcceptsSchemaNineMixProvenance(t *testing.T) {
+	r := report.Result{SchemaVersion: 9, Name: "Synthetic example", Target: "https://app.example.com", StartedAt: "2026-10-01T12:00:00Z", ElapsedSeconds: 30, ObservationSeconds: 30, Config: report.RunConfig{Users: 1, ProfileMixBasis: "sanitized_analytics", ProfileMixReference: "weekly-summary-v2"}}
+	path := filepath.Join(t.TempDir(), "schema-v9.json")
+	if err := report.WriteJSON(path, r); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ReadRun(path)
+	if err != nil || got.Config.ProfileMixBasis != "sanitized_analytics" || got.Config.ProfileMixReference != "weekly-summary-v2" {
+		t.Fatalf("schema-v9 provenance report not readable: %+v err=%v", got, err)
+	}
+}
+
+func TestComparisonRequiresMatchingMixProvenance(t *testing.T) {
+	old, current := synthetic(), synthetic()
+	old.Config.WorkloadRevision, current.Config.WorkloadRevision = "rev-1", "rev-1"
+	old.Config.ProfileMixBasis, current.Config.ProfileMixBasis = "sanitized_analytics", "business_estimate"
+	old.Config.ProfileMixReference, current.Config.ProfileMixReference = "usage-v1", "planning-v1"
+	var out strings.Builder
+	writeComparison(&out, old, current)
+	if !strings.Contains(out.String(), "NOT a controlled comparison") {
+		t.Fatalf("comparison did not reject changed provenance: %s", out.String())
+	}
+}
 func TestNoPrivateTargetInFixture(t *testing.T) {
 	r := synthetic()
 	if !strings.Contains(r.Target, "example.com") {

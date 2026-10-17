@@ -216,22 +216,24 @@ func percentile(values []time.Duration, p float64) time.Duration {
 func roundMS(d time.Duration) float64 { return float64(d.Microseconds()) / 1000.0 }
 
 type RunConfig struct {
-	WorkloadRevision  string          `json:"workload_revision,omitempty"`
-	Environment       string          `json:"environment,omitempty"`
-	Users             int             `json:"users"`
-	Duration          string          `json:"duration"`
-	RampUp            string          `json:"ramp_up,omitempty"`
-	ThinkTime         string          `json:"think_time,omitempty"`
-	RequestTimeout    string          `json:"request_timeout"`
-	MaxRPS            int             `json:"max_rps"`
-	P95LimitMS        float64         `json:"p95_limit_ms"`
-	MaxErrorRate      float64         `json:"max_error_rate"`
-	Mode              string          `json:"mode"`
-	ArrivalRate       int             `json:"arrival_rate,omitempty"`
-	SeparateSessions  bool            `json:"separate_sessions"`
-	MinSamplesPerStep int             `json:"min_samples_per_step"`
-	Profiles          []ProfileConfig `json:"profiles,omitempty"`
-	WindowDuration    string          `json:"window_duration,omitempty"`
+	WorkloadRevision    string          `json:"workload_revision,omitempty"`
+	Environment         string          `json:"environment,omitempty"`
+	ProfileMixBasis     string          `json:"profile_mix_basis,omitempty"`
+	ProfileMixReference string          `json:"profile_mix_reference,omitempty"`
+	Users               int             `json:"users"`
+	Duration            string          `json:"duration"`
+	RampUp              string          `json:"ramp_up,omitempty"`
+	ThinkTime           string          `json:"think_time,omitempty"`
+	RequestTimeout      string          `json:"request_timeout"`
+	MaxRPS              int             `json:"max_rps"`
+	P95LimitMS          float64         `json:"p95_limit_ms"`
+	MaxErrorRate        float64         `json:"max_error_rate"`
+	Mode                string          `json:"mode"`
+	ArrivalRate         int             `json:"arrival_rate,omitempty"`
+	SeparateSessions    bool            `json:"separate_sessions"`
+	MinSamplesPerStep   int             `json:"min_samples_per_step"`
+	Profiles            []ProfileConfig `json:"profiles,omitempty"`
+	WindowDuration      string          `json:"window_duration,omitempty"`
 }
 
 // ProfileConfig records the intended workflow mix used for a run.
