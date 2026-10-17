@@ -61,6 +61,41 @@ func AssessQuality(r Result) *Quality {
 	if r.Generator == nil || r.Generator.ProcessSamples < 2 || !r.Generator.ProcessCPUValid {
 		limit("Generator process measurements are missing or unsupported.")
 	}
+	if r.SchemaVersion >= 10 && r.Generator != nil {
+		g := r.Generator
+		values := []float64{g.ObservedSeconds, g.SamplingIntervalMS, g.SampleCollectionTotalMS, g.SampleCollectionMaxMS, g.MaxSampleGapMS, g.GoCPUBusySeconds, g.GoCPUCapacitySeconds, g.GoCPUUtilizationRatio, g.PeakProcessCPUUtilizationRatio}
+		for _, value := range values {
+			if math.IsNaN(value) || math.IsInf(value, 0) || value < 0 {
+				invalidate("Generator sampling observations contain invalid values.")
+				break
+			}
+		}
+		if g.Samples < 0 || g.ProcessSamples < 0 || g.ProcessCPUSamples < 0 || g.ProcessSamples > g.Samples || g.ProcessCPUSamples > g.ProcessSamples {
+			invalidate("Generator sample counts are inconsistent.")
+		}
+		if (g.Samples > 0 && g.GOMAXPROCS < 1) ||
+			(g.Samples >= 2 && (g.ObservedSeconds <= 0 || g.MaxSampleGapMS <= 0)) ||
+			g.SampleCollectionMaxMS > g.SampleCollectionTotalMS ||
+			(g.GoCPUValid && (g.Samples < 2 || g.GOMAXPROCS < 1 || g.GoCPUCapacitySeconds <= 0)) ||
+			(g.ProcessCPUValid && (g.ProcessSamples < 2 || g.ProcessCPUSamples < 1)) ||
+			(!g.ProcessCPUValid && g.ProcessCPUSamples > 0) {
+			invalidate("Generator sampling fields contradict their sample coverage.")
+		}
+		if g.SamplingIntervalMS <= 0 || g.Samples < 2 {
+			limit("Generator sampling interval or sample coverage is unavailable.")
+		} else if g.MaxSampleGapMS > 2*g.SamplingIntervalMS {
+			limit("Generator health sampling has a gap longer than two configured intervals.")
+		}
+		if g.SamplingIntervalMS > 0 && g.SampleCollectionMaxMS > g.SamplingIntervalMS {
+			limit("A generator health sample took longer than the configured sampling interval.")
+		}
+		if g.ProcessSamples > 0 && g.PeakProcessRSSBytes == 0 {
+			limit("Generator process sampling reported no resident-memory value.")
+		}
+		if g.Samples > 0 && (g.PeakHeapAllocBytes == 0 || g.PeakGoroutines == 0) {
+			limit("Generator runtime sampling reported a zero heap or goroutine peak.")
+		}
+	}
 	if r.Config.MaxRPS > 0 && r.WindowSeconds() > 0 &&
 		float64(r.Metrics.Total)/r.WindowSeconds() > 0.90*float64(r.Config.MaxRPS) {
 		limit("Observed request throughput is near the configured client rate limit.")

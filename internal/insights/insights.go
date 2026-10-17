@@ -38,7 +38,7 @@ func ReadRun(path string) (report.Result, error) {
 	if err := readJSON(path, &r); err != nil {
 		return r, err
 	}
-	if r.SchemaVersion < 1 || r.SchemaVersion > 9 || r.Name == "" || r.Metrics.Total < 0 || r.Metrics.Success < 0 || r.Metrics.Failures < 0 || r.Metrics.Success+r.Metrics.Failures != r.Metrics.Total || r.Config.Users < 1 || r.ElapsedSeconds <= 0 || (r.SchemaVersion >= 4 && r.ObservationSeconds <= 0) {
+	if r.SchemaVersion < 1 || r.SchemaVersion > 10 || r.Name == "" || r.Metrics.Total < 0 || r.Metrics.Success < 0 || r.Metrics.Failures < 0 || r.Metrics.Success+r.Metrics.Failures != r.Metrics.Total || r.Config.Users < 1 || r.ElapsedSeconds <= 0 || (r.SchemaVersion >= 4 && r.ObservationSeconds <= 0) {
 		return report.Result{}, errors.New("not a valid Damocline HTTP run report")
 	}
 	return r, nil
@@ -160,6 +160,9 @@ func Evaluate(r report.Result, host *hostmon.Result) Assessment {
 	if r.Generator != nil {
 		g := r.Generator
 		a.Findings = append(a.Findings, Finding{"INFO", fmt.Sprintf("Load-generator runtime: %d samples over %.1fs, peak Go heap %.1f MiB, peak goroutines %d, GC cycles %d.", g.Samples, g.ObservedSeconds, float64(g.PeakHeapAllocBytes)/(1024*1024), g.PeakGoroutines, g.GCCycles)})
+		if r.SchemaVersion >= 10 {
+			a.Findings = append(a.Findings, Finding{"INFO", fmt.Sprintf("Generator sampler: %.0f ms interval, maximum sample gap %.1f ms, total collection wall time %.2f ms (largest sample %.2f ms).", g.SamplingIntervalMS, g.MaxSampleGapMS, g.SampleCollectionTotalMS, g.SampleCollectionMaxMS)})
+		}
 		if g.GoCPUValid {
 			a.Findings = append(a.Findings, Finding{"INFO", fmt.Sprintf("Observed Go runtime CPU activity: %.0f%% of the sampled GOMAXPROCS capacity; this is not full process or server CPU utilization.", 100*g.GoCPUUtilizationRatio)})
 			if g.Samples >= 3 && g.GoCPUUtilizationRatio >= 0.90 {
