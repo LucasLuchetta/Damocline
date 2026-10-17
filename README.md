@@ -42,20 +42,6 @@ Damocline will seek **scenario-specific sustainable capacity**, never claim one 
 
 Damocline should apply to **authorized HTTP/HTTPS applications** hosted on VPSs, dedicated machines, containers, Kubernetes, PaaS, or serverless platforms. Internal resource metrics require optional instrumentation or permissions; an external URL alone cannot reveal a server's CPU or database bottlenecks.
 
-## Understand what your result means
-
-Damocline prints a human-readable **assessment** after every `run` and can explain previously saved reports offline:
-
-```powershell
-damocline report --file .damocline/reports/your-run.json
-damocline report --file .damocline/reports/later-run.json --compare .damocline/reports/earlier-run.json
-damocline report --file .damocline/reports/your-run.json --host host.json
-```
-
-It distinguishes **meeting your p95/error objectives** from **proving user capacity** and **having evidence that a bigger server is needed**. Achieved RPS is not the configured `max_rps` ceiling; HTTP request latency is not complete journey duration. A single PASS cannot certify infrastructure headroom.
-
-See [Understand your results](docs/REPORT_EXPLAINER.md) for interpretation, sample-size and comparison warnings. The command never sends traffic.
-
 ## How it is intended to work
 
 ```text
@@ -98,6 +84,34 @@ You can alternatively run `.\start.cmd` directly in the cloned directory, or `go
 Browser login session reuse **does not replay login forms**, create distinct user accounts, or measure browser rendering. The load engine remains Damocline's own Go implementation, not k6.
 
 See [Source installation and browser login](docs/SOURCE_INSTALL.md) and [Guided CLI](docs/INTERACTIVE_START.md).
+
+## Understand what your result means
+
+Damocline prints a human-readable **assessment** after every `run` and can explain previously saved reports offline:
+
+```powershell
+damocline report --file .damocline/reports/your-run.json
+damocline report --file .damocline/reports/later-run.json --compare .damocline/reports/earlier-run.json
+damocline report --file .damocline/reports/your-run.json --host host.json
+```
+
+It distinguishes **meeting your p95/error objectives** from **proving user capacity** and **having evidence that a bigger server is needed**. Achieved RPS is not the configured `max_rps` ceiling; HTTP request latency is not complete journey duration. A single PASS cannot certify infrastructure headroom.
+
+See [Understand your results](docs/REPORT_EXPLAINER.md) for interpretation, sample-size and comparison warnings. The command never sends traffic.
+
+## Repeat a saved scenario
+
+The guided CLI now supports English slash commands:
+
+```powershell
+damocline /start    # create a new scenario; keep the previous one in local history
+damocline /history  # select a saved scenario by number and review it before rerun
+damocline           # show the guided setup and current-profile choices
+```
+
+Scenario configurations are stored only in `.damocline/` alongside your source checkout. The current profile stays in `.damocline/scenario.local.json`, older distinct configurations are stored in `.damocline/history/`, and result reports remain in `.damocline/reports/`. These are scenario snapshots, not a report-history viewer. Do not commit private scenarios or reports. Browser authentication must be repeated for each rerun; traffic still requires explicit `AUTHORIZE` and a separate start confirmation.
+
+See [Guided CLI](docs/INTERACTIVE_START.md) for selection, persistence, and security details.
 
 ## Run your first bounded test
 

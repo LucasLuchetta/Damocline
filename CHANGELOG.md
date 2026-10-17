@@ -9,7 +9,6 @@ This project follows a human-maintained changelog. No release exists yet.
 - Explicit distinction between configured RPS ceiling, achieved throughput, request p95, journey p95, tested user levels, and evidence for infrastructure upgrades.
 - Safety-oriented caveats for small sample sizes, long-tail responses, shared sessions, dropped arrivals and uncontrolled comparisons.
 
-
 ### Fixed
 - Guided setup accepts bare domains and HTTPS origins with a trailing slash, and retries invalid addresses instead of aborting.
 - Removed third-party load-testing tool references from the interactive welcome banner.
@@ -17,6 +16,8 @@ This project follows a human-maintained changelog. No release exists yet.
 ### Added
 - Interactive, opt-in source update notifications with fast-forward Git safety checks, local automatic-update preference, and automatic restart after installing a new version.
 - `damocline update` for manual checking and opting in/out; scripted load-testing commands remain unaffected.
+- English CLI slash commands `damocline /start` and `damocline /history` to create, list, select and repeat locally saved scenario configurations with renewed traffic authorization.
+- Duplicate-aware, private local scenario snapshots with safety checks that reject literal HTTP headers when archiving. No credential values or browser cookies are persisted by the history mechanism.
 - Source-based Windows CMD/PowerShell command launcher (`damocline` opens the wizard) and optional POSIX launcher.
 - Temporary Chrome/Edge login session borrowing for authenticated read-only HTTP tests; reviewed page suggestions, no credential persistence.
 - CI no longer publishes executable release artifacts.

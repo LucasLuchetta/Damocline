@@ -42,6 +42,18 @@ func Run(args []string, stdout, stderr io.Writer) int {
 			return 2
 		}
 		return start(os.Stdin, stdout, stderr)
+	case "/start":
+		if len(args) != 1 {
+			fmt.Fprintln(stderr, "usage: damocline /start")
+			return 2
+		}
+		return startWithMode(os.Stdin, stdout, stderr, "new")
+	case "/history":
+		if len(args) != 1 {
+			fmt.Fprintln(stderr, "usage: damocline /history")
+			return 2
+		}
+		return startWithMode(os.Stdin, stdout, stderr, "history")
 	case "report":
 		return reportCmd(args[1:], stdout, stderr)
 	case "run":
@@ -61,8 +73,10 @@ func help(w io.Writer) {
 	fmt.Fprint(w, `Damocline — find the limit before it finds you.
 
 Usage:
-  damocline        # guided setup and execution
-  damocline start  # same guided wizard
+  damocline          # guided setup, including /start and /history
+  damocline /start   # create a new saved scenario (archives the previous one)
+  damocline /history # select and repeat a previous saved scenario
+  damocline start    # original guided wizard
   damocline report --file run.json [--compare previous.json] [--host host.json]
   damocline run --config scenario.json --authorized [--out reports/run.json]
   damocline run --config scenario.json --dry-run
