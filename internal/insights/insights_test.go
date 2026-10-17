@@ -129,3 +129,29 @@ func TestGeneratorHealthReportedWithoutAssumingServerBottleneck(t *testing.T) {
 		}
 	}
 }
+
+func TestErrorUncertaintyDoesNotMisrepresentSmallPassingSample(t *testing.T) {
+	r := synthetic() // 21 requests, zero failures, configured 1% error budget.
+	var output bytes.Buffer
+	Write(&output, r, nil, nil)
+	if !strings.Contains(output.String(), "one-sided 95% upper bound") ||
+		!strings.Contains(output.String(), "NOT statistically established") ||
+		!strings.Contains(output.String(), "299 independent error-free operations") {
+		t.Fatalf("missing conservative error-rate interpretation: %s", output.String())
+	}
+	if r.Outcome != "PASS" {
+		t.Fatal("observed threshold PASS must not be silently recast as statistical certification")
+	}
+}
+
+func TestErrorUncertaintyReportsStatisticalAssumptions(t *testing.T) {
+	r := synthetic()
+	r.Metrics.Total = 1000
+	r.Metrics.Success = 1000
+	var output bytes.Buffer
+	Write(&output, r, nil, nil)
+	if !strings.Contains(output.String(), "independence and stationarity") ||
+		!strings.Contains(output.String(), "does not validate sustained capacity") {
+		t.Fatalf("statistical assumptions absent: %s", output.String())
+	}
+}
