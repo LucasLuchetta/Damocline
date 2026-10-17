@@ -1,0 +1,39 @@
+{
+  "name": "Example weighted read-only workflows",
+  "base_url": "https://app.example.com",
+  "mode": "closed",
+  "users": 20,
+  "duration": "30s",
+  "ramp_up": "5s",
+  "request_timeout": "8s",
+  "max_rps": 60,
+  "p95_limit_ms": 1500,
+  "max_error_rate": 0.01,
+  "min_samples_per_step": 10,
+  "profiles": [
+    {
+      "name": "dashboard",
+      "weight": 50,
+      "think_time": "500ms",
+      "steps": [
+        {"name": "dashboard-page", "method": "GET", "path": "/dashboard", "expected_status": [200]}
+      ]
+    },
+    {
+      "name": "search",
+      "weight": 30,
+      "think_time": "750ms",
+      "steps": [
+        {"name": "search-page", "method": "GET", "path": "/search", "expected_status": [200]}
+      ]
+    },
+    {
+      "name": "review",
+      "weight": 20,
+      "think_time": "1s",
+      "steps": [
+        {"name": "review-page", "method": "GET", "path": "/records", "expected_status": [200]}
+      ]
+    }
+  ]
+}

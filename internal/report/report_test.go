@@ -20,8 +20,22 @@ func TestMetricsAndPercentiles(t *testing.T) {
 	if math.Abs(r.P95MS-96) > 0.01 {
 		t.Fatalf("p95=%f expected 96", r.P95MS)
 	}
+	if r.P95IID95Approximation {
+		t.Fatal("p95 rank interval must be absent when the expected tail has fewer than ten samples")
+	}
 	if r.Reasons["timeout"] != 1 {
 		t.Fatalf("reasons: %+v", r.Reasons)
+	}
+}
+
+func TestP95IIDRankIntervalUsesSortedLatencyRanks(t *testing.T) {
+	m := NewMetricSet()
+	for i := 1; i <= 1_000; i++ {
+		m.Record(time.Duration(i)*time.Millisecond, true, false, "")
+	}
+	r := m.Snapshot()
+	if !r.P95IID95Approximation || r.P95IID95LowerMS != 937 || r.P95IID95UpperMS != 964 {
+		t.Fatalf("unexpected p95 IID interval: %+v", r)
 	}
 }
 

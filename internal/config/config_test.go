@@ -4,6 +4,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
 func good() Scenario {
@@ -131,5 +132,137 @@ func TestArrivalRateBoundMatchesGlobalRPSCeiling(t *testing.T) {
 	s.ArrivalRate = 101
 	if _, err := Parse(s, Options{Authorized: true}); err == nil {
 		t.Fatal("accepted arrival rate above the bounded 100 RPS ceiling")
+	}
+}
+
+func TestWeightedProfilesArePrepared(t *testing.T) {
+	s := good()
+	s.Users = 4
+	s.Steps = nil
+	s.Profiles = []Profile{
+		{Name: "browse", Weight: 3, ThinkTime: "20ms", Steps: []Step{{Name: "dashboard", Path: "/dashboard"}}},
+		{Name: "edit", Weight: 1, Steps: []Step{{Name: "save", Method: "POST", Path: "/save"}}},
+	}
+	v, err := Parse(s, Options{Authorized: true, AllowWrites: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(v.Profiles) != 2 || len(v.Steps) != 2 || v.Profiles[0].ThinkTime != 20*time.Millisecond || v.Steps[1].Profile != "edit" {
+		t.Fatalf("profiles were not prepared: %+v", v)
+	}
+}
+
+func TestRejectInvalidWeightedProfiles(t *testing.T) {
+	tests := []struct {
+		name     string
+		users    int
+		steps    []Step
+		profiles []Profile
+	}{
+		{
+			name:  "steps and profiles",
+			users: 2,
+			steps: []Step{{Name: "legacy", Path: "/"}},
+			profiles: []Profile{
+				{Name: "browse", Weight: 1, Steps: []Step{{Name: "browse", Path: "/"}}},
+				{Name: "search", Weight: 1, Steps: []Step{{Name: "search", Path: "/search"}}},
+			},
+		},
+		{
+			name:  "too few users",
+			users: 1,
+			profiles: []Profile{
+				{Name: "browse", Weight: 1, Steps: []Step{{Name: "browse", Path: "/"}}},
+				{Name: "search", Weight: 1, Steps: []Step{{Name: "search", Path: "/search"}}},
+			},
+		},
+		{
+			name:  "duplicate step names",
+			users: 2,
+			profiles: []Profile{
+				{Name: "browse", Weight: 1, Steps: []Step{{Name: "page", Path: "/"}}},
+				{Name: "search", Weight: 1, Steps: []Step{{Name: "page", Path: "/search"}}},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := good()
+			s.Users = tt.users
+			s.Steps = tt.steps
+			s.Profiles = tt.profiles
+			if _, err := Parse(s, Options{Authorized: true}); err == nil {
+				t.Fatal("invalid profiles were accepted")
+			}
+		})
+	}
+}
+
+func TestRejectInvalidDynamicWorkflowReferences(t *testing.T) {
+	tests := []struct {
+		name  string
+		steps []Step
+	}{
+		{
+			name:  "forward reference",
+			steps: []Step{{Name: "record", Path: "/records/{{id}}"}},
+		},
+		{
+			name:  "query reference",
+			steps: []Step{{Name: "session", Path: "/session", Extract: map[string]Extract{"id": {JSONPointer: "/id"}}}, {Name: "record", Path: "/records?id={{id}}"}},
+		},
+		{
+			name:  "invalid extractor",
+			steps: []Step{{Name: "session", Path: "/session", Extract: map[string]Extract{"id": {JSONPointer: "/id", Header: "X-ID"}}}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := good()
+			s.Steps = tt.steps
+			if _, err := Parse(s, Options{Authorized: true}); err == nil {
+				t.Fatal("invalid dynamic workflow was accepted")
+			}
+		})
+	}
+}
+
+func TestWindowDurationValidation(t *testing.T) {
+	s := good()
+	s.WindowDuration = "500ms"
+	if _, err := Parse(s, Options{Authorized: true}); err == nil {
+		t.Fatal("sub-second window was accepted")
+	}
+	s.WindowDuration = "2s"
+	if _, err := Parse(s, Options{Authorized: true}); err == nil {
+		t.Fatal("window longer than scenario duration was accepted")
+	}
+}
+
+func TestSyntheticDataPrefixEnablesOnlyTheSyntheticIDTemplate(t *testing.T) {
+	t.Setenv("DAMOCLINE_TEST_DATA_PREFIX", "damocline-test")
+	s := good()
+	s.SyntheticDataPrefixEnv = "DAMOCLINE_TEST_DATA_PREFIX"
+	s.Steps = []Step{{Name: "create", Method: "POST", Path: "/records/{{synthetic_id}}"}}
+	v, err := Parse(s, Options{Authorized: true, AllowWrites: true})
+	if err != nil || v.SyntheticDataPrefix != "damocline-test" {
+		t.Fatalf("synthetic prefix was not prepared: %+v err=%v", v, err)
+	}
+	s.SyntheticDataPrefixEnv = "bad-name"
+	if _, err := Parse(s, Options{Authorized: true, AllowWrites: true}); err == nil {
+		t.Fatal("invalid synthetic prefix environment name was accepted")
+	}
+}
+
+func TestWorkloadRevisionAndEnvironmentLabelsAreValidated(t *testing.T) {
+	s := good()
+	s.WorkloadRevision = "checkout-v3.2"
+	s.Environment = "staging-small"
+	if _, err := Parse(s, Options{Authorized: true}); err != nil {
+		t.Fatalf("safe reproducibility labels rejected: %v", err)
+	}
+	s.Environment = "production cluster"
+	if _, err := Parse(s, Options{Authorized: true}); err == nil {
+		t.Fatal("unsafe environment label accepted")
 	}
 }

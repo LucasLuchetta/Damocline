@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -36,8 +37,183 @@ func TestSuccess(t *testing.T) {
 	if result.Metrics.Success < 1 || result.Metrics.Failures != 0 || result.Outcome != "PASS" {
 		t.Fatalf("unexpected report: %+v", result)
 	}
-	if result.SchemaVersion != 4 || result.ObservationSeconds != v.Duration.Seconds() || result.Generator == nil || result.Generator.ProcessSamples < 2 {
-		t.Fatalf("report must include schema-v4 observation window and generator process observations: %+v", result)
+	if result.SchemaVersion != 6 || result.ObservationSeconds != v.Duration.Seconds() || result.Generator == nil || result.Generator.ProcessSamples < 2 {
+		t.Fatalf("report must include schema-v6 observation window and generator process observations: %+v", result)
+	}
+}
+
+func TestWeightedProfilesAreMeasuredSeparately(t *testing.T) {
+	seen := map[string]int{}
+	var mu sync.Mutex
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		seen[r.URL.Path]++
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	s := config.Scenario{
+		Name: "weighted local profiles", BaseURL: srv.URL, Users: 4, Duration: "1s", MaxRPS: 50,
+		P95LimitMS: 1000, MaxErrorRate: 0,
+		Profiles: []config.Profile{
+			{Name: "browse", Weight: 3, Steps: []config.Step{{Name: "dashboard", Path: "/dashboard"}}},
+			{Name: "search", Weight: 1, Steps: []config.Step{{Name: "search", Path: "/search"}}},
+		},
+	}
+	v, err := config.Parse(s, config.Options{Authorized: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	v.Duration = 300 * time.Millisecond
+	r := Run(context.Background(), v)
+	if r.Outcome != "PASS" || len(r.Profiles) != 2 || r.Profiles[0].AssignedVUs != 3 || r.Profiles[1].AssignedVUs != 1 ||
+		r.Profiles[0].Journeys.Total == 0 || r.Profiles[1].Journeys.Total == 0 {
+		t.Fatalf("weighted profile evidence missing: %+v", r)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if seen["/dashboard"] == 0 || seen["/search"] == 0 {
+		t.Fatalf("expected both workflows, got %+v", seen)
+	}
+}
+
+func TestSyntheticDataIDsAreUniqueAndNeverReported(t *testing.T) {
+	var mu sync.Mutex
+	seen := map[string]bool{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost && r.Method != http.MethodDelete {
+			t.Errorf("unexpected method %s", r.Method)
+		}
+		mu.Lock()
+		seen[r.URL.Path] = true
+		mu.Unlock()
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+	t.Setenv("DAMOCLINE_TEST_DATA_PREFIX", "damocline-test")
+	s := config.Scenario{Name: "synthetic write", BaseURL: srv.URL, Users: 2, Duration: "1s", MaxRPS: 30, P95LimitMS: 1000, MaxErrorRate: 0,
+		SyntheticDataPrefixEnv: "DAMOCLINE_TEST_DATA_PREFIX", Steps: []config.Step{{Name: "create", Method: "POST", Path: "/records/{{synthetic_id}}", ExpectedStatus: []int{204}}, {Name: "cleanup", Method: "DELETE", Path: "/records/{{synthetic_id}}", ExpectedStatus: []int{204}}}}
+	v, err := config.Parse(s, config.Options{Authorized: true, AllowWrites: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	v.Duration = 300 * time.Millisecond
+	r := Run(context.Background(), v)
+	if r.Metrics.Success == 0 || len(seen) < 2 {
+		t.Fatalf("synthetic workflow did not execute: %+v paths=%v", r, seen)
+	}
+	for path := range seen {
+		if !strings.HasPrefix(path, "/records/damocline-test-") {
+			t.Fatalf("unexpected synthetic path %q", path)
+		}
+	}
+	encoded, err := json.Marshal(r)
+	if err != nil || strings.Contains(string(encoded), "damocline-test-") {
+		t.Fatalf("synthetic IDs must not be reported: %s err=%v", encoded, err)
+	}
+}
+
+func TestJourneyExtractsResponseValuesForLaterSteps(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/session":
+			w.Header().Set("X-Test-Token", "token-123")
+			_, _ = w.Write([]byte(`{"record":{"id":"alpha/beta"}}`))
+		case "/records/alpha/beta":
+			if r.Header.Get("X-Token") != "Bearer token-123" {
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+			_, _ = w.Write([]byte("record found"))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	s := config.Scenario{Name: "dependent local journey", BaseURL: srv.URL, Users: 1, Duration: "1s", MaxRPS: 20, P95LimitMS: 1000, MaxErrorRate: 0,
+		Steps: []config.Step{
+			{Name: "session", Path: "/session", Extract: map[string]config.Extract{"record_id": {JSONPointer: "/record/id"}, "token": {Header: "X-Test-Token"}}},
+			{Name: "record", Path: "/records/{{record_id}}", Headers: map[string]string{"X-Token": "Bearer {{token}}"}, MustContain: "record found"},
+		}}
+	v, err := config.Parse(s, config.Options{Authorized: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	v.Duration = 300 * time.Millisecond
+	r := Run(context.Background(), v)
+	if r.Outcome != "PASS" || r.Steps[0].Metrics.Success == 0 || r.Steps[1].Metrics.Success == 0 {
+		t.Fatalf("dependent journey did not complete: %+v", r)
+	}
+}
+
+func TestFailedExtractionFailsStep(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"missing":true}`))
+	}))
+	defer srv.Close()
+	s := config.Scenario{Name: "failed extraction", BaseURL: srv.URL, Users: 1, Duration: "1s", MaxRPS: 10, P95LimitMS: 1000, MaxErrorRate: 0,
+		Steps: []config.Step{{Name: "session", Path: "/", Extract: map[string]config.Extract{"record_id": {JSONPointer: "/id"}}}}}
+	v, err := config.Parse(s, config.Options{Authorized: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	v.Duration = 200 * time.Millisecond
+	r := Run(context.Background(), v)
+	if r.Outcome == "PASS" || r.Metrics.Reasons["extraction_failed"] == 0 {
+		t.Fatalf("missing extraction was not reported: %+v", r)
+	}
+}
+
+func TestObservationWindowsExposeLateSLOBreach(t *testing.T) {
+	started := time.Now()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if time.Since(started) > 150*time.Millisecond {
+			time.Sleep(60 * time.Millisecond)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	v := scenario(t, srv.URL, []config.Step{{Name: "page", Path: "/"}})
+	v.Duration = 350 * time.Millisecond
+	v.Window = 100 * time.Millisecond
+	v.Scenario.P95LimitMS = 20
+	r := Run(context.Background(), v)
+	if len(r.Windows) < 2 || r.Outcome != "FAIL" {
+		t.Fatalf("late window degradation was not visible: %+v", r)
+	}
+	found := false
+	for _, warning := range r.Warnings {
+		if strings.Contains(warning, "breached an SLO") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("window breach warning missing: %+v", r.Warnings)
+	}
+}
+
+func TestArrivalProfilesFollowConfiguredWeights(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	s := config.Scenario{
+		Name: "weighted arrival profiles", BaseURL: srv.URL, Users: 2, Duration: "1s", Mode: "arrival", ArrivalRate: 10, MaxRPS: 20,
+		P95LimitMS: 1000, MaxErrorRate: 0,
+		Profiles: []config.Profile{
+			{Name: "browse", Weight: 3, Steps: []config.Step{{Name: "dashboard", Path: "/dashboard"}}},
+			{Name: "search", Weight: 1, Steps: []config.Step{{Name: "search", Path: "/search"}}},
+		},
+	}
+	v, err := config.Parse(s, config.Options{Authorized: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := Run(context.Background(), v)
+	if r.Outcome != "PASS" || r.ArrivalsScheduled != 10 || r.ArrivalsDropped != 0 || len(r.Profiles) != 2 ||
+		r.Profiles[0].Journeys.Total != 8 || r.Profiles[1].Journeys.Total != 2 ||
+		r.Profiles[0].AssignedVUs != 0 || r.Profiles[1].AssignedVUs != 0 {
+		t.Fatalf("arrival profile mix was not measured deterministically: %+v", r)
 	}
 }
 func TestLoginRedirectIsFailure(t *testing.T) {

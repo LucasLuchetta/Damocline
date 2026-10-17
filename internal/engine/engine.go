@@ -4,11 +4,15 @@ package engine
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/cookiejar"
+	"net/url"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -22,6 +26,8 @@ import (
 
 const maxResponseBytes = 2 << 20
 
+var variablePattern = regexp.MustCompile(`\{\{([a-z][a-z0-9_]{0,63})\}\}`)
+
 type sample struct {
 	name               string
 	latency            time.Duration
@@ -29,25 +35,84 @@ type sample struct {
 	reason             string
 }
 type collector struct {
-	mu        sync.Mutex
-	aggregate *report.MetricSet
-	steps     map[string]*report.MetricSet
-	journeys  *report.MetricSet
+	mu          sync.Mutex
+	aggregate   *report.MetricSet
+	steps       map[string]*report.MetricSet
+	journeys    *report.MetricSet
+	profiles    map[string]*report.MetricSet
+	started     time.Time
+	window      time.Duration
+	observation time.Duration
+	windows     []*report.MetricSet
 }
 
-func newCollector(v config.Validated) *collector {
+func newCollector(v config.Validated, started time.Time) *collector {
 	c := &collector{aggregate: report.NewMetricSet(),
-		journeys: report.NewMetricSet(), steps: make(map[string]*report.MetricSet, len(v.Steps))}
+		journeys: report.NewMetricSet(), steps: make(map[string]*report.MetricSet, len(v.Steps)), profiles: make(map[string]*report.MetricSet, len(v.Profiles)), started: started, window: v.Window, observation: v.Duration}
 	for _, s := range v.Steps {
 		c.steps[s.Name] = report.NewMetricSet()
 	}
+	for _, profile := range v.Profiles {
+		c.profiles[profile.Name] = report.NewMetricSet()
+	}
 	return c
+}
+
+func (c *collector) addJourney(profile string, latency time.Duration, success, cancelled bool, reason string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.journeys.Record(latency, success, cancelled, reason)
+	c.profiles[profile].Record(latency, success, cancelled, reason)
+}
+
+type profileSelector struct {
+	weights []int
+	current []int
+	total   int
+}
+
+func newProfileSelector(profiles []config.PreparedProfile) *profileSelector {
+	s := &profileSelector{weights: make([]int, len(profiles)), current: make([]int, len(profiles))}
+	for i, profile := range profiles {
+		s.weights[i] = profile.Weight
+		s.total += profile.Weight
+	}
+	return s
+}
+
+// next uses smooth weighted round-robin. For every prefix of selections, each
+// profile remains close to its requested weight without random sampling noise.
+func (s *profileSelector) next() int {
+	selected := 0
+	for i := range s.weights {
+		s.current[i] += s.weights[i]
+		if s.current[i] > s.current[selected] {
+			selected = i
+		}
+	}
+	s.current[selected] -= s.total
+	return selected
 }
 func (c *collector) add(s sample) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.aggregate.Record(s.latency, s.success, s.cancelled, s.reason)
 	c.steps[s.name].Record(s.latency, s.success, s.cancelled, s.reason)
+	if c.window <= 0 {
+		return
+	}
+	elapsed := time.Since(c.started)
+	if elapsed > c.observation {
+		return
+	}
+	index := int(elapsed / c.window)
+	if index < 0 {
+		return
+	}
+	for len(c.windows) <= index {
+		c.windows = append(c.windows, report.NewMetricSet())
+	}
+	c.windows[index].Record(s.latency, s.success, s.cancelled, s.reason)
 }
 
 func Run(parent context.Context, v config.Validated) report.Result {
@@ -55,12 +120,12 @@ func Run(parent context.Context, v config.Validated) report.Result {
 	generatorMonitor := generatorhealth.Start(250 * time.Millisecond)
 	// Stop admitting new work at the configured boundary, then allow any
 	// already-started journey a bounded time to finish.
-	drainAllowance := min(30*time.Second, v.Timeout*time.Duration(len(v.Steps))+v.ThinkTime*time.Duration(len(v.Steps)))
+	drainAllowance := drainDuration(v)
 	ctx, cancel := context.WithTimeout(parent, v.Duration+drainAllowance)
 	defer cancel()
 	scheduleCtx, cancelSchedule := context.WithTimeout(parent, v.Duration)
 	defer cancelSchedule()
-	coll := newCollector(v)
+	coll := newCollector(v, started)
 	ticker := time.NewTicker(time.Second / time.Duration(v.Scenario.MaxRPS))
 	defer ticker.Stop()
 	tr := http.DefaultTransport.(*http.Transport).Clone()
@@ -71,9 +136,28 @@ func Run(parent context.Context, v config.Validated) report.Result {
 	tr.IdleConnTimeout = 15 * time.Second
 	defer tr.CloseIdleConnections()
 	var startedIterations, completedIterations, scheduledIterations, droppedIterations atomic.Int64
+	var inFlight, inFlightTotal, inFlightSamples atomic.Int64
 	var wg sync.WaitGroup
 	var arrivalStats scheduler.Stats
 	clients := make([]*http.Client, v.Scenario.Users)
+	sampleDone := make(chan struct{})
+	go func() {
+		<-scheduleCtx.Done()
+		close(sampleDone)
+	}()
+	go func() {
+		ticker := time.NewTicker(50 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-sampleDone:
+				return
+			case <-ticker.C:
+				inFlightTotal.Add(inFlight.Load())
+				inFlightSamples.Add(1)
+			}
+		}
+	}()
 	for i := range clients {
 		jar, _ := cookiejar.New(nil)
 		if len(v.Cookies) > 0 {
@@ -87,18 +171,27 @@ func Run(parent context.Context, v config.Validated) report.Result {
 		}
 		clients[i] = &http.Client{Transport: tr, Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	}
-	iteration := func(client *http.Client) {
+	var syntheticSequence atomic.Int64
+	iteration := func(client *http.Client, profile config.PreparedProfile, actor int) {
 		startedIterations.Add(1)
 		journeyStart := time.Now()
 		journeyOk := true
 		fullyCompleted := true
-		for stepIndex, step := range v.Steps {
+		variables := map[string]string{}
+		if v.SyntheticDataPrefix != "" {
+			sequence := syntheticSequence.Add(1)
+			variables["synthetic_id"] = fmt.Sprintf("%s-%x-%d-%d", v.SyntheticDataPrefix, started.UnixNano(), actor+1, sequence)
+		}
+		for stepIndex, step := range profile.Steps {
 			if !waitToken(ctx, ticker.C) {
 				fullyCompleted = false
 				break
 			}
-			s := execute(ctx, client, v.Timeout, step)
+			s, extracted := execute(ctx, client, v.Base, v.Timeout, step, variables, &inFlight)
 			coll.add(s)
+			for name, value := range extracted {
+				variables[name] = value
+			}
 			if !s.success {
 				journeyOk = false
 			}
@@ -106,49 +199,48 @@ func Run(parent context.Context, v config.Validated) report.Result {
 				fullyCompleted = false
 				break
 			}
-			if stepIndex < len(v.Steps)-1 && !sleep(ctx, v.ThinkTime) {
+			if stepIndex < len(profile.Steps)-1 && !sleep(ctx, profile.ThinkTime) {
 				fullyCompleted = false
 				break
 			}
 		}
 		if fullyCompleted {
 			completedIterations.Add(1)
-			coll.mu.Lock()
-			coll.journeys.Record(time.Since(journeyStart), journeyOk, false, func() string {
+			coll.addJourney(profile.Name, time.Since(journeyStart), journeyOk, false, func() string {
 				if journeyOk {
 					return ""
 				}
 				return "journey_step_failed"
 			}())
-			coll.mu.Unlock()
 		} else {
-			coll.mu.Lock()
-			coll.journeys.Record(time.Since(journeyStart), false, true, "journey_cancelled")
-			coll.mu.Unlock()
+			coll.addJourney(profile.Name, time.Since(journeyStart), false, true, "journey_cancelled")
 		}
 	}
+	selector := newProfileSelector(v.Profiles)
+	assignedVUs := make([]int, len(v.Profiles))
 	if v.Scenario.Mode == "arrival" {
-		arrivals := make(chan struct{}) // unbuffered: busy workers cannot hide dropped arrivals
+		arrivals := make(chan int) // unbuffered: busy workers cannot hide dropped arrivals
 		for i := 0; i < v.Scenario.Users; i++ {
 			wg.Add(1)
-			go func(client *http.Client) {
+			go func(client *http.Client, actor int) {
 				defer wg.Done()
 				for {
 					select {
 					case <-ctx.Done():
 						return
-					case _, ok := <-arrivals:
+					case profileIndex, ok := <-arrivals:
 						if !ok {
 							return
 						}
-						iteration(client)
+						iteration(client, v.Profiles[profileIndex], actor)
 					}
 				}
-			}(clients[i])
+			}(clients[i], i)
 		}
 		arrivalStats = scheduler.Drive(scheduleCtx, v.Duration, v.Scenario.ArrivalRate, func() bool {
+			profileIndex := selector.next()
 			select {
-			case arrivals <- struct{}{}:
+			case arrivals <- profileIndex:
 				return true
 			default:
 				return false
@@ -158,6 +250,11 @@ func Run(parent context.Context, v config.Validated) report.Result {
 		droppedIterations.Store(arrivalStats.Dropped())
 		close(arrivals)
 	} else {
+		closedProfiles := make([]int, v.Scenario.Users)
+		for i := range closedProfiles {
+			closedProfiles[i] = selector.next()
+			assignedVUs[closedProfiles[i]]++
+		}
 		for i := 0; i < v.Scenario.Users; i++ {
 			wg.Add(1)
 			go func(index int) {
@@ -166,9 +263,10 @@ func Run(parent context.Context, v config.Validated) report.Result {
 				if !sleep(scheduleCtx, delay) {
 					return
 				}
+				profileIndex := closedProfiles[index]
 				for scheduleCtx.Err() == nil {
 					scheduledIterations.Add(1)
-					iteration(clients[index])
+					iteration(clients[index], v.Profiles[profileIndex], index)
 				}
 			}(i)
 		}
@@ -180,7 +278,26 @@ func Run(parent context.Context, v config.Validated) report.Result {
 	journeyMetrics := coll.journeys.Snapshot()
 	steps := make([]report.StepResult, 0, len(v.Steps))
 	for _, st := range v.Steps {
-		steps = append(steps, report.StepResult{Name: st.Name, Method: st.Method, Path: safePath(st.Path), Metrics: coll.steps[st.Name].Snapshot()})
+		profileName := ""
+		if len(v.Scenario.Profiles) > 0 {
+			profileName = st.Profile
+		}
+		steps = append(steps, report.StepResult{Profile: profileName, Name: st.Name, Method: st.Method, Path: safePath(st.Path), Metrics: coll.steps[st.Name].Snapshot()})
+	}
+	windows := make([]report.WindowResult, 0, len(coll.windows))
+	for index, metrics := range coll.windows {
+		startSeconds := float64(index) * v.Window.Seconds()
+		windows = append(windows, report.WindowResult{StartSeconds: round(startSeconds), EndSeconds: round(startSeconds + v.Window.Seconds()), Metrics: metrics.Snapshot()})
+	}
+	var profileResults []report.ProfileResult
+	var profileConfig []report.ProfileConfig
+	if len(v.Scenario.Profiles) > 0 {
+		profileResults = make([]report.ProfileResult, 0, len(v.Profiles))
+		profileConfig = make([]report.ProfileConfig, 0, len(v.Profiles))
+		for i, profile := range v.Profiles {
+			profileResults = append(profileResults, report.ProfileResult{Name: profile.Name, Weight: profile.Weight, AssignedVUs: assignedVUs[i], Journeys: coll.profiles[profile.Name].Snapshot()})
+			profileConfig = append(profileConfig, report.ProfileConfig{Name: profile.Name, Weight: profile.Weight, ThinkTime: profile.ThinkTime.String()})
+		}
 	}
 	coll.mu.Unlock()
 	elapsed := time.Since(started)
@@ -188,9 +305,17 @@ func Run(parent context.Context, v config.Validated) report.Result {
 	if agg.Total > 0 {
 		errorsRate = float64(agg.Failures) / float64(agg.Total)
 	}
-	result := report.Result{SchemaVersion: 4, Name: v.Scenario.Name, Target: v.Base.Scheme + "://" + v.Base.Host, StartedAt: started.UTC().Format(time.RFC3339), ElapsedSeconds: round(elapsed.Seconds()), ObservationSeconds: round(v.Duration.Seconds()),
-		Config:  report.RunConfig{Users: v.Scenario.Users, Duration: v.Scenario.Duration, RampUp: v.Scenario.RampUp, ThinkTime: v.Scenario.ThinkTime, RequestTimeout: v.Timeout.String(), MaxRPS: v.Scenario.MaxRPS, P95LimitMS: v.Scenario.P95LimitMS, MaxErrorRate: v.Scenario.MaxErrorRate, Mode: v.Scenario.Mode, ArrivalRate: v.Scenario.ArrivalRate, SeparateSessions: len(v.Cookies) > 0, MinSamplesPerStep: v.Scenario.MinSamplesPerStep},
-		Metrics: agg, Journeys: journeyMetrics, Steps: steps, Outcome: "PASS", ErrorsRate: round(errorsRate), IterationsStarted: startedIterations.Load(), IterationsCompleted: completedIterations.Load(), ArrivalsScheduled: scheduledIterations.Load(), ArrivalsDropped: droppedIterations.Load(), ArrivalsDroppedLate: arrivalStats.DroppedLate, ArrivalsDroppedBusy: arrivalStats.DroppedBusy, SchedulerLagP95MS: float64(arrivalStats.P95Lag.Microseconds()) / 1000, SchedulerLagMaxMS: float64(arrivalStats.MaxLag.Microseconds()) / 1000,
+	averageInFlight := 0.0
+	if samples := inFlightSamples.Load(); samples > 0 {
+		averageInFlight = float64(inFlightTotal.Load()) / float64(samples)
+	}
+	littleLawEstimate := 0.0
+	if v.Duration > 0 {
+		littleLawEstimate = float64(agg.Total) / v.Duration.Seconds() * agg.MeanMS / 1000
+	}
+	result := report.Result{SchemaVersion: 6, Name: v.Scenario.Name, Target: v.Base.Scheme + "://" + v.Base.Host, StartedAt: started.UTC().Format(time.RFC3339), ElapsedSeconds: round(elapsed.Seconds()), ObservationSeconds: round(v.Duration.Seconds()),
+		Config:  report.RunConfig{WorkloadRevision: v.Scenario.WorkloadRevision, Environment: v.Scenario.Environment, Users: v.Scenario.Users, Duration: v.Scenario.Duration, RampUp: v.Scenario.RampUp, ThinkTime: v.Scenario.ThinkTime, RequestTimeout: v.Timeout.String(), MaxRPS: v.Scenario.MaxRPS, P95LimitMS: v.Scenario.P95LimitMS, MaxErrorRate: v.Scenario.MaxErrorRate, Mode: v.Scenario.Mode, ArrivalRate: v.Scenario.ArrivalRate, SeparateSessions: len(v.Cookies) > 0, MinSamplesPerStep: v.Scenario.MinSamplesPerStep, Profiles: profileConfig, WindowDuration: v.Window.String()},
+		Metrics: agg, Journeys: journeyMetrics, Steps: steps, Profiles: profileResults, Windows: windows, Outcome: "PASS", ErrorsRate: round(errorsRate), IterationsStarted: startedIterations.Load(), IterationsCompleted: completedIterations.Load(), ArrivalsScheduled: scheduledIterations.Load(), ArrivalsDropped: droppedIterations.Load(), ArrivalsDroppedLate: arrivalStats.DroppedLate, ArrivalsDroppedBusy: arrivalStats.DroppedBusy, SchedulerLagP95MS: float64(arrivalStats.P95Lag.Microseconds()) / 1000, SchedulerLagMaxMS: float64(arrivalStats.MaxLag.Microseconds()) / 1000, AverageInFlight: round(averageInFlight), LittleLawEstimate: round(littleLawEstimate),
 		Note: "Measured synthetic HTTP actors under the configured workload; not a universal server capacity or a browser-user count.", Generator: &generatorSnapshot}
 	if agg.Total == 0 || agg.Success == 0 || errorsRate > v.Scenario.MaxErrorRate || agg.P95MS > v.Scenario.P95LimitMS || result.ArrivalsDropped > 0 {
 		result.Outcome = "FAIL"
@@ -198,6 +323,20 @@ func Run(parent context.Context, v config.Validated) report.Result {
 	for _, st := range steps {
 		if st.Metrics.Total < v.Scenario.MinSamplesPerStep || st.Metrics.Success == 0 || st.Metrics.P95MS > v.Scenario.P95LimitMS || (st.Metrics.Total > 0 && float64(st.Metrics.Failures)/float64(st.Metrics.Total) > v.Scenario.MaxErrorRate) {
 			result.Outcome = "FAIL"
+		}
+	}
+	for _, window := range windows {
+		if window.Metrics.Total < v.Scenario.MinSamplesPerStep {
+			if result.Outcome == "PASS" {
+				result.Outcome = "INCONCLUSIVE"
+			}
+			result.Warnings = append(result.Warnings, fmt.Sprintf("Observation window %.1f-%.1fs has only %d completed requests; interval evidence is insufficient.", window.StartSeconds, window.EndSeconds, window.Metrics.Total))
+			continue
+		}
+		windowErrorRate := float64(window.Metrics.Failures) / float64(window.Metrics.Total)
+		if window.Metrics.P95MS > v.Scenario.P95LimitMS || windowErrorRate > v.Scenario.MaxErrorRate {
+			result.Outcome = "FAIL"
+			result.Warnings = append(result.Warnings, fmt.Sprintf("Observation window %.1f-%.1fs breached an SLO.", window.StartSeconds, window.EndSeconds))
 		}
 	}
 	if arrivalStats.DroppedLate > 0 {
@@ -243,6 +382,18 @@ func waitToken(ctx context.Context, ch <-chan time.Time) bool {
 		return ctx.Err() == nil
 	}
 }
+
+func drainDuration(v config.Validated) time.Duration {
+	maximum := time.Duration(0)
+	for _, profile := range v.Profiles {
+		candidate := v.Timeout*time.Duration(len(profile.Steps)) + profile.ThinkTime*time.Duration(len(profile.Steps)-1)
+		if candidate > maximum {
+			maximum = candidate
+		}
+	}
+	return min(30*time.Second, maximum)
+}
+
 func sleep(ctx context.Context, d time.Duration) bool {
 	if d <= 0 {
 		return ctx.Err() == nil
@@ -256,46 +407,56 @@ func sleep(ctx context.Context, d time.Duration) bool {
 		return ctx.Err() == nil
 	}
 }
-func execute(parent context.Context, client *http.Client, timeout time.Duration, s config.PreparedStep) sample {
+func execute(parent context.Context, client *http.Client, base *url.URL, timeout time.Duration, s config.PreparedStep, variables map[string]string, inFlight *atomic.Int64) (sample, map[string]string) {
 	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
+	requestURL, err := interpolateURL(base, s.PathTemplate, variables)
+	if err != nil {
+		return sample{name: s.Name, reason: "variable_interpolation"}, nil
+	}
 	var body io.Reader
 	if len(s.Body) > 0 {
-		body = bytes.NewReader(s.Body)
+		body = bytes.NewReader([]byte(interpolate(string(s.Body), variables)))
 	}
-	req, err := http.NewRequestWithContext(ctx, s.Method, s.URL, body)
+	req, err := http.NewRequestWithContext(ctx, s.Method, requestURL, body)
 	if err != nil {
-		return sample{name: s.Name, reason: "request_build"}
+		return sample{name: s.Name, reason: "request_build"}, nil
 	}
 	for k, v := range s.ResolvedHeaders {
-		req.Header.Set(k, v)
+		value := interpolate(v, variables)
+		if strings.ContainsAny(value, "\r\n") {
+			return sample{name: s.Name, reason: "variable_interpolation"}, nil
+		}
+		req.Header.Set(k, value)
 	}
 	start := time.Now()
+	inFlight.Add(1)
+	defer inFlight.Add(-1)
 	res, err := client.Do(req)
 	if err != nil {
 		d := time.Since(start)
 		if parent.Err() != nil {
-			return sample{name: s.Name, latency: d, cancelled: true, reason: "run_cancelled"}
+			return sample{name: s.Name, latency: d, cancelled: true, reason: "run_cancelled"}, nil
 		}
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return sample{name: s.Name, latency: d, reason: "timeout"}
+			return sample{name: s.Name, latency: d, reason: "timeout"}, nil
 		}
-		return sample{name: s.Name, latency: d, reason: "transport"}
+		return sample{name: s.Name, latency: d, reason: "transport"}, nil
 	}
 	defer res.Body.Close()
 	data, readErr := io.ReadAll(io.LimitReader(res.Body, maxResponseBytes+1))
 	d := time.Since(start)
 	if parent.Err() != nil {
-		return sample{name: s.Name, latency: d, cancelled: true, reason: "run_cancelled"}
+		return sample{name: s.Name, latency: d, cancelled: true, reason: "run_cancelled"}, nil
 	}
 	if readErr != nil {
 		if errors.Is(readErr, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return sample{name: s.Name, latency: d, reason: "timeout"}
+			return sample{name: s.Name, latency: d, reason: "timeout"}, nil
 		}
-		return sample{name: s.Name, latency: d, reason: "body_read"}
+		return sample{name: s.Name, latency: d, reason: "body_read"}, nil
 	}
 	if len(data) > maxResponseBytes {
-		return sample{name: s.Name, latency: d, reason: "response_too_large"}
+		return sample{name: s.Name, latency: d, reason: "response_too_large"}, nil
 	}
 	ok := res.StatusCode >= 200 && res.StatusCode <= 299
 	if len(s.ExpectedStatus) > 0 {
@@ -308,12 +469,110 @@ func execute(parent context.Context, client *http.Client, timeout time.Duration,
 		}
 	}
 	if !ok {
-		return sample{name: s.Name, latency: d, reason: fmt.Sprintf("http_%d", res.StatusCode)}
+		return sample{name: s.Name, latency: d, reason: fmt.Sprintf("http_%d", res.StatusCode)}, nil
 	}
 	if s.MustContain != "" && !bytes.Contains(data, []byte(s.MustContain)) {
-		return sample{name: s.Name, latency: d, reason: "assertion_missing_text"}
+		return sample{name: s.Name, latency: d, reason: "assertion_missing_text"}, nil
 	}
-	return sample{name: s.Name, latency: d, success: true}
+	extracted, err := extractValues(s.Extract, res.Header, data)
+	if err != nil {
+		return sample{name: s.Name, latency: d, reason: "extraction_failed"}, nil
+	}
+	return sample{name: s.Name, latency: d, success: true}, extracted
+}
+
+func interpolateURL(base *url.URL, pathTemplate string, variables map[string]string) (string, error) {
+	pathOnly, query, hasQuery := strings.Cut(pathTemplate, "?")
+	segments := strings.Split(pathOnly, "/")
+	for i, segment := range segments {
+		if !strings.HasPrefix(segment, "{{") || !strings.HasSuffix(segment, "}}") {
+			continue
+		}
+		name := strings.TrimSuffix(strings.TrimPrefix(segment, "{{"), "}}")
+		value, ok := variables[name]
+		if !ok {
+			return "", fmt.Errorf("missing variable %q", name)
+		}
+		segments[i] = url.PathEscape(value)
+	}
+	resolvedPath := strings.Join(segments, "/")
+	if hasQuery {
+		resolvedPath += "?" + query
+	}
+	parsed, err := url.Parse(resolvedPath)
+	if err != nil {
+		return "", err
+	}
+	return base.ResolveReference(parsed).String(), nil
+}
+
+func interpolate(value string, variables map[string]string) string {
+	return variablePattern.ReplaceAllStringFunc(value, func(match string) string {
+		name := strings.TrimSuffix(strings.TrimPrefix(match, "{{"), "}}")
+		return variables[name]
+	})
+}
+
+func extractValues(extracts map[string]config.Extract, headers http.Header, body []byte) (map[string]string, error) {
+	values := map[string]string{}
+	if len(extracts) == 0 {
+		return values, nil
+	}
+	var document any
+	for name, extract := range extracts {
+		if extract.Header != "" {
+			value := headers.Get(extract.Header)
+			if value == "" || len(value) > 8192 || strings.ContainsAny(value, "\r\n") {
+				return nil, fmt.Errorf("header extraction %q failed", name)
+			}
+			values[name] = value
+			continue
+		}
+		if document == nil {
+			if err := json.Unmarshal(body, &document); err != nil {
+				return nil, fmt.Errorf("decode JSON response: %w", err)
+			}
+		}
+		value, ok := jsonPointer(document, extract.JSONPointer)
+		if !ok || value == "" || len(value) > 8192 {
+			return nil, fmt.Errorf("JSON pointer extraction %q failed", name)
+		}
+		values[name] = value
+	}
+	return values, nil
+}
+
+func jsonPointer(document any, pointer string) (string, bool) {
+	current := document
+	for _, raw := range strings.Split(strings.TrimPrefix(pointer, "/"), "/") {
+		part := strings.ReplaceAll(strings.ReplaceAll(raw, "~1", "/"), "~0", "~")
+		switch node := current.(type) {
+		case map[string]any:
+			var ok bool
+			current, ok = node[part]
+			if !ok {
+				return "", false
+			}
+		case []any:
+			index, err := strconv.Atoi(part)
+			if err != nil || index < 0 || index >= len(node) {
+				return "", false
+			}
+			current = node[index]
+		default:
+			return "", false
+		}
+	}
+	switch value := current.(type) {
+	case string:
+		return value, true
+	case float64:
+		return strconv.FormatFloat(value, 'f', -1, 64), true
+	case bool:
+		return strconv.FormatBool(value), true
+	default:
+		return "", false
+	}
 }
 func safePath(p string) string {
 	if i := strings.IndexByte(p, '?'); i >= 0 {

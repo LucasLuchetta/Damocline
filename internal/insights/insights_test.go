@@ -98,6 +98,23 @@ func TestComparisonExplainsDifferentRPSCaps(t *testing.T) {
 		}
 	}
 }
+
+func TestComparisonRequiresRevisionAndRecordsEnvironment(t *testing.T) {
+	prev := synthetic()
+	now := synthetic()
+	prev.Config.WorkloadRevision = "checkout-v4"
+	now.Config.WorkloadRevision = "checkout-v4"
+	prev.Config.Environment = "staging-small"
+	now.Config.Environment = "staging-large"
+	var b bytes.Buffer
+	Write(&b, now, nil, &prev)
+	if strings.Contains(b.String(), "Workload revision, acceptance criteria") {
+		t.Fatalf("matched controlled inputs unexpectedly rejected: %s", b.String())
+	}
+	if !strings.Contains(b.String(), "Environment: staging-small -> staging-large") || !strings.Contains(b.String(), "not proof of cause") {
+		t.Fatalf("environment comparison missing limitation: %s", b.String())
+	}
+}
 func TestReadRunRejectsBrokenInput(t *testing.T) {
 	d := t.TempDir()
 	p := filepath.Join(d, "broken.json")
@@ -155,6 +172,43 @@ func TestReadRunAcceptsSchemaFourObservationWindow(t *testing.T) {
 	}
 	if _, err := ReadRun(path); err == nil {
 		t.Fatal("schema-v4 report without observation window was accepted")
+	}
+}
+
+func TestReadRunAcceptsSchemaFiveProfiles(t *testing.T) {
+	r := synthetic()
+	r.SchemaVersion = 5
+	r.ElapsedSeconds = 31
+	r.ObservationSeconds = 30
+	r.Config.Profiles = []report.ProfileConfig{{Name: "browse", Weight: 3, ThinkTime: "200ms"}, {Name: "search", Weight: 1, ThinkTime: "0s"}}
+	r.Profiles = []report.ProfileResult{{Name: "browse", Weight: 3, AssignedVUs: 3}, {Name: "search", Weight: 1, AssignedVUs: 1}}
+	data, err := json.Marshal(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "schema-v5.json")
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ReadRun(path)
+	if err != nil || got.SchemaVersion != 5 || len(got.Profiles) != 2 || got.Profiles[0].Name != "browse" {
+		t.Fatalf("schema-v5 profiles not readable: %+v err=%v", got, err)
+	}
+}
+
+func TestReadRunAcceptsSchemaSixP95RankInterval(t *testing.T) {
+	r := report.Result{
+		SchemaVersion: 6, Name: "Synthetic example", Target: "https://app.example.com", StartedAt: "2026-10-01T12:00:00Z",
+		ElapsedSeconds: 30, ObservationSeconds: 30, Config: report.RunConfig{Users: 1},
+		Metrics: report.MetricSet{Total: 1, Success: 1, P95IID95Approximation: true, P95IID95LowerMS: 10, P95IID95UpperMS: 20},
+	}
+	path := filepath.Join(t.TempDir(), "schema-v6.json")
+	if err := report.WriteJSON(path, r); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ReadRun(path)
+	if err != nil || got.SchemaVersion != 6 || !got.Metrics.P95IID95Approximation {
+		t.Fatalf("schema-v6 report not readable: %+v err=%v", got, err)
 	}
 }
 func TestNoPrivateTargetInFixture(t *testing.T) {

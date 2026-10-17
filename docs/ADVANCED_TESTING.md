@@ -38,8 +38,13 @@ Scenario fields:
 | `max_error_rate` | Maximum completed-request error fraction. |
 | `think_time` | Delay between steps in a VU journey. |
 | `per_vu_cookie_env_prefix` | Optional prefix for independent session cookies. |
+| `profiles` | Optional replacement for `steps`: 2-10 named weighted workflows, each with `name`, `weight`, `steps`, and optional `think_time`. |
+| `extract` | Optional map of response values to capture using exactly one `json_pointer` or `header` selector. |
+| `window_duration` | Optional 1s-60s request-metric window. Every sampled window must meet the request p95 and error SLOs. |
 
-HTTP redirects are not followed. A redirect to login is a failure unless explicitly listed as expected (not recommended for an authenticated page test).
+Use either top-level `steps` or `profiles`, never both. [`examples/weighted-profiles-readonly.json`](../examples/weighted-profiles-readonly.json) shows a three-profile read-only mix. Profile weights describe the planned mix. In closed mode, configure at least one VU per profile; in arrival mode, inspect actual profile starts in the report. HTTP redirects are not followed. A redirect to login is a failure unless explicitly listed as expected (not recommended for an authenticated page test).
+
+A later step may use a value extracted by an earlier one in the same journey. Path variables must occupy a whole path segment, which prevents a response value from changing origin or query semantics. Header and body templates use `{{variable_name}}`. Extracted values are not placed in report output.
 
 ## 3. Independent test users
 
@@ -82,7 +87,58 @@ Set `"mode": "arrival"`, `"arrival_rate": 5`, `"users": 10`, and `"max_rps": 20`
 
 This is distinct from 10 concurrent users. It answers a different capacity question. `explore` is deliberately restricted to closed-loop user counts; arrival-rate tests use `run`.
 
-## 7. Monitor the Linux VPS independently
+## 7. Repeated phased campaign
+
+Use a campaign when a short exploratory probe is insufficient. Each trial runs warm-up, an evaluated observation window, and a recovery window. Warm-up establishes workload state but cannot make a campaign pass; both observation and recovery must pass in every repeat.
+
+```powershell
+.\damocline.exe campaign --config .\myapp.local.json --warmup 30s --observation 5m --spike-users 20 --spike-duration 30s --recovery 30s --repeats 2 --authorized --out reports\campaign.json
+```
+
+The whole campaign is bounded to 15 minutes. Observation can last up to 10 minutes; warm-up, spike, and recovery are bounded to 3 minutes. An optional spike must use more VUs than the base scenario and stays inside the existing 50-VU safety ceiling. The campaign stops at the first non-passing trial. Configure `window_duration` in the scenario to evaluate request p95 and errors throughout an observation phase. It records phase reports for later comparison. It does not yet provide percentile confidence intervals or a sustained-capacity certificate.
+
+Assess a completed campaign against an owner demand target without making HTTP
+requests:
+
+```powershell
+.\damocline.exe plan --campaign reports\campaign.json --peak-users 200 --growth-percent 30 --reserve-percent 30
+```
+
+`plan` accepts only a complete repeated campaign report with passing
+observation and recovery phases. It calculates the required synthetic
+workload-equivalent actor count and reports whether the recorded base VU level
+exactly matched that target **under the saved test conditions**. It is not a prediction of
+server capacity, a diagnosis of the limiting component, or a recommendation to
+buy infrastructure.
+
+## Synthetic write data and explicit cleanup
+
+For an authorized write workflow, declare an environment-backed data prefix and
+use `{{synthetic_id}}` in complete path segments, headers, or `body_env`
+content. Damocline generates a fresh identifier for every journey and never
+writes that identifier to a report.
+
+```powershell
+$env:DAMOCLINE_TEST_DATA_PREFIX = "damocline-check"
+.\damocline.exe run --config .\write-workflow.json --authorized --allow-writes
+```
+
+```json
+{
+  "synthetic_data_prefix_env": "DAMOCLINE_TEST_DATA_PREFIX",
+  "steps": [
+    {"name": "create", "method": "POST", "path": "/records/{{synthetic_id}}"},
+    {"name": "cleanup", "method": "DELETE", "path": "/records/{{synthetic_id}}"}
+  ]
+}
+```
+
+Cleanup is an explicit workflow step, so a failed or cancelled journey can
+leave test data behind. Use an isolated test namespace, validate cleanup in
+staging, and retain an application-specific cleanup procedure; Damocline does
+not delete resources outside the configured, authorized journey.
+
+## 8. Monitor the Linux VPS independently
 
 Run Damocline natively on your Linux host (not inside a container whose procfs could refer to other scopes). The following collects host-wide CPU and available-memory estimates without opening any network port, launching Docker or requiring elevated privileges:
 
@@ -100,6 +156,26 @@ To correlate host samples against staged loads:
 
 The correlation report shows mean/peak CPU and peak memory use during individual trials. It does **not** measure per-container usage, PostgreSQL waits, Redis, application traces or prove causality. Consider collecting `docker stats` and database metrics independently for further diagnosis.
 
+## 9. Collect application metrics explicitly
+
+For an application that exposes a permitted Prometheus-text metric endpoint, take a bounded snapshot with explicit authorization:
+
+```powershell
+.\damocline.exe metrics --endpoint https://app.example.com/metrics --authorized --out reports\application-metrics.json
+```
+
+The collector accepts only HTTP(S), follows no redirects, caps the response body, aggregates labeled samples by metric name, and does not preserve labels or credentials. It is a point-in-time observation. Correlate it with a named campaign manually; a high queue, error, or latency metric does not by itself prove which component caused a bottleneck.
+
+For local Docker container snapshots, run `damocline docker --authorized --out reports/docker.json`. It invokes one bounded `docker stats --no-stream` call and records CPU and memory observations. Docker availability, access permissions, database waits, queue state, and application traces remain separate concerns.
+
+## 10. Inspect a saved report locally
+
+```powershell
+.\damocline.exe dashboard --file reports\run.json
+```
+
+The dashboard binds only to `127.0.0.1` (or `localhost`/`::1`), reads one existing report, and displays the saved outcome, request metrics, steps, and observation windows. It makes no load requests and does not expose the report to the network.
+
 ## 8. Limitations and quality checks
 
 - A high VU count with a low RPS cap **does not prove** the server can support that count of active people.
@@ -108,4 +184,4 @@ The correlation report shows mean/peak CPU and peak memory use during individual
 - Closed-loop VUs slow down their request rate when the application slows; use arrival mode to study offered traffic and dropped scheduling.
 - Synthetic sessions with shared cookies are not independent users.
 - Host CPU saturation correlating with response latency is a hypothesis, not an established bottleneck cause.
-- The engine still lacks browser measurement, automatic login/CSRF handling, response-driven variables, per-container metrics and calibrated capacity or generator limits. Go runtime and supported Windows/Linux process health samples are available, but the error-rate confidence bound assumes independent, stationary outcomes and does not describe percentile or run-to-run uncertainty. Read the [scientific foundations and validation contract](SCIENTIFIC_FOUNDATIONS.md) before interpreting a capacity result.
+- The engine still lacks browser measurement, automatic login/CSRF handling, synthetic-data lifecycle controls, continuous per-container metrics, and calibrated capacity or generator limits. Weights are a declared synthetic assumption until validated against sanitized usage evidence. Go runtime and supported Windows/Linux process health samples are available, but the error-rate confidence bound assumes independent, stationary outcomes and does not describe percentile or run-to-run uncertainty. Read the [scientific foundations and validation contract](SCIENTIFIC_FOUNDATIONS.md) before interpreting a capacity result.

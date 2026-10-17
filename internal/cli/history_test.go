@@ -101,6 +101,24 @@ func TestHistoryRejectsLiteralHeaders(t *testing.T) {
 	})
 }
 
+func TestHistoryRejectsLiteralProfileHeaders(t *testing.T) {
+	runInTempDir(t, func() {
+		p := startPreferences{Kind: "run", MinUsers: 1, MaxUsers: 1}
+		s := exampleHistoryScenario("http://localhost:12345", "weighted literal")
+		s.Steps = nil
+		s.Profiles = []config.Profile{
+			{Name: "browse", Weight: 1, Steps: []config.Step{{Name: "page", Headers: map[string]string{"Authorization": "literal-secret"}}}},
+			{Name: "search", Weight: 1, Steps: []config.Step{{Name: "search"}}},
+		}
+		if err := saveActiveProfile(s, p); err != nil {
+			t.Fatal(err)
+		}
+		if err := saveActiveProfile(exampleHistoryScenario(s.BaseURL, "new"), p); err == nil {
+			t.Fatal("literal profile header must not be archived")
+		}
+	})
+}
+
 func TestHistoryStoresVariableReferencesOnly(t *testing.T) {
 	runInTempDir(t, func() {
 		p := startPreferences{Kind: "run", MinUsers: 1, MaxUsers: 1, AuthMode: "browser", LoginPath: "/login"}

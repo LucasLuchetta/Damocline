@@ -38,7 +38,7 @@ func ReadRun(path string) (report.Result, error) {
 	if err := readJSON(path, &r); err != nil {
 		return r, err
 	}
-	if r.SchemaVersion < 1 || r.SchemaVersion > 4 || r.Name == "" || r.Metrics.Total < 0 || r.Metrics.Success < 0 || r.Metrics.Failures < 0 || r.Metrics.Success+r.Metrics.Failures != r.Metrics.Total || r.Config.Users < 1 || r.ElapsedSeconds <= 0 || (r.SchemaVersion >= 4 && r.ObservationSeconds <= 0) {
+	if r.SchemaVersion < 1 || r.SchemaVersion > 6 || r.Name == "" || r.Metrics.Total < 0 || r.Metrics.Success < 0 || r.Metrics.Failures < 0 || r.Metrics.Success+r.Metrics.Failures != r.Metrics.Total || r.Config.Users < 1 || r.ElapsedSeconds <= 0 || (r.SchemaVersion >= 4 && r.ObservationSeconds <= 0) {
 		return report.Result{}, errors.New("not a valid Damocline HTTP run report")
 	}
 	return r, nil
@@ -123,6 +123,24 @@ func Evaluate(r report.Result, host *hostmon.Result) Assessment {
 	if r.Journeys.Total > 0 {
 		a.Findings = append(a.Findings, Finding{"INFO", fmt.Sprintf("Complete journey p95: %.0f ms, including configured think time; this is different from HTTP request p95.", r.Journeys.P95MS)})
 	}
+	for _, window := range r.Windows {
+		if window.Metrics.Total == 0 {
+			a.Findings = append(a.Findings, Finding{"CAUTION", fmt.Sprintf("Observation window %.1f-%.1fs has no completed requests.", window.StartSeconds, window.EndSeconds)})
+			continue
+		}
+		windowErrorRate := float64(window.Metrics.Failures) / float64(window.Metrics.Total)
+		if window.Metrics.P95MS > r.Config.P95LimitMS || windowErrorRate > r.Config.MaxErrorRate {
+			a.Findings = append(a.Findings, Finding{"CAUTION", fmt.Sprintf("Observation window %.1f-%.1fs breached an SLO: p95 %.0f ms, errors %.2f%%.", window.StartSeconds, window.EndSeconds, window.Metrics.P95MS, 100*windowErrorRate)})
+		}
+	}
+	for _, profile := range r.Profiles {
+		started := profile.Journeys.Total + profile.Journeys.Cancelled
+		if started == 0 {
+			a.Findings = append(a.Findings, Finding{"CAUTION", fmt.Sprintf("Profile %q received no journey starts; its configured weight was not represented in this run.", profile.Name)})
+			continue
+		}
+		a.Findings = append(a.Findings, Finding{"INFO", fmt.Sprintf("Profile %q: configured weight %d, %d started journeys, %d completed, %d cancelled.", profile.Name, profile.Weight, started, profile.Journeys.Total, profile.Journeys.Cancelled)})
+	}
 	if r.Config.Users == 1 {
 		a.Findings = append(a.Findings, Finding{"LIMIT", "Only one virtual user was configured: this is a baseline, not a concurrent-user capacity test."})
 	} else if !r.Config.SeparateSessions {
@@ -134,6 +152,10 @@ func Evaluate(r report.Result, host *hostmon.Result) Assessment {
 		if r.Config.MaxRPS > 0 && actual >= 0.90*float64(r.Config.MaxRPS) {
 			a.Findings = append(a.Findings, Finding{"LIMIT", "Traffic approached the generator's max_rps setting. This run cannot separate a client-side rate cap from application capacity."})
 		}
+	}
+	if r.AverageInFlight > 0 || r.LittleLawEstimate > 0 {
+		a.Findings = append(a.Findings, Finding{"INFO", fmt.Sprintf("Request-boundary concurrency check: sampled average in-flight %.2f; throughput × mean request time estimate %.2f.", r.AverageInFlight, r.LittleLawEstimate)})
+		a.Findings = append(a.Findings, Finding{"CAUTION", "This is a finite-window Little's Law consistency signal. Sampling, drain boundaries, non-stationarity, and request correlation can explain differences; it does not predict capacity."})
 	}
 	if r.Generator != nil {
 		g := r.Generator
@@ -262,9 +284,14 @@ func Write(w io.Writer, r report.Result, host *hostmon.Result, previous *report.
 
 func writeComparison(w io.Writer, old, current report.Result) {
 	fmt.Fprintln(w, "\nComparison with previous run:")
-	compatible := old.Target == current.Target && old.Config.Users == current.Config.Users && old.Config.Mode == current.Config.Mode && old.Config.SeparateSessions == current.Config.SeparateSessions && old.Config.ThinkTime == current.Config.ThinkTime && sameSteps(old.Steps, current.Steps)
+	compatible := old.Target == current.Target && old.Config.WorkloadRevision != "" && old.Config.WorkloadRevision == current.Config.WorkloadRevision && old.Config.Users == current.Config.Users && old.Config.Mode == current.Config.Mode && old.Config.ArrivalRate == current.Config.ArrivalRate && old.Config.SeparateSessions == current.Config.SeparateSessions && old.Config.ThinkTime == current.Config.ThinkTime && old.Config.RequestTimeout == current.Config.RequestTimeout && old.Config.P95LimitMS == current.Config.P95LimitMS && old.Config.MaxErrorRate == current.Config.MaxErrorRate && old.Config.MinSamplesPerStep == current.Config.MinSamplesPerStep && old.Config.WindowDuration == current.Config.WindowDuration && sameSteps(old.Steps, current.Steps) && sameProfiles(old.Config.Profiles, current.Config.Profiles)
 	if !compatible {
-		fmt.Fprintln(w, "  [LIMIT] Workload settings, authentication mode, target, or routes differ. This is NOT a controlled comparison.")
+		fmt.Fprintln(w, "  [LIMIT] Workload revision, acceptance criteria, authentication mode, target, or routes differ or are unrecorded. This is NOT a controlled comparison.")
+	}
+	if old.Config.Environment == "" || current.Config.Environment == "" {
+		fmt.Fprintln(w, "  [LIMIT] One or both environment labels are missing; record the deployment and hosting configuration for a reproducible comparison.")
+	} else {
+		fmt.Fprintf(w, "  Environment: %s -> %s. A changed environment is a tested comparison condition, not proof of cause.\n", old.Config.Environment, current.Config.Environment)
 	}
 	if old.Config.MaxRPS != current.Config.MaxRPS {
 		fmt.Fprintf(w, "  [LIMIT] max_rps ceilings differ (%d vs %d); a configured ceiling is not the actual traffic rate.\n", old.Config.MaxRPS, current.Config.MaxRPS)
@@ -288,7 +315,19 @@ func sameSteps(a, b []report.StepResult) bool {
 		return false
 	}
 	for i := range a {
-		if a[i].Path != b[i].Path || a[i].Method != b[i].Method {
+		if a[i].Profile != b[i].Profile || a[i].Path != b[i].Path || a[i].Method != b[i].Method {
+			return false
+		}
+	}
+	return true
+}
+
+func sameProfiles(a, b []report.ProfileConfig) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
 			return false
 		}
 	}

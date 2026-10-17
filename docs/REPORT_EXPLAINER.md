@@ -16,6 +16,15 @@ Compare two runs without repeating them:
 damocline report --file .damocline/reports/later-run.json --compare .damocline/reports/earlier-run.json
 ```
 
+For a controlled comparison, set `workload_revision` and `environment` in
+both scenarios. The revision identifies the same declared workflow and SLO
+inputs. The environment label records the tested deployment or hosting
+configuration. Missing or different workload revisions, targets, routes,
+authentication mode, timing, arrival settings, or acceptance criteria make
+the output explicitly non-controlled. A changed environment is evidence for a
+comparison experiment, never proof that a particular infrastructure component
+caused the difference.
+
 If you independently captured Linux host telemetry using `damocline monitor`, add the optional host JSON:
 
 ```powershell

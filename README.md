@@ -128,6 +128,24 @@ It does **not** certify human-user capacity, sustained availability or a need
 for new infrastructure. The synthetic VU model, realistic journey mix and
 generator accuracy must still be independently validated.
 
+## Assess a sustained campaign against the demand goal
+
+After a repeated `campaign` has recorded its warm-up, observation, and
+recovery evidence, assess the same business target without generating more
+traffic:
+
+```powershell
+damocline plan --campaign reports/campaign.json --peak-users 200 --growth-percent 30 --reserve-percent 30
+```
+
+The command calculates the demand to validate and accepts it only when a
+complete, passing, schema-v1 repeated campaign exercised that exact base VU
+level. It reports **GOAL_MET_UNDER_TESTED_CONDITIONS**, never a hardware
+prediction: the result remains conditional on the saved workflow,
+environment, SLOs, observation windows, generator evidence, and observed
+variation. It does not identify a bottleneck or recommend an infrastructure
+purchase.
+
 ## Terminal home screen
 
 Run `damocline` or `.\\start.cmd` to open the **Eclipse** pixel-art splash (the Damocline sword crossing an eclipse-like horizon in Unicode block characters) and a numbered home menu. Select **New load test**, **Saved scenarios**, **Continue current**, **Help**, or **Exit** without remembering CLI flags. The interface uses optional ANSI colors and a no-color fallback for older terminals and redirected output. On a supported interactive Windows console, use **↑/↓ and Enter** (or number shortcuts) to navigate; redirected input and older terminals retain numbered input. The optional source update check now happens **before the splash and menu**, not after choosing a scenario.

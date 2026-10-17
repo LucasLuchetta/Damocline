@@ -26,7 +26,7 @@ These are **capabilities**, not a declaration of end-to-end production readiness
 - [x] **B0-01:** Native Go HTTP runner; GET/HEAD and explicitly authorized writes; bounded rate, VUs, timeout and duration. Verified by existing engine/config tests; currently up to 50 VUs, 100 request starts/s and 3 minutes for an individual run.
 - [x] **B0-02:** Closed-loop actors, configurable think times and open-loop journey starts, with explicitly accounted offered/admitted/busy-dropped/late-dropped arrivals.
 - [x] **B0-03:** Bounded graceful-drain logic and incomplete request/journey accounting; cancelled journeys cannot silently produce PASS.
-- [x] **B0-04:** Independent cookie jars with optional environment-backed per-VU cookies, named HTTP steps and response/status assertions. Real-browser rendering and dynamic request dependencies are not part of this capability.
+- [x] **B0-04:** Independent cookie jars with optional environment-backed per-VU cookies, named HTTP steps and response/status assertions. Real-browser rendering remains out of scope; bounded response-derived values and dependent HTTP steps are tracked in B2 below.
 - [x] **B0-05:** Separate-process loopback reference check with known delays/errors, 4 KiB bodies, a 30-second soak and extended 2–100 arrivals/s stages, plus scheduler-stall, overload and recovery checks.
 - [x] **B0-06:** Go runtime and Windows/Linux process CPU/memory sampling for the **generator**, not the application server; collected alongside run metrics.
 - [x] **B0-07:** CI test, race/vet/build checks and extended bounded loopback calibration on Linux and Windows. See [reference validation](REFERENCE_VALIDATION.md) for its actual tolerances and limitations.
@@ -36,11 +36,25 @@ These are **capabilities**, not a declaration of end-to-end production readiness
 - [x] **B1-01:** Short, bounded VU exploration with step-up, refinement after failure and repeated stage observations; highest observed passing / first observed failing levels are not sustained-capacity certificates.
 - [x] **B1-02:** Explicit business demand target, growth and reserve calculations; optional exact-target probe inside exploration bounds; offline `goal` command.
 - [x] **B1-03:** Aggregate request, named-step and completed-journey p50/p95/p99, failures, scheduled/dropped arrivals, JSON reporting and human-readable insights.
-- [x] **B1-04:** Conditional, one-sided 95% upper error-rate bound under independent/stationary Bernoulli assumptions; no latency-percentile or trial-to-trial confidence intervals yet.
-- [x] **B1-05:** Optional Linux **host-wide** CPU/RAM observations and timestamp-based correlation; no per-container, database or application causality.
+- [x] **B1-04:** Conditional, one-sided 95% upper error-rate bound under independent/stationary Bernoulli assumptions; an assumption-dependent P95 rank interval and empirical repeat spread are tracked in B2, but dependence-aware inference remains open.
+- [x] **B1-05:** Optional Linux **host-wide** CPU/RAM observations and timestamp-based correlation; B2 adds a one-time container snapshot and bounded application-metric collection, not continuous per-service correlation or causal diagnosis.
 - [x] **B1-06:** Guided CLI, temporary browser login for locally held cookies, saved scenarios, report comparison and source-based installation/update flow.
 
 **Evidence boundary at baseline:** the local fixture checks detect gross measurement/accounting failures under specific conditions. They do **not** determine universal generator capacity, remote network timing accuracy, realistic population behavior, sustainable application capacity, or the benefit of a server upgrade. Every campaign needs a host-local calibration preflight for the proposed load envelope.
+
+
+### B2 — Additional experimental slices in PR #27
+
+The following implementation slices extend the baseline without meeting every verification requirement of G1–G6. **Keep a gate unchecked until all acceptance conditions in its own task are met.** These capabilities remain scoped to bounded, authorized workloads and must not be described as general production-capacity certification.
+
+- **G1-01–G1-03/G1-09 (partial):** Strictly validated, named weighted HTTP profiles with deterministic closed-loop actor assignment, weighted open-loop journey selection, per-profile accounting and a shared safety budget. Production-derived mix validation, partly-open sessions and a complete workload-representativeness protocol remain open.
+- **G1-07/G1-11–G1-13 (partial):** Opt-in per-journey synthetic identifiers and bounded JSON Pointer/response-header extraction for subsequent request substitutions. This is not browser-based login recording, full credential lifecycle management, or application-specific write-data cleanup.
+- **G2-01–G2-05/G2-10–G2-17 (partial):** Bounded campaigns with warm-up, separate observation windows, optional VU spikes, recovery/repeats and request-window SLO checks; the initial observation/soak bound is 10 minutes. Longer validated soaks, stabilization evidence, full journey-level gates and reproducible end-to-end capacity qualification remain open.
+- **G3-04/G3-05/G3-09/G3-16 (partial):** Conditional IID-assumption P95 rank interval, empirical repeat spread, a bounded Little's Law consistency signal, revision/environment labels for cautious comparisons, and offline business-goal assessment from completed campaign evidence. Dependence-aware coverage, strict experiment equivalence and general decision certification remain open.
+- **G4-02/G4-03/G4-06 (partial):** Explicitly authorized Docker container CPU/memory **snapshot** and bounded collection of configured Prometheus-text application metrics. No ongoing Docker/DB correlation, full adapter contract, clock-skew validation or causal bottleneck proof is implied.
+- **G6/compatibility (partial):** Loopback-only read-only report dashboard and cross-compiled source CLI targets for Linux, Windows and macOS. Scenario-building web UI, signed releases and runtime compatibility guarantees are still open.
+
+See the corresponding ADRs 0007–0012, implementation tests and measurement documentation for precise assumptions and limitations.
 
 ## 1. Implementation order and decision gates
 
@@ -320,7 +334,7 @@ Acceptance thresholds must be justified by the **specific fixture, hardware clas
 
 ## 13. Suggested next PRs, in dependency order
 
-These are future tasks, **not PRs that already exist**. Work on the smallest vertical slice that produces verifiable user value.
+These are remaining acceptance milestones, **not a claim that each listed item lacks any code**. PR #27 provides partial slices of several milestones as noted in B2; the outstanding verification and integration criteria still apply. Work on the smallest vertical slice that produces verifiable user value.
 
 1. **Next 1 — G1-01 to G1-03 + G1-09:** multi-workflow schema, weighted journeys and global rate/actor budget. Keep existing single-workflow JSON working; add a three-workflow controlled fixture.
 2. **Next 2 — G1-05 to G1-07 + G1-11:** repeatable timing/data variability and actor isolation. Add safe fixture assertions before enabling independent write-heavy profiles.

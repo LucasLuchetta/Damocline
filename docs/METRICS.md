@@ -22,26 +22,35 @@ Do not describe a request rate, open TCP connection count, or total logins as "s
 
 **Open-loop journey arrivals:** planned journey starts are independent of previous response completion. Damocline reports scheduled, started, completed, dropped-late and dropped-busy arrivals, plus scheduler lag. A dropped or delayed start means offered demand was not fully delivered; a worker-busy drop is not evidence that the target itself saturated. Client-side limits can invalidate the intended load, so inspect generator observations too.
 
+**Weighted profiles:** a scenario can define two to ten named workflows, each with a positive integer weight, steps, and optional think time. Closed-loop VUs are allocated deterministically across profiles; arrival mode selects each planned journey with smooth weighted round-robin. The report records configured weights, assigned closed-loop VUs, and actual started/completed/cancelled journeys. A weight is an intended demand mix, not evidence that the mix represents production use; derive it from sanitized usage evidence and review the observed counts.
+
+**Dependent steps:** a step may extract a string, number, or Boolean through a JSON Pointer, or a bounded response-header value. Later steps in the same journey may use it in complete path segments, headers, or `body_env` content. Extracted values are kept only in the VU's current journey and are never written to the report. Extraction failure makes the step fail; it is not silently replaced with a prior value.
+
 A **partly open session model**—independent session arrivals followed by dependent requests and think times within each session—is not implemented. Open-loop journey arrivals and closed-loop VUs answer different questions and are not interchangeable.
 
 ## Statistical interpretation and generator health
 
 The error-rate assessment includes a one-sided 95% upper bound. With zero observed errors it uses an exact binomial bound; with observed errors it uses a Wilson upper score bound. Both treat outcomes as independent, stationary Bernoulli trials. Real requests may be correlated within a VU, time window, or deployment, so the bound is conditional evidence rather than a reliability guarantee.
 
-Reported p50/p95/p99 values are point estimates. Counts accompany them, but the report does not calculate percentile confidence intervals or run-to-run uncertainty. A low sample count or correlated samples can make tail estimates especially unstable.
+Reported p50/p95/p99 values are point estimates. With enough samples (at least ten expected observations on either side of the requested percentile), the report also includes a normal-approximation 95% interval from the P95 order-statistic ranks. That interval assumes independent, stationary latency observations and is omitted when the tail sample is too small. It is not dependence-aware and does not replace time-separated trials. A low sample count or correlated samples can make tail estimates especially unstable.
 
-Generator health samples Go heap allocation, goroutines, garbage-collection activity, Go runtime CPU occupancy, and (on Windows/Linux) process RSS and CPU time. HTTP run report schema v4 includes these process fields and separates `observation_seconds` (the configured workload window) from `elapsed_seconds` (including the bounded drain period for in-flight work). Throughput uses the observation window; time-series correlation uses the full elapsed interval. Process CPU is sampled between intervals and normalized to GOMAXPROCS; it is not host utilization, and RSS is not total host memory. Sampling may miss brief peaks. These metrics describe the load generator, not the application under test. Current 90% runtime/process CPU guards and request-rate-ceiling checks are provisional safeguards, not calibrated universal saturation thresholds.
+When `window_duration` is configured, the report also contains request metrics for each completed observation window. Every non-empty window is checked against the configured request p95 and error-rate SLOs. A window with fewer completed requests than `min_samples_per_step` is marked inconclusive. This is a temporal guard against a good aggregate hiding a late degradation; it is not a percentile confidence interval or proof of stationarity.
+
+Completed phased campaigns summarize the observed minimum and maximum observation p95, error rate, and throughput across independent trials. This describes run-to-run spread and makes instability visible; it is not a confidence interval, bootstrap result, or dependence-aware statistical guarantee.
+
+Run reports also sample average in-flight HTTP requests over the workload window and compute throughput multiplied by mean request time. The two values support a bounded Little's Law consistency check only when they share the same request boundary and observation window. They are not a queueing model, a capacity prediction, or evidence about browser work.
+
+Generator health samples Go heap allocation, goroutines, garbage-collection activity, Go runtime CPU occupancy, and (on Windows/Linux) process RSS and CPU time. HTTP run report schema v6 includes these process fields, the conditional P95 rank interval, and separates `observation_seconds` (the configured workload window) from `elapsed_seconds` (including the bounded drain period for in-flight work). Throughput uses the observation window; time-series correlation uses the full elapsed interval. Process CPU is sampled between intervals and normalized to GOMAXPROCS; it is not host utilization, and RSS is not total host memory. Sampling may miss brief peaks. These metrics describe the load generator, not the application under test. Current 90% runtime/process CPU guards and request-rate-ceiling checks are provisional safeguards, not calibrated universal saturation thresholds.
 
 Arrival accounting and scheduler lag are also measurement-quality signals. Any unexplained reconciliation mismatch invalidates interpretation. A late scheduler start indicates generator timing error; a busy-worker drop indicates configured worker capacity prevented delivery. Neither should silently be counted as target capacity.
 
 ## What is not yet measured
 
-- No time-series windows for checking whether SLOs held throughout a sustained steady state.
-- No uncertainty interval for latency percentiles or variability across independent runs.
+- No predeclared long soak protocol for checking whether SLOs held throughout a production-representative steady state.
+- No uncertainty interval for latency percentiles or dependence-aware variability analysis across independent runs.
 - No latency estimate for incomplete journeys; they are counted as cancelled, and an otherwise passing run becomes inconclusive. Journey percentiles describe completed journeys only.
-- No Little's Law consistency check: average in-flight work is not retained over matching observation windows.
 - No fitted queueing or Universal Scalability Law model. Do not extrapolate beyond tested levels.
-- No partly open session arrivals, weighted workload profiles, or response-driven workflow dependencies.
+- No partly open session arrivals, synthetic-data lifecycle controls, or production-derived validation of workload weights.
 
 Closed-loop and open-loop models answer different questions and should be selected from the intended demand process.
 
@@ -49,12 +58,12 @@ Closed-loop and open-loop models answer different questions and should be select
 
 - Authorized target identifiers and sanitized scenario revision.
 - Environment assumptions (machine size, application version, data size, deployment topology where known).
-- Test duration and configured ramp-up. Separate warm-up, steady-state observation, and cool-down windows are not yet represented in the report.
+- Test duration and configured ramp-up. Campaign reports additionally preserve warm-up, observation, optional spike, and recovery phases; their bounded duration is not a substitute for a predeclared long soak protocol.
 - Requested and achieved load; scheduled, started, completed, and dropped work.
 - Request and journey p50/p95/p99 latency, counts, error rates, and timeouts.
 - Criteria for passing, including latency and business-operation error budgets.
 - Generator health and limitations, including resource use and timing accuracy.
-- Repetition count and the range actually tested. Current reports do not provide run-to-run variance or latency confidence intervals.
+- Repetition count and the range actually tested. Campaign reports provide observed min/max spread across observation trials, not run-to-run variance, a confidence interval, or a dependence-aware analysis.
 - Telemetry correlation only when the relevant evidence was collected.
 
 Never assert a precise bottleneck if the available evidence only suggests one.

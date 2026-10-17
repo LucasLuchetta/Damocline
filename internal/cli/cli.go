@@ -6,20 +6,25 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/signal"
 	"strings"
 	"syscall"
 	"time"
 
+	"github.com/LucasLuchetta/Damocline/internal/appmetrics"
+	"github.com/LucasLuchetta/Damocline/internal/campaign"
 	"github.com/LucasLuchetta/Damocline/internal/capacitygoal"
 	"github.com/LucasLuchetta/Damocline/internal/config"
 	"github.com/LucasLuchetta/Damocline/internal/correlate"
+	"github.com/LucasLuchetta/Damocline/internal/dockermon"
 	"github.com/LucasLuchetta/Damocline/internal/engine"
 	"github.com/LucasLuchetta/Damocline/internal/explorer"
 	"github.com/LucasLuchetta/Damocline/internal/hostmon"
 	"github.com/LucasLuchetta/Damocline/internal/insights"
 	"github.com/LucasLuchetta/Damocline/internal/report"
+	"github.com/LucasLuchetta/Damocline/internal/reportui"
 )
 
 var Version = "dev"
@@ -57,14 +62,24 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return startWithMode(os.Stdin, stdout, stderr, "history")
 	case "report":
 		return reportCmd(args[1:], stdout, stderr)
+	case "dashboard":
+		return dashboardCmd(args[1:], stdout, stderr)
 	case "goal":
 		return goalCmd(args[1:], stdout, stderr)
+	case "plan":
+		return planCmd(args[1:], stdout, stderr)
 	case "run":
 		return run(args[1:], stdout, stderr)
 	case "explore":
 		return explore(args[1:], stdout, stderr)
+	case "campaign":
+		return campaignCmd(args[1:], stdout, stderr)
 	case "monitor":
 		return monitor(args[1:], stdout, stderr)
+	case "metrics":
+		return metricsCmd(args[1:], stdout, stderr)
+	case "docker":
+		return dockerCmd(args[1:], stdout, stderr)
 	case "correlate":
 		return correlateCmd(args[1:], stdout, stderr)
 	default:
@@ -81,12 +96,17 @@ Usage:
   damocline /history # select and repeat a previous saved scenario
   damocline start    # original guided wizard
   damocline report --file run.json [--compare previous.json] [--host host.json]
+	  damocline dashboard --file run.json [--addr 127.0.0.1:8787]
   damocline goal --file capacity.json --peak-users 20 [--growth-percent 25] [--reserve-percent 20]
+	  damocline plan --campaign campaign.json --peak-users 20 [--growth-percent 25] [--reserve-percent 20]
   damocline run --config scenario.json --authorized [--out reports/run.json]
   damocline run --config scenario.json --dry-run
   damocline explore --config scenario.json --min-users 2 --max-users 20 --stage-duration 20s --repeats 2 --authorized
+	  damocline campaign --config scenario.json --warmup 30s --observation 2m --recovery 30s --repeats 2 --authorized
   damocline explore --config scenario.json --peak-users 10 --growth-percent 25 --reserve-percent 20 --authorized
   damocline monitor --duration 3m --interval 2s --out reports/host.json
+	  damocline metrics --endpoint https://app.example.com/metrics --authorized [--out reports/app-metrics.json]
+	  damocline docker --authorized [--out reports/docker.json]
   damocline correlate --load reports/load.json --host reports/host.json --out reports/correlated.json
   damocline update           # check and install source updates
   damocline update --auto    # enable automatic updates
@@ -134,6 +154,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	fmt.Fprintf(stdout, "Scenario: %s | target: %s://%s | users: %d | duration: %s | max RPS: %d\n", validated.Scenario.Name, validated.Base.Scheme, validated.Base.Host, validated.Scenario.Users, validated.Duration, validated.Scenario.MaxRPS)
+	if len(validated.Scenario.Profiles) > 0 {
+		for _, profile := range validated.Profiles {
+			fmt.Fprintf(stdout, "  Profile %s: weight=%d, think time=%s\n", profile.Name, profile.Weight, profile.ThinkTime)
+		}
+	}
 	for _, step := range validated.Steps {
 		path := step.Path
 		if i := strings.IndexByte(path, '?'); i >= 0 {
@@ -150,8 +175,19 @@ func run(args []string, stdout, stderr io.Writer) int {
 	defer stop()
 	result := engine.Run(ctx, validated)
 	fmt.Fprintf(stdout, "Result: %s | requests: %d (%d passed, %d failed, %d cancelled) | p95: %.1f ms | error rate: %.2f%% | %.1f req/s\n", result.Outcome, result.Metrics.Total, result.Metrics.Success, result.Metrics.Failures, result.Metrics.Cancelled, result.Metrics.P95MS, result.ErrorsRate*100, float64(result.Metrics.Total)/result.WindowSeconds())
+	if result.Metrics.P95IID95Approximation {
+		fmt.Fprintf(stdout, "P95 IID 95%% rank approximation: %.1f-%.1f ms; this assumes independent, stationary request latencies.\n", result.Metrics.P95IID95LowerMS, result.Metrics.P95IID95UpperMS)
+	}
 	for _, st := range result.Steps {
-		fmt.Fprintf(stdout, "  - %s: total=%d failures=%d p95=%.1f ms\n", st.Name, st.Metrics.Total, st.Metrics.Failures, st.Metrics.P95MS)
+		fmt.Fprintf(stdout, "  - %s/%s: total=%d failures=%d p95=%.1f ms\n", st.Profile, st.Name, st.Metrics.Total, st.Metrics.Failures, st.Metrics.P95MS)
+	}
+	for _, profile := range result.Profiles {
+		started := profile.Journeys.Total + profile.Journeys.Cancelled
+		if result.Config.Mode == "closed" {
+			fmt.Fprintf(stdout, "  Profile %s: configured weight=%d, assigned VUs=%d, started journeys=%d, completed=%d, cancelled=%d\n", profile.Name, profile.Weight, profile.AssignedVUs, started, profile.Journeys.Total, profile.Journeys.Cancelled)
+			continue
+		}
+		fmt.Fprintf(stdout, "  Profile %s: configured weight=%d, started journeys=%d, completed=%d, cancelled=%d\n", profile.Name, profile.Weight, started, profile.Journeys.Total, profile.Journeys.Cancelled)
 	}
 	fmt.Fprintf(stdout, "Iterations: %d started / %d completed; arrivals dropped: %d\n", result.IterationsStarted, result.IterationsCompleted, result.ArrivalsDropped)
 	for _, w := range result.Warnings {
@@ -168,6 +204,111 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	if result.Outcome != "PASS" {
 		return 1
+	}
+	return 0
+}
+
+func campaignCmd(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("campaign", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	filename := fs.String("config", "", "scenario JSON")
+	warmup := fs.Duration("warmup", 30*time.Second, "warm-up duration (0s-3m)")
+	observation := fs.Duration("observation", 2*time.Minute, "steady observation duration (10s-3m)")
+	spikeUsers := fs.Int("spike-users", 0, "optional peak virtual users above the base scenario")
+	spikeDuration := fs.Duration("spike-duration", 0, "optional spike duration (10s-3m)")
+	recovery := fs.Duration("recovery", 30*time.Second, "recovery duration after observation (0s-3m)")
+	repeats := fs.Int("repeats", 2, "independent trials (2-5)")
+	budget := fs.Duration("budget", 0, "maximum campaign wall time (up to 15m)")
+	authorized := fs.Bool("authorized", false, "confirm authorization to benchmark the target")
+	dry := fs.Bool("dry-run", false, "validate campaign settings without sending traffic")
+	writes := fs.Bool("allow-writes", false, "explicitly opt in to HTTP mutation methods")
+	insecure := fs.Bool("allow-insecure-http", false, "permit intentional plaintext HTTP to a non-loopback host")
+	out := fs.String("out", "", "JSON campaign report output path")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if *filename == "" || len(fs.Args()) != 0 {
+		fmt.Fprintln(stderr, "--config is required and positional arguments are not accepted")
+		return 2
+	}
+	options := campaign.Options{Warmup: *warmup, Observation: *observation, SpikeUsers: *spikeUsers, SpikeDuration: *spikeDuration, Recovery: *recovery, Repeats: *repeats, Budget: *budget}
+	if err := campaign.Validate(options); err != nil {
+		fmt.Fprintf(stderr, "invalid campaign: %v\n", err)
+		return 2
+	}
+	scenario, err := config.Load(*filename)
+	if err != nil {
+		fmt.Fprintf(stderr, "configuration error: %v\n", err)
+		return 2
+	}
+	validated, err := config.Parse(scenario, config.Options{Authorized: *authorized || *dry, AllowWrites: *writes, AllowInsecureHTTP: *insecure})
+	if err != nil {
+		fmt.Fprintf(stderr, "configuration error: %v\n", err)
+		return 2
+	}
+	fmt.Fprintf(stdout, "Campaign: %s | %s://%s | warm-up %s | observation %s | spike %d VUs for %s | recovery %s | repeats %d\n", validated.Scenario.Name, validated.Base.Scheme, validated.Base.Host, options.Warmup, options.Observation, options.SpikeUsers, options.SpikeDuration, options.Recovery, options.Repeats)
+	if *dry {
+		fmt.Fprintln(stdout, "DRY RUN: no traffic generated. Warm-up is excluded from the conclusion; observation and recovery must pass in every trial.")
+		return 0
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	result, err := campaign.Run(ctx, validated, options)
+	if err != nil {
+		fmt.Fprintf(stderr, "campaign error: %v\n", err)
+		return 2
+	}
+	for _, trial := range result.Trials {
+		fmt.Fprintf(stdout, "Trial %d: %s\n", trial.Number, trial.Outcome)
+		for _, phase := range trial.Phases {
+			fmt.Fprintf(stdout, "  %s: %s | p95 %.0fms | errors %.2f%% | requests %d\n", phase.Name, phase.Run.Outcome, phase.Run.Metrics.P95MS, phase.Run.ErrorsRate*100, phase.Run.Metrics.Total)
+		}
+	}
+	if variability := result.ObservationVariability; variability != nil {
+		fmt.Fprintf(stdout, "Observation spread across %d trials: p95 %.0f-%.0fms | errors %.2f%%-%.2f%% | throughput %.2f-%.2f req/s\n", variability.Runs, variability.P95MinMS, variability.P95MaxMS, variability.ErrorRateMin*100, variability.ErrorRateMax*100, variability.ThroughputMinRPS, variability.ThroughputMaxRPS)
+		fmt.Fprintln(stdout, "This is observed run-to-run spread, not a statistical confidence interval.")
+	}
+	fmt.Fprintf(stdout, "Campaign outcome: %s\n", result.Outcome)
+	fmt.Fprintln(stdout, "This is repeated observed evidence under the configured workload. It is not a universal capacity certification or infrastructure recommendation.")
+	if *out != "" {
+		if err := report.WriteAnyJSON(*out, result); err != nil {
+			fmt.Fprintf(stderr, "report error: %v\n", err)
+			return 2
+		}
+		fmt.Fprintf(stdout, "Report: %s\n", *out)
+	}
+	if result.Outcome != "PASS" {
+		return 1
+	}
+	return 0
+}
+
+func dashboardCmd(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("dashboard", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	path := fs.String("file", "", "Damocline HTTP run report JSON")
+	address := fs.String("addr", "127.0.0.1:8787", "loopback listen address")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if *path == "" || len(fs.Args()) != 0 {
+		fmt.Fprintln(stderr, "usage: damocline dashboard --file run.json [--addr 127.0.0.1:8787]")
+		return 2
+	}
+	if err := reportui.ListenAddress(*address); err != nil {
+		fmt.Fprintf(stderr, "invalid dashboard address: %v\n", err)
+		return 2
+	}
+	result, err := insights.ReadRun(*path)
+	if err != nil {
+		fmt.Fprintf(stderr, "cannot read run: %v\n", err)
+		return 2
+	}
+	server := &http.Server{Addr: *address, Handler: reportui.Handler(result), ReadHeaderTimeout: 5 * time.Second}
+	fmt.Fprintf(stdout, "Local dashboard: http://%s/ (Ctrl+C to stop)\n", *address)
+	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		fmt.Fprintf(stderr, "dashboard error: %v\n", err)
+		return 2
 	}
 	return 0
 }
@@ -301,6 +442,76 @@ func explore(args []string, stdout, stderr io.Writer) int {
 }
 
 // monitor reads host-level CPU and RAM without opening any network listener.
+func dockerCmd(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("docker", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	authorized := fs.Bool("authorized", false, "confirm permission to inspect local Docker resources")
+	out := fs.String("out", "", "JSON snapshot output path")
+	if err := fs.Parse(args); err != nil || len(fs.Args()) != 0 {
+		return 2
+	}
+	if !*authorized {
+		fmt.Fprintln(stderr, "explicit --authorized confirmation is required before collecting Docker metrics")
+		return 2
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	snapshot, err := dockermon.Collect(ctx)
+	if err != nil {
+		fmt.Fprintf(stderr, "docker metrics error: %v\n", err)
+		return 2
+	}
+	for _, container := range snapshot.Containers {
+		fmt.Fprintf(stdout, "%s: CPU %.1f%% | memory %d / %d bytes\n", container.Name, container.CPUPercent, container.MemoryBytes, container.MemoryLimit)
+	}
+	fmt.Fprintln(stdout, snapshot.Note)
+	if *out != "" {
+		if err := report.WriteAnyJSON(*out, snapshot); err != nil {
+			fmt.Fprintf(stderr, "report error: %v\n", err)
+			return 2
+		}
+	}
+	return 0
+}
+
+func metricsCmd(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("metrics", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	endpoint := fs.String("endpoint", "", "explicit authorized application metrics endpoint")
+	authorized := fs.Bool("authorized", false, "confirm permission to access the metrics endpoint")
+	out := fs.String("out", "", "JSON snapshot output path")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if *endpoint == "" || len(fs.Args()) != 0 {
+		fmt.Fprintln(stderr, "--endpoint is required and positional arguments are not accepted")
+		return 2
+	}
+	if !*authorized {
+		fmt.Fprintln(stderr, "explicit --authorized confirmation is required before accessing metrics")
+		return 2
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	snapshot, err := appmetrics.Collect(ctx, *endpoint)
+	if err != nil {
+		fmt.Fprintf(stderr, "metrics error: %v\n", err)
+		return 2
+	}
+	fmt.Fprintf(stdout, "Application metrics: %s | %d metric names\n", snapshot.Source, len(snapshot.Samples))
+	for _, sample := range snapshot.Samples {
+		fmt.Fprintf(stdout, "  %s = %g\n", sample.Name, sample.Value)
+	}
+	fmt.Fprintln(stdout, snapshot.Note)
+	if *out != "" {
+		if err := report.WriteAnyJSON(*out, snapshot); err != nil {
+			fmt.Fprintf(stderr, "report error: %v\n", err)
+			return 2
+		}
+	}
+	return 0
+}
+
 func monitor(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("monitor", flag.ContinueOnError)
 	fs.SetOutput(stderr)
