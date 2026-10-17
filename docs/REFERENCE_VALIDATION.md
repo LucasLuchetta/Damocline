@@ -14,6 +14,16 @@ The reference response delay is 20 ms with a 4 KiB body. The check accepts obser
 
 `REFERENCE_SMOKE_PASSED` means only that these bounded local cases reconciled on this host. It does not establish maximum generator throughput, cross-platform accuracy, sustained capacity, or application capacity. Keep the JSON private under the gitignored `.damocline/` directory; it records local environment metadata and timing evidence.
 
+## Versioned local preflight metadata (G0-01)
+
+The same calibration report embeds a `preflight` object (schema version `1`), preserving the existing top-level calibration schema and traffic limits. It records the generator OS/arch, logical CPUs, GOMAXPROCS, Go version and runner source revision; UTC test start/end; same-host, separate-process loopback fixture mode; GET-only arrivals, 4 KiB healthy response, 20 ms delay, 5-second stages, 30-second soak, configured rates/repeats; and each healthy stage's scheduled, started, completed, dropped and outcome counts.
+
+The `scenario_fingerprint_sha256` hashes **only** this fixed, non-secret fixture configuration. It is not a tamper-proof signature or a fingerprint of a customer workload. The `highest_passing_tested_arrival_rate` appears as a positive value only when **the entire** reference check passed, and describes the highest successful **tested** rate—not the generator's maximum capacity.
+
+The new metadata excludes temporary loopback ports, customer hostnames, request paths, credentials, headers, tokens, environment-variable values, and bodies. The local artifact must remain private: other sections of the existing report still include host measurements. Regression tests cover schema round-trips, unknown/incompatible versions, invalid fixture fingerprints, unsafe version metadata, failed-stage handling, and secret-marker absence.
+
+**Not a client-workload readiness certificate:** a passing 4 KiB loopback reference cannot verify unrelated HTTPS traffic, payload sizes, multi-step sessions, or real client networks. Workload equivalence, artifact freshness and host matching remain explicitly open under G0-02/G0-08.
+
 Repeat the healthy matrix three times to inspect short-run variability:
 
 ```powershell
