@@ -305,18 +305,28 @@ func start(input io.Reader, output, errOutput io.Writer) int {
 }
 
 func startWithMode(input io.Reader, output, errOutput io.Writer, mode string) int {
+	return startWithModeAndHeader(input, output, errOutput, mode, true)
+}
+
+func startWithModeNoBanner(input io.Reader, output, errOutput io.Writer, mode string) int {
+	return startWithModeAndHeader(input, output, errOutput, mode, false)
+}
+
+func startWithModeAndHeader(input io.Reader, output, errOutput io.Writer, mode string, showHeader bool) int {
 	w := wizard{input: bufio.NewReader(input), out: output}
-	fmt.Fprintln(output, "DAMOCLINE")
-	fmt.Fprintln(output, "Find the limit before it finds you.")
-	fmt.Fprintln(output, "Native Load Testing & Capacity Exploration")
-	fmt.Fprintln(output, "Open Source | Local First")
-	fmt.Fprintln(output, "Commands: damocline /start (new scenario), damocline /history (repeat saved scenario)")
+	if showHeader {
+		fmt.Fprintln(output, "DAMOCLINE")
+		fmt.Fprintln(output, "Find the limit before it finds you.")
+		fmt.Fprintln(output, "Native Load Testing & Capacity Exploration")
+		fmt.Fprintln(output, "Open Source | Local First")
+		fmt.Fprintln(output, "Commands: damocline /start (new scenario), damocline /history (repeat saved scenario)")
+	}
 	var s config.Scenario
 	var p startPreferences
 	var err error
 	newScenario := mode == "new"
 	fromHistory := mode == "history"
-	useSaved := false
+	useSaved := mode == "current"
 	if mode == "default" {
 		if _, statErr := os.Stat(scenarioPath); statErr == nil {
 			selected, askErr := w.choose("Saved profile found. Use it? (y/n, /start, /history)", "y", "y", "n", "/start", "/history")
