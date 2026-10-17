@@ -47,7 +47,7 @@ func (g Goal) required() (int,error) {
 	// Percentages represent successive multipliers: planned peak after growth,
 	// then a reserve on that projected peak. This is NOT measured capacity.
 	value:=math.Ceil(float64(g.PeakUsers)*(1+g.GrowthPercent/100)*(1+g.ReservePercent/100))
-	if math.IsInf(value,0)||value>math.MaxInt {
+	if math.IsInf(value,0)||value>float64(int(^uint(0)>>1)) {
 		return 0, errors.New("calculated target overflows integer bounds")
 	}
 	return int(value),nil
@@ -141,10 +141,10 @@ func Evaluate(ex explorer.Result, g Goal) (Assessment,error) {
 }
 
 func adequateGenerator(r report.Result) bool {
-	if r.Metrics.Total<=0 || r.Generator==nil || r.Generator.Samples<2 ||
+	if r.Metrics.Total<=0 || r.Generator==nil || r.Generator.Samples<2 || !r.Generator.GoCPUValid ||
 		r.ArrivalsDropped>0 || r.ArrivalsDroppedLate>0 || r.Metrics.Cancelled>0 ||
 		r.Config.MaxRPS<=0 || r.ElapsedSeconds<=0 ||
-		r.Generator.GoCPUValid && r.Generator.GoCPUUtilizationRatio>=0.90 {
+		r.Generator.GoCPUUtilizationRatio>=0.90 {
 		return false
 	}
 	// Client-side limit binding can hide any potential server capacity.
