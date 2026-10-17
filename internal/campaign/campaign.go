@@ -13,11 +13,13 @@ import (
 )
 
 type Options struct {
-	Warmup      time.Duration
-	Observation time.Duration
-	Recovery    time.Duration
-	Repeats     int
-	Budget      time.Duration
+	Warmup        time.Duration
+	Observation   time.Duration
+	SpikeUsers    int
+	SpikeDuration time.Duration
+	Recovery      time.Duration
+	Repeats       int
+	Budget        time.Duration
 }
 
 type Phase struct {
@@ -38,6 +40,8 @@ type Result struct {
 	StartedAt              string       `json:"started_at"`
 	Warmup                 string       `json:"warmup"`
 	Observation            string       `json:"observation"`
+	SpikeUsers             int          `json:"spike_users,omitempty"`
+	SpikeDuration          string       `json:"spike_duration,omitempty"`
 	Recovery               string       `json:"recovery"`
 	Repeats                int          `json:"repeats"`
 	Trials                 []Trial      `json:"trials"`
@@ -64,13 +68,19 @@ func Validate(options Options) error {
 	if options.Warmup < 0 || options.Warmup > 3*time.Minute || options.Recovery < 0 || options.Recovery > 3*time.Minute {
 		return fmt.Errorf("warmup and recovery must be between 0 and 3m")
 	}
-	if options.Observation < 10*time.Second || options.Observation > 3*time.Minute {
-		return fmt.Errorf("observation must be between 10s and 3m")
+	if options.Observation < 10*time.Second || options.Observation > 10*time.Minute {
+		return fmt.Errorf("observation must be between 10s and 10m")
+	}
+	if (options.SpikeUsers == 0) != (options.SpikeDuration == 0) {
+		return fmt.Errorf("spike-users and spike-duration must be set together")
+	}
+	if options.SpikeUsers < 0 || options.SpikeUsers > 50 || options.SpikeDuration < 0 || options.SpikeDuration > 3*time.Minute || (options.SpikeUsers > 0 && options.SpikeDuration < 10*time.Second) {
+		return fmt.Errorf("spike-users must be 1-50 and spike-duration must be 10s-3m")
 	}
 	if options.Repeats < 2 || options.Repeats > 5 {
 		return fmt.Errorf("repeats must be between 2 and 5")
 	}
-	minimum := time.Duration(options.Repeats) * (options.Warmup + options.Observation + options.Recovery)
+	minimum := time.Duration(options.Repeats) * (options.Warmup + options.Observation + options.SpikeDuration + options.Recovery)
 	if options.Budget != 0 && (options.Budget < minimum || options.Budget > 15*time.Minute) {
 		return fmt.Errorf("budget must cover every phase and be at most 15m")
 	}
@@ -88,8 +98,19 @@ func WithRunner(ctx context.Context, base config.Validated, options Options, run
 	if err := Validate(options); err != nil {
 		return Result{}, err
 	}
+	if options.SpikeUsers > 0 && options.SpikeUsers <= base.Scenario.Users {
+		return Result{}, fmt.Errorf("spike-users must exceed the base scenario users")
+	}
+	var spikeCookies []string
+	if options.SpikeUsers > 0 && base.Scenario.PerVUCookieEnvPrefix != "" {
+		var err error
+		spikeCookies, err = config.ResolveSessions(base.Scenario.PerVUCookieEnvPrefix, options.SpikeUsers)
+		if err != nil {
+			return Result{}, err
+		}
+	}
 	if options.Budget == 0 {
-		options.Budget = time.Duration(options.Repeats) * (options.Warmup + options.Observation + options.Recovery)
+		options.Budget = time.Duration(options.Repeats) * (options.Warmup + options.Observation + options.SpikeDuration + options.Recovery)
 	}
 	ctx, cancel := context.WithTimeout(ctx, options.Budget)
 	defer cancel()
@@ -100,13 +121,15 @@ func WithRunner(ctx context.Context, base config.Validated, options Options, run
 		StartedAt:     time.Now().UTC().Format(time.RFC3339),
 		Warmup:        options.Warmup.String(),
 		Observation:   options.Observation.String(),
+		SpikeUsers:    options.SpikeUsers,
+		SpikeDuration: options.SpikeDuration.String(),
 		Recovery:      options.Recovery.String(),
 		Repeats:       options.Repeats,
 		Trials:        []Trial{},
 		Outcome:       "INCONCLUSIVE",
 		Notes: []string{
 			"Warm-up runs establish workload state but are excluded from capacity conclusions.",
-			"Observation and recovery both require PASS in every independent trial; this is evidence under the configured workload, not a universal capacity certification.",
+			"Observation, configured spike, and recovery all require PASS in every independent trial; this is evidence under the configured workload, not a universal capacity certification.",
 		},
 	}
 	for number := 1; number <= options.Repeats; number++ {
@@ -115,10 +138,12 @@ func WithRunner(ctx context.Context, base config.Validated, options Options, run
 			name     string
 			duration time.Duration
 			required bool
+			users    int
 		}{
-			{name: "warmup", duration: options.Warmup},
-			{name: "observation", duration: options.Observation, required: true},
-			{name: "recovery", duration: options.Recovery, required: true},
+			{name: "warmup", duration: options.Warmup, users: base.Scenario.Users},
+			{name: "observation", duration: options.Observation, required: true, users: base.Scenario.Users},
+			{name: "spike", duration: options.SpikeDuration, required: true, users: options.SpikeUsers},
+			{name: "recovery", duration: options.Recovery, required: true, users: base.Scenario.Users},
 		} {
 			if phase.duration == 0 {
 				continue
@@ -130,6 +155,10 @@ func WithRunner(ctx context.Context, base config.Validated, options Options, run
 			v := base
 			v.Duration = phase.duration
 			v.Scenario.Duration = phase.duration.String()
+			v.Scenario.Users = phase.users
+			if len(spikeCookies) > 0 && phase.users == options.SpikeUsers {
+				v.Cookies = spikeCookies
+			}
 			run := runner(ctx, v)
 			trial.Phases = append(trial.Phases, Phase{Name: phase.name, Run: run})
 			if run.Outcome == "ABORTED" || run.Outcome == "INCONCLUSIVE" {

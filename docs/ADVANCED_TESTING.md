@@ -92,10 +92,10 @@ This is distinct from 10 concurrent users. It answers a different capacity quest
 Use a campaign when a short exploratory probe is insufficient. Each trial runs warm-up, an evaluated observation window, and a recovery window. Warm-up establishes workload state but cannot make a campaign pass; both observation and recovery must pass in every repeat.
 
 ```powershell
-.\damocline.exe campaign --config .\myapp.local.json --warmup 30s --observation 2m --recovery 30s --repeats 2 --authorized --out reports\campaign.json
+.\damocline.exe campaign --config .\myapp.local.json --warmup 30s --observation 5m --spike-users 20 --spike-duration 30s --recovery 30s --repeats 2 --authorized --out reports\campaign.json
 ```
 
-The whole campaign is bounded to 15 minutes, each phase is bounded to 3 minutes, and it stops at the first non-passing trial. Configure `window_duration` in the scenario to evaluate request p95 and errors throughout an observation phase. It records phase reports for later comparison. It does not yet provide injected spikes, percentile confidence intervals, or a sustained-capacity certificate.
+The whole campaign is bounded to 15 minutes. Observation can last up to 10 minutes; warm-up, spike, and recovery are bounded to 3 minutes. An optional spike must use more VUs than the base scenario and stays inside the existing 50-VU safety ceiling. The campaign stops at the first non-passing trial. Configure `window_duration` in the scenario to evaluate request p95 and errors throughout an observation phase. It records phase reports for later comparison. It does not yet provide percentile confidence intervals or a sustained-capacity certificate.
 
 ## 8. Monitor the Linux VPS independently
 

@@ -42,3 +42,14 @@ func TestCampaignFailsObservationAndStops(t *testing.T) {
 		t.Fatalf("failed observation was not terminal: %+v err=%v calls=%d", result, err, calls)
 	}
 }
+
+func TestCampaignRunsBoundedSpikeBeforeRecovery(t *testing.T) {
+	var users []int
+	result, err := WithRunner(context.Background(), scenario(t), Options{Observation: 10 * time.Second, SpikeUsers: 3, SpikeDuration: 10 * time.Second, Recovery: 10 * time.Second, Repeats: 2}, func(_ context.Context, v config.Validated) report.Result {
+		users = append(users, v.Scenario.Users)
+		return report.Result{Outcome: "PASS", ElapsedSeconds: v.Duration.Seconds(), ObservationSeconds: v.Duration.Seconds(), Metrics: report.MetricSet{Total: 10}}
+	})
+	if err != nil || result.Outcome != "PASS" || len(users) != 6 || users[1] != 3 || users[4] != 3 {
+		t.Fatalf("spike was not isolated: %+v err=%v users=%v", result, err, users)
+	}
+}
