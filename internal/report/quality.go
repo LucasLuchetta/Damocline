@@ -1,6 +1,6 @@
 package report
 
-import "fmt"
+import "math"
 
 // Quality describes whether arithmetic delivery/accounting evidence can be
 // trusted. It is orthogonal to SLO Outcome. Positive calibration equivalence
@@ -28,11 +28,11 @@ func AssessQuality(r Result) *Quality {
 	}
 	limit:=func(reason string) {q.Findings=append(q.Findings,reason)}
 	if r.Metrics.Total<0 || r.Metrics.Success<0 || r.Metrics.Failures<0 ||
-		r.Metrics.Cancelled<0 || r.Metrics.Success+r.Metrics.Failures!=r.Metrics.Total {
+		r.Metrics.Cancelled<0 || r.Metrics.Success>r.Metrics.Total || r.Metrics.Failures!=r.Metrics.Total-r.Metrics.Success {
 		invalidate("Request aggregate accounting is inconsistent.")
 	}
 	if r.Journeys.Total<0 || r.Journeys.Success<0 || r.Journeys.Failures<0 ||
-		r.Journeys.Cancelled<0 || r.Journeys.Success+r.Journeys.Failures!=r.Journeys.Total {
+		r.Journeys.Cancelled<0 || r.Journeys.Success>r.Journeys.Total || r.Journeys.Failures!=r.Journeys.Total-r.Journeys.Success {
 		invalidate("Completed-journey accounting is inconsistent.")
 	}
 	if r.IterationsStarted<0 || r.IterationsCompleted<0 ||
@@ -41,12 +41,12 @@ func AssessQuality(r Result) *Quality {
 		invalidate("Negative or nonconservative iteration/arrival counters.")
 	}
 	if r.Config.Mode=="arrival" {
-		if r.IterationsStarted+r.ArrivalsDropped!=r.ArrivalsScheduled ||
-			r.ArrivalsDropped!=r.ArrivalsDroppedLate+r.ArrivalsDroppedBusy {
+		if r.IterationsStarted>r.ArrivalsScheduled || r.ArrivalsDropped!=r.ArrivalsScheduled-r.IterationsStarted ||
+			r.ArrivalsDroppedLate>r.ArrivalsDropped || r.ArrivalsDroppedBusy!=r.ArrivalsDropped-r.ArrivalsDroppedLate {
 			invalidate("Scheduled, started and dropped arrivals do not reconcile.")
 		}
 	}
-	if r.ObservationSeconds<0 || r.ElapsedSeconds<=0 {
+	if math.IsNaN(r.ObservationSeconds) || math.IsInf(r.ObservationSeconds,0) || math.IsNaN(r.ElapsedSeconds) || math.IsInf(r.ElapsedSeconds,0) || r.ObservationSeconds<0 || r.ElapsedSeconds<=0 {
 		invalidate("Observation or elapsed time is invalid.")
 	}
 	if r.Metrics.Cancelled>0 || r.Journeys.Cancelled>0 ||
@@ -69,8 +69,8 @@ func AssessQuality(r Result) *Quality {
 		invalidate("Required bounded actor/rate configuration is absent.")
 	}
 	for _,s:=range r.Steps {
-		if s.Metrics.Total<0 || s.Metrics.Success+s.Metrics.Failures!=s.Metrics.Total {
-			invalidate(fmt.Sprintf("Named-step accounting is inconsistent (step index checked without route disclosure)."))
+		if s.Metrics.Total<0 || s.Metrics.Success<0 || s.Metrics.Failures<0 || s.Metrics.Success>s.Metrics.Total || s.Metrics.Failures!=s.Metrics.Total-s.Metrics.Success {
+			invalidate("Named-step accounting is inconsistent (step identity intentionally omitted).")
 			break
 		}
 	}
