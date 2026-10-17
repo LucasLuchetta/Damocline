@@ -24,6 +24,17 @@ func TestMetricsAndPercentiles(t *testing.T) {
 		t.Fatalf("reasons: %+v", r.Reasons)
 	}
 }
+
+func TestWindowSecondsPrefersConfiguredObservationWindow(t *testing.T) {
+	r := Result{ElapsedSeconds: 31, ObservationSeconds: 30}
+	if r.WindowSeconds() != 30 {
+		t.Fatalf("workload window=%v; want 30s", r.WindowSeconds())
+	}
+	r.ObservationSeconds = 0
+	if r.WindowSeconds() != 31 {
+		t.Fatalf("legacy fallback window=%v; want elapsed 31s", r.WindowSeconds())
+	}
+}
 func TestReportJSONDoesNotLeakUnexportedSamples(t *testing.T) {
 	r := Result{Name: "test", Metrics: NewMetricSet().Snapshot()}
 	dir := t.TempDir()

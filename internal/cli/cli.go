@@ -26,7 +26,7 @@ var Version = "dev"
 
 func Run(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		return welcome(os.Stdin,stdout,stderr)
+		return welcome(os.Stdin, stdout, stderr)
 	}
 	switch args[0] {
 	case "help", "--help", "-h":
@@ -149,7 +149,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	result := engine.Run(ctx, validated)
-	fmt.Fprintf(stdout, "Result: %s | requests: %d (%d passed, %d failed, %d cancelled) | p95: %.1f ms | error rate: %.2f%% | %.1f req/s\n", result.Outcome, result.Metrics.Total, result.Metrics.Success, result.Metrics.Failures, result.Metrics.Cancelled, result.Metrics.P95MS, result.ErrorsRate*100, float64(result.Metrics.Total)/result.ElapsedSeconds)
+	fmt.Fprintf(stdout, "Result: %s | requests: %d (%d passed, %d failed, %d cancelled) | p95: %.1f ms | error rate: %.2f%% | %.1f req/s\n", result.Outcome, result.Metrics.Total, result.Metrics.Success, result.Metrics.Failures, result.Metrics.Cancelled, result.Metrics.P95MS, result.ErrorsRate*100, float64(result.Metrics.Total)/result.WindowSeconds())
 	for _, st := range result.Steps {
 		fmt.Fprintf(stdout, "  - %s: total=%d failures=%d p95=%.1f ms\n", st.Name, st.Metrics.Total, st.Metrics.Failures, st.Metrics.P95MS)
 	}

@@ -47,6 +47,8 @@ Each assessment also highlights:
 4. Differences in duration, rate caps and achieved throughput that prevent treating two results as a controlled comparison.
 5. Suggested next experiments to answer the still-open capacity question.
 
+The error-rate insight includes a one-sided 95% upper bound: exact for zero observed failures and a Wilson score approximation otherwise. It assumes independent, stationary outcomes, which may not hold for correlated requests. It does not certify the configured error budget unless the bound itself is below that budget. Request and completed-journey latency percentiles are point estimates without confidence intervals. A journey interrupted at shutdown is not included in completed-journey latency statistics; inspect cancellation counts and treat unfinished work as a limitation.
+
 ## What an assessment cannot prove
 
 The report command is a deterministic explanation layer over existing measurements. It does **not** invent CPU, RAM, PostgreSQL, Redis or Docker metrics. It does not use AI, access private credentials, contact hosted services, or automatically upgrade your server.

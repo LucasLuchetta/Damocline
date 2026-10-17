@@ -98,28 +98,38 @@ type StepResult struct {
 	Metrics MetricSet `json:"metrics"`
 }
 type Result struct {
-	SchemaVersion       int          `json:"schema_version"`
-	Name                string       `json:"name"`
-	Target              string       `json:"target"`
-	StartedAt           string       `json:"started_at"`
-	ElapsedSeconds      float64      `json:"elapsed_seconds"`
-	Config              RunConfig    `json:"config"`
-	Metrics             MetricSet    `json:"metrics"`
-	Journeys            MetricSet    `json:"journeys"`
-	Steps               []StepResult `json:"steps"`
-	Outcome             string       `json:"outcome"`
-	ErrorsRate          float64      `json:"error_rate"`
-	Note                string       `json:"note"`
-	IterationsStarted   int64        `json:"iterations_started"`
-	IterationsCompleted int64        `json:"iterations_completed"`
-	ArrivalsScheduled   int64        `json:"arrivals_scheduled"`
-	ArrivalsDropped     int64        `json:"arrivals_dropped"`
-	ArrivalsDroppedLate int64        `json:"arrivals_dropped_late,omitempty"`
-	ArrivalsDroppedBusy int64        `json:"arrivals_dropped_busy,omitempty"`
-	SchedulerLagP95MS   float64      `json:"scheduler_lag_p95_ms,omitempty"`
-	SchedulerLagMaxMS   float64      `json:"scheduler_lag_max_ms,omitempty"`
-	Warnings            []string     `json:"warnings,omitempty"`
+	SchemaVersion       int                      `json:"schema_version"`
+	Name                string                   `json:"name"`
+	Target              string                   `json:"target"`
+	StartedAt           string                   `json:"started_at"`
+	ElapsedSeconds      float64                  `json:"elapsed_seconds"`
+	ObservationSeconds  float64                  `json:"observation_seconds,omitempty"`
+	Config              RunConfig                `json:"config"`
+	Metrics             MetricSet                `json:"metrics"`
+	Journeys            MetricSet                `json:"journeys"`
+	Steps               []StepResult             `json:"steps"`
+	Outcome             string                   `json:"outcome"`
+	ErrorsRate          float64                  `json:"error_rate"`
+	Note                string                   `json:"note"`
+	IterationsStarted   int64                    `json:"iterations_started"`
+	IterationsCompleted int64                    `json:"iterations_completed"`
+	ArrivalsScheduled   int64                    `json:"arrivals_scheduled"`
+	ArrivalsDropped     int64                    `json:"arrivals_dropped"`
+	ArrivalsDroppedLate int64                    `json:"arrivals_dropped_late,omitempty"`
+	ArrivalsDroppedBusy int64                    `json:"arrivals_dropped_busy,omitempty"`
+	SchedulerLagP95MS   float64                  `json:"scheduler_lag_p95_ms,omitempty"`
+	SchedulerLagMaxMS   float64                  `json:"scheduler_lag_max_ms,omitempty"`
+	Warnings            []string                 `json:"warnings,omitempty"`
 	Generator           *generatorhealth.Summary `json:"generator,omitempty"`
+}
+
+// WindowSeconds returns the configured workload window when the report records
+// it, falling back to wall-clock elapsed time for older report schemas.
+func (r Result) WindowSeconds() float64 {
+	if r.ObservationSeconds > 0 {
+		return r.ObservationSeconds
+	}
+	return r.ElapsedSeconds
 }
 
 func WriteJSON(path string, r Result) error { return WriteAnyJSON(path, r) }

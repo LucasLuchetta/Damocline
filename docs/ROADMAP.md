@@ -17,17 +17,22 @@ This is a working plan for an open-source project in **pre-alpha**. The native l
 - [x] Per-user cookie jars and optional distinct environment-backed identities; full login/CSRF recording is still planned.
 - [x] Request-level latency, error categories, and throughput measurement with bounded run caps.
 - [x] JSON report with metrics, sanitized paths, and no raw credentials; deeper redaction tests remain open.
-- [ ] Generator profiling and controlled reference benchmarking (required before capacity claims).
+- [x] Bounded local HTTP reference fixture and deterministic scheduler accounting tests.
+- [x] Separate-process loopback calibration for known delay, 4 KiB bodies, 2–100 arrivals/s, a 30-second sustained stage, worker underdelivery, and error recovery; this bounds evidence to the tested host/platform and does not claim the generator's maximum throughput.
+- [x] Sample Go heap, goroutines, GC cycles, Go scheduler CPU utilization, and supported Windows/Linux process CPU/RSS during each run; these are generator observations, not target/host capacity limits.
+- [x] Reconcile scheduled, started, completed, cancelled, failed, and dropped work; test scheduler stalls, insufficient samples, response-size bounds, and generator process CPU/RSS sampling.
+- [x] Establish a bounded reference envelope on Windows and Linux through 100 arrivals/s, repeated trials, a 4 KiB payload, and a 30-second soak; validate generator headroom and keep untested rates/payloads outside the claim.
 
-**Exit:** local safe HTTP tests produce correct, verifiable metrics and refuse unsafe/unbounded configurations.
+**Exit:** local safe HTTP tests produce correct, verifiable metrics and refuse unsafe/unbounded configurations. P0 closes for the measured envelope on Windows and Linux. Each capacity campaign still needs a host-local `damocline-calibrate --extended --repeats 2` preflight; results do not establish a universal generator maximum or cover every payload size.
 
 ## M1 — Realistic workload modeling
 
-- [ ] Versioned scenario YAML/JSON schema with strict validation.
-- [ ] Authentication references, cookies, variable extraction, and assertions.
+- [x] Versioned, strictly validated JSON scenario schema; YAML is not supported.
+- [x] Environment-backed cookie/header references, cookie jars, and HTTP response assertions; dynamic response extraction and dependent steps remain open.
 - [x] Closed-loop VUs with configurable think times.
-- [x] Open-loop arrival scheduling, dropped-start accounting and rate-cap warnings (client generator profiling remains open).
+- [x] Open-loop journey arrivals with scheduled/admitted/busy-dropped/late-dropped accounting; model/session representativeness remains open.
 - [ ] Isolated read/write workflows with explicit synthetic test data.
+- [ ] Weighted production-derived user profiles and stateful multi-step sessions.
 
 **Exit:** target slowdowns and failures cannot silently make observed delivery diverge from scheduled load.
 
@@ -36,10 +41,14 @@ This is a working plan for an open-source project in **pre-alpha**. The native l
 - [x] User-defined error/latency budgets and scenario-specific success criteria.
 - [x] Bounded step-up, bracket refinement, confirmation runs, and time-budget stop.
 - [x] Explorations of named mixed-step journeys; workload mixing by weighted independent user groups remains open.
-- [x] Report tested range, repeat results, client cap and telemetry limitations; calibrated uncertainty remains open.
+- [x] Report tested range, repeat results, client cap and telemetry limitations.
+- [x] Report a one-sided 95% error-rate bound under stated independent/stationary Bernoulli assumptions; percentile and repeat-to-repeat uncertainty remain open.
+- [x] Calculate business demand targets and directly probe exact target VU levels without raising safety ceilings; this does not predict capacity.
+- [ ] Sustained capacity campaigns with warm-up, steady windows, soak, spikes, recovery, independent repeats, and time-series pass criteria.
+- [ ] Statistical uncertainty for latency percentiles and repeat-to-repeat variation, with dependence-aware methods.
 - [ ] Repeatable comparisons between builds and hosting configurations.
 
-**Exit:** reports explain *what* passed, *under which conditions*, and *what remains uncertain*.
+**Exit:** reports explain *what* passed, *under which conditions*, and *what remains uncertain*. Goal assessment and exact target probing are implemented as short observations; they do not close the certification gate.
 
 ## M3 — Optional infrastructure telemetry
 

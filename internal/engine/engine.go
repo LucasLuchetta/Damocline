@@ -53,8 +53,13 @@ func (c *collector) add(s sample) {
 func Run(parent context.Context, v config.Validated) report.Result {
 	started := time.Now()
 	generatorMonitor := generatorhealth.Start(250 * time.Millisecond)
-	ctx, cancel := context.WithTimeout(parent, v.Duration)
+	// Stop admitting new work at the configured boundary, then allow any
+	// already-started journey a bounded time to finish.
+	drainAllowance := min(30*time.Second, v.Timeout*time.Duration(len(v.Steps))+v.ThinkTime*time.Duration(len(v.Steps)))
+	ctx, cancel := context.WithTimeout(parent, v.Duration+drainAllowance)
 	defer cancel()
+	scheduleCtx, cancelSchedule := context.WithTimeout(parent, v.Duration)
+	defer cancelSchedule()
 	coll := newCollector(v)
 	ticker := time.NewTicker(time.Second / time.Duration(v.Scenario.MaxRPS))
 	defer ticker.Stop()
@@ -87,7 +92,7 @@ func Run(parent context.Context, v config.Validated) report.Result {
 		journeyStart := time.Now()
 		journeyOk := true
 		fullyCompleted := true
-		for _, step := range v.Steps {
+		for stepIndex, step := range v.Steps {
 			if !waitToken(ctx, ticker.C) {
 				fullyCompleted = false
 				break
@@ -101,7 +106,7 @@ func Run(parent context.Context, v config.Validated) report.Result {
 				fullyCompleted = false
 				break
 			}
-			if !sleep(ctx, v.ThinkTime) {
+			if stepIndex < len(v.Steps)-1 && !sleep(ctx, v.ThinkTime) {
 				fullyCompleted = false
 				break
 			}
@@ -115,6 +120,10 @@ func Run(parent context.Context, v config.Validated) report.Result {
 				}
 				return "journey_step_failed"
 			}())
+			coll.mu.Unlock()
+		} else {
+			coll.mu.Lock()
+			coll.journeys.Record(time.Since(journeyStart), false, true, "journey_cancelled")
 			coll.mu.Unlock()
 		}
 	}
@@ -137,7 +146,7 @@ func Run(parent context.Context, v config.Validated) report.Result {
 				}
 			}(clients[i])
 		}
-		arrivalStats = scheduler.Drive(ctx, v.Duration, v.Scenario.ArrivalRate, func() bool {
+		arrivalStats = scheduler.Drive(scheduleCtx, v.Duration, v.Scenario.ArrivalRate, func() bool {
 			select {
 			case arrivals <- struct{}{}:
 				return true
@@ -154,10 +163,10 @@ func Run(parent context.Context, v config.Validated) report.Result {
 			go func(index int) {
 				defer wg.Done()
 				delay := time.Duration(index) * v.RampUp / time.Duration(v.Scenario.Users)
-				if !sleep(ctx, delay) {
+				if !sleep(scheduleCtx, delay) {
 					return
 				}
-				for ctx.Err() == nil {
+				for scheduleCtx.Err() == nil {
 					scheduledIterations.Add(1)
 					iteration(clients[index])
 				}
@@ -179,7 +188,7 @@ func Run(parent context.Context, v config.Validated) report.Result {
 	if agg.Total > 0 {
 		errorsRate = float64(agg.Failures) / float64(agg.Total)
 	}
-	result := report.Result{SchemaVersion: 2, Name: v.Scenario.Name, Target: v.Base.Scheme + "://" + v.Base.Host, StartedAt: started.UTC().Format(time.RFC3339), ElapsedSeconds: round(elapsed.Seconds()),
+	result := report.Result{SchemaVersion: 4, Name: v.Scenario.Name, Target: v.Base.Scheme + "://" + v.Base.Host, StartedAt: started.UTC().Format(time.RFC3339), ElapsedSeconds: round(elapsed.Seconds()), ObservationSeconds: round(v.Duration.Seconds()),
 		Config:  report.RunConfig{Users: v.Scenario.Users, Duration: v.Scenario.Duration, RampUp: v.Scenario.RampUp, ThinkTime: v.Scenario.ThinkTime, RequestTimeout: v.Timeout.String(), MaxRPS: v.Scenario.MaxRPS, P95LimitMS: v.Scenario.P95LimitMS, MaxErrorRate: v.Scenario.MaxErrorRate, Mode: v.Scenario.Mode, ArrivalRate: v.Scenario.ArrivalRate, SeparateSessions: len(v.Cookies) > 0, MinSamplesPerStep: v.Scenario.MinSamplesPerStep},
 		Metrics: agg, Journeys: journeyMetrics, Steps: steps, Outcome: "PASS", ErrorsRate: round(errorsRate), IterationsStarted: startedIterations.Load(), IterationsCompleted: completedIterations.Load(), ArrivalsScheduled: scheduledIterations.Load(), ArrivalsDropped: droppedIterations.Load(), ArrivalsDroppedLate: arrivalStats.DroppedLate, ArrivalsDroppedBusy: arrivalStats.DroppedBusy, SchedulerLagP95MS: float64(arrivalStats.P95Lag.Microseconds()) / 1000, SchedulerLagMaxMS: float64(arrivalStats.MaxLag.Microseconds()) / 1000,
 		Note: "Measured synthetic HTTP actors under the configured workload; not a universal server capacity or a browser-user count.", Generator: &generatorSnapshot}
@@ -201,7 +210,7 @@ func Run(parent context.Context, v config.Validated) report.Result {
 		result.Warnings = append(result.Warnings, "Multiple virtual users may share one login identity; configure per_vu_cookie_env_prefix to test independent authenticated sessions.")
 	}
 	// A saturated request-rate governor masks the offered capacity of added VUs.
-	if agg.Total > 0 && elapsed.Seconds() > 0 && float64(agg.Total)/elapsed.Seconds() > 0.9*float64(v.Scenario.MaxRPS) {
+	if agg.Total > 0 && v.Duration.Seconds() > 0 && float64(agg.Total)/v.Duration.Seconds() > 0.9*float64(v.Scenario.MaxRPS) {
 		result.Warnings = append(result.Warnings, "Request throughput is near max_rps: the configured client-side rate ceiling may hide server capacity. This run alone cannot establish a user-count limit.")
 	}
 	if arrivalStats.DroppedBusy > 0 {
@@ -216,6 +225,12 @@ func Run(parent context.Context, v config.Validated) report.Result {
 	}
 	if agg.Cancelled > 0 {
 		result.Warnings = append(result.Warnings, "In-flight requests were cancelled at the test boundary; completion statistics exclude them.")
+	}
+	if result.Journeys.Cancelled > 0 {
+		result.Warnings = append(result.Warnings, "One or more journeys were incomplete at the run boundary; journey latency percentiles exclude them.")
+		if result.Outcome == "PASS" {
+			result.Outcome = "INCONCLUSIVE"
+		}
 	}
 	return result
 }

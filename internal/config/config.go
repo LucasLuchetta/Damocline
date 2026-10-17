@@ -108,8 +108,8 @@ func Parse(s Scenario, o Options) (Validated, error) {
 		return v, errors.New("mode must be closed or arrival")
 	}
 	if s.Mode == "arrival" {
-		if s.ArrivalRate < 1 || s.ArrivalRate > 20 {
-			return v, errors.New("arrival_rate must be between 1 and 20 iterations/second")
+		if s.ArrivalRate < 1 || s.ArrivalRate > 100 {
+			return v, errors.New("arrival_rate must be between 1 and 100 iterations/second")
 		}
 		if s.ArrivalRate*len(s.Steps) > s.MaxRPS {
 			return v, errors.New("arrival_rate multiplied by steps exceeds max_rps; increase max_rps or reduce arrival_rate")

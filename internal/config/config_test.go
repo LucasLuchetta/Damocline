@@ -119,3 +119,17 @@ func TestArrivalValidation(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestArrivalRateBoundMatchesGlobalRPSCeiling(t *testing.T) {
+	s := good()
+	s.Mode = "arrival"
+	s.MaxRPS = 100
+	s.ArrivalRate = 100
+	if _, err := Parse(s, Options{Authorized: true}); err != nil {
+		t.Fatalf("100 arrivals/s should be allowed within max_rps: %v", err)
+	}
+	s.ArrivalRate = 101
+	if _, err := Parse(s, Options{Authorized: true}); err == nil {
+		t.Fatal("accepted arrival rate above the bounded 100 RPS ceiling")
+	}
+}

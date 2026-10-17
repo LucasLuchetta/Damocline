@@ -15,7 +15,7 @@
 The name evokes the **Sword of Damocles**: apparently stable systems can have limits hanging overhead. Damocline aims to find those limits *before users do*.
 
 > [!IMPORTANT]
-> **Experimental advanced HTTP engine:** native closed-loop and arrival-rate scheduling, repeated virtual-user capacity exploration, independent cookie sessions, Linux CPU/RAM sampling, and UTC report correlation are available. Manual temporary browser login is experimental. Automatic login replay, full-browser load tests, per-container telemetry, and rigorous generator-capacity calibration are not implemented. A passing test is **not** a universal maximum-users claim.
+> **Experimental advanced HTTP engine:** native closed-loop and arrival-rate scheduling, repeated virtual-user capacity exploration, independent cookie sessions, Linux CPU/RAM sampling, and UTC report correlation are available. Manual temporary browser login is experimental. Automatic login replay, full-browser load tests, per-container telemetry, and universal generator-ceiling certification are not implemented. A passing test is **not** a universal maximum-users claim.
 
 ## The problem
 
@@ -221,6 +221,8 @@ For safe local testing, real authenticated application testing, and Windows inst
 - [Architecture](docs/ARCHITECTURE.md)
 - [Roadmap](docs/ROADMAP.md)
 - [Measurement model](docs/METRICS.md)
+- [Scientific foundations and validation contract](docs/SCIENTIFIC_FOUNDATIONS.md)
+- [Local reference validation](docs/REFERENCE_VALIDATION.md)
 - [MVP quick start](docs/QUICKSTART.md)
 - [Source updates](docs/UPDATES.md)
 - [Decision records](docs/adr/0001-go-core.md)

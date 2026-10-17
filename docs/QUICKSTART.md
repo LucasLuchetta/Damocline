@@ -76,9 +76,10 @@ A run prints:
 - Total requests, successful operations, failure reasons and cancelled requests.
 - Per-step p95 latency and aggregate p50/p95/p99.
 - Achieved throughput, configured virtual users, and whether your p95 and error-rate thresholds passed.
+- For open-loop arrival mode, scheduled/started/completed/dropped arrivals and scheduler-lag summaries; plus sampled Go-runtime and supported OS process health for the generator.
 - A JSON artifact for comparing later runs.
 
-**PASS means the declared objectives passed in this one run.** It does not mean the server supports that many *people* indefinitely or that it has a known maximum capacity. Ramp-up time is included in the run; this MVP does not yet separate steady-state windows or measure generator saturation comprehensively.
+**PASS means the declared objectives passed in this one run.** It does not mean the server supports that many *people* indefinitely or that it has a known maximum capacity. The report's error-rate upper bound assumes independent stationary outcomes; latency percentiles are point estimates without confidence intervals. Generator health samples the Go runtime and, on Windows/Linux, OS process CPU/RSS; sampling can miss brief saturation. The run does not separate warm-up from a steady-state observation window.
 
 To compare traffic under different settings, copy the scenario, change `users` deliberately, keep route/data/latency/error definitions constant, and repeat in comparable conditions. Results from overlapping pages cannot be added together to produce a system-wide limit.
 
@@ -86,13 +87,13 @@ For Linux or Docker servers you administer, collect server-side signals separate
 
 ## 5. Limitations and safeguards
 
-- **Execution model:** closed-loop VUs; not an independent arrival-rate model.
+- **Execution model:** closed-loop VUs and open-loop journey arrivals are supported. Independent session arrivals with dependent within-session steps (a partly open model) are not implemented.
 - **Protocol:** HTTP/HTTPS only, no browser DOM, WebSockets, or JS rendering.
 - **Login:** no built-in browser/form login recorder. Use environment-backed headers, and confirm redirects to login are treated as failures by default.
 - **Body size:** responses larger than 2 MiB are flagged, not silently benchmarked as successful.
 - **Traffic bounds:** up to 50 VUs, 100 RPS, 3 minutes, 20 steps, 30-second request timeout. Use much smaller values when beginning.
 - **Writes:** GET/HEAD are available by default; POST/PUT/PATCH/DELETE require explicit `--allow-writes` and safe test data.
 - **Security:** no HTTP redirects are followed; non-local plaintext HTTP requires `--allow-insecure-http`. These features do **not** prove you own a target; follow explicit authorization and rate-limit policies.
-- **Reporting:** no response bodies, cookies, or authorization headers are exported. Treat scenario paths and test environment details as sensitive where appropriate.
+- **Reporting:** no response bodies, cookies, or authorization headers are exported. Journey metrics cover completed journeys; shutdown does not yet provide a full drain and latency accounting for every unfinished journey. Treat scenario paths and test environment details as sensitive where appropriate.
 
 See [Measurement model](METRICS.md) for precise terminology and the [Roadmap](ROADMAP.md) for future capacity exploration and host telemetry.

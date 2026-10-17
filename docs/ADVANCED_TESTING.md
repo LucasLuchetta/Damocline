@@ -108,4 +108,4 @@ The correlation report shows mean/peak CPU and peak memory use during individual
 - Closed-loop VUs slow down their request rate when the application slows; use arrival mode to study offered traffic and dropped scheduling.
 - Synthetic sessions with shared cookies are not independent users.
 - Host CPU saturation correlating with response latency is a hypothesis, not an established bottleneck cause.
-- The engine still lacks browser measurement, auto-login/CSRF token extraction, memory/CPU profiling of the load generator, per-container metrics and fully calibrated confidence intervals. Do not use it for published capacity claims without independent validation.
+- The engine still lacks browser measurement, automatic login/CSRF handling, response-driven variables, per-container metrics and calibrated capacity or generator limits. Go runtime and supported Windows/Linux process health samples are available, but the error-rate confidence bound assumes independent, stationary outcomes and does not describe percentile or run-to-run uncertainty. Read the [scientific foundations and validation contract](SCIENTIFIC_FOUNDATIONS.md) before interpreting a capacity result.
