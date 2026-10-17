@@ -24,7 +24,7 @@ var Version = "dev"
 
 func Run(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		return start(os.Stdin,stdout,stderr)
+		return welcome(os.Stdin,stdout,stderr)
 	}
 	switch args[0] {
 	case "help", "--help", "-h":
@@ -68,7 +68,7 @@ func help(w io.Writer) {
 	fmt.Fprint(w, `Damocline — find the limit before it finds you.
 
 Usage:
-  damocline          # guided setup, including /start and /history
+  damocline          # branded welcome screen with guided menu
   damocline /start   # create a new saved scenario (archives the previous one)
   damocline /history # select and repeat a previous saved scenario
   damocline start    # original guided wizard
