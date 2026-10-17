@@ -10,6 +10,7 @@ import (
 
 	"github.com/LucasLuchetta/Damocline/internal/campaign"
 	"github.com/LucasLuchetta/Damocline/internal/capacitygoal"
+	"github.com/LucasLuchetta/Damocline/internal/report"
 )
 
 const maxCampaignReportBytes = 16 << 20
@@ -42,12 +43,40 @@ func Evaluate(evidence campaign.Result, goal capacitygoal.Goal) (Result, error) 
 		result.Findings = append(result.Findings, fmt.Sprintf("The passing base level (%d VUs) differs from the required target (%d VUs). Test the exact target before deciding on capacity.", evidence.BaseUsers, target))
 		return result, nil
 	}
+	if blocker := qualityBlocker(evidence); blocker != "" {
+		result.Findings = append(result.Findings, blocker)
+		return result, nil
+	}
 	result.State = "GOAL_MET_UNDER_TESTED_CONDITIONS"
 	result.Findings = append(result.Findings, fmt.Sprintf("The repeated campaign passed at %d base VUs, meeting the calculated target of %d VUs under the recorded conditions.", evidence.BaseUsers, target))
 	if evidence.ObservationVariability != nil {
 		result.Findings = append(result.Findings, fmt.Sprintf("Observed observation p95 ranged from %.0f to %.0f ms across %d trials; review the full report before changing infrastructure.", evidence.ObservationVariability.P95MinMS, evidence.ObservationVariability.P95MaxMS, evidence.ObservationVariability.Runs))
 	}
 	return result, nil
+}
+
+func qualityBlocker(evidence campaign.Result) string {
+	for _, trial := range evidence.Trials {
+		for _, phase := range trial.Phases {
+			if phase.Name == "warmup" {
+				continue
+			}
+			if phase.Run.Quality == nil {
+				return "A required campaign phase is missing explicit data-quality evidence; the tested demand remains INSUFFICIENT_EVIDENCE."
+			}
+			switch phase.Run.Quality.State {
+			case report.QualityValid:
+				continue
+			case report.QualityInvalid:
+				return "A required campaign phase has INVALID measurement quality; the tested demand remains INSUFFICIENT_EVIDENCE."
+			case report.QualityLimited:
+				return "A required campaign phase has LIMITED measurement quality; the tested demand remains INSUFFICIENT_EVIDENCE."
+			default:
+				return "A required campaign phase has unknown measurement quality; the tested demand remains INSUFFICIENT_EVIDENCE."
+			}
+		}
+	}
+	return ""
 }
 
 // ReadCampaign reads a bounded saved campaign report. It never makes a network

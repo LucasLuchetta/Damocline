@@ -138,13 +138,15 @@ traffic:
 damocline plan --campaign reports/campaign.json --peak-users 200 --growth-percent 30 --reserve-percent 30
 ```
 
-The command calculates the demand to validate and accepts it only when a
-complete, passing, schema-v1 repeated campaign exercised that exact base VU
-level. It reports **GOAL_MET_UNDER_TESTED_CONDITIONS**, never a hardware
-prediction: the result remains conditional on the saved workflow,
-environment, SLOs, observation windows, generator evidence, and observed
-variation. It does not identify a bottleneck or recommend an infrastructure
-purchase.
+The command calculates the demand to validate and reports
+**GOAL_MET_UNDER_TESTED_CONDITIONS** only when a complete, passing, schema-v1
+repeated campaign exercised that exact base VU level and every required phase
+has `VALID_WITHIN_ENVELOPE` data quality. Missing, limited, invalid, or unknown
+phase quality returns `INSUFFICIENT_EVIDENCE`. The current engine does not yet
+emit `VALID_WITHIN_ENVELOPE`, so current campaigns remain insufficient until
+the workload-specific generator preflight gate is implemented. The command
+never makes a hardware prediction, identifies a bottleneck, or recommends an
+infrastructure purchase.
 
 ## Terminal home screen
 
