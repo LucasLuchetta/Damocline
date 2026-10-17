@@ -1,0 +1,22 @@
+# Build and testing
+/bin/
+/build/
+/dist/
+*.exe
+*.test
+*.out
+coverage.out
+
+# Local reports and credentials
+/results/
+/reports/
+.env
+.env.*
+*.local.yml
+*.local.yaml
+
+# Editors and OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
