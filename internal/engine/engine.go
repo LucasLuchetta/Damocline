@@ -4,6 +4,7 @@ package engine
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -129,6 +130,14 @@ func Run(parent context.Context, v config.Validated) report.Result {
 	ticker := time.NewTicker(time.Second / time.Duration(v.Scenario.MaxRPS))
 	defer ticker.Stop()
 	tr := http.DefaultTransport.(*http.Transport).Clone()
+	if v.TLSRootCAs != nil {
+		if tr.TLSClientConfig != nil {
+			tr.TLSClientConfig = tr.TLSClientConfig.Clone()
+		} else {
+			tr.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+		}
+		tr.TLSClientConfig.RootCAs = v.TLSRootCAs
+	}
 	tr.MaxIdleConns = v.Scenario.Users * 3
 	tr.MaxIdleConnsPerHost = v.Scenario.Users * 2
 	tr.MaxConnsPerHost = v.Scenario.Users + 4

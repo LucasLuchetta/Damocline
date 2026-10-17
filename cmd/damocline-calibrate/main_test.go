@@ -23,3 +23,18 @@ func TestCheckReconcilesHealthyStagesWithSeparateSoakWork(t *testing.T) {
 		t.Fatalf("healthy stages plus the independent 30-second soak should reconcile: %v", issues)
 	}
 }
+
+func TestTransportChecksRequireTrustedHTTPSAndRejectUntrustedHTTPS(t *testing.T) {
+	checks := []transportCheck{
+		{Name: "http", Outcome: "PASS", Requests: 10, Success: 10, ServerReceived: 10},
+		{Name: "https_trusted_fixture", Outcome: "PASS", Requests: 10, Success: 10, ServerReceived: 10},
+		{Name: "https_untrusted_fixture", Outcome: "FAIL", Requests: 10, Failures: 10, Reasons: map[string]int{"transport": 10}},
+	}
+	if !transportChecksPass(checks) {
+		t.Fatal("expected successful HTTP, trusted HTTPS, and rejected untrusted HTTPS checks")
+	}
+	checks[1].ServerReceived = 9
+	if transportChecksPass(checks) {
+		t.Fatal("accepted a TLS stage whose client/server request ledgers differ")
+	}
+}

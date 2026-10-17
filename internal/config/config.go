@@ -2,6 +2,7 @@
 package config
 
 import (
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -68,6 +69,9 @@ type Options struct {
 	Authorized        bool
 	AllowWrites       bool
 	AllowInsecureHTTP bool
+	// TLSRootCAs is reserved for internal controlled fixtures. Public CLI
+	// scenarios cannot override certificate verification.
+	TLSRootCAs *x509.CertPool
 }
 
 type Validated struct {
@@ -82,6 +86,7 @@ type Validated struct {
 	Profiles            []PreparedProfile
 	Cookies             []string
 	SyntheticDataPrefix string
+	TLSRootCAs          *x509.CertPool
 }
 
 // PreparedProfile contains the safe, resolved workflow selected by the
@@ -361,7 +366,7 @@ func Parse(s Scenario, o Options) (Validated, error) {
 	if err != nil {
 		return v, err
 	}
-	v = Validated{Scenario: s, Base: u, Duration: duration, RampUp: ramp, ThinkTime: think, Timeout: timeout, Window: window, Steps: prepared, Profiles: preparedProfiles, Cookies: cookies, SyntheticDataPrefix: dataPrefix}
+	v = Validated{Scenario: s, Base: u, Duration: duration, RampUp: ramp, ThinkTime: think, Timeout: timeout, Window: window, Steps: prepared, Profiles: preparedProfiles, Cookies: cookies, SyntheticDataPrefix: dataPrefix, TLSRootCAs: o.TLSRootCAs}
 	return v, nil
 }
 
