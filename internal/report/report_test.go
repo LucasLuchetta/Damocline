@@ -2,9 +2,27 @@ package report
 
 import (
 	"math"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
+
+func TestWriteAnyJSONRejectsOversizedReportWithoutCreatingFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "oversized.json")
+	if err := os.WriteFile(path, []byte("existing report"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	data := map[string]string{"payload": strings.Repeat("x", maxReportBytes)}
+	if err := WriteAnyJSON(path, data); err == nil || !strings.Contains(err.Error(), "16 MiB output limit") {
+		t.Fatalf("oversized report was not rejected clearly: %v", err)
+	}
+	written, err := os.ReadFile(path)
+	if err != nil || string(written) != "existing report" {
+		t.Fatalf("oversized report changed the existing output: %q err=%v", written, err)
+	}
+}
 
 func TestMetricsAndPercentiles(t *testing.T) {
 	m := NewMetricSet()

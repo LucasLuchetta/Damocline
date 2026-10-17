@@ -3,6 +3,7 @@ package report
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -301,6 +302,8 @@ type Result struct {
 	Signals               []Signal                 `json:"diagnostic_signals,omitempty"`
 }
 
+const maxReportBytes = 16 << 20
+
 // WindowSeconds returns the configured workload window when the report records
 // it, falling back to wall-clock elapsed time for older report schemas.
 func (r Result) WindowSeconds() float64 {
@@ -314,15 +317,18 @@ func WriteJSON(path string, r Result) error { return WriteAnyJSON(path, r) }
 
 // WriteAnyJSON safely writes redacted report values to a restricted local file.
 func WriteAnyJSON(path string, r any) error {
-	d := filepath.Dir(path)
-	if err := os.MkdirAll(d, 0700); err != nil {
-		return fmt.Errorf("create report directory: %w", err)
-	}
 	bytes, err := json.MarshalIndent(r, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal report: %w", err)
 	}
+	if len(bytes) > maxReportBytes {
+		return errors.New("report exceeds the 16 MiB output limit")
+	}
 	bytes = append(bytes, '\n')
+	d := filepath.Dir(path)
+	if err := os.MkdirAll(d, 0700); err != nil {
+		return fmt.Errorf("create report directory: %w", err)
+	}
 	if err := os.WriteFile(path, bytes, 0600); err != nil {
 		return fmt.Errorf("write report: %w", err)
 	}

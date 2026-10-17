@@ -2,6 +2,7 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -108,13 +109,22 @@ var envPattern = regexp.MustCompile(`^\$\{([A-Z_][A-Z0-9_]*)\}$`)
 var variablePattern = regexp.MustCompile(`\{\{([a-z][a-z0-9_]{0,63})\}\}`)
 var variableNamePattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
 
+const maxScenarioBytes = 1 << 20
+
 func Load(path string) (Scenario, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return Scenario{}, fmt.Errorf("open scenario: %w", err)
 	}
 	defer f.Close()
-	dec := json.NewDecoder(io.LimitReader(f, 1<<20))
+	data, err := io.ReadAll(io.LimitReader(f, maxScenarioBytes+1))
+	if err != nil {
+		return Scenario{}, fmt.Errorf("read scenario: %w", err)
+	}
+	if len(data) > maxScenarioBytes {
+		return Scenario{}, fmt.Errorf("scenario exceeds the %d-byte input limit", maxScenarioBytes)
+	}
+	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 	var s Scenario
 	if err := dec.Decode(&s); err != nil {

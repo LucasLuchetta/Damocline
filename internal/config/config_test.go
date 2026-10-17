@@ -1,11 +1,38 @@
 package config
 
 import (
+	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestLoadEnforcesExactScenarioByteLimit(t *testing.T) {
+	encoded, err := json.Marshal(good())
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "scenario.json")
+	valid := make([]byte, maxScenarioBytes)
+	copy(valid, encoded)
+	for i := len(encoded); i < len(valid); i++ {
+		valid[i] = ' '
+	}
+	if err := os.WriteFile(path, valid, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err != nil {
+		t.Fatalf("scenario exactly at the input limit was rejected: %v", err)
+	}
+	if err := os.WriteFile(path, append(valid, ' '), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "input limit") {
+		t.Fatalf("oversized scenario was not rejected clearly: %v", err)
+	}
+}
 
 func good() Scenario {
 	return Scenario{Name: "smoke", BaseURL: "http://127.0.0.1:9876", Users: 2, Duration: "1s", MaxRPS: 5, P95LimitMS: 1500, MaxErrorRate: .01, Steps: []Step{{Name: "home", Path: "/"}}}
