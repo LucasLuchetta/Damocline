@@ -97,7 +97,6 @@ func Evaluate(r report.Result, host *hostmon.Result) Assessment {
 	} else {
 		a.Findings = append(a.Findings, Finding{"CAUTION", "No completed HTTP requests were measured."})
 	}
-
 	if r.Metrics.Total > 0 && r.Config.MaxErrorRate >= 0 && r.Config.MaxErrorRate <= 1 {
 		upper, err := statistics.UpperFailureRate95(r.Metrics.Failures, r.Metrics.Total)
 		if err == nil {
@@ -135,6 +134,19 @@ func Evaluate(r report.Result, host *hostmon.Result) Assessment {
 		if r.Config.MaxRPS > 0 && actual >= 0.90*float64(r.Config.MaxRPS) {
 			a.Findings = append(a.Findings, Finding{"LIMIT", "Traffic approached the generator's max_rps setting. This run cannot separate a client-side rate cap from application capacity."})
 		}
+	}
+	if r.Generator != nil {
+		g := r.Generator
+		a.Findings = append(a.Findings, Finding{"INFO", fmt.Sprintf("Load-generator runtime: %d samples over %.1fs, peak Go heap %.1f MiB, peak goroutines %d, GC cycles %d.", g.Samples, g.ObservedSeconds, float64(g.PeakHeapAllocBytes)/(1024*1024), g.PeakGoroutines, g.GCCycles)})
+		if g.GoCPUValid {
+			a.Findings = append(a.Findings, Finding{"INFO", fmt.Sprintf("Observed Go runtime CPU activity: %.0f%% of the sampled GOMAXPROCS capacity; this is not full process or server CPU utilization.", 100*g.GoCPUUtilizationRatio)})
+			if g.Samples >= 3 && g.GoCPUUtilizationRatio >= 0.90 {
+				a.Findings = append(a.Findings, Finding{"CAUTION", "The load generator showed high Go runtime CPU activity. Validate generator headroom before making a server-capacity claim."})
+			}
+		} else {
+			a.Findings = append(a.Findings, Finding{"CAUTION", "Go runtime CPU activity was not measurable consistently in this run; generator CPU headroom is unknown."})
+		}
+		a.Findings = append(a.Findings, Finding{"LIMIT", "Generator heap allocation is not operating-system process RSS; sampled peaks can miss short spikes."})
 	}
 	if r.ArrivalsDropped > 0 {
 		a.Findings = append(a.Findings, Finding{"LIMIT", fmt.Sprintf("%d scheduled journey starts were dropped: offered load was not delivered.", r.ArrivalsDropped)})
