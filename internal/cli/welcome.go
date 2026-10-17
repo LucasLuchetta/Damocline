@@ -10,15 +10,22 @@ import (
 	"strings"
 )
 
-// This lightweight, line-oriented home screen uses only the Go standard
-// library. It works in PowerShell, CMD, Unix terminals, CI and redirected IO.
-// It deliberately avoids raw terminal mode or changing the user's console.
-const swordArt = `                 ╷
-                 │
-            ─────┼─────
-                 │
-                 │
-                 ▼`
+// The Eclipse is an original, monochrome block-art rendering of Damocline's
+// sword-and-horizon mark. Keep it compact for PowerShell/CMD and other terminals.
+// The welcome screen stays line-oriented and does not enable raw terminal mode.
+const eclipseArt = `             ▄▄▄▄▄▄▄▄▄▄▄▄▄
+         ▄███████████████████▄
+       ▄██████████▀█▀██████████▄
+      ███████████  █  ███████████
+      ██████████  ▄█▄  ██████████
+      ██████████  ▀█▀  ██████████
+      ▀▀▀▀▀▀▀▀▀▀   █   ▀▀▀▀▀▀▀▀▀▀
+
+         ▄████████ █ ████████▄
+           ▀██████ █ ██████▀
+              ▀███ █ ███▀
+                 ▀ █ ▀
+                   ▼`
 
 func terminalColors(output io.Writer) bool {
 	if output != os.Stdout || os.Getenv("NO_COLOR") != "" || strings.EqualFold(os.Getenv("TERM"), "dumb") {
@@ -48,13 +55,13 @@ func welcomeArt(out io.Writer, color bool) {
 		reset = "\x1b[0m"
 	}
 	fmt.Fprintln(out)
-	for _, line := range strings.Split(swordArt, "\n") {
-		fmt.Fprintf(out, "%s%s%s\n", muted, line, reset)
+	for _, line := range strings.Split(eclipseArt, "\n") {
+		fmt.Fprintf(out, "%s%s%s\n", bold, line, reset)
 	}
 	fmt.Fprintf(out, "\n  %sD A M O C L I N E%s\n", bold, reset)
 	fmt.Fprintf(out, "  %sFind the limit before it finds you.%s\n", muted, reset)
-	fmt.Fprintln(out, "  Local-first HTTP capacity explorer")
-	fmt.Fprintln(out)
+	fmt.Fprintf(out, "  %sLOCAL-FIRST HTTP CAPACITY EXPLORER%s\n", muted, reset)
+	fmt.Fprintf(out, "\n  %s%s%s\n\n", muted, strings.Repeat("─", 45), reset)
 }
 
 func welcomeMenu(w *wizard, hasCurrent bool, color bool) (string, error) {
