@@ -241,6 +241,7 @@ func runOfflineCoverage(calibrationPath, scenarioPath string, w io.Writer) error
 	}
 	a, readErr := loadCalibrationForCoverage(calibrationPath)
 	result := compareScenarioToReference(s, a, readErr)
+	result.checkProvenance(a, readErr, time.Now().UTC(), currentRuntime())
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	if err := enc.Encode(result); err != nil {

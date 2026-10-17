@@ -225,6 +225,8 @@ go run ./cmd/damocline version
 
 For safe local testing, real authenticated application testing, and Windows instructions, see the [MVP quick start](docs/QUICKSTART.md). Use `--dry-run` to validate first, then `--authorized` to actually generate bounded traffic.
 
+**Optional local HTTP transport reference:** Run `go run ./cmd/damocline-calibrate --transport-matrix --out .damocline/calibration/transport.json` to verify bounded response-size, TLS, keep-alive, streaming, controlled delay and failure fixtures. The matrix never calls a customer application and does **not** certify the native generator scheduler or application capacity.
+
 **Offline reference suitability check:** After running the separate-process calibrator, you can check how your requested workload differs from its *actual* measured envelope without sending a single request to your application:
 
 ```powershell

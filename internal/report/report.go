@@ -165,6 +165,7 @@ type Result struct {
 	LittleLawEstimate   float64                  `json:"little_law_in_flight_estimate,omitempty"`
 	Warnings            []string                 `json:"warnings,omitempty"`
 	Generator           *generatorhealth.Summary `json:"generator,omitempty"`
+	Quality             *Quality                  `json:"data_quality,omitempty"`
 }
 
 // WindowSeconds returns the configured workload window when the report records

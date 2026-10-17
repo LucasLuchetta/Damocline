@@ -22,6 +22,7 @@ import (
 	"github.com/LucasLuchetta/Damocline/internal/config"
 	"github.com/LucasLuchetta/Damocline/internal/engine"
 	"github.com/LucasLuchetta/Damocline/internal/reference"
+	"github.com/LucasLuchetta/Damocline/internal/protocolcheck"
 	"github.com/LucasLuchetta/Damocline/internal/report"
 )
 
@@ -58,9 +59,28 @@ func main() {
 	out := flag.String("out", ".damocline/calibration/reference.json", "local JSON result path")
 	repeats := flag.Int("repeats", 1, "repeat the fixed three-stage matrix (1..3)")
 	extended := flag.Bool("extended", false, "add bounded 15, 20, 50, and 100 arrivals/s loopback stages; allows up to two repeats")
+	transportMatrix := flag.Bool("transport-matrix", false, "run a bounded, loopback-only HTTP transport fixture matrix (not a capacity test)")
 	checkScenario := flag.String("check-scenario", "", "offline-only: compare a scenario against a saved local reference artifact")
 	calibration := flag.String("calibration", ".damocline/calibration/reference.json", "local reference JSON to use with --check-scenario")
 	flag.Parse()
+	if *transportMatrix {
+		if *serve || *checkScenario != "" {
+			fmt.Fprintln(os.Stderr, "--transport-matrix cannot be combined with --serve or --check-scenario")
+			os.Exit(1)
+		}
+		result := protocolcheck.Run(context.Background())
+		if err := protocolcheck.Validate(result); err != nil {
+			fmt.Fprintln(os.Stderr, "transport matrix is incomplete or failed:", err)
+			os.Exit(1)
+		}
+		if err := report.WriteAnyJSON(*out, result); err != nil {
+			fmt.Fprintln(os.Stderr, "cannot write transport evidence:", err)
+			os.Exit(1)
+		}
+		fmt.Println(protocolcheck.Summary(result))
+		if result.Status != "TRANSPORT_FIXTURES_PASSED" { os.Exit(1) }
+		return
+	}
 	if *checkScenario != "" {
 		if *serve {
 			fmt.Fprintln(os.Stderr, "--serve cannot be combined with offline --check-scenario")

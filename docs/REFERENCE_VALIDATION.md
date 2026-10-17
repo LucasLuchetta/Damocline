@@ -40,6 +40,24 @@ The existing fixture measures a 20 ms, 4 KiB, unencrypted IPv4-loopback GET. Sce
 
 A missing, failed, inconsistent, oversized, or unsupported calibration produces an inconclusive comparison, never acceptance. The output deliberately omits scenario names, URLs, routes, headers, credentials and extracted values. Treat the input and local calibration files as private.
 
+## Expanded transport-only reference matrix (G0-03 partial)
+
+Use the optional bounded fixture matrix to exercise Go HTTP transports with an **independent** client/server ledger, without contacting an application or using actual user data:
+
+```powershell
+go run ./cmd/damocline-calibrate --transport-matrix --out .damocline/calibration/transport.json
+```
+
+It executes ten small local HTTP(S) fixture variants (30 total HTTP GETs): 0/1/4/64 KiB responses, normal keep-alive, explicitly disabled connection reuse, 40 ms delayed responses, streaming with flush, known HTTP 503 errors, and ephemeral **fixture-only** TLS. All requests use `httptest` loopback servers with no outbound DNS or proxies. Each case independently reconciles the request count and response status/size. The JSON report uses a separate schema (`http_transport_reference` version 1) and does not contain dynamic endpoint URLs, certs, customer paths or secrets. CI runs this matrix on Linux and Windows.
+
+**Scientific boundary:** this checks the Go transport and fixture semantics; it **does not run the Damocline engine's scheduler**, nor quantify TLS setup precision, real DNS latency, HTTP/2, a remote network, streaming under production load, or a maximum rate. It does not expand the baseline `preflight` fingerprint or certify any additional application workload. Dynamic payload distributions, connect/DNS faults and validated generator delivery for these new combinations are future G0-03 work.
+
+## Offline evidence freshness and provenance (G0-08 partial)
+
+The `--check-scenario` command also emits `calibration_age`, `runtime_compatibility` and `host_identity` dimensions. A future-dated artifact (beyond five minutes), a calibration older than a **conservative operational 24-hour review threshold**, or a mismatch in OS/architecture/Go version/CPU configuration/known source revision makes the declared shape `NOT_ESTABLISHED`. This 24-hour threshold is a warning policy, **not** a validated statistical expiry.
+
+An unavailable source revision stays `UNVERIFIED`; even matching runtime attributes do not identify the actual machine. `host_identity` therefore remains `UNVERIFIED`. A `MATCHED` age or runtime observation does not change the mandatory overall `INCONCLUSIVE` verdict. An invalid calibration cannot lend any passing rate evidence.
+
 Repeat the healthy matrix three times to inspect short-run variability:
 
 ```powershell
