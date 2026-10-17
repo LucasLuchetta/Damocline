@@ -6,6 +6,10 @@ This project follows a human-maintained changelog. No release exists yet.
 
 ### Added
 - Require explicit `VALID_WITHIN_ENVELOPE` quality on every required sustained-campaign phase before offline demand planning can report a goal met; missing or limited evidence remains insufficient.
+- Exclude zero or non-finite generator process readings from health summaries, expose invalid sample counts as a measurement-quality limitation, and reject process-counter conversion overflow.
+- Report open-arrival scheduler lag sample count, p50/p95/maximum and the monotonic slot-to-admission measurement boundary; label timing accuracy as uncalibrated.
+- Add a bounded worker-exhaustion integration check that distinguishes locally dropped arrivals from requests received by an independently counted loopback server.
+- Add a bounded cancellation integration check that reconciles scheduled and admitted arrivals, incomplete client journeys, and independently observed server-side completion/cancellation counters.
 - Add a fail-fast PowerShell local validation script that runs the full Go test suite and verifies baseline, extended, repeated, and transport-matrix calibration artifacts.
 - Add a bounded, local-only HTTP transport fixture matrix (0/1/4/64 KiB, stream, 503, keep-alive/close, private TLS and controlled tail delays) with independent client/server ledgers, schema validation and Linux/Windows CI; distinguish transport checks from native scheduler calibration.
 - Compare preflight age and basic runtime/source compatibility offline without pretending OS metadata attests physical host identity; stale or mismatched evidence invalidates apparent fixture equivalence.

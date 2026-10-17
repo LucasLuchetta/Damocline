@@ -37,6 +37,10 @@ func readProcessHealth() (cpuSeconds float64, residentBytes uint64, ok bool) {
 		return 0, 0, false
 	}
 	cpuTicks := uint64(kernel.HighDateTime)<<32 | uint64(kernel.LowDateTime)
-	cpuTicks += uint64(user.HighDateTime)<<32 | uint64(user.LowDateTime)
+	userTicks := uint64(user.HighDateTime)<<32 | uint64(user.LowDateTime)
+	if userTicks > ^uint64(0)-cpuTicks || memory.WorkingSetSize == 0 {
+		return 0, 0, false
+	}
+	cpuTicks += userTicks
 	return float64(cpuTicks) / 1e7, uint64(memory.WorkingSetSize), true
 }

@@ -13,8 +13,10 @@ type Stats struct {
 	Admitted    int64
 	DroppedBusy int64
 	DroppedLate int64
-	MaxLag      time.Duration
+	LagSamples  int64
+	P50Lag      time.Duration
 	P95Lag      time.Duration
+	MaxLag      time.Duration
 	lags        []time.Duration
 }
 
@@ -50,8 +52,11 @@ func (s *Stats) observe(lag time.Duration) {
 func (s *Stats) finish() Stats {
 	if len(s.lags) > 0 {
 		sort.Slice(s.lags, func(i, j int) bool { return s.lags[i] < s.lags[j] })
-		ix := (95*len(s.lags)+99)/100 - 1
-		s.P95Lag = s.lags[ix]
+		s.LagSamples = int64(len(s.lags))
+		p50Index := (50*len(s.lags)+99)/100 - 1
+		p95Index := (95*len(s.lags)+99)/100 - 1
+		s.P50Lag = s.lags[p50Index]
+		s.P95Lag = s.lags[p95Index]
 	}
 	s.lags = nil
 	return *s

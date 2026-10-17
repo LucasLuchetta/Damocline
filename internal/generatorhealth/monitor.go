@@ -4,6 +4,7 @@
 package generatorhealth
 
 import (
+	"math"
 	"runtime"
 	"runtime/metrics"
 	"sync"
@@ -26,6 +27,7 @@ type Summary struct {
 	GoCPUValid                     bool    `json:"go_cpu_valid"`
 	ProcessSamples                 int     `json:"process_samples"`
 	ProcessCPUSamples              int     `json:"process_cpu_samples"`
+	InvalidProcessSamples          int     `json:"invalid_process_samples,omitempty"`
 	PeakProcessRSSBytes            uint64  `json:"peak_process_rss_bytes,omitempty"`
 	PeakProcessCPUUtilizationRatio float64 `json:"peak_process_cpu_utilization_ratio"`
 	ProcessCPUValid                bool    `json:"process_cpu_valid"`
@@ -89,6 +91,10 @@ func (a *accumulator) add(r reading) {
 	}
 	a.latest = r
 	a.summary.Samples++
+	if r.processAvailable && (math.IsNaN(r.processCPUSeconds) || math.IsInf(r.processCPUSeconds, 0) || r.processCPUSeconds < 0 || r.processRSSBytes == 0) {
+		a.summary.InvalidProcessSamples++
+		r.processAvailable = false
+	}
 	if r.heap > a.summary.PeakHeapAllocBytes {
 		a.summary.PeakHeapAllocBytes = r.heap
 	}
