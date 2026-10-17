@@ -28,7 +28,7 @@ Damocline measures observed application behavior under a defined synthetic workl
 
 ## Logical components
 
-**Scenario specification.** Versioned target, request or journey steps, authentication references, think times, workload mode, acceptance criteria, traffic limits, and output options. A scenario may define either one legacy journey or two to ten weighted profiles with their own named steps and optional think time. The report records configured weights and observed journey counts. Response-driven extraction and dependent request construction remain planned.
+**Scenario specification.** Versioned target, request or journey steps, authentication references, think times, workload mode, acceptance criteria, traffic limits, and output options. A scenario may define either one legacy journey or two to ten weighted profiles with their own named steps and optional think time. The report records configured weights and observed journey counts. A step can extract a bounded JSON Pointer or response-header value and a later step in the same journey can use it in a path segment, header, or environment-backed body. Dynamic login recording and data lifecycle management remain planned.
 
 **Workload scheduler.** The engine supports closed-loop virtual users and open-loop journey arrivals. It tracks scheduled starts, actual starts, late and worker-busy drops, scheduler lag, and iteration completion. A partly open model with independently arriving sessions and dependent steps within each session is not implemented.
 
@@ -38,7 +38,7 @@ Damocline measures observed application behavior under a defined synthetic workl
 
 **Capacity explorer.** Run bounded repeated probes against explicit error and latency targets, and optionally attempt an exact business target. Its short experiments report observed passing and failing levels; they do not establish a sustained or statistically certified capacity boundary.
 
-**Metrics pipeline.** Report request and completed-journey distributions, failures, arrival accounting, scheduler lag, and sampled Go-runtime plus supported OS process health for the generator. Interrupted journeys are counted as cancelled and make an otherwise passing run inconclusive; their partial duration is not presented as a completed journey latency. The current report is aggregate: it does not provide aligned steady-state time series or percentile confidence intervals.
+**Metrics pipeline.** Report request and completed-journey distributions, failures, arrival accounting, scheduler lag, sampled Go-runtime plus supported OS process health for the generator, optional request time windows, and a conditional IID-assumption P95 rank interval. Interrupted journeys are counted as cancelled and make an otherwise passing run inconclusive; their partial duration is not presented as a completed journey latency. The current report remains aggregate: windows and percentile intervals do not establish steady state or account for correlated samples. It also records a request-boundary Little's Law consistency signal when average in-flight sampling, throughput, and mean latency share the configured observation window.
 
 **Optional telemetry adapters.** Collect host, Docker, database, or cloud metrics with consent and configured permissions. An absent metric is unknown, not proof of health. Avoid transferring secrets or unrestricted production logs.
 
