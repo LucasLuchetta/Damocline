@@ -1,5 +1,9 @@
 <p align="center">
-  <img src="assets/brand/damocline-logo.webp" alt="Damocline — a suspended sword. Find the limit before it finds you." width="380" />
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/brand/damocline-logo-dark.png" />
+    <source media="(prefers-color-scheme: light)" srcset="assets/brand/damocline-logo-light.png" />
+    <img src="assets/brand/damocline-logo-light.png" alt="Damocline — Find the limit before it finds you." width="380" />
+  </picture>
 </p>
 
 [![CI](https://github.com/LucasLuchetta/Damocline/actions/workflows/ci.yml/badge.svg)](https://github.com/LucasLuchetta/Damocline/actions/workflows/ci.yml)
