@@ -62,6 +62,8 @@ Each named step reports additive client-observed phase totals in `http_trace`. `
 
 `first_byte_ms` sums time from immediately before `http.Client.Do` to the first response byte callback. It includes client scheduling, connection work, network transit and target response delay; it is not server processing time. `body_ms` sums time from first response byte to the end of the bounded body read. `complete_ms` sums full client-observed request duration from immediately before `Do` through body read completion, or through a transport error. Counts distinguish phase observations from requests. These totals are diagnostic sums, not percentiles and not additive disjoint slices: DNS/connect/TLS overlap may occur and first-byte already includes earlier phases. Request queue waiting internal to `net/http.Transport` is not exposed by this API; `request_write_ms` records time until `WroteRequest` and must not be interpreted as a pure queue duration. Clock/trace callback accuracy has not been calibrated under host load.
 
+Completed journey latency includes rate-token waits between steps, network/response time for each step, and configured think-time intervals. It is reported independently from per-step request latency. `observed_think_time_ms` and `think_time_observations` sum wall time spent in configured between-step sleeps; an interrupted sleep is recorded as a partial interval. They do not represent user think time outside the modeled workflow. Cancelled journeys increment the cancellation count and their partial elapsed duration is excluded from completed journey percentiles.
+
 ## What is not yet measured
 
 - No predeclared long soak protocol for checking whether SLOs held throughout a production-representative steady state.

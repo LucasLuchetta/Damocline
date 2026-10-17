@@ -119,6 +119,64 @@ func TestHTTPTraceBodyTimeoutIsMarkedIncomplete(t *testing.T) {
 	}
 }
 
+func TestJourneyTimingSeparatesRequestsAndObservedThinkTime(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(5 * time.Millisecond)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	s := config.Scenario{Name: "known journey timing", BaseURL: server.URL, Users: 1, Duration: "1s", MaxRPS: 50, P95LimitMS: 1000, MaxErrorRate: 0, ThinkTime: "60ms", Steps: []config.Step{{Name: "first", Path: "/first"}, {Name: "second", Path: "/second"}}}
+	v, err := config.Parse(s, config.Options{Authorized: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	v.Duration = 360 * time.Millisecond
+	r := Run(context.Background(), v)
+	if r.Journeys.Total == 0 || r.Journeys.MeanMS <= r.Steps[0].Metrics.MeanMS || r.Steps[0].Metrics.MeanMS > 100 || r.Steps[1].Metrics.MeanMS > 100 {
+		t.Fatalf("request and journey timing boundaries were not distinct: journey=%+v steps=%+v", r.Journeys, r.Steps)
+	}
+	if r.ThinkTimeObservations == 0 || r.ObservedThinkTimeMS < float64(r.ThinkTimeObservations)*50 || r.ObservedThinkTimeMS > float64(r.ThinkTimeObservations)*200 {
+		t.Fatalf("observed think-time accounting outside local fixture tolerance: total=%.1fms observations=%d", r.ObservedThinkTimeMS, r.ThinkTimeObservations)
+	}
+	if len(r.Profiles) != 0 {
+		t.Fatalf("legacy single-workflow reports should retain top-level think-time totals only: %+v", r.Profiles)
+	}
+	if r.Quality == nil || r.Quality.State == report.QualityInvalid {
+		t.Fatalf("well-formed journey timing must reconcile: %+v", r.Quality)
+	}
+}
+
+func TestInterruptedMultiStepJourneyHasNoCompletedLatencySample(t *testing.T) {
+	secondStarted := make(chan struct{}, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/second" {
+			secondStarted <- struct{}{}
+			<-r.Context().Done()
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	s := config.Scenario{Name: "interrupted journey", BaseURL: server.URL, Users: 1, Duration: "1s", MaxRPS: 50, P95LimitMS: 1000, MaxErrorRate: 0, ThinkTime: "40ms", Steps: []config.Step{{Name: "first", Path: "/first"}, {Name: "second", Path: "/second"}}}
+	v, err := config.Parse(s, config.Options{Authorized: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	v.Duration = 500 * time.Millisecond
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() { <-secondStarted; cancel() }()
+	r := Run(ctx, v)
+	if r.Metrics.Success != 1 || r.Metrics.Cancelled != 1 || r.Journeys.Total != 0 || r.Journeys.Cancelled != 1 || r.Journeys.P95MS != 0 || r.Outcome != "ABORTED" {
+		t.Fatalf("partial multi-step journey entered completed latency metrics: %+v", r)
+	}
+	if r.ThinkTimeObservations != 1 || r.ObservedThinkTimeMS < 20 {
+		t.Fatalf("completed think interval before interruption was not retained: %.1fms/%d", r.ObservedThinkTimeMS, r.ThinkTimeObservations)
+	}
+	if r.Quality == nil || r.Quality.State == report.QualityInvalid {
+		t.Fatalf("interrupted journey timing must remain arithmetically valid: %+v", r.Quality)
+	}
+}
+
 func TestWeightedProfilesAreMeasuredSeparately(t *testing.T) {
 	seen := map[string]int{}
 	var mu sync.Mutex

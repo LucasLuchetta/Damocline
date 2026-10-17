@@ -183,10 +183,12 @@ type StepResult struct {
 // actual share is based on starts, because failures and cancellation can alter
 // the share of completed journeys.
 type ProfileResult struct {
-	Name        string    `json:"name"`
-	Weight      int       `json:"weight"`
-	AssignedVUs int       `json:"assigned_vus,omitempty"`
-	Journeys    MetricSet `json:"journeys"`
+	Name                  string    `json:"name"`
+	Weight                int       `json:"weight"`
+	AssignedVUs           int       `json:"assigned_vus,omitempty"`
+	Journeys              MetricSet `json:"journeys"`
+	ObservedThinkTimeMS   float64   `json:"observed_think_time_ms,omitempty"`
+	ThinkTimeObservations int       `json:"think_time_observations,omitempty"`
 }
 type WindowResult struct {
 	StartSeconds float64   `json:"start_seconds"`
@@ -194,35 +196,37 @@ type WindowResult struct {
 	Metrics      MetricSet `json:"metrics"`
 }
 type Result struct {
-	SchemaVersion       int                      `json:"schema_version"`
-	Name                string                   `json:"name"`
-	Target              string                   `json:"target"`
-	StartedAt           string                   `json:"started_at"`
-	ElapsedSeconds      float64                  `json:"elapsed_seconds"`
-	ObservationSeconds  float64                  `json:"observation_seconds,omitempty"`
-	Config              RunConfig                `json:"config"`
-	Metrics             MetricSet                `json:"metrics"`
-	Journeys            MetricSet                `json:"journeys"`
-	Steps               []StepResult             `json:"steps"`
-	Profiles            []ProfileResult          `json:"profiles,omitempty"`
-	Windows             []WindowResult           `json:"windows,omitempty"`
-	Outcome             string                   `json:"outcome"`
-	ErrorsRate          float64                  `json:"error_rate"`
-	Note                string                   `json:"note"`
-	IterationsStarted   int64                    `json:"iterations_started"`
-	IterationsCompleted int64                    `json:"iterations_completed"`
-	ArrivalsScheduled   int64                    `json:"arrivals_scheduled"`
-	ArrivalsDropped     int64                    `json:"arrivals_dropped"`
-	ArrivalsDroppedLate int64                    `json:"arrivals_dropped_late,omitempty"`
-	ArrivalsDroppedBusy int64                    `json:"arrivals_dropped_busy,omitempty"`
-	SchedulerLagP95MS   float64                  `json:"scheduler_lag_p95_ms,omitempty"`
-	SchedulerLagMaxMS   float64                  `json:"scheduler_lag_max_ms,omitempty"`
-	AverageInFlight     float64                  `json:"average_in_flight_requests,omitempty"`
-	LittleLawEstimate   float64                  `json:"little_law_in_flight_estimate,omitempty"`
-	Warnings            []string                 `json:"warnings,omitempty"`
-	Generator           *generatorhealth.Summary `json:"generator,omitempty"`
-	Quality             *Quality                 `json:"data_quality,omitempty"`
-	Signals             []Signal                 `json:"diagnostic_signals,omitempty"`
+	SchemaVersion         int                      `json:"schema_version"`
+	Name                  string                   `json:"name"`
+	Target                string                   `json:"target"`
+	StartedAt             string                   `json:"started_at"`
+	ElapsedSeconds        float64                  `json:"elapsed_seconds"`
+	ObservationSeconds    float64                  `json:"observation_seconds,omitempty"`
+	Config                RunConfig                `json:"config"`
+	Metrics               MetricSet                `json:"metrics"`
+	Journeys              MetricSet                `json:"journeys"`
+	Steps                 []StepResult             `json:"steps"`
+	Profiles              []ProfileResult          `json:"profiles,omitempty"`
+	Windows               []WindowResult           `json:"windows,omitempty"`
+	Outcome               string                   `json:"outcome"`
+	ErrorsRate            float64                  `json:"error_rate"`
+	Note                  string                   `json:"note"`
+	IterationsStarted     int64                    `json:"iterations_started"`
+	IterationsCompleted   int64                    `json:"iterations_completed"`
+	ArrivalsScheduled     int64                    `json:"arrivals_scheduled"`
+	ArrivalsDropped       int64                    `json:"arrivals_dropped"`
+	ArrivalsDroppedLate   int64                    `json:"arrivals_dropped_late,omitempty"`
+	ArrivalsDroppedBusy   int64                    `json:"arrivals_dropped_busy,omitempty"`
+	SchedulerLagP95MS     float64                  `json:"scheduler_lag_p95_ms,omitempty"`
+	SchedulerLagMaxMS     float64                  `json:"scheduler_lag_max_ms,omitempty"`
+	AverageInFlight       float64                  `json:"average_in_flight_requests,omitempty"`
+	LittleLawEstimate     float64                  `json:"little_law_in_flight_estimate,omitempty"`
+	ObservedThinkTimeMS   float64                  `json:"observed_think_time_ms,omitempty"`
+	ThinkTimeObservations int                      `json:"think_time_observations,omitempty"`
+	Warnings              []string                 `json:"warnings,omitempty"`
+	Generator             *generatorhealth.Summary `json:"generator,omitempty"`
+	Quality               *Quality                 `json:"data_quality,omitempty"`
+	Signals               []Signal                 `json:"diagnostic_signals,omitempty"`
 }
 
 // WindowSeconds returns the configured workload window when the report records
