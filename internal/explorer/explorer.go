@@ -111,8 +111,8 @@ func WithRunner(ctx context.Context, base config.Validated, opt Options, runner 
 			p.Runs = append(p.Runs, r)
 			if r.Outcome != "PASS" {
 				p.Status = "FAIL"
-				if r.Outcome == "ABORTED" {
-					p.Status = "ABORTED"
+				if r.Outcome == "ABORTED" || r.Outcome == "INCONCLUSIVE" {
+					p.Status = r.Outcome
 				}
 				break
 			}
