@@ -34,6 +34,12 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	case "version", "--version", "-v":
 		fmt.Fprintf(stdout, "damocline %s (advanced HTTP pre-alpha)\n", Version)
 		return 0
+	case "start":
+		if len(args) != 1 {
+			fmt.Fprintln(stderr, "usage: damocline start")
+			return 2
+		}
+		return start(os.Stdin, stdout, stderr)
 	case "run":
 		return run(args[1:], stdout, stderr)
 	case "explore":
@@ -51,6 +57,7 @@ func help(w io.Writer) {
 	fmt.Fprint(w, `Damocline — find the limit before it finds you.
 
 Usage:
+  damocline start  # guided setup and execution
   damocline run --config scenario.json --authorized [--out reports/run.json]
   damocline run --config scenario.json --dry-run
   damocline explore --config scenario.json --min-users 2 --max-users 20 --stage-duration 20s --repeats 2 --authorized
