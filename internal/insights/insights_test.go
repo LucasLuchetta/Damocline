@@ -211,6 +211,18 @@ func TestReadRunAcceptsSchemaSixP95RankInterval(t *testing.T) {
 		t.Fatalf("schema-v6 report not readable: %+v err=%v", got, err)
 	}
 }
+
+func TestReadRunAcceptsSchemaSevenHTTPTrace(t *testing.T) {
+	r := report.Result{SchemaVersion: 7, Name: "Synthetic example", Target: "https://app.example.com", StartedAt: "2026-10-01T12:00:00Z", ElapsedSeconds: 30, ObservationSeconds: 30, Config: report.RunConfig{Users: 1}, Steps: []report.StepResult{{Name: "page", HTTPTrace: report.HTTPTrace{RequestAttemptCount: 1, CompleteCount: 1, RateWaitCount: 1}}}}
+	path := filepath.Join(t.TempDir(), "schema-v7.json")
+	if err := report.WriteJSON(path, r); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ReadRun(path)
+	if err != nil || got.SchemaVersion != 7 || len(got.Steps) != 1 || got.Steps[0].HTTPTrace.RequestAttemptCount != 1 {
+		t.Fatalf("schema-v7 timing report not readable: %+v err=%v", got, err)
+	}
+}
 func TestNoPrivateTargetInFixture(t *testing.T) {
 	r := synthetic()
 	if !strings.Contains(r.Target, "example.com") {

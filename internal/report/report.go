@@ -34,39 +34,53 @@ type MetricSet struct {
 // phase was not attempted (for example, DNS on a reused connection); it does
 // not mean the phase took zero time.
 type HTTPTrace struct {
-	WriteCount     int     `json:"request_write_count"`
-	WriteMS        float64 `json:"request_write_ms,omitempty"`
-	RateWaitCount  int     `json:"rate_wait_count"`
-	RateWaitMS     float64 `json:"rate_wait_ms,omitempty"`
-	DNSCount       int     `json:"dns_count"`
-	DNSMS          float64 `json:"dns_ms,omitempty"`
-	ConnectCount   int     `json:"connect_count"`
-	ConnectMS      float64 `json:"connect_ms,omitempty"`
-	TLSCount       int     `json:"tls_count"`
-	TLSMS          float64 `json:"tls_ms,omitempty"`
-	FirstByteCount int     `json:"first_byte_count"`
-	FirstByteMS    float64 `json:"first_byte_ms,omitempty"`
-	BodyCount      int     `json:"body_count"`
-	BodyMS         float64 `json:"body_ms,omitempty"`
-	CompleteCount  int     `json:"complete_count"`
-	CompleteMS     float64 `json:"complete_ms,omitempty"`
+	RequestAttemptCount    int     `json:"request_attempt_count"`
+	WriteCount             int     `json:"request_write_count"`
+	WriteMS                float64 `json:"request_write_ms,omitempty"`
+	WriteFailedCount       int     `json:"request_write_failed_count,omitempty"`
+	DNSStartCount          int     `json:"dns_start_count"`
+	RateWaitCount          int     `json:"rate_wait_count"`
+	RateWaitMS             float64 `json:"rate_wait_ms,omitempty"`
+	RateWaitCancelledCount int     `json:"rate_wait_cancelled_count,omitempty"`
+	DNSCount               int     `json:"dns_count"`
+	DNSMS                  float64 `json:"dns_ms,omitempty"`
+	ConnectCount           int     `json:"connect_count"`
+	ConnectStartCount      int     `json:"connect_start_count"`
+	ConnectMS              float64 `json:"connect_ms,omitempty"`
+	TLSCount               int     `json:"tls_count"`
+	TLSStartCount          int     `json:"tls_start_count"`
+	TLSMS                  float64 `json:"tls_ms,omitempty"`
+	FirstByteCount         int     `json:"first_byte_count"`
+	FirstByteMS            float64 `json:"first_byte_ms,omitempty"`
+	BodyCount              int     `json:"body_count"`
+	BodyMS                 float64 `json:"body_ms,omitempty"`
+	BodyIncompleteCount    int     `json:"body_incomplete_count,omitempty"`
+	CompleteCount          int     `json:"complete_count"`
+	CompleteMS             float64 `json:"complete_ms,omitempty"`
 }
 
 func (t *HTTPTrace) Record(o HTTPTrace) {
+	t.RequestAttemptCount += o.RequestAttemptCount
 	t.WriteCount += o.WriteCount
 	t.WriteMS += o.WriteMS
+	t.WriteFailedCount += o.WriteFailedCount
+	t.DNSStartCount += o.DNSStartCount
 	t.RateWaitCount += o.RateWaitCount
 	t.RateWaitMS += o.RateWaitMS
+	t.RateWaitCancelledCount += o.RateWaitCancelledCount
 	t.DNSCount += o.DNSCount
 	t.DNSMS += o.DNSMS
 	t.ConnectCount += o.ConnectCount
+	t.ConnectStartCount += o.ConnectStartCount
 	t.ConnectMS += o.ConnectMS
 	t.TLSCount += o.TLSCount
+	t.TLSStartCount += o.TLSStartCount
 	t.TLSMS += o.TLSMS
 	t.FirstByteCount += o.FirstByteCount
 	t.FirstByteMS += o.FirstByteMS
 	t.BodyCount += o.BodyCount
 	t.BodyMS += o.BodyMS
+	t.BodyIncompleteCount += o.BodyIncompleteCount
 	t.CompleteCount += o.CompleteCount
 	t.CompleteMS += o.CompleteMS
 }
