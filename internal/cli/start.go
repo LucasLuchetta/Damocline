@@ -305,17 +305,21 @@ func start(input io.Reader, output, errOutput io.Writer) int {
 }
 
 func startWithMode(input io.Reader, output, errOutput io.Writer, mode string) int {
-	return startWithModeAndHeader(input, output, errOutput, mode, true)
+	return startWithModeAndHeader(input, output, errOutput, mode, true, true)
 }
 
 func startWithModeNoBanner(input io.Reader, output, errOutput io.Writer, mode string) int {
-	return startWithModeAndHeader(input, output, errOutput, mode, false)
+	return startWithModeAndHeader(input, output, errOutput, mode, false, false)
 }
 
-func startWithModeAndHeader(input io.Reader, output, errOutput io.Writer, mode string, showHeader bool) int {
+func startWithModeAndHeader(input io.Reader, output, errOutput io.Writer, mode string, showHeader, checkUpdates bool) int {
 	w := wizard{input: bufio.NewReader(input), out: output}
-	if handled, exitCode := promptUpdate(&w, errOutput, mode); handled {
-		return exitCode
+	// The no-argument home screen already checked updates before its logo/menu.
+	// Direct interactive subcommands still check here before their setup wizard.
+	if checkUpdates {
+		if handled, exitCode := promptUpdate(&w, errOutput, mode); handled {
+			return exitCode
+		}
 	}
 	if showHeader {
 		fmt.Fprintln(output, "DAMOCLINE")
