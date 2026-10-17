@@ -30,6 +30,7 @@ const soakDuration = 30 * time.Second
 
 type assessment struct {
 	SchemaVersion  int                `json:"schema_version"`
+	Preflight       preflightRecord    `json:"preflight"`
 	Status         string             `json:"status"`
 	At             string             `json:"at"`
 	OS             string             `json:"os"`
@@ -153,6 +154,7 @@ func runMatrix(path string, repeats int, extended bool) error {
 	if extended && repeats > 2 {
 		return errors.New("extended matrix permits at most two repeats within the hard deadline")
 	}
+	preflightStarted := time.Now().UTC()
 	ctx, cancel := context.WithTimeout(context.Background(), 160*time.Second)
 	defer cancel()
 	exe, err := os.Executable()
@@ -297,6 +299,35 @@ func runMatrix(path string, repeats int, extended bool) error {
 	result.Checks = append(result.Checks, checkFailures(result.FailureRun, result.FailureServer)...)
 	if len(result.Checks) == 0 {
 		result.Status = "REFERENCE_SMOKE_PASSED"
+	}
+	observedStages := make([]preflightStage, 0, len(result.Runs))
+	for i, stage := range result.Runs {
+		observedStages = append(observedStages, preflightStage{
+			ArrivalRate: rates[i], Scheduled: stage.ArrivalsScheduled,
+			Started: stage.IterationsStarted, Completed: stage.IterationsCompleted,
+			Dropped: stage.ArrivalsDropped, Outcome: stage.Outcome,
+		})
+	}
+	result.Preflight, err = newPreflightRecord(
+		preflightStarted, time.Now().UTC(),
+		preflightGenerator{
+			OS: runtime.GOOS, Arch: runtime.GOARCH, LogicalCPUs: runtime.NumCPU(),
+			GOMAXPROCS: runtime.GOMAXPROCS(0), GoVersion: runtime.Version(),
+			RunnerVersion: sourceRunnerVersion(),
+		},
+		preflightFixture{
+			NetworkMode: "loopback_same_host_separate_process",
+			WorkloadModel: "open_loop_journey_arrivals",
+			Method: "GET", HealthyResponseBytes: 4 << 10,
+			HealthyDelay: "20ms", StageDuration: stageDuration.String(),
+			SoakDuration: soakDuration.String(), StageUsers: 10,
+			MaximumRPS: 100, Repeats: repeats, Extended: extended,
+			HealthyRates: append([]int(nil), rates...),
+		},
+		observedStages, result.Status,
+	)
+	if err != nil {
+		return fmt.Errorf("construct preflight evidence: %w", err)
 	}
 	if err := report.WriteAnyJSON(path, result); err != nil {
 		return err
