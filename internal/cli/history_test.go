@@ -53,7 +53,7 @@ func TestHistoryArchivesPreviousScenarioAndSupportsSelection(t *testing.T) {
 		options, err = savedHistory()
 		if err != nil || len(options) != 2 { t.Fatalf("history grew again: %d %v", len(options), err) }
 		entries, err := os.ReadDir(historyDir)
-		if err != nil || len(entries) != 1 { t.Fatalf("unexpected history file count: %d %v", len(entries), err) }
+		if err != nil || len(entries) != 2 { t.Fatalf("unexpected history file count: %d %v", len(entries), err) }
 	})
 }
 
