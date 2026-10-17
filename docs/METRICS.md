@@ -28,6 +28,16 @@ Do not describe a request rate, open TCP connection count, or total logins as "s
 
 A **partly open session model**—independent session arrivals followed by dependent requests and think times within each session—is not implemented. Open-loop journey arrivals and closed-loop VUs answer different questions and are not interchangeable.
 
+## Evidence-aware bottleneck signals (G0-05 partial)
+
+`diagnostic_signals` identifies observable symptoms separately from causal conclusions. A client-side `max_rps` ceiling, missed journey starts, exhausted synthetic workers or high sampled generator CPU are not evidence of server saturation. `HTTP_ERROR_RESPONSE` means an observed 4xx/5xx status, not proof that CPU, a database or connection pool caused the failure. Missing telemetry is flagged explicitly; where no supported signal exists, `BOTTLENECK_NOT_ESTABLISHED` indicates that root cause is unknown. Full connection-pool and infrastructure-level attribution remains unimplemented.
+
+## Measurement data quality (initial G0-16 slice)
+
+New run reports include `data_quality.state` and a bounded `data_quality.findings` list. The state is distinct from `outcome` (observed request/step SLO PASS/FAIL/INCONCLUSIVE). Arithmetic contradictions between scheduled/started/dropped work, negative counts, impossible request or journey totals, or invalid durations are `INVALID`. Missing generator process samples, dropped/cancelled work, client-rate saturation and the absence of workload-equivalent preflight evidence are described as `LIMITED`. Invalid accounting cannot remain an observed PASS.
+
+The `VALID_WITHIN_ENVELOPE` enum is **reserved** until an independently validated, equivalent generator envelope can be linked to the tested application workload. This stage does not emit that state; a run can legitimately have an SLO `PASS` and measurement evidence `LIMITED` simultaneously. Data quality findings never embed requested URLs, secrets, step names, or response content. Previously recorded reports may lack the optional quality field; missing is **not** equivalent to validated.
+
 ## Statistical interpretation and generator health
 
 The error-rate assessment includes a one-sided 95% upper bound. With zero observed errors it uses an exact binomial bound; with observed errors it uses a Wilson upper score bound. Both treat outcomes as independent, stationary Bernoulli trials. Real requests may be correlated within a VU, time window, or deployment, so the bound is conditional evidence rather than a reliability guarantee.

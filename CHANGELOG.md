@@ -5,7 +5,13 @@ This project follows a human-maintained changelog. No release exists yet.
 ## [Unreleased]
 
 ### Added
-- Add `damocline-calibrate --transport-matrix` for bounded loopback HTTP, trusted HTTPS, and untrusted-certificate rejection checks; add a fail-fast PowerShell local-validation script that verifies all calibration report statuses.
+- Add a fail-fast PowerShell local validation script that runs the full Go test suite and verifies baseline, extended, repeated, and transport-matrix calibration artifacts.
+- Add a bounded, local-only HTTP transport fixture matrix (0/1/4/64 KiB, stream, 503, keep-alive/close, private TLS and controlled tail delays) with independent client/server ledgers, schema validation and Linux/Windows CI; distinguish transport checks from native scheduler calibration.
+- Compare preflight age and basic runtime/source compatibility offline without pretending OS metadata attests physical host identity; stale or mismatched evidence invalidates apparent fixture equivalence.
+- Include distinct, bounded diagnostic signals for generator rate cap, busy workers, missed starts, process CPU pressure, HTTP error responses and unknown bottlenecks without claiming server causality.
+- Include separate data-quality findings in HTTP run reports: impossible accounting is INVALID, generator/delivery/preflight uncertainty is LIMITED, and missing independent calibration never yields a false VALID_WITHIN_ENVELOPE claim.
+- Add an offline, fail-closed G0-02 reference coverage assessment (`damocline-calibrate --check-scenario ... --calibration ...`), comparing exact measured rates, simple request mix, VUs, duration, protocol and safety ceilings while exposing unverified payload/connection/host evidence. Output is always `INCONCLUSIVE` until stronger validity gates exist and never contacts the target.
+- Embed a versioned, sanitized local loopback preflight record in calibration reports with generator/runner identity, UTC test window, fixture fingerprint, per-stage delivered arrivals and the highest *tested passing* rate. It does not certify real application capacity.
 - Add validated workload-revision and environment labels to HTTP reports; offline comparisons require matching complete workload conditions and label environment changes as non-causal evidence.
 - Add opt-in, environment-backed synthetic data prefixes and a per-journey `{{synthetic_id}}` template value for isolated write workflows; generated identifiers remain out of reports.
 - Add an IID-assumption, normal-approximation P95 order-statistic-rank interval when tail sample adequacy permits; preserve its limitations in the CLI and report schema v6.

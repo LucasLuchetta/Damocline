@@ -225,6 +225,16 @@ go run ./cmd/damocline version
 
 For safe local testing, real authenticated application testing, and Windows instructions, see the [MVP quick start](docs/QUICKSTART.md). Use `--dry-run` to validate first, then `--authorized` to actually generate bounded traffic.
 
+**Optional local HTTP transport reference:** Run `go run ./cmd/damocline-calibrate --transport-matrix --out .damocline/calibration/transport.json` to verify bounded response-size, TLS, keep-alive, streaming, controlled delay and failure fixtures. The matrix never calls a customer application and does **not** certify the native generator scheduler or application capacity.
+
+**Offline reference suitability check:** After running the separate-process calibrator, you can check how your requested workload differs from its *actual* measured envelope without sending a single request to your application:
+
+```powershell
+go run ./cmd/damocline-calibrate --check-scenario examples/weighted-profiles-readonly.json --calibration .damocline/calibration/reference.json
+```
+
+This intentionally produces `INCONCLUSIVE` for application-capacity readiness: the reference validates only specific loopback rates and one 4 KiB GET, not your application's response sizes, TLS/network path, auth or session mix. See [reference validity and coverage](docs/REFERENCE_VALIDATION.md) for exact evidence and limitations.
+
 ## Principles
 
 1. **Evidence before estimates.** Capacity is always tied to a specific workload, duration, environment, and acceptance criteria.

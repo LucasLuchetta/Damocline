@@ -5,16 +5,12 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
-	"io"
-	"log"
 	"net"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"os/exec"
 	"runtime"
@@ -26,6 +22,7 @@ import (
 	"github.com/LucasLuchetta/Damocline/internal/config"
 	"github.com/LucasLuchetta/Damocline/internal/engine"
 	"github.com/LucasLuchetta/Damocline/internal/reference"
+	"github.com/LucasLuchetta/Damocline/internal/protocolcheck"
 	"github.com/LucasLuchetta/Damocline/internal/report"
 )
 
@@ -34,6 +31,7 @@ const soakDuration = 30 * time.Second
 
 type assessment struct {
 	SchemaVersion  int                `json:"schema_version"`
+	Preflight       preflightRecord    `json:"preflight"`
 	Status         string             `json:"status"`
 	At             string             `json:"at"`
 	OS             string             `json:"os"`
@@ -61,8 +59,42 @@ func main() {
 	out := flag.String("out", ".damocline/calibration/reference.json", "local JSON result path")
 	repeats := flag.Int("repeats", 1, "repeat the fixed three-stage matrix (1..3)")
 	extended := flag.Bool("extended", false, "add bounded 15, 20, 50, and 100 arrivals/s loopback stages; allows up to two repeats")
-	transportMatrix := flag.Bool("transport-matrix", false, "run bounded local HTTP and trusted/untrusted HTTPS transport checks")
+	transportMatrix := flag.Bool("transport-matrix", false, "run a bounded, loopback-only HTTP transport fixture matrix (not a capacity test)")
+	checkScenario := flag.String("check-scenario", "", "offline-only: compare a scenario against a saved local reference artifact")
+	calibration := flag.String("calibration", ".damocline/calibration/reference.json", "local reference JSON to use with --check-scenario")
 	flag.Parse()
+	if *transportMatrix {
+		if *serve || *checkScenario != "" {
+			fmt.Fprintln(os.Stderr, "--transport-matrix cannot be combined with --serve or --check-scenario")
+			os.Exit(1)
+		}
+		result := protocolcheck.Run(context.Background())
+		if err := protocolcheck.Validate(result); err != nil {
+			fmt.Fprintln(os.Stderr, "transport matrix is incomplete or failed:", err)
+			os.Exit(1)
+		}
+		if err := report.WriteAnyJSON(*out, result); err != nil {
+			fmt.Fprintln(os.Stderr, "cannot write transport evidence:", err)
+			os.Exit(1)
+		}
+		fmt.Println(protocolcheck.Summary(result))
+		if result.Status != "TRANSPORT_FIXTURES_PASSED" { os.Exit(1) }
+		return
+	}
+	if *checkScenario != "" {
+		if *serve {
+			fmt.Fprintln(os.Stderr, "--serve cannot be combined with offline --check-scenario")
+			os.Exit(1)
+		}
+		if err := runOfflineCoverage(*calibration, *checkScenario, os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			if errors.Is(err, errInconclusive) {
+				os.Exit(2)
+			}
+			os.Exit(1)
+		}
+		return
+	}
 	if *serve {
 		if err := runFixture(); err != nil {
 			fmt.Fprintln(os.Stderr, err)
@@ -70,115 +102,10 @@ func main() {
 		}
 		return
 	}
-	var err error
-	if *transportMatrix {
-		if *extended || *repeats != 1 {
-			err = errors.New("--transport-matrix cannot be combined with --extended or non-default --repeats")
-		} else {
-			err = runTransportMatrix(*out)
-		}
-	} else {
-		err = runMatrix(*out, *repeats, *extended)
-	}
-	if err != nil {
+	if err := runMatrix(*out, *repeats, *extended); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-}
-
-type transportCheck struct {
-	Name           string         `json:"name"`
-	Outcome        string         `json:"outcome"`
-	Requests       int            `json:"requests"`
-	Success        int            `json:"success"`
-	Failures       int            `json:"failures"`
-	Reasons        map[string]int `json:"failure_reasons,omitempty"`
-	ServerReceived int64          `json:"server_received"`
-}
-
-type transportAssessment struct {
-	SchemaVersion int              `json:"schema_version"`
-	Status        string           `json:"status"`
-	At            string           `json:"at"`
-	OS            string           `json:"os"`
-	Arch          string           `json:"arch"`
-	Checks        []transportCheck `json:"checks"`
-	Limitations   []string         `json:"limitations"`
-}
-
-func runTransportMatrix(path string) error {
-	var httpRequests atomic.Int64
-	httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		httpRequests.Add(1)
-		time.Sleep(20 * time.Millisecond)
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write(make([]byte, 4<<10))
-	}))
-	defer httpServer.Close()
-
-	var httpsRequests atomic.Int64
-	httpsServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		httpsRequests.Add(1)
-		time.Sleep(20 * time.Millisecond)
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write(make([]byte, 4<<10))
-	}))
-	httpsServer.Config.ErrorLog = log.New(io.Discard, "", 0)
-	defer httpsServer.Close()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
-	defer cancel()
-	result := transportAssessment{SchemaVersion: 1, Status: "CHECKS_FAILED", At: time.Now().UTC().Format(time.RFC3339), OS: runtime.GOOS, Arch: runtime.GOARCH,
-		Checks: []transportCheck{}, Limitations: []string{"Loopback transport results do not measure internet DNS, routing, proxies, or remote TLS termination.", "The trusted TLS stage uses only the local fixture certificate; it does not establish trust settings for any external target.", "The untrusted TLS stage verifies certificate rejection and transport-error accounting, not application capacity."}}
-
-	plain := runTransportStage(ctx, "http", httpServer.URL, nil)
-	plain.ServerReceived = httpRequests.Load()
-	result.Checks = append(result.Checks, plain)
-	trustedPool := httpsServer.Client().Transport.(*http.Transport).TLSClientConfig.RootCAs
-	trustedBefore := httpsRequests.Load()
-	trusted := runTransportStage(ctx, "https_trusted_fixture", httpsServer.URL, trustedPool)
-	trusted.ServerReceived = httpsRequests.Load() - trustedBefore
-	result.Checks = append(result.Checks, trusted)
-	untrustedBefore := httpsRequests.Load()
-	untrusted := runTransportStage(ctx, "https_untrusted_fixture", httpsServer.URL, nil)
-	untrusted.ServerReceived = httpsRequests.Load() - untrustedBefore
-	result.Checks = append(result.Checks, untrusted)
-	if transportChecksPass(result.Checks) {
-		result.Status = "TRANSPORT_MATRIX_PASSED"
-	}
-	if err := report.WriteAnyJSON(path, result); err != nil {
-		return err
-	}
-	fmt.Printf("%s: HTTP and trusted HTTPS each delivered 10 requests; untrusted HTTPS was rejected before reaching the fixture. Report: %s\n", result.Status, path)
-	if result.Status != "TRANSPORT_MATRIX_PASSED" {
-		return errors.New("transport matrix checks failed; inspect the local report")
-	}
-	return nil
-}
-
-func runTransportStage(ctx context.Context, name, target string, roots *x509.CertPool) transportCheck {
-	scenario := config.Scenario{Name: "Local transport " + name, BaseURL: target, Users: 2, Duration: "5s", MaxRPS: 2,
-		Mode: "arrival", ArrivalRate: 2, Timeout: "1s", P95LimitMS: 1000, MaxErrorRate: 0,
-		Steps: []config.Step{{Name: "transport", Method: "GET", Path: "/", ExpectedStatus: []int{200}}}}
-	validated, err := config.Parse(scenario, config.Options{Authorized: true, TLSRootCAs: roots})
-	if err != nil {
-		return transportCheck{Name: name, Outcome: "CONFIG_ERROR"}
-	}
-	run := engine.Run(ctx, validated)
-	return transportCheck{Name: name, Outcome: run.Outcome, Requests: run.Metrics.Total, Success: run.Metrics.Success, Failures: run.Metrics.Failures, Reasons: run.Metrics.Reasons}
-}
-
-func transportChecksPass(checks []transportCheck) bool {
-	if len(checks) != 3 {
-		return false
-	}
-	for _, check := range checks[:2] {
-		if check.Outcome != "PASS" || check.Requests != 10 || check.Success != 10 || check.Failures != 0 || check.ServerReceived != 10 {
-			return false
-		}
-	}
-	untrusted := checks[2]
-	return untrusted.Outcome == "FAIL" && untrusted.Requests == 10 && untrusted.Success == 0 && untrusted.Failures == 10 && untrusted.Reasons["transport"] == 10 && untrusted.ServerReceived == 0
 }
 
 func runFixture() error {
@@ -263,6 +190,7 @@ func runMatrix(path string, repeats int, extended bool) error {
 	if extended && repeats > 2 {
 		return errors.New("extended matrix permits at most two repeats within the hard deadline")
 	}
+	preflightStarted := time.Now().UTC()
 	ctx, cancel := context.WithTimeout(context.Background(), 160*time.Second)
 	defer cancel()
 	exe, err := os.Executable()
@@ -407,6 +335,35 @@ func runMatrix(path string, repeats int, extended bool) error {
 	result.Checks = append(result.Checks, checkFailures(result.FailureRun, result.FailureServer)...)
 	if len(result.Checks) == 0 {
 		result.Status = "REFERENCE_SMOKE_PASSED"
+	}
+	observedStages := make([]preflightStage, 0, len(result.Runs))
+	for i, stage := range result.Runs {
+		observedStages = append(observedStages, preflightStage{
+			ArrivalRate: rates[i], Scheduled: stage.ArrivalsScheduled,
+			Started: stage.IterationsStarted, Completed: stage.IterationsCompleted,
+			Dropped: stage.ArrivalsDropped, Outcome: stage.Outcome,
+		})
+	}
+	result.Preflight, err = newPreflightRecord(
+		preflightStarted, time.Now().UTC(),
+		preflightGenerator{
+			OS: runtime.GOOS, Arch: runtime.GOARCH, LogicalCPUs: runtime.NumCPU(),
+			GOMAXPROCS: runtime.GOMAXPROCS(0), GoVersion: runtime.Version(),
+			RunnerVersion: sourceRunnerVersion(),
+		},
+		preflightFixture{
+			NetworkMode: "loopback_same_host_separate_process",
+			WorkloadModel: "open_loop_journey_arrivals",
+			Method: "GET", HealthyResponseBytes: 4 << 10,
+			HealthyDelay: "20ms", StageDuration: stageDuration.String(),
+			SoakDuration: soakDuration.String(), StageUsers: 10,
+			MaximumRPS: 100, Repeats: repeats, Extended: extended,
+			HealthyRates: append([]int(nil), rates...),
+		},
+		observedStages, result.Status,
+	)
+	if err != nil {
+		return fmt.Errorf("construct preflight evidence: %w", err)
 	}
 	if err := report.WriteAnyJSON(path, result); err != nil {
 		return err

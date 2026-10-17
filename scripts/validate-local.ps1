@@ -29,7 +29,7 @@ $expectedReports = @(
     @{ Path = '.damocline/calibration/reference.json'; Status = 'REFERENCE_SMOKE_PASSED' },
     @{ Path = '.damocline/calibration/reference-extended.json'; Status = 'REFERENCE_SMOKE_PASSED' },
     @{ Path = '.damocline/calibration/reference-repeats.json'; Status = 'REFERENCE_SMOKE_PASSED' },
-    @{ Path = '.damocline/calibration/transport.json'; Status = 'TRANSPORT_MATRIX_PASSED' }
+    @{ Path = '.damocline/calibration/transport.json'; Status = 'TRANSPORT_FIXTURES_PASSED' }
 )
 
 foreach ($expected in $expectedReports) {

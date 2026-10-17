@@ -10,20 +10,6 @@ go run ./cmd/damocline-calibrate --out .damocline/calibration/reference.json
 
 The command has a 160-second hard deadline and includes a 30-second sustained stage at 10 journey arrivals per second. It runs three five-second healthy stages at 2, 5, and 10 arrivals per second, then the soak, a deliberately slow single-worker stage, and a known-error/recovery stage. In the healthy matrix, each stage has exactly `rate * 5` scheduled arrivals: 10, 25, and 50 (85 total). The soak must reconcile all 300 arrivals and retain at least 100 generator/process samples. The controlled error stage returns two HTTP 503 responses followed by eight successes. The overload stage must report worker-busy drops, refuse PASS, and reconcile requests that were received, completed, or cancelled at the run boundary.
 
-Run a separate bounded transport matrix to verify ordinary HTTP, HTTPS with
-the local fixture certificate trusted, and HTTPS rejection when that
-certificate is untrusted:
-
-```powershell
-go run ./cmd/damocline-calibrate --transport-matrix --out .damocline/calibration/transport.json
-```
-
-Each stage makes ten requests over loopback. The untrusted TLS stage must
-record ten transport failures and zero requests accepted by that HTTPS
-fixture. This validates local certificate handling and failure accounting; it
-does not exercise remote DNS, proxies, TLS termination, internet connections,
-or the target application's HTTPS configuration.
-
 To run the automated Go suite and all four local calibration artifacts with
 fail-fast status checking, use:
 
@@ -38,6 +24,52 @@ that final message.
 The reference response delay is 20 ms with a 4 KiB body. The check accepts observed request and journey p50/p95 values between 15 and 150 ms, scheduler p95 lag below half of the arrival interval, and maximum lag below one interval. It rejects sampled generator CPU at or above 90%, heap above 256 MiB, or process RSS above 512 MiB. These broad bounds catch gross timing/accounting mistakes and an obviously saturated generator; they are not calibrated precision tolerances or universal performance guarantees. Go-runtime and OS process CPU/RSS samples must be present on Windows/Linux. Their readings describe only the generator; CPU is normalized to its GOMAXPROCS value, not the host or target.
 
 `REFERENCE_SMOKE_PASSED` means only that these bounded local cases reconciled on this host. It does not establish maximum generator throughput, cross-platform accuracy, sustained capacity, or application capacity. Keep the JSON private under the gitignored `.damocline/` directory; it records local environment metadata and timing evidence.
+
+## Versioned local preflight metadata (G0-01)
+
+The same calibration report embeds a `preflight` object (schema version `1`), preserving the existing top-level calibration schema and traffic limits. It records the generator OS/arch, logical CPUs, GOMAXPROCS, Go version and runner source revision; UTC test start/end; same-host, separate-process loopback fixture mode; GET-only arrivals, 4 KiB healthy response, 20 ms delay, 5-second stages, 30-second soak, configured rates/repeats; and each healthy stage's scheduled, started, completed, dropped and outcome counts.
+
+The `scenario_fingerprint_sha256` hashes **only** this fixed, non-secret fixture configuration. It is not a tamper-proof signature or a fingerprint of a customer workload. The `highest_passing_tested_arrival_rate` appears as a positive value only when **the entire** reference check passed, and describes the highest successful **tested** rate—not the generator's maximum capacity.
+
+The new metadata excludes temporary loopback ports, customer hostnames, request paths, credentials, headers, tokens, environment-variable values, and bodies. The local artifact must remain private: other sections of the existing report still include host measurements. Regression tests cover schema round-trips, unknown/incompatible versions, invalid fixture fingerprints, unsafe version metadata, failed-stage handling, and secret-marker absence.
+
+**Not a client-workload readiness certificate:** a passing 4 KiB loopback reference cannot verify unrelated HTTPS traffic, payload sizes, multi-step sessions, or real client networks. Workload equivalence, artifact freshness and host matching remain explicitly open under G0-02/G0-08.
+
+## Compare a requested scenario with the measured reference (G0-02)
+
+Run this **offline** command after generating a local reference JSON. It reads a bounded calibration file and a scenario file, but does not contact the application's URL, launch test traffic, or access its credentials:
+
+```powershell
+go run ./cmd/damocline-calibrate --check-scenario examples/weighted-profiles-readonly.json --calibration .damocline/calibration/reference.json
+```
+
+The output is structured JSON with `status: "INCONCLUSIVE"`, a `request_shape` summary, exact `tested_arrival_rates`, and per-dimension `MATCHED`, `OUTSIDE_REFERENCE`, or `UNVERIFIED` findings. The CLI exits with code 2 when inconclusive (note that `go run` itself may report this as `exit status 2` and exit with code 1). Malformed scenarios produce an input error, not synthetic traffic.
+
+This is **not a capacity-pass command**. It checks explicitly whether the declared VU/worker count, arrival rate, workload model, simple GET-only request mix, durations, timeout, ceiling, and URL transport resemble the tested fixture. Only the *exact* arrival rates in the preflight record can match; 25 arrivals/s is **not** assumed validated from nearby passing 20 and 50 arrivals/s stages. A closed-loop workload cannot be equated to open-loop arrivals.
+
+The existing fixture measures a 20 ms, 4 KiB, unencrypted IPv4-loopback GET. Scenario JSON does not establish the target's real response-body distribution, connection reuse, server identity or generator equivalence. For that reason even a declared workload that resembles the fixture remains **INCONCLUSIVE**; an HTTPS/remote/authenticated/multi-workflow scenario reports additional explicit mismatches. No passing fixture rate, including 100 arrivals/s, authorizes an unmeasured target or implies a universal maximum. `G0-03` will extend payload/transport reference matrices, and `G0-08` will enforce host, age and evidence-quality gates.
+
+A missing, failed, inconsistent, oversized, or unsupported calibration produces an inconclusive comparison, never acceptance. The output deliberately omits scenario names, URLs, routes, headers, credentials and extracted values. Treat the input and local calibration files as private.
+
+## Expanded transport-only reference matrix (G0-03 partial)
+
+Use the optional bounded fixture matrix to exercise Go HTTP transports with an **independent** client/server ledger, without contacting an application or using actual user data:
+
+```powershell
+go run ./cmd/damocline-calibrate --transport-matrix --out .damocline/calibration/transport.json
+```
+
+It executes ten small local HTTP(S) fixture variants (30 total HTTP GETs): 0/1/4/64 KiB responses, normal keep-alive, explicitly disabled connection reuse, 40 ms delayed responses, streaming with flush, known HTTP 503 errors, and ephemeral **fixture-only** TLS. All requests use `httptest` loopback servers with no outbound DNS or proxies. Each case independently reconciles the request count and response status/size. The JSON report uses a separate schema (`http_transport_reference` version 1) and does not contain dynamic endpoint URLs, certs, customer paths or secrets. CI runs this matrix on Linux and Windows.
+
+**Native-engine regression coverage:** the automated Go test suite additionally runs the actual Damocline engine/scheduler against independently counted 1/4/64 KiB HTTP fixtures, a controlled latency-tail fixture and a connection-close fixture, with a bounded 5 journey starts/s for two seconds each. These are regression cases and are not an independently calibrated throughput envelope. The transport matrix CLI remains an independent check and does not run the scheduler.
+
+**Scientific boundary:** the CLI transport matrix checks the Go transport and fixture semantics; it **does not run the Damocline engine's scheduler**, nor quantify TLS setup precision, real DNS latency, HTTP/2, a remote network, streaming under production load, or a maximum rate. It does not expand the baseline `preflight` fingerprint or certify any additional application workload. Dynamic payload distributions, connect/DNS faults and validated generator delivery for these new combinations are future G0-03 work.
+
+## Offline evidence freshness and provenance (G0-08 partial)
+
+The `--check-scenario` command also emits `calibration_age`, `runtime_compatibility` and `host_identity` dimensions. A future-dated artifact (beyond five minutes), a calibration older than a **conservative operational 24-hour review threshold**, or a mismatch in OS/architecture/Go version/CPU configuration/known source revision makes the declared shape `NOT_ESTABLISHED`. This 24-hour threshold is a warning policy, **not** a validated statistical expiry.
+
+An unavailable source revision stays `UNVERIFIED`; even matching runtime attributes do not identify the actual machine. `host_identity` therefore remains `UNVERIFIED`. A `MATCHED` age or runtime observation does not change the mandatory overall `INCONCLUSIVE` verdict. An invalid calibration cannot lend any passing rate evidence.
 
 Repeat the healthy matrix three times to inspect short-run variability:
 
