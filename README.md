@@ -85,6 +85,20 @@ Browser login session reuse **does not replay login forms**, create distinct use
 
 See [Source installation and browser login](docs/SOURCE_INSTALL.md) and [Guided CLI](docs/INTERACTIVE_START.md).
 
+## Understand what your result means
+
+Damocline prints a human-readable **assessment** after every `run` and can explain previously saved reports offline:
+
+```powershell
+damocline report --file .damocline/reports/your-run.json
+damocline report --file .damocline/reports/later-run.json --compare .damocline/reports/earlier-run.json
+damocline report --file .damocline/reports/your-run.json --host host.json
+```
+
+It distinguishes **meeting your p95/error objectives** from **proving user capacity** and **having evidence that a bigger server is needed**. Achieved RPS is not the configured `max_rps` ceiling; HTTP request latency is not complete journey duration. A single PASS cannot certify infrastructure headroom.
+
+See [Understand your results](docs/REPORT_EXPLAINER.md) for interpretation, sample-size and comparison warnings. The command never sends traffic.
+
 ## Repeat a saved scenario
 
 The guided CLI now supports English slash commands:

@@ -4,6 +4,11 @@ This project follows a human-maintained changelog. No release exists yet.
 
 ## [Unreleased]
 
+### Improved
+- Human-readable offline result assessment via `damocline report --file`, optional comparisons and aligned Linux host data; assessment also prints after `run`.
+- Explicit distinction between configured RPS ceiling, achieved throughput, request p95, journey p95, tested user levels, and evidence for infrastructure upgrades.
+- Safety-oriented caveats for small sample sizes, long-tail responses, shared sessions, dropped arrivals and uncontrolled comparisons.
+
 ### Fixed
 - Guided setup accepts bare domains and HTTPS origins with a trailing slash, and retries invalid addresses instead of aborting.
 - Removed third-party load-testing tool references from the interactive welcome banner.
