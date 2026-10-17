@@ -18,15 +18,31 @@ The guided CLI requests the application origin, authorized GET pages, authentica
 
 See [source install and browser security](SOURCE_INSTALL.md).
 
+## Slash commands and scenario history
+
+Use these **English** commands from PowerShell/CMD after installing the source launcher:
+
+```powershell
+damocline /start    # always create a new scenario
+damocline /history  # select and repeat a saved scenario
+damocline           # use current settings, start a new scenario, or open history
+```
+
+These are CLI arguments, not HTTP routes. When you open plain `damocline` and a saved profile exists, you may enter `/start` or `/history` at the profile prompt. The original `damocline start` interactive wizard continues to work.
+
+History is **local to the launcher checkout's `.damocline` directory**, not global across different clones. On Windows the registered launcher switches to the source checkout before starting the program. Each distinct scenario is kept once and can be selected by number; switching scenarios preserves the current settings in history. Your original `.damocline/scenario.local.json` remains the active profile for compatibility. The history entries are configuration snapshots, not historical benchmark results; JSON run reports remain in `.damocline/reports/`.
+
+A selected scenario is **not executed automatically**. It still shows the plan, requires typing `AUTHORIZE` each time and a separate `y` to start. Browser-login mode opens a fresh temporary browser for manual login again; no session cookie is persisted. A scenario edited to include literal HTTP header values cannot be archived until those headers are changed to environment-variable references such as `${DAMOCLINE_SESSION_COOKIE}`.
+
 ## Saved settings
 
-First use creates private local files in the current directory:
+First use creates private local files in the source checkout's working directory (normally the launcher checkout):
 
 - **.damocline/scenario.local.json** — sanitized reusable scenario.
 - **.damocline/start.json** — guided mode settings.
-- **.damocline/reports/** — JSON reports after completed runs.
+- **.damocline/reports/** — JSON reports after completed runs.\n- **.damocline/history/** — snapshots of previously replaced scenarios, without resolved secrets.
 
-The .damocline folder is gitignored by the project. No cookie values are saved. When you type **damocline start** again from that directory, press Enter to use the saved profile, or answer "n" to create a new one.
+The .damocline folder is gitignored by the project. No cookie values are saved. When you type **damocline** again, press Enter to reuse the current profile, or choose `/start` or `/history` to create or select another scenario.
 
 ## Authentication
 
