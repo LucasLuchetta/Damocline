@@ -27,7 +27,7 @@ func readProcessHealth() (cpuSeconds float64, residentBytes uint64, ok bool) {
 	if err != nil {
 		return 0, 0, false
 	}
-	residentBytes, ok := residentBytesFromPages(pages, os.Getpagesize())
+	residentBytes, ok = residentBytesFromPages(pages, os.Getpagesize())
 	if !ok {
 		return 0, 0, false
 	}
