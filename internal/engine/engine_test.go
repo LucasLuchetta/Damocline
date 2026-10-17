@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/LucasLuchetta/Damocline/internal/config"
+	"github.com/LucasLuchetta/Damocline/internal/report"
 )
 
 func scenario(t *testing.T, url string, steps []config.Step) config.Validated {
@@ -37,8 +38,84 @@ func TestSuccess(t *testing.T) {
 	if result.Metrics.Success < 1 || result.Metrics.Failures != 0 || result.Outcome != "PASS" {
 		t.Fatalf("unexpected report: %+v", result)
 	}
-	if result.SchemaVersion != 6 || result.ObservationSeconds != v.Duration.Seconds() || result.Generator == nil || result.Generator.ProcessSamples < 2 {
-		t.Fatalf("report must include schema-v6 observation window and generator process observations: %+v", result)
+	if result.SchemaVersion != 7 || result.ObservationSeconds != v.Duration.Seconds() || result.Generator == nil || result.Generator.ProcessSamples < 2 {
+		t.Fatalf("report must include schema-v7 phase timing, observation window and generator process observations: %+v", result)
+	}
+}
+
+func TestHTTPTraceMeasuresLoopbackPhasesAndConnectionReuse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("trace body"))
+	}))
+	defer server.Close()
+	v := scenario(t, server.URL, []config.Step{{Name: "page", Path: "/"}})
+	v.Duration = 180 * time.Millisecond
+	v.Scenario.Users = 1
+	v.Scenario.MaxRPS = 10
+	r := Run(context.Background(), v)
+	if len(r.Steps) != 1 {
+		t.Fatalf("expected one step: %+v", r.Steps)
+	}
+	trace := r.Steps[0].HTTPTrace
+	if trace.CompleteCount != trace.RequestAttemptCount || trace.FirstByteCount == 0 || trace.BodyCount == 0 {
+		t.Fatalf("expected first-byte, body and complete observations: %+v", trace)
+	}
+	if trace.FirstByteMS < 0 || trace.BodyMS < 0 || trace.CompleteMS < trace.FirstByteMS {
+		t.Fatalf("invalid phase boundaries: %+v", trace)
+	}
+	if trace.ConnectCount < 1 || trace.ConnectCount >= trace.CompleteCount {
+		t.Fatalf("expected initial connection plus reused connections, got %+v", trace)
+	}
+	if trace.WriteCount != trace.CompleteCount {
+		t.Fatalf("request-write callbacks did not reconcile: %+v", trace)
+	}
+	if trace.RateWaitCount < trace.CompleteCount || trace.RateWaitMS < 0 {
+		t.Fatalf("rate wait should be measured separately for each admitted step: %+v", trace)
+	}
+}
+
+func TestHTTPTraceReconcilesFailedWriteAndTransportError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	}))
+	url := server.URL
+	server.CloseClientConnections()
+	server.Close()
+	v := scenario(t, url, []config.Step{{Name: "gone", Path: "/"}})
+	v.Duration = 400 * time.Millisecond
+	v.Timeout = 50 * time.Millisecond
+	v.Scenario.Users = 1
+	v.Scenario.MaxRPS = 10
+	r := Run(context.Background(), v)
+	if len(r.Steps) != 1 || r.Steps[0].Metrics.Failures == 0 {
+		t.Fatalf("expected a recorded local transport failure: %+v", r.Steps)
+	}
+	step := r.Steps[0]
+	if step.HTTPTrace.CompleteCount != step.HTTPTrace.RequestAttemptCount || step.HTTPTrace.RateWaitCount < step.HTTPTrace.CompleteCount || step.HTTPTrace.CompleteMS <= 0 {
+		t.Fatalf("transport-failure phase counters did not reconcile: %+v", step.HTTPTrace)
+	}
+	if r.Quality == nil || r.Quality.State == report.QualityInvalid {
+		t.Fatalf("valid failed-request trace must not make accounting invalid: %+v", r.Quality)
+	}
+}
+
+func TestHTTPTraceBodyTimeoutIsMarkedIncomplete(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.(http.Flusher).Flush()
+		_, _ = w.Write([]byte("first"))
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+	v := scenario(t, server.URL, []config.Step{{Name: "stream", Path: "/"}})
+	v.Duration = 400 * time.Millisecond
+	v.Timeout = 50 * time.Millisecond
+	v.Scenario.Users = 1
+	v.Scenario.MaxRPS = 10
+	r := Run(context.Background(), v)
+	if len(r.Steps) != 1 || r.Steps[0].HTTPTrace.FirstByteCount == 0 || r.Steps[0].HTTPTrace.BodyIncompleteCount == 0 || r.Steps[0].Metrics.Reasons["timeout"] == 0 {
+		t.Fatalf("incomplete streamed body was not captured: %+v", r.Steps)
 	}
 }
 

@@ -90,7 +90,7 @@ The *first functional release* need not wait for every P2 adapter or optional br
 
 ### G0-B — Standardize HTTP measurements and correctness
 
-- [ ] **G0-12:** Define exact timestamp boundaries for request queue wait, rate-token wait, DNS, TCP, TLS, first response byte, body receive, transport errors and full client-observed latency (e.g. Go `httptrace`). **Verify:** local deterministic phase fixtures and published metric semantics.
+- [ ] **G0-12:** Define exact timestamp boundaries for request queue wait, rate-token wait, DNS, TCP, TLS, first response byte, body receive, transport errors and full client-observed latency (e.g. Go `httptrace`). **Verify:** local deterministic phase fixtures and published metric semantics. **Partial slice in this PR:** per-step, bounded client trace totals/counts for rate wait, DNS, TCP, TLS, first byte, body read and full completion/error, tested against a local keep-alive fixture. First-byte is not server processing time; pure Transport queue time and callback accuracy calibration remain open.
 - [ ] **G0-13:** Record per-step request latency separately from journey elapsed time and configured think time; keep canceled/incomplete journeys distinct from completed percentile samples. **Verify:** scripted multi-step fixture with known pauses and aborts.
 - [ ] **G0-14:** Retain counters for HTTP status families, assertion failures, network timeouts, TLS failures, redirects, rate-limit suppression and unexpected response size. **Verify:** injected failure matrix with exact counts.
 - [ ] **G0-15:** Validate against a server-side request ledger at every test boundary, including admitted-but-incomplete work after graceful drain. **Verify:** conservation equations and failure-path integration tests.

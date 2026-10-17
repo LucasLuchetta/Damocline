@@ -10,11 +10,14 @@ import (
 )
 
 func TestHandlerRendersReport(t *testing.T) {
-	h := Handler(report.Result{Name: "Local report", Outcome: "PASS", Metrics: report.MetricSet{Total: 2, P95MS: 100}, Steps: []report.StepResult{{Name: "page"}}})
+	h := Handler(report.Result{Name: "Local report", Outcome: "PASS", Metrics: report.MetricSet{Total: 2, P95MS: 100}, Steps: []report.StepResult{{Name: "page", HTTPTrace: report.HTTPTrace{FirstByteCount: 1, FirstByteMS: 12, TLSCount: 1, TLSMS: 3}}}})
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/", nil))
 	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "Local report") || !strings.Contains(w.Body.String(), "page") {
 		t.Fatalf("unexpected page: %d %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "First byte") || !strings.Contains(w.Body.String(), "12.0 ms") || !strings.Contains(w.Body.String(), "3.0 ms (1)") {
+		t.Fatalf("report view omitted client phase timings: %s", w.Body.String())
 	}
 }
 

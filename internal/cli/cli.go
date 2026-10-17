@@ -180,6 +180,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	for _, st := range result.Steps {
 		fmt.Fprintf(stdout, "  - %s/%s: total=%d failures=%d p95=%.1f ms\n", st.Profile, st.Name, st.Metrics.Total, st.Metrics.Failures, st.Metrics.P95MS)
+		fmt.Fprintf(stdout, "    client timing totals: rate-wait=%.1f ms, DNS=%.1f ms (%d attempts), connect=%.1f ms (%d attempts), TLS=%.1f ms (%d attempts), request-write=%.1f ms (%d observations), first-byte=%.1f ms, body=%.1f ms, full=%.1f ms; first-byte is not server processing time.\n", st.HTTPTrace.RateWaitMS, st.HTTPTrace.DNSMS, st.HTTPTrace.DNSCount, st.HTTPTrace.ConnectMS, st.HTTPTrace.ConnectCount, st.HTTPTrace.TLSMS, st.HTTPTrace.TLSCount, st.HTTPTrace.WriteMS, st.HTTPTrace.WriteCount, st.HTTPTrace.FirstByteMS, st.HTTPTrace.BodyMS, st.HTTPTrace.CompleteMS)
 	}
 	for _, profile := range result.Profiles {
 		started := profile.Journeys.Total + profile.Journeys.Cancelled
