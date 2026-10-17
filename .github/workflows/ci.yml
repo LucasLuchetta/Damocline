@@ -30,3 +30,23 @@ jobs:
         run: go run ./cmd/damocline help
 
 # CI intentionally does not upload Windows .exe or other prebuilt binaries.
+
+  windows-launcher:
+    name: Windows source installer and CMD shim
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Install the source launcher (no packaged EXE)
+        shell: pwsh
+        run: .\setup.cmd
+      - name: Invoke the registered launcher
+        shell: pwsh
+        run: |
+          $launcher = Join-Path $env:LOCALAPPDATA 'Damocline\bin\damocline.cmd'
+          if (-not (Test-Path $launcher)) { throw 'Missing source launcher' }
+          & $launcher help
+          if ($LASTEXITCODE -ne 0) { throw 'Source CLI did not start successfully' }
