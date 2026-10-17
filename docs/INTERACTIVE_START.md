@@ -23,16 +23,25 @@ See [source install and browser security](SOURCE_INSTALL.md).
 Run `damocline` (or `.\\start.cmd`) to open the branded sword splash and main menu. The screen is deliberately small and line-oriented so it works in PowerShell, Windows Terminal, CMD, Unix terminals and redirected input without any additional terminal UI dependencies.
 
 ```text
-                 ╷
-                 │
-            ─────┼─────
-                 │
-                 │
-                 ▼
+             ▄▄▄▄▄▄▄▄▄▄▄▄▄
+         ▄███████████████████▄
+       ▄██████████▀█▀██████████▄
+      ███████████  █  ███████████
+      ██████████  ▄█▄  ██████████
+      ██████████  ▀█▀  ██████████
+      ▀▀▀▀▀▀▀▀▀▀   █   ▀▀▀▀▀▀▀▀▀▀
+
+         ▄████████ █ ████████▄
+           ▀██████ █ ██████▀
+              ▀███ █ ███▀
+                 ▀ █ ▀
+                   ▼
 
   D A M O C L I N E
   Find the limit before it finds you.
-  Local-first HTTP capacity explorer
+  LOCAL-FIRST HTTP CAPACITY EXPLORER
+
+  ─────────────────────────────────────────────
 
   What would you like to do?
 
@@ -43,7 +52,7 @@ Run `damocline` (or `.\\start.cmd`) to open the branded sword splash and main me
     [0] Exit                 Leave without generating traffic
 ```
 
-Type a number and press Enter. The default is `1`, and option 3 explains when no current scenario exists. Option 4 displays help and returns to the menu. Colors are optional and are disabled for non-terminal output, `NO_COLOR`, `TERM=dumb`, and non-ANSI Windows hosts. The sword artwork is built from terminal characters, not a copied Claude Code logo.
+Type a number and press Enter. The default is `1`, and option 3 explains when no current scenario exists. Option 4 displays help and returns to the menu. Colors are optional and are disabled for non-terminal output, `NO_COLOR`, `TERM=dumb`, and non-ANSI Windows hosts. The original **Eclipse** illustration adapts Damocline's sword-and-horizon branding with Unicode block characters (`█`, `▄`, `▀`) rather than copying another tool's logo. A terminal font supporting Unicode block elements (for example Cascadia Mono) is recommended for the intended pixel-art appearance.
 
 The welcome screen does not run a benchmark, check a target, collect credentials or bypass any existing traffic authorization. `/start`, `/history`, `run`, `explore` and all other explicit subcommands remain direct, script-friendly CLI commands. The menu uses numbered input, **not** arrow-key navigation or full-screen terminal control.
 
