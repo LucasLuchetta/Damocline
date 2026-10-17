@@ -32,7 +32,7 @@ A **partly open session model**—independent session arrivals followed by depen
 
 The error-rate assessment includes a one-sided 95% upper bound. With zero observed errors it uses an exact binomial bound; with observed errors it uses a Wilson upper score bound. Both treat outcomes as independent, stationary Bernoulli trials. Real requests may be correlated within a VU, time window, or deployment, so the bound is conditional evidence rather than a reliability guarantee.
 
-Reported p50/p95/p99 values are point estimates. Counts accompany them, but the report does not calculate percentile confidence intervals or run-to-run uncertainty. A low sample count or correlated samples can make tail estimates especially unstable.
+Reported p50/p95/p99 values are point estimates. Counts accompany them, but the report does not calculate percentile confidence intervals or dependence-aware run-to-run uncertainty. A low sample count or correlated samples can make tail estimates especially unstable.
 
 When `window_duration` is configured, the report also contains request metrics for each completed observation window. Every non-empty window is checked against the configured request p95 and error-rate SLOs. A window with fewer completed requests than `min_samples_per_step` is marked inconclusive. This is a temporal guard against a good aggregate hiding a late degradation; it is not a percentile confidence interval or proof of stationarity.
 
@@ -46,12 +46,11 @@ Arrival accounting and scheduler lag are also measurement-quality signals. Any u
 
 ## What is not yet measured
 
-- No time-series windows for checking whether SLOs held throughout a sustained steady state.
-- No uncertainty interval for latency percentiles or variability across independent runs.
+- No predeclared long soak protocol for checking whether SLOs held throughout a production-representative steady state.
+- No uncertainty interval for latency percentiles or dependence-aware variability analysis across independent runs.
 - No latency estimate for incomplete journeys; they are counted as cancelled, and an otherwise passing run becomes inconclusive. Journey percentiles describe completed journeys only.
-- No Little's Law consistency check: average in-flight work is not retained over matching observation windows.
 - No fitted queueing or Universal Scalability Law model. Do not extrapolate beyond tested levels.
-- No partly open session arrivals, response-driven workflow dependencies, synthetic-data lifecycle controls, or production-derived validation of workload weights.
+- No partly open session arrivals, synthetic-data lifecycle controls, or production-derived validation of workload weights.
 
 Closed-loop and open-loop models answer different questions and should be selected from the intended demand process.
 
@@ -59,12 +58,12 @@ Closed-loop and open-loop models answer different questions and should be select
 
 - Authorized target identifiers and sanitized scenario revision.
 - Environment assumptions (machine size, application version, data size, deployment topology where known).
-- Test duration and configured ramp-up. Separate warm-up, steady-state observation, and cool-down windows are not yet represented in the report.
+- Test duration and configured ramp-up. Campaign reports additionally preserve warm-up, observation, optional spike, and recovery phases; their bounded duration is not a substitute for a predeclared long soak protocol.
 - Requested and achieved load; scheduled, started, completed, and dropped work.
 - Request and journey p50/p95/p99 latency, counts, error rates, and timeouts.
 - Criteria for passing, including latency and business-operation error budgets.
 - Generator health and limitations, including resource use and timing accuracy.
-- Repetition count and the range actually tested. Current reports do not provide run-to-run variance or latency confidence intervals.
+- Repetition count and the range actually tested. Campaign reports provide observed min/max spread across observation trials, not run-to-run variance, a confidence interval, or a dependence-aware analysis.
 - Telemetry correlation only when the relevant evidence was collected.
 
 Never assert a precise bottleneck if the available evidence only suggests one.
