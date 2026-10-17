@@ -79,3 +79,16 @@ func TestQualitySeparatesMissingGeneratorAndSLOFailure(t *testing.T) {
 		t.Fatalf("missing limited evidence warning: %+v", q)
 	}
 }
+
+func TestQualityLimitsInvalidGeneratorProcessSamples(t *testing.T) {
+	r := validSyntheticQualityRun()
+	r.Generator.InvalidProcessSamples = 1
+	quality := AssessQuality(r)
+	findings := strings.Join(quality.Findings, " ")
+	if quality.State != QualityLimited || !strings.Contains(findings, "process samples") {
+		t.Fatalf("invalid generator readings must limit measurement quality: %+v", quality)
+	}
+	if strings.Contains(findings, "application capacity") {
+		t.Fatalf("generator sample finding must not infer target capacity: %+v", quality)
+	}
+}

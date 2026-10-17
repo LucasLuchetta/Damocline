@@ -46,6 +46,13 @@ func AssessQuality(r Result) *Quality {
 			invalidate("Scheduled, started and dropped arrivals do not reconcile.")
 		}
 	}
+	if r.Generator != nil {
+		if r.Generator.InvalidProcessSamples < 0 {
+			invalidate("Generator process sample invalidation count is negative.")
+		} else if r.Generator.InvalidProcessSamples > 0 {
+			limit("One or more generator process samples were zero or implausible and were excluded.")
+		}
+	}
 	if math.IsNaN(r.ObservationSeconds) || math.IsInf(r.ObservationSeconds, 0) || math.IsNaN(r.ElapsedSeconds) || math.IsInf(r.ElapsedSeconds, 0) || r.ObservationSeconds < 0 || r.ElapsedSeconds <= 0 {
 		invalidate("Observation or elapsed time is invalid.")
 	}

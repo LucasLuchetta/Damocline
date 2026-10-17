@@ -5,6 +5,7 @@ This project follows a human-maintained changelog. No release exists yet.
 ## [Unreleased]
 
 ### Added
+- Exclude zero or non-finite generator process readings from health summaries, expose invalid sample counts as a measurement-quality limitation, and reject process-counter conversion overflow.
 - Report open-arrival scheduler lag sample count, p50/p95/maximum and the monotonic slot-to-admission measurement boundary; label timing accuracy as uncalibrated.
 - Add a bounded worker-exhaustion integration check that distinguishes locally dropped arrivals from requests received by an independently counted loopback server.
 - Add a bounded cancellation integration check that reconciles scheduled and admitted arrivals, incomplete client journeys, and independently observed server-side completion/cancellation counters.
