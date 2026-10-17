@@ -52,9 +52,13 @@ Run `damocline` (or `.\\start.cmd`) to open the branded sword splash and main me
     [0] Exit                 Leave without generating traffic
 ```
 
-Type a number and press Enter. The default is `1`, and option 3 explains when no current scenario exists. Option 4 displays help and returns to the menu. Colors are optional and are disabled for non-terminal output, `NO_COLOR`, `TERM=dumb`, and non-ANSI Windows hosts. The original **Eclipse** illustration adapts Damocline's sword-and-horizon branding with Unicode block characters (`█`, `▄`, `▀`) rather than copying another tool's logo. A terminal font supporting Unicode block elements (for example Cascadia Mono) is recommended for the intended pixel-art appearance.
+On supported interactive Windows consoles (PowerShell, Windows Terminal and CMD), use **Up/Down arrows** to move the highlight, **Enter** to select, **Esc** to exit, or a number key for quick selection. On redirected input, unsupported console hosts and Unix shells, type a number and press Enter; default is `1`. Option 3 explains when no current scenario exists. Option 4 displays help and returns to the menu. Colors are optional and are disabled for non-terminal output, `NO_COLOR`, `TERM=dumb`, and non-ANSI Windows hosts. The original **Eclipse** illustration adapts Damocline's sword-and-horizon branding with Unicode block characters (`█`, `▄`, `▀`) rather than copying another tool's logo. A terminal font supporting Unicode block elements (for example Cascadia Mono) is recommended for the intended pixel-art appearance.
 
-The welcome screen does not run a benchmark, check a target, collect credentials or bypass any existing traffic authorization. `/start`, `/history`, `run`, `explore` and all other explicit subcommands remain direct, script-friendly CLI commands. The menu uses numbered input, **not** arrow-key navigation or full-screen terminal control.
+The welcome screen does not run a benchmark, check a target, collect credentials or bypass any existing traffic authorization. `/start`, `/history`, `run`, `explore` and all other explicit subcommands remain direct, script-friendly CLI commands. The interactive Windows menu reads native console key events and temporarily enables ANSI cursor movement to redraw its highlight; it restores console modes on exit. It does not use full-screen terminal control. Numbered input remains available when the console does not support that capability.
+
+## Startup source-update check
+
+Bare `damocline` checks for source updates **before** drawing the Eclipse artwork and main menu. On an eligible clean `master` checkout, it offers a safe fast-forward update or applies it when automatic updates have been enabled, then restarts into the updated CLI. If the update is skipped, unavailable offline, or there is no newer commit, the original startup continues normally. Choosing a scenario from the home menu does not repeat the Git check. Direct guided entrypoints (`start`, `/start`, `/history`) continue to check on their own; scripted benchmarks do not. See [source updates](UPDATES.md).
 
 ## Slash commands and scenario history
 
