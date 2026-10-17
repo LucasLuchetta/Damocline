@@ -125,6 +125,14 @@ For an application that exposes a permitted Prometheus-text metric endpoint, tak
 
 The collector accepts only HTTP(S), follows no redirects, caps the response body, aggregates labeled samples by metric name, and does not preserve labels or credentials. It is a point-in-time observation. Correlate it with a named campaign manually; a high queue, error, or latency metric does not by itself prove which component caused a bottleneck.
 
+## 10. Inspect a saved report locally
+
+```powershell
+.\damocline.exe dashboard --file reports\run.json
+```
+
+The dashboard binds only to `127.0.0.1` (or `localhost`/`::1`), reads one existing report, and displays the saved outcome, request metrics, steps, and observation windows. It makes no load requests and does not expose the report to the network.
+
 ## 8. Limitations and quality checks
 
 - A high VU count with a low RPS cap **does not prove** the server can support that count of active people.

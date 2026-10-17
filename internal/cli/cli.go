@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/signal"
 	"strings"
@@ -22,6 +23,7 @@ import (
 	"github.com/LucasLuchetta/Damocline/internal/hostmon"
 	"github.com/LucasLuchetta/Damocline/internal/insights"
 	"github.com/LucasLuchetta/Damocline/internal/report"
+	"github.com/LucasLuchetta/Damocline/internal/reportui"
 )
 
 var Version = "dev"
@@ -59,6 +61,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return startWithMode(os.Stdin, stdout, stderr, "history")
 	case "report":
 		return reportCmd(args[1:], stdout, stderr)
+	case "dashboard":
+		return dashboardCmd(args[1:], stdout, stderr)
 	case "goal":
 		return goalCmd(args[1:], stdout, stderr)
 	case "run":
@@ -87,6 +91,7 @@ Usage:
   damocline /history # select and repeat a previous saved scenario
   damocline start    # original guided wizard
   damocline report --file run.json [--compare previous.json] [--host host.json]
+	  damocline dashboard --file run.json [--addr 127.0.0.1:8787]
   damocline goal --file capacity.json --peak-users 20 [--growth-percent 25] [--reserve-percent 20]
   damocline run --config scenario.json --authorized [--out reports/run.json]
   damocline run --config scenario.json --dry-run
@@ -264,6 +269,36 @@ func campaignCmd(args []string, stdout, stderr io.Writer) int {
 	}
 	if result.Outcome != "PASS" {
 		return 1
+	}
+	return 0
+}
+
+func dashboardCmd(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("dashboard", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	path := fs.String("file", "", "Damocline HTTP run report JSON")
+	address := fs.String("addr", "127.0.0.1:8787", "loopback listen address")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if *path == "" || len(fs.Args()) != 0 {
+		fmt.Fprintln(stderr, "usage: damocline dashboard --file run.json [--addr 127.0.0.1:8787]")
+		return 2
+	}
+	if err := reportui.ListenAddress(*address); err != nil {
+		fmt.Fprintf(stderr, "invalid dashboard address: %v\n", err)
+		return 2
+	}
+	result, err := insights.ReadRun(*path)
+	if err != nil {
+		fmt.Fprintf(stderr, "cannot read run: %v\n", err)
+		return 2
+	}
+	server := &http.Server{Addr: *address, Handler: reportui.Handler(result), ReadHeaderTimeout: 5 * time.Second}
+	fmt.Fprintf(stdout, "Local dashboard: http://%s/ (Ctrl+C to stop)\n", *address)
+	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		fmt.Fprintf(stderr, "dashboard error: %v\n", err)
+		return 2
 	}
 	return 0
 }
