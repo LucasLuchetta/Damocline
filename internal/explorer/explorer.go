@@ -87,7 +87,7 @@ func WithRunner(ctx context.Context, base config.Validated, opt Options, runner 
 	started := time.Now()
 	result := Result{SchemaVersion: 1, Scenario: base.Scenario.Name, Target: base.Base.Scheme + "://" + base.Base.Host, StartedAt: started.UTC().Format(time.RFC3339), StageDuration: opt.StageDuration.String(), Repeats: opt.Repeats, MinUsers: opt.MinUsers, MaxUsers: opt.MaxUsers, Outcome: "INCONCLUSIVE", Notes: []string{
 		"The highest repeatedly passing tested level is not a universal server capacity. It applies only to this HTTP workload, traffic cap, deployment, and service-level objectives.",
-		"No server CPU, RAM, database, or generator resource telemetry is collected by this command; root cause and real-user capacity remain unverified.",
+		"The generator reports Go runtime heap, goroutines, GC, and partial Go CPU activity per trial; full process metrics, server CPU/RAM, databases, and root causes remain unverified.",
 	}}
 	probe := func(users int) string {
 		p := Probe{Users: users, Status: "PASS"}
