@@ -1,6 +1,6 @@
 # Guided terminal setup
 
-Damocline is a standalone native **Go CLI**. No Docker, Node.js, Python, hosted account, browser dashboard, or k6 installation is required.
+Damocline is a standalone native **Go CLI**. No Docker, Node.js, Python, hosted account, browser dashboard, installation is required.
 
 ## Start from cloned source (Windows)
 
@@ -109,7 +109,7 @@ Do not paste session cookies into source files, issues, or chats. If an environm
 - Only authorized HTTPS sites (or localhost/loopback HTTP) are accepted.
 - Conservative defaults: 2 initial VUs, 20 requests/second global maximum, p95 objective 1.5 seconds, 1% error budget.
 - Before any traffic, the wizard shows the plan, requires typing **AUTHORIZE**, and separately asks whether to start. Authorization is not saved between runs.
-- Tests execute using the same Go engine as the advanced **run** and **explore** CLI commands; "start" is a guided frontend, **not a k6 wrapper**.
+- Tests execute using the same Go engine as the advanced **run** and **explore** CLI commands; "start" is a guided frontend, **the native Damocline engine**.
 - Reports show scenario-specific observations, not the universal server capacity or guaranteed number of real people who can log in.
 - Linux CPU/RAM collection currently requires the separate "damocline monitor" command on the VPS. One-command remote SSH monitoring remains planned, not implemented.
 
