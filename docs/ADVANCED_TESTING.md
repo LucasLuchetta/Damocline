@@ -86,7 +86,17 @@ Set `"mode": "arrival"`, `"arrival_rate": 5`, `"users": 10`, and `"max_rps": 20`
 
 This is distinct from 10 concurrent users. It answers a different capacity question. `explore` is deliberately restricted to closed-loop user counts; arrival-rate tests use `run`.
 
-## 7. Monitor the Linux VPS independently
+## 7. Repeated phased campaign
+
+Use a campaign when a short exploratory probe is insufficient. Each trial runs warm-up, an evaluated observation window, and a recovery window. Warm-up establishes workload state but cannot make a campaign pass; both observation and recovery must pass in every repeat.
+
+```powershell
+.\damocline.exe campaign --config .\myapp.local.json --warmup 30s --observation 2m --recovery 30s --repeats 2 --authorized --out reports\campaign.json
+```
+
+The whole campaign is bounded to 15 minutes, each phase is bounded to 3 minutes, and it stops at the first non-passing trial. It records phase reports for later comparison. It does not yet provide intra-window time-series thresholds, injected spikes, percentile confidence intervals, or a sustained-capacity certificate.
+
+## 8. Monitor the Linux VPS independently
 
 Run Damocline natively on your Linux host (not inside a container whose procfs could refer to other scopes). The following collects host-wide CPU and available-memory estimates without opening any network port, launching Docker or requiring elevated privileges:
 

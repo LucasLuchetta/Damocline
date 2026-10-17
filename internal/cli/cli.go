@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/LucasLuchetta/Damocline/internal/campaign"
 	"github.com/LucasLuchetta/Damocline/internal/capacitygoal"
 	"github.com/LucasLuchetta/Damocline/internal/config"
 	"github.com/LucasLuchetta/Damocline/internal/correlate"
@@ -63,6 +64,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return run(args[1:], stdout, stderr)
 	case "explore":
 		return explore(args[1:], stdout, stderr)
+	case "campaign":
+		return campaignCmd(args[1:], stdout, stderr)
 	case "monitor":
 		return monitor(args[1:], stdout, stderr)
 	case "correlate":
@@ -85,6 +88,7 @@ Usage:
   damocline run --config scenario.json --authorized [--out reports/run.json]
   damocline run --config scenario.json --dry-run
   damocline explore --config scenario.json --min-users 2 --max-users 20 --stage-duration 20s --repeats 2 --authorized
+	  damocline campaign --config scenario.json --warmup 30s --observation 2m --recovery 30s --repeats 2 --authorized
   damocline explore --config scenario.json --peak-users 10 --growth-percent 25 --reserve-percent 20 --authorized
   damocline monitor --duration 3m --interval 2s --out reports/host.json
   damocline correlate --load reports/load.json --host reports/host.json --out reports/correlated.json
@@ -174,6 +178,75 @@ func run(args []string, stdout, stderr io.Writer) int {
 	insights.Write(stdout, result, nil, nil)
 	if *out != "" {
 		if err := report.WriteJSON(*out, result); err != nil {
+			fmt.Fprintf(stderr, "report error: %v\n", err)
+			return 2
+		}
+		fmt.Fprintf(stdout, "Report: %s\n", *out)
+	}
+	if result.Outcome != "PASS" {
+		return 1
+	}
+	return 0
+}
+
+func campaignCmd(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("campaign", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	filename := fs.String("config", "", "scenario JSON")
+	warmup := fs.Duration("warmup", 30*time.Second, "warm-up duration (0s-3m)")
+	observation := fs.Duration("observation", 2*time.Minute, "steady observation duration (10s-3m)")
+	recovery := fs.Duration("recovery", 30*time.Second, "recovery duration after observation (0s-3m)")
+	repeats := fs.Int("repeats", 2, "independent trials (2-5)")
+	budget := fs.Duration("budget", 0, "maximum campaign wall time (up to 15m)")
+	authorized := fs.Bool("authorized", false, "confirm authorization to benchmark the target")
+	dry := fs.Bool("dry-run", false, "validate campaign settings without sending traffic")
+	writes := fs.Bool("allow-writes", false, "explicitly opt in to HTTP mutation methods")
+	insecure := fs.Bool("allow-insecure-http", false, "permit intentional plaintext HTTP to a non-loopback host")
+	out := fs.String("out", "", "JSON campaign report output path")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if *filename == "" || len(fs.Args()) != 0 {
+		fmt.Fprintln(stderr, "--config is required and positional arguments are not accepted")
+		return 2
+	}
+	options := campaign.Options{Warmup: *warmup, Observation: *observation, Recovery: *recovery, Repeats: *repeats, Budget: *budget}
+	if err := campaign.Validate(options); err != nil {
+		fmt.Fprintf(stderr, "invalid campaign: %v\n", err)
+		return 2
+	}
+	scenario, err := config.Load(*filename)
+	if err != nil {
+		fmt.Fprintf(stderr, "configuration error: %v\n", err)
+		return 2
+	}
+	validated, err := config.Parse(scenario, config.Options{Authorized: *authorized || *dry, AllowWrites: *writes, AllowInsecureHTTP: *insecure})
+	if err != nil {
+		fmt.Fprintf(stderr, "configuration error: %v\n", err)
+		return 2
+	}
+	fmt.Fprintf(stdout, "Campaign: %s | %s://%s | warm-up %s | observation %s | recovery %s | repeats %d\n", validated.Scenario.Name, validated.Base.Scheme, validated.Base.Host, options.Warmup, options.Observation, options.Recovery, options.Repeats)
+	if *dry {
+		fmt.Fprintln(stdout, "DRY RUN: no traffic generated. Warm-up is excluded from the conclusion; observation and recovery must pass in every trial.")
+		return 0
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	result, err := campaign.Run(ctx, validated, options)
+	if err != nil {
+		fmt.Fprintf(stderr, "campaign error: %v\n", err)
+		return 2
+	}
+	for _, trial := range result.Trials {
+		fmt.Fprintf(stdout, "Trial %d: %s\n", trial.Number, trial.Outcome)
+		for _, phase := range trial.Phases {
+			fmt.Fprintf(stdout, "  %s: %s | p95 %.0fms | errors %.2f%% | requests %d\n", phase.Name, phase.Run.Outcome, phase.Run.Metrics.P95MS, phase.Run.ErrorsRate*100, phase.Run.Metrics.Total)
+		}
+	}
+	fmt.Fprintf(stdout, "Campaign outcome: %s\n", result.Outcome)
+	fmt.Fprintln(stdout, "This is repeated observed evidence under the configured workload. It is not a universal capacity certification or infrastructure recommendation.")
+	if *out != "" {
+		if err := report.WriteAnyJSON(*out, result); err != nil {
 			fmt.Fprintf(stderr, "report error: %v\n", err)
 			return 2
 		}
