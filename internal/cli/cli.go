@@ -24,8 +24,7 @@ var Version = "dev"
 
 func Run(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		help(stdout)
-		return 0
+		return start(os.Stdin,stdout,stderr)
 	}
 	switch args[0] {
 	case "help", "--help", "-h":
@@ -57,7 +56,8 @@ func help(w io.Writer) {
 	fmt.Fprint(w, `Damocline — find the limit before it finds you.
 
 Usage:
-  damocline start  # guided setup and execution
+  damocline        # guided setup and execution
+  damocline start  # same guided wizard
   damocline run --config scenario.json --authorized [--out reports/run.json]
   damocline run --config scenario.json --dry-run
   damocline explore --config scenario.json --min-users 2 --max-users 20 --stage-duration 20s --repeats 2 --authorized
