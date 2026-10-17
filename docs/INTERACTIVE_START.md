@@ -4,7 +4,9 @@ Damocline is a standalone native **Go CLI**. No Docker, Node.js, Python, hosted 
 
 ## Start
 
-In Windows PowerShell or CMD, from a folder containing the executable:
+Download the `damocline-preview-binaries` artifact from a successful [CI run](https://github.com/LucasLuchetta/Damocline/actions/workflows/ci.yml). Extract the ZIP and open its `windows-amd64` folder. It contains `damocline.exe` ready to execute, without Go, Python, Node.js, Docker, or k6.
+
+In Windows PowerShell or CMD, from that folder:
 
 ```powershell
 .\damocline.exe start
