@@ -18,6 +18,35 @@ The guided CLI requests the application origin, authorized GET pages, authentica
 
 See [source install and browser security](SOURCE_INSTALL.md).
 
+## Terminal welcome screen
+
+Run `damocline` (or `.\\start.cmd`) to open the branded sword splash and main menu. The screen is deliberately small and line-oriented so it works in PowerShell, Windows Terminal, CMD, Unix terminals and redirected input without any additional terminal UI dependencies.
+
+```text
+                 ╷
+                 │
+            ─────┼─────
+                 │
+                 │
+                 ▼
+
+  D A M O C L I N E
+  Find the limit before it finds you.
+  Local-first HTTP capacity explorer
+
+  What would you like to do?
+
+  > [1] New load test        Create a new scenario
+    [2] Saved scenarios      Select a previous configuration
+    [3] Continue current     Reuse the active scenario
+    [4] Help                 Commands and documentation
+    [0] Exit                 Leave without generating traffic
+```
+
+Type a number and press Enter. The default is `1`, and option 3 explains when no current scenario exists. Option 4 displays help and returns to the menu. Colors are optional and are disabled for non-terminal output, `NO_COLOR`, `TERM=dumb`, and non-ANSI Windows hosts. The sword artwork is built from terminal characters, not a copied Claude Code logo.
+
+The welcome screen does not run a benchmark, check a target, collect credentials or bypass any existing traffic authorization. `/start`, `/history`, `run`, `explore` and all other explicit subcommands remain direct, script-friendly CLI commands. The menu uses numbered input, **not** arrow-key navigation or full-screen terminal control.
+
 ## Slash commands and scenario history
 
 Use these **English** commands from PowerShell/CMD after installing the source launcher:
