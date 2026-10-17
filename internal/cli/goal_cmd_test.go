@@ -19,8 +19,9 @@ func TestGoalCommandUsesSavedExploreWithoutGeneratingTraffic(t *testing.T) {
 		Metrics:report.MetricSet{Total:30,Success:30},
 		Generator:&generatorhealth.Summary{Samples:4,GoCPUValid:true,GoCPUUtilizationRatio:0.22},
 	}
+	highest := 30
 	r := explorer.Result{SchemaVersion:1,Scenario:"synthetic app",StageDuration:"30s",
-		MinUsers:2,MaxUsers:50,Repeats:2,
+		MinUsers:2,MaxUsers:50,Repeats:2,HighestPassingUsers:&highest,
 		Probes:[]explorer.Probe{{Users:30,Status:"PASS",Runs:[]report.Result{current,current}}},
 	}
 	if err := report.WriteAnyJSON(file,r);err!=nil{t.Fatal(err)}

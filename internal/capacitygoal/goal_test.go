@@ -57,6 +57,8 @@ func TestClientRateCeilingBlocksClaim(t *testing.T) {
 	ex:=exploration(20)
 	for i:=range ex.Probes[0].Runs {
 		ex.Probes[0].Runs[i].Config.MaxRPS=1
+		ex.Probes[0].Runs[i].Metrics.Total=30 // 1 RPS achieved of 1 configured RPS
+		ex.Probes[0].Runs[i].Metrics.Success=30
 	}
 	a,err:=Evaluate(ex,Goal{PeakUsers:20})
 	if err!=nil || a.State!="INSUFFICIENT_EVIDENCE" {
