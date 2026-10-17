@@ -12,12 +12,12 @@ This is a working plan for an open-source project in **pre-alpha**. There is no 
 
 ## M0 — Safe HTTP engine
 
-- [ ] Explicit authorized targets and safeguards (traffic caps, timeouts, duration, stop conditions).
-- [ ] HTTP GET/POST against local fixtures with connection reuse.
-- [ ] Independent user session state and deterministic accounting.
-- [ ] Latency, error, and throughput measurement with bounded memory.
-- [ ] Machine-readable report format and sensitive-field redaction.
-- [ ] Generator profiling and controlled reference benchmarking.
+- [x] Explicit authorization flag, validated target and bounded traffic caps, timeout, and run duration (MVP); advanced stop conditions remain open.
+- [x] HTTP GET/POST against local fixtures with connection reuse (write methods require opt-in).
+- [x] Per-user HTTP requests with shared capped dispatch; full per-user sessions and deterministic accounting remain open.
+- [x] Request-level latency, error categories, and throughput measurement with bounded run caps.
+- [x] JSON report with metrics, sanitized paths, and no raw credentials; deeper redaction tests remain open.
+- [ ] Generator profiling and controlled reference benchmarking (required before capacity claims).
 
 **Exit:** local safe HTTP tests produce correct, verifiable metrics and refuse unsafe/unbounded configurations.
 

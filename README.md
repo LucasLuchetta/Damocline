@@ -11,7 +11,7 @@
 The name evokes the **Sword of Damocles**: apparently stable systems can have limits hanging overhead. Damocline aims to find those limits *before users do*.
 
 > [!IMPORTANT]
-> **Pre-alpha — not ready for load testing.** The repository currently provides a small Go CLI scaffold, documentation, and development automation. The testing engine, capacity explorer, and monitoring adapters are planned, **not implemented**.
+> **Experimental HTTP MVP:** bounded, closed-loop HTTP load testing now works in the CLI. Automatic capacity discovery, open-loop traffic, full-browser journeys, and infrastructure collectors are **not implemented**. Never interpret a single passing run as the maximum number of users your server supports.
 
 ## The problem
 
@@ -28,12 +28,12 @@ Damocline will seek **scenario-specific sustainable capacity**, never claim one 
 
 | Component | Goal | Status |
 | --- | --- | --- |
-| Native Go load engine | Controlled HTTP traffic and reproducible measurements | Planned |
-| Workload models | Concurrent virtual users and independent arrival rates | Planned |
+| Native Go load engine | Bounded HTTP requests with closed-loop VUs | **MVP implemented** |
+| Workload models | Closed-loop VUs supported; independent arrivals planned | **Partial** |
 | Capacity explorer | Automatically bracket, refine, and confirm passing load levels | Planned |
 | Per-workflow analysis | Evaluate pages, journeys, and concurrent workload mixes | Planned |
 | Infrastructure adapters | Optional host, Docker, database, and cloud telemetry | Planned |
-| Reporting | Correlate evidence, surface uncertainty, compare runs | Planned |
+| Reporting | p50/p95/p99, error reasons, per-step results, JSON export; infrastructure correlation planned | **Partial** |
 | Local-first CLI | Work without requiring a cloud account | Scaffold only |
 
 Damocline should apply to **authorized HTTP/HTTPS applications** hosted on VPSs, dedicated machines, containers, Kubernetes, PaaS, or serverless platforms. Internal resource metrics require optional instrumentation or permissions; an external URL alone cannot reveal a server's CPU or database bottlenecks.
@@ -57,9 +57,26 @@ Scenario + goals + permitted target
 
 Idle sessions, active virtual users, requests in flight, and arrivals per second are different concepts. See [Measurement model](docs/METRICS.md) for the intended definitions and reporting requirements.
 
+## Run your first bounded test
+
+```bash
+# First run a local HTTP test server on port 18080 in a separate terminal.
+python -m http.server 18080 --bind 127.0.0.1
+
+# Validate without generating traffic.
+go run ./cmd/damocline run --config examples/local-smoke.json --dry-run
+
+# Explicitly authorize traffic to your local server and save the results.
+go run ./cmd/damocline run --config examples/local-smoke.json --authorized --out reports/local.json
+```
+
+For Windows/PowerShell, session-cookie authentication, and safely testing your own application, see **[Quick start](docs/QUICKSTART.md)**. Experimental Windows and Linux binaries are attached to successful CI runs as downloadable workflow artifacts (not signed releases).
+
+**Initial safety ceilings:** up to 50 virtual users, 100 requests/second, and three minutes per run; these are upper bounds, not recommendations for production. The example starts with **2 VUs and 5 RPS**. HTTP redirects are not followed, so a 302 to a login page is reported as a failure by default.
+
 ## Developer quick start
 
-**Requires Go 1.24+. These commands do not generate load.**
+**Requires Go 1.24+.** `help` and `version` do not generate traffic; the `run` command does.
 
 ```bash
 git clone https://github.com/LucasLuchetta/Damocline.git
@@ -69,7 +86,7 @@ go run ./cmd/damocline help
 go run ./cmd/damocline version
 ```
 
-A `test` or `run` command will only be added when a safe, verified engine exists.
+For safe local testing, real authenticated application testing, and Windows instructions, see the [MVP quick start](docs/QUICKSTART.md). Use `--dry-run` to validate first, then `--authorized` to actually generate bounded traffic.
 
 ## Principles
 
@@ -85,6 +102,7 @@ A `test` or `run` command will only be added when a safe, verified engine exists
 - [Architecture](docs/ARCHITECTURE.md)
 - [Roadmap](docs/ROADMAP.md)
 - [Measurement model](docs/METRICS.md)
+- [MVP quick start](docs/QUICKSTART.md)
 - [Decision records](docs/adr/0001-go-core.md)
 - [Contributing](CONTRIBUTING.md)
 - [Security](SECURITY.md)

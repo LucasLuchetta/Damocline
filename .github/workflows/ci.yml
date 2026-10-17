@@ -29,3 +29,24 @@ jobs:
         run: go test -race ./...
       - name: Build
         run: go build ./cmd/damocline
+
+  preview-binaries:
+    name: Preview CLI binaries
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Build native Windows and Linux CLIs
+        shell: bash
+        run: |
+          mkdir -p dist
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -o dist/damocline-windows-amd64.exe ./cmd/damocline
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o dist/damocline-linux-amd64 ./cmd/damocline
+      - uses: actions/upload-artifact@v4
+        with:
+          name: damocline-preview-binaries
+          path: dist/*
+          if-no-files-found: error

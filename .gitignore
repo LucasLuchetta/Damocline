@@ -20,3 +20,6 @@ coverage.out
 .vscode/
 .DS_Store
 Thumbs.db
+
+# User-specific scenario overrides
+*.local.json

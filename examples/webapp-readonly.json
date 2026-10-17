@@ -1,0 +1,29 @@
+{
+  "name": "My web app — authenticated read-only smoke",
+  "base_url": "https://app.example.com",
+  "users": 2,
+  "duration": "30s",
+  "ramp_up": "5s",
+  "think_time": "500ms",
+  "request_timeout": "8s",
+  "max_rps": 5,
+  "p95_limit_ms": 1500,
+  "max_error_rate": 0.01,
+  "steps": [
+    {
+      "name": "dashboard",
+      "method": "GET",
+      "path": "/dashboard",
+      "headers": {"Cookie": "${DAMOCLINE_SESSION_COOKIE}"},
+      "expected_status": [200],
+      "must_contain": "Dashboard"
+    },
+    {
+      "name": "employees",
+      "method": "GET",
+      "path": "/employees",
+      "headers": {"Cookie": "${DAMOCLINE_SESSION_COOKIE}"},
+      "expected_status": [200]
+    }
+  ]
+}
