@@ -2,6 +2,7 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,7 +18,10 @@ import (
 type Scenario struct {
 	Name                   string    `json:"name"`
 	WorkloadRevision       string    `json:"workload_revision,omitempty"`
+	ApplicationRevision    string    `json:"application_revision,omitempty"`
 	Environment            string    `json:"environment,omitempty"`
+	ProfileMixBasis        string    `json:"profile_mix_basis,omitempty"`
+	ProfileMixReference    string    `json:"profile_mix_reference,omitempty"`
 	BaseURL                string    `json:"base_url"`
 	Users                  int       `json:"users"`
 	Duration               string    `json:"duration"`
@@ -72,6 +76,7 @@ type Options struct {
 
 type Validated struct {
 	Scenario            Scenario
+	WorkloadFingerprint string
 	Base                *url.URL
 	Duration            time.Duration
 	RampUp              time.Duration
@@ -106,13 +111,22 @@ var envPattern = regexp.MustCompile(`^\$\{([A-Z_][A-Z0-9_]*)\}$`)
 var variablePattern = regexp.MustCompile(`\{\{([a-z][a-z0-9_]{0,63})\}\}`)
 var variableNamePattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
 
+const maxScenarioBytes = 1 << 20
+
 func Load(path string) (Scenario, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return Scenario{}, fmt.Errorf("open scenario: %w", err)
 	}
 	defer f.Close()
-	dec := json.NewDecoder(io.LimitReader(f, 1<<20))
+	data, err := io.ReadAll(io.LimitReader(f, maxScenarioBytes+1))
+	if err != nil {
+		return Scenario{}, fmt.Errorf("read scenario: %w", err)
+	}
+	if len(data) > maxScenarioBytes {
+		return Scenario{}, fmt.Errorf("scenario exceeds the %d-byte input limit", maxScenarioBytes)
+	}
+	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 	var s Scenario
 	if err := dec.Decode(&s); err != nil {
@@ -133,10 +147,25 @@ func Parse(s Scenario, o Options) (Validated, error) {
 	if strings.TrimSpace(s.Name) == "" {
 		return v, errors.New("name is required")
 	}
-	for field, value := range map[string]string{"workload_revision": s.WorkloadRevision, "environment": s.Environment} {
+	for field, value := range map[string]string{"workload_revision": s.WorkloadRevision, "application_revision": s.ApplicationRevision, "environment": s.Environment} {
 		if value != "" && !regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$`).MatchString(value) {
 			return v, fmt.Errorf("%s must be a safe 1-120 character label", field)
 		}
+	}
+	if s.ProfileMixBasis == "" {
+		s.ProfileMixBasis = "assumption"
+	}
+	if s.ProfileMixBasis != "assumption" && s.ProfileMixBasis != "sanitized_analytics" && s.ProfileMixBasis != "business_estimate" {
+		return v, errors.New("profile_mix_basis must be assumption, sanitized_analytics, or business_estimate")
+	}
+	if s.ProfileMixReference != "" && !regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$`).MatchString(s.ProfileMixReference) {
+		return v, errors.New("profile_mix_reference must be a safe 1-80 character label")
+	}
+	if s.ProfileMixBasis == "assumption" && s.ProfileMixReference != "" {
+		return v, errors.New("profile_mix_reference requires a non-assumption profile_mix_basis")
+	}
+	if s.ProfileMixBasis != "assumption" && s.ProfileMixReference == "" {
+		return v, errors.New("profile_mix_reference is required for a non-assumption profile_mix_basis")
 	}
 	if s.Users < 1 || s.Users > 50 {
 		return v, errors.New("users must be between 1 and 50 for this initial release")
@@ -362,6 +391,7 @@ func Parse(s Scenario, o Options) (Validated, error) {
 		return v, err
 	}
 	v = Validated{Scenario: s, Base: u, Duration: duration, RampUp: ramp, ThinkTime: think, Timeout: timeout, Window: window, Steps: prepared, Profiles: preparedProfiles, Cookies: cookies, SyntheticDataPrefix: dataPrefix}
+	v.WorkloadFingerprint = WorkloadFingerprint(v)
 	return v, nil
 }
 

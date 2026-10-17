@@ -16,8 +16,8 @@ import (
 
 func synthetic() report.Result {
 	return report.Result{
-		SchemaVersion: 2, Name: "Synthetic example", Target: "https://app.example.com", StartedAt: "2026-10-01T12:00:00Z", ElapsedSeconds: 30,
-		Config:  report.RunConfig{Users: 1, Duration: "30s", ThinkTime: "1s", MaxRPS: 20, P95LimitMS: 1500, MaxErrorRate: 0.01, Mode: "closed", MinSamplesPerStep: 5},
+		SchemaVersion: 11, Name: "Synthetic example", Target: "https://app.example.com", StartedAt: "2026-10-01T12:00:00Z", ElapsedSeconds: 30,
+		Config:  report.RunConfig{WorkloadRevision: "workload-v1", ApplicationRevision: "app-build-1", WorkloadFingerprint: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Environment: "staging-small", Users: 1, Duration: "30s", ThinkTime: "1s", MaxRPS: 20, P95LimitMS: 1500, MaxErrorRate: 0.01, Mode: "closed", MinSamplesPerStep: 5},
 		Metrics: report.MetricSet{Total: 21, Success: 21, P50MS: 178, P95MS: 412, P99MS: 4804}, Journeys: report.MetricSet{Total: 20, Success: 20, P95MS: 1550},
 		Steps:   []report.StepResult{{Name: "Dashboard", Path: "/dashboard", Method: "GET", Metrics: report.MetricSet{Total: 21, Success: 21, P95MS: 412}}},
 		Outcome: "PASS", IterationsCompleted: 20,
@@ -127,11 +127,61 @@ func TestComparisonRequiresRevisionAndRecordsEnvironment(t *testing.T) {
 	now.Config.Environment = "staging-large"
 	var b bytes.Buffer
 	Write(&b, now, nil, &prev)
-	if strings.Contains(b.String(), "Workload revision, acceptance criteria") {
-		t.Fatalf("matched controlled inputs unexpectedly rejected: %s", b.String())
+	if !strings.Contains(b.String(), "Comparison eligibility: NOT_COMPARABLE") {
+		t.Fatalf("different environment labels must not be treated as comparable: %s", b.String())
 	}
-	if !strings.Contains(b.String(), "Environment: staging-small -> staging-large") || !strings.Contains(b.String(), "not proof of cause") {
+	if !strings.Contains(b.String(), "Environment: staging-small -> staging-large") || !strings.Contains(b.String(), "not proof of cause") || !strings.Contains(b.String(), "NOT_COMPARABLE") {
 		t.Fatalf("environment comparison missing limitation: %s", b.String())
+	}
+}
+
+func TestComparisonRequiresMatchingWorkloadFingerprint(t *testing.T) {
+	prev, current := synthetic(), synthetic()
+	current.Config.WorkloadFingerprint = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	var out strings.Builder
+	writeComparison(&out, prev, current)
+	if !strings.Contains(out.String(), "Comparison eligibility: NOT_COMPARABLE") || !strings.Contains(out.String(), "Workload fingerprint") {
+		t.Fatalf("different workload fingerprints must block controlled comparison: %s", out.String())
+	}
+}
+
+func TestComparisonOnlyMatchesDeclaredWorkload(t *testing.T) {
+	prev, current := synthetic(), synthetic()
+	var out strings.Builder
+	writeComparison(&out, prev, current)
+	if !strings.Contains(out.String(), "MATCHED_DECLARED_WORKLOAD") || !strings.Contains(out.String(), "do not embed loopback preflight/calibration evidence") || strings.Contains(out.String(), "MATCHED_DECLARED_CONDITIONS") {
+		t.Fatalf("matching declared workload was overstated as controlled evidence: %s", out.String())
+	}
+}
+
+func TestComparisonReportsApplicationRevisionAsTreatment(t *testing.T) {
+	prev, current := synthetic(), synthetic()
+	current.Config.ApplicationRevision = "app-build-2"
+	var out strings.Builder
+	writeComparison(&out, prev, current)
+	if !strings.Contains(out.String(), "Application revision: app-build-1 -> app-build-2") || !strings.Contains(out.String(), "does not establish its causal effect") {
+		t.Fatalf("application revision change was not recorded as an unproven treatment: %s", out.String())
+	}
+}
+
+func TestComparisonWarnsWhenApplicationRevisionIsMissing(t *testing.T) {
+	prev, current := synthetic(), synthetic()
+	current.Config.ApplicationRevision = ""
+	var out strings.Builder
+	writeComparison(&out, prev, current)
+	if !strings.Contains(out.String(), "Application revision is missing") {
+		t.Fatalf("missing application revision was not made explicit: %s", out.String())
+	}
+}
+
+func TestComparisonRequiresSchemaElevenFingerprint(t *testing.T) {
+	prev, current := synthetic(), synthetic()
+	prev.SchemaVersion = 10
+	current.SchemaVersion = 10
+	var out strings.Builder
+	writeComparison(&out, prev, current)
+	if !strings.Contains(out.String(), "Comparison eligibility: NOT_COMPARABLE") {
+		t.Fatalf("pre-fingerprint reports must not be treated as controlled comparisons: %s", out.String())
 	}
 }
 func TestReadRunRejectsBrokenInput(t *testing.T) {
@@ -230,6 +280,100 @@ func TestReadRunAcceptsSchemaSixP95RankInterval(t *testing.T) {
 		t.Fatalf("schema-v6 report not readable: %+v err=%v", got, err)
 	}
 }
+
+func TestReadRunAcceptsSchemaSevenHTTPTrace(t *testing.T) {
+	r := report.Result{SchemaVersion: 7, Name: "Synthetic example", Target: "https://app.example.com", StartedAt: "2026-10-01T12:00:00Z", ElapsedSeconds: 30, ObservationSeconds: 30, Config: report.RunConfig{Users: 1}, Steps: []report.StepResult{{Name: "page", HTTPTrace: report.HTTPTrace{RequestAttemptCount: 1, CompleteCount: 1, RateWaitCount: 1}}}}
+	path := filepath.Join(t.TempDir(), "schema-v7.json")
+	if err := report.WriteJSON(path, r); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ReadRun(path)
+	if err != nil || got.SchemaVersion != 7 || len(got.Steps) != 1 || got.Steps[0].HTTPTrace.RequestAttemptCount != 1 {
+		t.Fatalf("schema-v7 timing report not readable: %+v err=%v", got, err)
+	}
+}
+
+func TestReadRunAcceptsSchemaEightHTTPDiagnostics(t *testing.T) {
+	r := report.Result{SchemaVersion: 8, Name: "Synthetic example", Target: "https://app.example.com", StartedAt: "2026-10-01T12:00:00Z", ElapsedSeconds: 30, ObservationSeconds: 30, Config: report.RunConfig{Users: 1}, Metrics: report.MetricSet{HTTP: report.HTTPDiagnostics{StatusCodes: map[int]int{302: 1}, Status3xx: 1, RedirectResponses: 1}}}
+	path := filepath.Join(t.TempDir(), "schema-v8.json")
+	if err := report.WriteJSON(path, r); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ReadRun(path)
+	if err != nil || got.SchemaVersion != 8 || got.Metrics.HTTP.RedirectResponses != 1 {
+		t.Fatalf("schema-v8 HTTP diagnostics report not readable: %+v err=%v", got, err)
+	}
+}
+
+func TestReadRunAcceptsSchemaNineMixProvenance(t *testing.T) {
+	r := report.Result{SchemaVersion: 9, Name: "Synthetic example", Target: "https://app.example.com", StartedAt: "2026-10-01T12:00:00Z", ElapsedSeconds: 30, ObservationSeconds: 30, Config: report.RunConfig{Users: 1, ProfileMixBasis: "sanitized_analytics", ProfileMixReference: "weekly-summary-v2"}}
+	path := filepath.Join(t.TempDir(), "schema-v9.json")
+	if err := report.WriteJSON(path, r); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ReadRun(path)
+	if err != nil || got.Config.ProfileMixBasis != "sanitized_analytics" || got.Config.ProfileMixReference != "weekly-summary-v2" {
+		t.Fatalf("schema-v9 provenance report not readable: %+v err=%v", got, err)
+	}
+}
+
+func TestReadRunAcceptsSchemaTenSamplerEvidence(t *testing.T) {
+	r := report.Result{SchemaVersion: 10, Name: "Synthetic example", Target: "https://app.example.com", StartedAt: "2026-10-01T12:00:00Z", ElapsedSeconds: 30, ObservationSeconds: 30, Config: report.RunConfig{Users: 1}, Generator: &generatorhealth.Summary{Samples: 5, SamplingIntervalMS: 250, MaxSampleGapMS: 251, SampleCollectionTotalMS: 1.2, SampleCollectionMaxMS: 0.4}}
+	path := filepath.Join(t.TempDir(), "schema-v10.json")
+	if err := report.WriteJSON(path, r); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ReadRun(path)
+	if err != nil || got.SchemaVersion != 10 || got.Generator.MaxSampleGapMS != 251 {
+		t.Fatalf("schema-v10 sampler report not readable: %+v err=%v", got, err)
+	}
+}
+
+func TestReadRunRequiresValidFingerprintForSchemaEleven(t *testing.T) {
+	r := synthetic()
+	r.ObservationSeconds = 30
+	r.Config.WorkloadFingerprint = "invalid"
+	data, err := json.Marshal(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "schema-v11-invalid-fingerprint.json")
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadRun(path); err == nil {
+		t.Fatal("schema-v11 report without a valid workload fingerprint was accepted")
+	}
+}
+
+func TestReadRunAcceptsSchemaElevenWorkloadFingerprint(t *testing.T) {
+	r := synthetic()
+	r.ObservationSeconds = 30
+	data, err := json.Marshal(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "schema-v11-workload-fingerprint.json")
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ReadRun(path)
+	if err != nil || got.SchemaVersion != 11 || got.Config.WorkloadFingerprint != r.Config.WorkloadFingerprint {
+		t.Fatalf("schema-v11 workload fingerprint report not readable: %+v err=%v", got, err)
+	}
+}
+
+func TestComparisonRequiresMatchingMixProvenance(t *testing.T) {
+	old, current := synthetic(), synthetic()
+	old.Config.WorkloadRevision, current.Config.WorkloadRevision = "rev-1", "rev-1"
+	old.Config.ProfileMixBasis, current.Config.ProfileMixBasis = "sanitized_analytics", "business_estimate"
+	old.Config.ProfileMixReference, current.Config.ProfileMixReference = "usage-v1", "planning-v1"
+	var out strings.Builder
+	writeComparison(&out, old, current)
+	if !strings.Contains(out.String(), "NOT a controlled comparison") {
+		t.Fatalf("comparison did not reject changed provenance: %s", out.String())
+	}
+}
 func TestNoPrivateTargetInFixture(t *testing.T) {
 	r := synthetic()
 	if !strings.Contains(r.Target, "example.com") {
@@ -239,16 +383,16 @@ func TestNoPrivateTargetInFixture(t *testing.T) {
 
 func TestGeneratorHealthReportedWithoutAssumingServerBottleneck(t *testing.T) {
 	r := synthetic()
-	r.SchemaVersion = 3
+	r.SchemaVersion = 10
 	r.Generator = &generatorhealth.Summary{
-		Samples: 6, ObservedSeconds: 2, PeakHeapAllocBytes: 32 << 20,
+		Samples: 6, ObservedSeconds: 2, SamplingIntervalMS: 250, MaxSampleGapMS: 251, SampleCollectionTotalMS: 2.4, SampleCollectionMaxMS: 0.5, PeakHeapAllocBytes: 32 << 20,
 		PeakGoroutines: 21, GCCycles: 1, GoCPUValid: true,
 		GoCPUUtilizationRatio: 0.96, ProcessSamples: 6, ProcessCPUSamples: 5, ProcessCPUValid: true,
 		PeakProcessRSSBytes: 64 << 20, PeakProcessCPUUtilizationRatio: 0.95,
 	}
 	var output bytes.Buffer
 	Write(&output, r, nil, nil)
-	for _, phrase := range []string{"Load-generator runtime", "Go runtime CPU activity", "Validate generator headroom", "Load-generator OS process", "Peak sampled generator process CPU", "Validate generator headroom", "SERVER UPGRADE: NOT JUSTIFIED"} {
+	for _, phrase := range []string{"Load-generator runtime", "Generator sampler", "maximum sample gap", "Go runtime CPU activity", "Validate generator headroom", "Load-generator OS process", "Peak sampled generator process CPU", "SERVER UPGRADE: NOT JUSTIFIED"} {
 		if !strings.Contains(output.String(), phrase) {
 			t.Fatalf("missing %q in output: %s", phrase, output.String())
 		}

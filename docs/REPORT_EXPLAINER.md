@@ -16,14 +16,20 @@ Compare two runs without repeating them:
 damocline report --file .damocline/reports/later-run.json --compare .damocline/reports/earlier-run.json
 ```
 
-For a controlled comparison, set `workload_revision` and `environment` in
-both scenarios. The revision identifies the same declared workflow and SLO
-inputs. The environment label records the tested deployment or hosting
-configuration. Missing or different workload revisions, targets, routes,
-authentication mode, timing, arrival settings, or acceptance criteria make
-the output explicitly non-controlled. A changed environment is evidence for a
-comparison experiment, never proof that a particular infrastructure component
-caused the difference.
+For a controlled comparison, set the same `workload_revision` and
+`environment` in both scenarios. Schema-v11 reports also carry a SHA-256
+fingerprint of the declared profile and step definitions, including routes,
+headers, assertions and response extraction rules. The comparator requires
+matching fingerprints, targets, authentication mode, timing, arrival settings,
+rate limits and acceptance criteria. Missing fingerprints in older reports or
+any declared-workload mismatch is labeled `NOT_COMPARABLE`. Matching declared
+conditions are labeled `MATCHED_DECLARED_WORKLOAD`, not a controlled or causal
+comparison. The fingerprint does not include resolved environment secrets,
+environment-backed body values or generator host identity. Application
+revision is shown as the observed treatment; different revisions receive a
+warning and do not establish a causal effect. Run reports do not embed
+loopback preflight evidence or authenticated generator host identity, so
+generator-condition equivalence remains unknown.
 
 If you independently captured Linux host telemetry using `damocline monitor`, add the optional host JSON:
 
@@ -40,6 +46,11 @@ phase in a complete repeated campaign to carry explicit
 quality remains `INSUFFICIENT_EVIDENCE`. Current runs are `LIMITED` while the
 workload-specific generator preflight gate is unfinished, so this positive
 demand assessment is intentionally unavailable from current campaign reports.
+The planner also requires adequate conditional P95 and error-rate bounds for
+every required phase aggregate, step, and SLO window; full window coverage; and
+spread data for every independent observation trial. These bounds assume
+independent, stationary observations, which Damocline does not establish, so
+they are not a dependence-aware confidence guarantee.
 
 ## Understand the four answers
 
@@ -59,7 +70,7 @@ HOST METRICS:   NOT MEASURED
 Each assessment also highlights:
 
 1. **HTTP request p95** against the configured request-latency objective, separately from **complete journey p95** (which includes think-time).
-2. Errors, number of samples, intermittent long-tail responses, cancelled operations and missed arrivals.
+2. Errors by HTTP status family, redirects, 429 responses, assertion/timeout/TLS/transport failures, oversized responses, sample counts, long-tail responses, cancellations and missed arrivals. A 429 is an observed application response; local `max_rps` waits are reported separately and do not suppress requests.
 3. Achieved requests per second compared with the **configured maximum** (`max_rps` is a cap, not actual throughput).
 4. Differences in duration, rate caps and achieved throughput that prevent treating two results as a controlled comparison.
 5. Suggested next experiments to answer the still-open capacity question.

@@ -6,11 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
+	"time"
 
 	"github.com/LucasLuchetta/Damocline/internal/campaign"
 	"github.com/LucasLuchetta/Damocline/internal/capacitygoal"
 	"github.com/LucasLuchetta/Damocline/internal/report"
+	"github.com/LucasLuchetta/Damocline/internal/statistics"
 )
 
 const maxCampaignReportBytes = 16 << 20
@@ -23,6 +26,12 @@ type Result struct {
 }
 
 func Evaluate(evidence campaign.Result, goal capacitygoal.Goal) (Result, error) {
+	return evaluateWithQuality(evidence, goal, report.AssessQuality)
+}
+
+type qualityAssessor func(report.Result) *report.Quality
+
+func evaluateWithQuality(evidence campaign.Result, goal capacitygoal.Goal, assess qualityAssessor) (Result, error) {
 	target, err := capacitygoal.EvaluatedUsers(goal)
 	if err != nil {
 		return Result{}, err
@@ -43,19 +52,28 @@ func Evaluate(evidence campaign.Result, goal capacitygoal.Goal) (Result, error) 
 		result.Findings = append(result.Findings, fmt.Sprintf("The passing base level (%d VUs) differs from the required target (%d VUs). Test the exact target before deciding on capacity.", evidence.BaseUsers, target))
 		return result, nil
 	}
-	if blocker := qualityBlocker(evidence); blocker != "" {
+	if blocker := qualityBlocker(evidence, assess); blocker != "" {
 		result.Findings = append(result.Findings, blocker)
+		return result, nil
+	}
+	if blocker := statisticalBlocker(evidence); blocker != "" {
+		result.Findings = append(result.Findings, blocker)
+		return result, nil
+	}
+	if !validObservationVariability(evidence.ObservationVariability, evidence.Repeats) {
+		result.Findings = append(result.Findings, "Observation variability is not recorded for every independent trial; demand remains INSUFFICIENT_EVIDENCE.")
 		return result, nil
 	}
 	result.State = "GOAL_MET_UNDER_TESTED_CONDITIONS"
 	result.Findings = append(result.Findings, fmt.Sprintf("The repeated campaign passed at %d base VUs, meeting the calculated target of %d VUs under the recorded conditions.", evidence.BaseUsers, target))
+	result.Findings = append(result.Findings, "Statistical bounds are conditional on independent, stationary requests and latencies; temporal dependence and stationarity are not established by this assessment.")
 	if evidence.ObservationVariability != nil {
 		result.Findings = append(result.Findings, fmt.Sprintf("Observed observation p95 ranged from %.0f to %.0f ms across %d trials; review the full report before changing infrastructure.", evidence.ObservationVariability.P95MinMS, evidence.ObservationVariability.P95MaxMS, evidence.ObservationVariability.Runs))
 	}
 	return result, nil
 }
 
-func qualityBlocker(evidence campaign.Result) string {
+func qualityBlocker(evidence campaign.Result, assess qualityAssessor) string {
 	for _, trial := range evidence.Trials {
 		for _, phase := range trial.Phases {
 			if phase.Name == "warmup" {
@@ -64,7 +82,20 @@ func qualityBlocker(evidence campaign.Result) string {
 			if phase.Run.Quality == nil {
 				return "A required campaign phase is missing explicit data-quality evidence; the tested demand remains INSUFFICIENT_EVIDENCE."
 			}
-			switch phase.Run.Quality.State {
+			if phase.Run.Quality.State != report.QualityValid && phase.Run.Quality.State != report.QualityInvalid && phase.Run.Quality.State != report.QualityLimited {
+				return "A required campaign phase has unknown measurement quality; the tested demand remains INSUFFICIENT_EVIDENCE."
+			}
+			if assess == nil {
+				return "A required campaign phase cannot have its data quality recomputed; the tested demand remains INSUFFICIENT_EVIDENCE."
+			}
+			recomputed := assess(phase.Run)
+			if recomputed == nil {
+				return "A required campaign phase has no recomputable data-quality result; the tested demand remains INSUFFICIENT_EVIDENCE."
+			}
+			if phase.Run.Quality.State != recomputed.State {
+				return fmt.Sprintf("A required campaign phase claims %s measurement quality but its report fields recompute as %s; the tested demand remains INSUFFICIENT_EVIDENCE.", phase.Run.Quality.State, recomputed.State)
+			}
+			switch recomputed.State {
 			case report.QualityValid:
 				continue
 			case report.QualityInvalid:
@@ -77,6 +108,91 @@ func qualityBlocker(evidence campaign.Result) string {
 		}
 	}
 	return ""
+}
+
+func statisticalBlocker(evidence campaign.Result) string {
+	for _, trial := range evidence.Trials {
+		for _, phase := range trial.Phases {
+			if phase.Name == "warmup" {
+				continue
+			}
+			run := phase.Run
+			if run.Config.P95LimitMS <= 0 || math.IsNaN(run.Config.P95LimitMS) || math.IsInf(run.Config.P95LimitMS, 0) ||
+				run.Config.MaxErrorRate <= 0 || run.Config.MaxErrorRate >= 1 || math.IsNaN(run.Config.MaxErrorRate) || math.IsInf(run.Config.MaxErrorRate, 0) {
+				return "A required phase is missing a statistically assessable latency or nonzero error-budget objective; demand remains INSUFFICIENT_EVIDENCE."
+			}
+			if run.ObservationSeconds <= 0 || math.IsNaN(run.ObservationSeconds) || math.IsInf(run.ObservationSeconds, 0) {
+				return "A required phase has no valid observation duration; demand remains INSUFFICIENT_EVIDENCE."
+			}
+			windowDuration, err := time.ParseDuration(run.Config.WindowDuration)
+			if err != nil || windowDuration <= 0 || len(run.Windows) == 0 {
+				return "A required phase has no complete, configured SLO-window evidence; demand remains INSUFFICIENT_EVIDENCE."
+			}
+			if blocker := metricSetBlocker(run.Metrics, run.Config.P95LimitMS, run.Config.MaxErrorRate); blocker != "" {
+				return "A required phase aggregate " + blocker
+			}
+			if len(run.Steps) == 0 {
+				return "A required phase has no per-step sample evidence; demand remains INSUFFICIENT_EVIDENCE."
+			}
+			for _, step := range run.Steps {
+				if blocker := metricSetBlocker(step.Metrics, run.Config.P95LimitMS, run.Config.MaxErrorRate); blocker != "" {
+					return "A required phase per-step " + blocker
+				}
+			}
+			windowSeconds := windowDuration.Seconds()
+			observationSeconds := run.ObservationSeconds
+			expectedStart := 0.0
+			for _, window := range run.Windows {
+				if math.IsNaN(window.StartSeconds) || math.IsInf(window.StartSeconds, 0) ||
+					math.IsNaN(window.EndSeconds) || math.IsInf(window.EndSeconds, 0) ||
+					window.StartSeconds < 0 || window.EndSeconds <= window.StartSeconds ||
+					math.Abs(window.StartSeconds-expectedStart) > 0.001 ||
+					math.Abs((window.EndSeconds-window.StartSeconds)-windowSeconds) > 0.001 ||
+					window.EndSeconds > observationSeconds+windowSeconds+0.001 {
+					return "A required phase has missing, overlapping, or out-of-range SLO windows; demand remains INSUFFICIENT_EVIDENCE."
+				}
+				if blocker := metricSetBlocker(window.Metrics, run.Config.P95LimitMS, run.Config.MaxErrorRate); blocker != "" {
+					return "A required phase window " + blocker
+				}
+				expectedStart = window.EndSeconds
+			}
+			if expectedStart+0.001 < observationSeconds || run.Windows[len(run.Windows)-1].StartSeconds >= observationSeconds {
+				return "A required phase does not have continuous SLO-window coverage through its observation horizon; demand remains INSUFFICIENT_EVIDENCE."
+			}
+		}
+	}
+	return ""
+}
+
+func metricSetBlocker(metrics report.MetricSet, p95LimitMS, maxErrorRate float64) string {
+	if metrics.Total <= 0 || metrics.Success < 0 || metrics.Success > metrics.Total ||
+		metrics.Failures != metrics.Total-metrics.Success || metrics.Cancelled != 0 {
+		return "has insufficient or invalid request counts; demand remains INSUFFICIENT_EVIDENCE."
+	}
+	upperErrorRate, err := statistics.UpperFailureRate95(metrics.Failures, metrics.Total)
+	if err != nil || upperErrorRate > maxErrorRate {
+		return "does not establish its configured error budget under the conditional binomial bound; demand remains INSUFFICIENT_EVIDENCE."
+	}
+	if _, _, err := statistics.PercentileRankInterval95(metrics.Total, 0.95); err != nil ||
+		!metrics.P95IID95Approximation || math.IsNaN(metrics.P95IID95LowerMS) || math.IsInf(metrics.P95IID95LowerMS, 0) ||
+		math.IsNaN(metrics.P95IID95UpperMS) || math.IsInf(metrics.P95IID95UpperMS, 0) ||
+		metrics.P95IID95LowerMS < 0 || metrics.P95IID95UpperMS < metrics.P95IID95LowerMS || metrics.P95IID95UpperMS > p95LimitMS {
+		return "lacks an adequate p95 rank interval below its configured limit; demand remains INSUFFICIENT_EVIDENCE."
+	}
+	return ""
+}
+
+func validObservationVariability(v *campaign.Variability, repeats int) bool {
+	if v == nil || v.Runs != repeats ||
+		math.IsNaN(v.P95MinMS) || math.IsInf(v.P95MinMS, 0) ||
+		math.IsNaN(v.P95MaxMS) || math.IsInf(v.P95MaxMS, 0) || v.P95MinMS < 0 || v.P95MaxMS < v.P95MinMS ||
+		math.IsNaN(v.ErrorRateMin) || math.IsInf(v.ErrorRateMin, 0) ||
+		math.IsNaN(v.ErrorRateMax) || math.IsInf(v.ErrorRateMax, 0) || v.ErrorRateMin < 0 || v.ErrorRateMax > 1 || v.ErrorRateMax < v.ErrorRateMin ||
+		math.IsNaN(v.ThroughputMinRPS) || math.IsInf(v.ThroughputMinRPS, 0) ||
+		math.IsNaN(v.ThroughputMaxRPS) || math.IsInf(v.ThroughputMaxRPS, 0) || v.ThroughputMinRPS < 0 || v.ThroughputMaxRPS < v.ThroughputMinRPS {
+		return false
+	}
+	return true
 }
 
 // ReadCampaign reads a bounded saved campaign report. It never makes a network

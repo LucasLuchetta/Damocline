@@ -5,6 +5,21 @@ This project follows a human-maintained changelog. No release exists yet.
 ## [Unreleased]
 
 ### Added
+- Report exact expected and observed dimensions for failed loopback calibration gates, including per-stage delivery, outcome, latency, generator health, lag, and independent server ledger; reject non-finite fixture latency.
+- Upgrade HTTP run reports to schema v11 with a workload-definition fingerprint; label legacy, mismatched workload, or mismatched generator-preflight comparisons `NOT_COMPARABLE`, and report application revision as the observed treatment.
+- Recompute measurement quality for every required phase during offline demand planning and reject persisted `VALID_WITHIN_ENVELOPE` claims that disagree with the underlying run fields.
+- Reconcile six in-flight requests cancelled by an external abort during the graceful-drain interval with the independent loopback server ledger.
+- Compare six requests that finish after the schedule cutoff against the independent loopback ledger, extending G0-15 evidence to graceful drain.
+- Reconcile an interrupted native-engine request with the independent loopback server ledger, including received/completed/cancelled/rejected conservation.
+- Upgrade HTTP run reports to schema v10 with generator sampler interval, maximum sample gap, and total/maximum sample-collection wall time; flag inconsistent sample data as INVALID and long gaps as LIMITED.
+- Enforce the scenario JSON byte limit exactly at 1 MiB and reject report artifacts above 16 MiB before creating or replacing an output file, with deterministic boundary tests.
+- Calibrate scheduler-lag reporting with nine bounded observations across three injected scheduler pauses, record the timing method and 50 ms fixture tolerance, and reject missing or altered lag evidence in offline preflight reads.
+- Record weighted-profile mix provenance as an explicit assumption, sanitized-analytics label, or business-estimate label in schema-v9 run reports; safe references are identifiers only and do not validate representativeness.
+- Upgrade HTTP run reports to schema v8 with exact status-code/family counters and structured assertion, timeout, TLS/transport, redirect, 429-response and oversized-body counts; reconcile aggregate, step and window evidence.
+- Report observed between-step think-time totals separately from per-step request and completed-journey latency, including interrupted sleep intervals; retain cancelled partial journeys outside completed journey percentiles.
+- Record per-step HTTP client timing totals and observation counts for rate-token wait, DNS, TCP connect, TLS handshake, first response byte, bounded body read, and full request completion/error; document that these are client observations, not server processing time.
+- Upgrade HTTP run reports to schema v7 for phase timing. Quality checks reconcile new phase counts for v7 while treating those fields as unknown in earlier reports.
+- Require adequate conditional P95 rank intervals, binomial error bounds, complete observation-window coverage, and variability across all independent trials before offline demand planning can report a goal met.
 - Require explicit `VALID_WITHIN_ENVELOPE` quality on every required sustained-campaign phase before offline demand planning can report a goal met; missing or limited evidence remains insufficient.
 - Exclude zero or non-finite generator process readings from health summaries, expose invalid sample counts as a measurement-quality limitation, and reject process-counter conversion overflow.
 - Report open-arrival scheduler lag sample count, p50/p95/maximum and the monotonic slot-to-admission measurement boundary; label timing accuracy as uncalibrated.
@@ -19,7 +34,7 @@ This project follows a human-maintained changelog. No release exists yet.
 - Embed a versioned, sanitized local loopback preflight record in calibration reports with generator/runner identity, UTC test window, fixture fingerprint, per-stage delivered arrivals and the highest *tested passing* rate. It does not certify real application capacity.
 - Add validated workload-revision and environment labels to HTTP reports; offline comparisons require matching complete workload conditions and label environment changes as non-causal evidence.
 - Add opt-in, environment-backed synthetic data prefixes and a per-journey `{{synthetic_id}}` template value for isolated write workflows; generated identifiers remain out of reports.
-- Add an IID-assumption, normal-approximation P95 order-statistic-rank interval when tail sample adequacy permits; preserve its limitations in the CLI and report schema v6.
+- Add an IID-assumption, normal-approximation P95 order-statistic-rank interval when tail sample adequacy permits; preserve its limitations in report schema v6.
 - Add an offline `plan` command that compares a calculated business demand target with a complete repeated campaign report, preserving scenario-specific evidence limits and never recommending infrastructure.
 - Add mean request latency, sampled in-flight request averages, and a bounded throughput-times-mean-latency consistency signal for Little's Law review.
 - Add CI source-build checks for Linux amd64, Windows amd64, macOS amd64, and macOS arm64 without publishing prebuilt binaries.

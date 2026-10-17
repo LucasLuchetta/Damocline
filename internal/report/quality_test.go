@@ -2,6 +2,7 @@ package report
 
 import (
 	"encoding/json"
+	"math"
 	"strings"
 	"testing"
 
@@ -14,10 +15,8 @@ func validSyntheticQualityRun() Result {
 		Config:  RunConfig{Users: 10, MaxRPS: 100, Mode: "arrival", ArrivalRate: 10},
 		Metrics: MetricSet{Total: 100, Success: 100}, Journeys: MetricSet{Total: 100, Success: 100},
 		IterationsStarted: 100, IterationsCompleted: 100, ArrivalsScheduled: 100,
-		SchedulerLagSamples: 100, SchedulerLagP50MS: 1, SchedulerLagP95MS: 2, SchedulerLagMaxMS: 3,
-		SchedulerLagMethod: "monotonic due-slot dispatch lag",
-		Generator:          &generatorhealth.Summary{Samples: 10, GoCPUValid: true, ProcessSamples: 10, ProcessCPUValid: true},
-		Outcome:            "PASS",
+		Generator: &generatorhealth.Summary{Samples: 10, GoCPUValid: true, ProcessSamples: 10, ProcessCPUValid: true},
+		Outcome:   "PASS",
 	}
 }
 
@@ -33,6 +32,69 @@ func TestQualityNoLocalCapacityCertificateEvenForPerfectDelivery(t *testing.T) {
 	}
 	if strings.Contains(string(data), "VALID_WITHIN_ENVELOPE") {
 		t.Fatal("cannot claim validated capacity")
+	}
+}
+
+func TestQualityLimitsStaleGeneratorSamplingAndRejectsMalformedSampling(t *testing.T) {
+	base := validSyntheticQualityRun()
+	base.SchemaVersion = 10
+	base.Generator.ObservedSeconds = 10
+	base.Generator.GOMAXPROCS = 1
+	base.Generator.SamplingIntervalMS = 250
+	base.Generator.SampleCollectionTotalMS = 2
+	base.Generator.SampleCollectionMaxMS = 0.5
+	base.Generator.MaxSampleGapMS = 250
+	base.Generator.ProcessSamples = base.Generator.Samples
+	base.Generator.ProcessCPUSamples = base.Generator.ProcessSamples - 1
+	base.Generator.PeakProcessRSSBytes = 4096
+	base.Generator.GoCPUCapacitySeconds = 10
+	base.Generator.PeakHeapAllocBytes = 1024
+	base.Generator.PeakGoroutines = 2
+	if q := AssessQuality(base); q.State != QualityLimited {
+		t.Fatalf("valid bounded sampler should preserve the existing limited envelope: %+v", q)
+	}
+	stale := base
+	staleGenerator := *base.Generator
+	staleGenerator.MaxSampleGapMS = 501
+	stale.Generator = &staleGenerator
+	q := AssessQuality(stale)
+	if q.State != QualityLimited || !strings.Contains(strings.Join(q.Findings, " "), "sampling has a gap") {
+		t.Fatalf("stale sampling gap was not exposed: %+v", q)
+	}
+	zero := base
+	zeroGenerator := *base.Generator
+	zeroGenerator.PeakProcessRSSBytes = 0
+	zero.Generator = &zeroGenerator
+	if q := AssessQuality(zero); q.State != QualityLimited || !strings.Contains(strings.Join(q.Findings, " "), "no resident-memory value") {
+		t.Fatalf("zero process RSS was not exposed as limited evidence: %+v", q)
+	}
+	for name, mutate := range map[string]func(*generatorhealth.Summary){
+		"non-finite interval":               func(g *generatorhealth.Summary) { g.SamplingIntervalMS = math.NaN() },
+		"sample counts exceed observations": func(g *generatorhealth.Summary) { g.ProcessSamples = g.Samples + 1 },
+		"collection peak exceeds total":     func(g *generatorhealth.Summary) { g.SampleCollectionMaxMS = g.SampleCollectionTotalMS + 1 },
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := base
+			copy := *base.Generator
+			mutate(&copy)
+			r.Generator = &copy
+			if q := AssessQuality(r); q.State != QualityInvalid {
+				t.Fatalf("malformed sampler evidence was not INVALID: %+v", q)
+			}
+		})
+	}
+}
+
+func TestQualityLimitsExcludedInvalidProcessSamples(t *testing.T) {
+	r := validSyntheticQualityRun()
+	r.Generator.InvalidProcessSamples = 1
+	q := AssessQuality(r)
+	if q.State != QualityLimited || !strings.Contains(strings.Join(q.Findings, " "), "process samples were zero or implausible and were excluded") {
+		t.Fatalf("excluded invalid generator samples must limit evidence: %+v", q)
+	}
+	r.Generator.InvalidProcessSamples = -1
+	if q := AssessQuality(r); q.State != QualityInvalid {
+		t.Fatalf("negative invalid-sample count must invalidate evidence: %+v", q)
 	}
 }
 
@@ -80,15 +142,49 @@ func TestQualitySeparatesMissingGeneratorAndSLOFailure(t *testing.T) {
 	}
 }
 
-func TestQualityLimitsInvalidGeneratorProcessSamples(t *testing.T) {
-	r := validSyntheticQualityRun()
-	r.Generator.InvalidProcessSamples = 1
-	quality := AssessQuality(r)
-	findings := strings.Join(quality.Findings, " ")
-	if quality.State != QualityLimited || !strings.Contains(findings, "process samples") {
-		t.Fatalf("invalid generator readings must limit measurement quality: %+v", quality)
+func TestQualityRejectsInconsistentHTTPTraceCountsAndTotals(t *testing.T) {
+	base := Result{SchemaVersion: 7, Metrics: MetricSet{Total: 1, Success: 1}, Journeys: MetricSet{Total: 1, Success: 1}, Outcome: "PASS", ElapsedSeconds: 1, ObservationSeconds: 1, Config: RunConfig{Users: 1, MaxRPS: 10}, IterationsStarted: 1, IterationsCompleted: 1}
+	base.Steps = []StepResult{{Metrics: MetricSet{Total: 1, Success: 1}, HTTPTrace: HTTPTrace{RequestAttemptCount: 1, RateWaitCount: 1, CompleteCount: 1, WriteCount: 1, FirstByteCount: 1, BodyCount: 1}}}
+	for name, mutate := range map[string]func(*HTTPTrace){
+		"negative phase count":          func(t *HTTPTrace) { t.DNSCount = -1 },
+		"non-finite duration":           func(t *HTTPTrace) { t.CompleteMS = math.NaN() },
+		"missing rate wait":             func(t *HTTPTrace) { t.RateWaitCount = 0 },
+		"body count exceeds first byte": func(t *HTTPTrace) { t.BodyCount = 2 },
+	} {
+		r := base
+		r.Steps = append([]StepResult(nil), base.Steps...)
+		mutate(&r.Steps[0].HTTPTrace)
+		if q := AssessQuality(r); q.State != QualityInvalid {
+			t.Errorf("%s: expected INVALID, got %+v", name, q)
+		}
 	}
-	if strings.Contains(findings, "application capacity") {
-		t.Fatalf("generator sample finding must not infer target capacity: %+v", quality)
+}
+
+func TestQualityTreatsPreTraceSchemaAsUnknown(t *testing.T) {
+	r := Result{SchemaVersion: 6, Metrics: MetricSet{Total: 1, Success: 1}, Journeys: MetricSet{Total: 1, Success: 1}, Outcome: "PASS", ElapsedSeconds: 1, ObservationSeconds: 1, Config: RunConfig{Users: 1, MaxRPS: 10}, IterationsStarted: 1, IterationsCompleted: 1, Steps: []StepResult{{Metrics: MetricSet{Total: 1, Success: 1}}}}
+	if q := AssessQuality(r); q.State == QualityInvalid {
+		t.Fatalf("historical report without HTTP phase fields must remain unknown, not invalid: %+v", q)
+	}
+}
+
+func TestQualityRejectsInvalidObservedThinkTime(t *testing.T) {
+	r := Result{SchemaVersion: 7, ElapsedSeconds: 1, ObservationSeconds: 1, Config: RunConfig{Users: 1, MaxRPS: 1}, ObservedThinkTimeMS: math.Inf(1), ThinkTimeObservations: 1}
+	if q := AssessQuality(r); q.State != QualityInvalid {
+		t.Fatalf("non-finite think time must invalidate v7 evidence: %+v", q)
+	}
+}
+
+func TestQualityRejectsInconsistentHTTPDiagnostics(t *testing.T) {
+	base := Result{SchemaVersion: 8, ElapsedSeconds: 1, ObservationSeconds: 1, Config: RunConfig{Users: 1, MaxRPS: 10}, Metrics: MetricSet{Total: 1, Success: 1}, Journeys: MetricSet{Total: 1, Success: 1}}
+	for name, diagnostics := range map[string]HTTPDiagnostics{
+		"status family mismatch":  {StatusCodes: map[int]int{302: 1}, Status2xx: 1},
+		"invalid status code":     {StatusCodes: map[int]int{99: 1}},
+		"negative classification": {NetworkTimeouts: -1},
+	} {
+		r := base
+		r.Metrics.HTTP = diagnostics
+		if q := AssessQuality(r); q.State != QualityInvalid {
+			t.Errorf("%s: expected INVALID, got %+v", name, q)
+		}
 	}
 }
