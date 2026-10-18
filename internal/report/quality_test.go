@@ -3,6 +3,7 @@ package report
 import (
 	"encoding/json"
 	"math"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -610,5 +611,14 @@ func TestQualityRejectsInconsistentHTTPDiagnostics(t *testing.T) {
 		if q := AssessQuality(r); q.State != QualityInvalid {
 			t.Errorf("%s: expected INVALID, got %+v", name, q)
 		}
+	}
+}
+
+func TestHTTPDiagnosticsClassifiesBodyReadFailureAsTransportFailure(t *testing.T) {
+	var diagnostics HTTPDiagnostics
+	diagnostics.Record(http.StatusOK, "body_read", false, false)
+	if diagnostics.Status2xx != 1 || diagnostics.StatusCodes[http.StatusOK] != 1 ||
+		diagnostics.TransportFailures != 1 || diagnostics.NetworkTimeouts != 0 || diagnostics.TLSFailures != 0 {
+		t.Fatalf("truncated successful-status response was not categorized consistently: %+v", diagnostics)
 	}
 }
