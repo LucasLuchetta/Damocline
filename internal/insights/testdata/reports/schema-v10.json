@@ -1,0 +1,1 @@
+{"schema_version":10,"name":"Synthetic legacy fixture","target":"http://127.0.0.1","elapsed_seconds":1,"observation_seconds":1,"config":{"users":1},"metrics":{"total":0,"success":0,"failures":0},"generator":{"samples":2,"sampling_interval_ms":250,"max_sample_gap_ms":250,"sample_collection_total_ms":1,"sample_collection_max_ms":0.5}}

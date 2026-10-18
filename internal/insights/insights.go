@@ -39,8 +39,16 @@ func ReadRun(path string) (report.Result, error) {
 	if err := readJSON(path, &r); err != nil {
 		return r, err
 	}
-	if r.SchemaVersion < 1 || r.SchemaVersion > 11 || r.Name == "" || r.Metrics.Total < 0 || r.Metrics.Success < 0 || r.Metrics.Failures < 0 || r.Metrics.Success+r.Metrics.Failures != r.Metrics.Total || r.Config.Users < 1 || r.ElapsedSeconds <= 0 || (r.SchemaVersion >= 4 && r.ObservationSeconds <= 0) || (r.SchemaVersion >= 11 && !validFingerprint(r.Config.WorkloadFingerprint)) {
+	if r.SchemaVersion < 1 || r.SchemaVersion > report.CurrentSchemaVersion || r.Name == "" || r.Metrics.Total < 0 || r.Metrics.Success < 0 || r.Metrics.Failures < 0 || r.Metrics.Success+r.Metrics.Failures != r.Metrics.Total || r.Config.Users < 1 || r.ElapsedSeconds <= 0 || (r.SchemaVersion >= 4 && r.ObservationSeconds <= 0) || (r.SchemaVersion >= 11 && !validFingerprint(r.Config.WorkloadFingerprint)) || (r.SchemaVersion >= 14 && r.Config.ConnectionPolicy != "reuse" && r.Config.ConnectionPolicy != "new_per_request") {
 		return report.Result{}, errors.New("not a valid Damocline HTTP run report")
+	}
+	if (r.SchemaVersion >= 16 && (r.ArrivalsCancelledBeforeAdmission == nil || *r.ArrivalsCancelledBeforeAdmission < 0)) ||
+		(r.SchemaVersion < 16 && r.ArrivalsCancelledBeforeAdmission != nil) {
+		return report.Result{}, errors.New("report arrival-cancellation evidence does not match its schema")
+	}
+	if (r.SchemaVersion >= 17 && (r.ArrivalsAdmitted == nil || *r.ArrivalsAdmitted < 0)) ||
+		(r.SchemaVersion < 17 && r.ArrivalsAdmitted != nil) {
+		return report.Result{}, errors.New("report admitted-arrival evidence does not match its schema")
 	}
 	return r, nil
 }
@@ -204,13 +212,27 @@ func Evaluate(r report.Result, host *hostmon.Result) Assessment {
 	if r.ArrivalsDroppedBusy > 0 {
 		a.Findings = append(a.Findings, Finding{"LIMIT", fmt.Sprintf("%d arrivals had no idle synthetic worker; server bottleneck is not established.", r.ArrivalsDroppedBusy)})
 	}
-	if r.SchedulerLagMaxMS > 0 {
-		a.Findings = append(a.Findings, Finding{"INFO", fmt.Sprintf("Generator scheduling lag p95 %.1f ms, peak %.1f ms.", r.SchedulerLagP95MS, r.SchedulerLagMaxMS)})
+	if r.SchemaVersion >= 17 && r.ArrivalsAdmitted != nil {
+		if *r.ArrivalsAdmitted != r.IterationsStarted {
+			a.Findings = append(a.Findings, Finding{"INVALID", "Scheduler-admitted arrivals do not reconcile with worker-started iterations."})
+		} else {
+			a.Findings = append(a.Findings, Finding{"INFO", fmt.Sprintf("Scheduler admitted %d arrivals; worker-started iterations reconcile exactly.", *r.ArrivalsAdmitted)})
+		}
+	}
+	if r.ArrivalsCancelledBeforeAdmission != nil && *r.ArrivalsCancelledBeforeAdmission > 0 {
+		a.Findings = append(a.Findings, Finding{"CAUTION", fmt.Sprintf("%d due arrivals were not admitted because the run was externally cancelled before its schedule ended.", *r.ArrivalsCancelledBeforeAdmission)})
+	}
+	if r.SchedulerLagSamples > 0 {
+		a.Findings = append(a.Findings, Finding{"INFO", fmt.Sprintf("Generator scheduling lag over %d planned arrivals: p50 %.1f ms, p95 %.1f ms, max %.1f ms (monotonic slot-to-admission; includes timer wake-up and callback admission). This is observed dispatch delay, not a calibrated clock-accuracy bound.", r.SchedulerLagSamples, r.SchedulerLagP50MS, r.SchedulerLagP95MS, r.SchedulerLagMaxMS)})
 	}
 	if r.Metrics.Cancelled > 0 {
 		a.Findings = append(a.Findings, Finding{"CAUTION", fmt.Sprintf("%d requests were cancelled at the run boundary and excluded from completed-request percentiles.", r.Metrics.Cancelled)})
 	}
 	for _, st := range r.Steps {
+		body := st.Metrics.ResponseBody
+		if r.SchemaVersion >= 12 && (body.CompleteObservations > 0 || body.IncompleteObservations > 0 || body.OversizedObservations > 0) {
+			a.Findings = append(a.Findings, Finding{"INFO", fmt.Sprintf("Step %q response body reader observed %d complete bodies (%d-%d bytes; %d bytes total), %d interrupted reads, and %d oversized bodies. Sizes exclude body contents and do not establish expected-workload equivalence.", st.Name, body.CompleteObservations, body.MinBytes, body.MaxBytes, body.TotalBytes, body.IncompleteObservations, body.OversizedObservations)})
+		}
 		if st.Metrics.Total == 0 {
 			a.Findings = append(a.Findings, Finding{"CAUTION", fmt.Sprintf("Step %q received no complete samples.", st.Name)})
 			continue
@@ -284,6 +306,18 @@ func Write(w io.Writer, r report.Result, host *hostmon.Result, previous *report.
 	for _, f := range a.Findings {
 		fmt.Fprintf(w, "  [%s] %s\n", f.Level, f.Text)
 	}
+	if r.Calibration != nil {
+		fmt.Fprintf(w, "\nCalibration coverage: %s\n", r.Calibration.Coverage.Status)
+		for _, dimension := range r.Calibration.Coverage.Dimensions {
+			fmt.Fprintf(w, "  %s: %s — %s\n", dimension.Name, dimension.Status, dimension.Reason)
+		}
+	}
+	if r.Quality != nil {
+		fmt.Fprintf(w, "\nMeasurement quality: %s\n", r.Quality.State)
+		for _, finding := range r.Quality.Findings {
+			fmt.Fprintf(w, "  - %s\n", finding)
+		}
+	}
 	if previous != nil {
 		writeComparison(w, *previous, r)
 	}
@@ -296,10 +330,10 @@ func Write(w io.Writer, r report.Result, host *hostmon.Result, previous *report.
 
 func writeComparison(w io.Writer, old, current report.Result) {
 	fmt.Fprintln(w, "\nComparison with previous run:")
-	compatible := old.Target == current.Target && old.SchemaVersion >= 11 && current.SchemaVersion >= 11 && validFingerprint(old.Config.WorkloadFingerprint) && old.Config.WorkloadFingerprint == current.Config.WorkloadFingerprint && old.Config.WorkloadRevision != "" && old.Config.WorkloadRevision == current.Config.WorkloadRevision && old.Config.Environment != "" && old.Config.Environment == current.Config.Environment && old.Config.ProfileMixBasis == current.Config.ProfileMixBasis && old.Config.ProfileMixReference == current.Config.ProfileMixReference && old.Config.Users == current.Config.Users && old.Config.Duration == current.Config.Duration && old.Config.RampUp == current.Config.RampUp && old.Config.MaxRPS == current.Config.MaxRPS && old.Config.Mode == current.Config.Mode && old.Config.ArrivalRate == current.Config.ArrivalRate && old.Config.SeparateSessions == current.Config.SeparateSessions && old.Config.ThinkTime == current.Config.ThinkTime && old.Config.RequestTimeout == current.Config.RequestTimeout && old.Config.P95LimitMS == current.Config.P95LimitMS && old.Config.MaxErrorRate == current.Config.MaxErrorRate && old.Config.MinSamplesPerStep == current.Config.MinSamplesPerStep && old.Config.WindowDuration == current.Config.WindowDuration && sameSteps(old.Steps, current.Steps) && sameProfiles(old.Config.Profiles, current.Config.Profiles)
+	compatible := old.Target == current.Target && old.SchemaVersion >= 14 && current.SchemaVersion >= 14 && old.Config.ConnectionPolicy == current.Config.ConnectionPolicy && validFingerprint(old.Config.WorkloadFingerprint) && old.Config.WorkloadFingerprint == current.Config.WorkloadFingerprint && old.Config.WorkloadRevision != "" && old.Config.WorkloadRevision == current.Config.WorkloadRevision && old.Config.Environment != "" && old.Config.Environment == current.Config.Environment && old.Config.ProfileMixBasis == current.Config.ProfileMixBasis && old.Config.ProfileMixReference == current.Config.ProfileMixReference && old.Config.Users == current.Config.Users && old.Config.Duration == current.Config.Duration && old.Config.RampUp == current.Config.RampUp && old.Config.MaxRPS == current.Config.MaxRPS && old.Config.Mode == current.Config.Mode && old.Config.ArrivalRate == current.Config.ArrivalRate && old.Config.SeparateSessions == current.Config.SeparateSessions && old.Config.ThinkTime == current.Config.ThinkTime && old.Config.RequestTimeout == current.Config.RequestTimeout && old.Config.P95LimitMS == current.Config.P95LimitMS && old.Config.MaxErrorRate == current.Config.MaxErrorRate && old.Config.MinSamplesPerStep == current.Config.MinSamplesPerStep && old.Config.WindowDuration == current.Config.WindowDuration && sameSteps(old.Steps, current.Steps) && sameProfiles(old.Config.Profiles, current.Config.Profiles)
 	if !compatible {
 		fmt.Fprintln(w, "  Comparison eligibility: NOT_COMPARABLE.")
-		fmt.Fprintln(w, "  [LIMIT] Workload fingerprint, revision, environment, load controls, acceptance criteria, authentication mode, target, or routes differ, are malformed, or are unrecorded. This is NOT a controlled comparison.")
+		fmt.Fprintln(w, "  [LIMIT] Workload fingerprint, connection policy, revision, environment, load controls, acceptance criteria, authentication mode, target, or routes differ, are malformed, or are unrecorded. Older report schemas do not record connection policy. This is NOT a controlled comparison.")
 	} else {
 		fmt.Fprintln(w, "  Comparison eligibility: MATCHED_DECLARED_WORKLOAD (observations only; no causal attribution).")
 	}

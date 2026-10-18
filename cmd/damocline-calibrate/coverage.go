@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/LucasLuchetta/Damocline/internal/calibration"
 	"github.com/LucasLuchetta/Damocline/internal/config"
 )
 
@@ -68,6 +69,9 @@ func loadCalibrationForCoverage(path string) (assessment, error) {
 	data, err := io.ReadAll(io.LimitReader(f, maxCalibrationBytes+1))
 	if err != nil || len(data) > maxCalibrationBytes {
 		return result, errors.New("local calibration file exceeds the read limit or cannot be read")
+	}
+	if _, err := calibration.ValidateArtifactBytes(data, false); err != nil {
+		return result, errors.New("local calibration has an unsupported, inconsistent, or invalid preflight record")
 	}
 	if err := json.Unmarshal(data, &result); err != nil {
 		return result, errors.New("local calibration file is not valid JSON")
@@ -205,6 +209,19 @@ func compareScenarioToReference(s config.Scenario, a assessment, calibrationErr 
 	} else {
 		r.add("request_mix", coverageMatched, "The declared journey has the same simple GET-only request shape.")
 	}
+	connectionPolicy := s.ConnectionPolicy
+	if connectionPolicy == "" {
+		connectionPolicy = "reuse"
+	}
+	if calibrationErr != nil {
+		r.add("connection_policy", coverageUnknown, "The calibration record could not establish its connection policy.")
+	} else if connectionPolicy != "reuse" {
+		r.add("connection_policy", coverageOutside, "The reference calibration covers reusable HTTP connections only.")
+	} else {
+		r.add("connection_policy", coverageMatched, "The configured policy matches reusable HTTP connections; live reuse still requires transport observation.")
+	}
+	workloadShape := calibration.AssessDeclaredWorkloadShape(s, a.Preflight)
+	r.add(workloadShape.Name, workloadShape.Status, workloadShape.Reason)
 
 	duration, durErr := time.ParseDuration(s.Duration)
 	if durErr != nil || duration <= 0 || duration > 30*time.Second {
@@ -239,7 +256,8 @@ func compareScenarioToReference(s config.Scenario, a assessment, calibrationErr 
 
 	r.add("response_body_size", coverageUnknown, "The fixture returned exactly 4096 bytes; an HTTP scenario does not attest the target's actual response-size distribution.")
 	r.add("connections_and_server_identity", coverageUnknown, "A scenario cannot prove connection reuse, HTTP response behavior or that its endpoint is the instrumented loopback fixture.")
-	r.add("generator_equivalence", coverageUnknown, "The calibration source host, age and workload-specific generator headroom are not yet checked (G0-08).")
+	r.add("generator_host_identity", coverageUnknown, "Calibration metadata does not attest physical generator identity (G0-08).")
+	r.add("generator_workload_headroom", coverageUnknown, "A request-shape fingerprint does not establish delivered headroom for this workload.")
 
 	outside := false
 	for _, item := range r.Dimensions {

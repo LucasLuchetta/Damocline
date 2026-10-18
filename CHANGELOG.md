@@ -5,7 +5,34 @@ This project follows a human-maintained changelog. No release exists yet.
 ## [Unreleased]
 
 ### Added
-- Require loopback calibration stages to include a recognized non-INVALID measurement-quality state before the reference fixture can pass.
+- Require loopback calibration stages to contain a recognized `VALID_WITHIN_ENVELOPE` or `LIMITED` state; missing, unknown, or `INVALID` measurement quality fails calibration.
+- Limit recomputed measurement quality when generator-health snapshot collection occupies at least 5% of the observation window; document this as a wall-time guardrail rather than CPU-overhead calibration.
+- Add native-engine loopback tests for resolver-injected DNS NXDOMAIN, connection refusal, and TCP reset; keep DNS queries and accepted TCP sockets distinct from HTTP request receipt.
+- Add a schema-v3 workload-shape calibration matrix executed through the native HTTP engine for exact 0/1/4/64 KiB GET response profiles and a synthetic 4 KiB POST body; reconcile arrivals and client body observations with independent child-fixture request and byte counters.
+- Preserve sub-microsecond `time.Duration` observations when converting HTTP trace totals to fractional milliseconds, avoiding zero-valued phase sums from integer microsecond truncation.
+- Require every healthy generator-calibration stage to reconcile complete response counts and exact 4 KiB min/max/total bytes in both aggregate and per-step engine reports before the fixture is accepted.
+- Require the controlled 10-arrival/s soak to reconcile every scheduler lag sample, use the engine's canonical dispatch-lag method identifier, and stay within fixture-specific p95 (<=50 ms) and maximum (<100 ms) screening limits before calibration or report recomputation can accept `VALID_WITHIN_ENVELOPE`.
+- Emit schema-v17 scheduler-admission counts and reject current reports where planned arrivals, admissions, worker-started iterations and drop categories do not reconcile.
+- Emit schema-v16 arrival accounting with externally cancelled planned starts separated from scheduler-late and worker-busy drops; preserve missing-versus-zero semantics for historical reports.
+- Reconcile current-schema started iterations with completed journeys and explicitly cancelled journeys during report-quality recomputation; reject corrupted cross-ledger totals as `INVALID` while retaining incomplete but fully accounted runs as `LIMITED`.
+- Exercise a successful trusted local HTTPS request through the native engine and reconcile received and completed requests against an independent server ledger; this validates fixture behavior, not a TLS performance envelope.
+- Add schema-v15 controlled-reference evidence for the calibrator-owned soak, recompute quality from the exact fixture and independent child-server counters, and require a passing calibration command to produce `VALID_WITHIN_ENVELOPE` for that controlled run.
+- Identify calibration runners by exact executable SHA-256 when Go build metadata does not include a source revision.
+- Add a schema-v15 report golden and negative quality tests for unattached or altered controlled evidence.
+
+- Add bounded `connection_policy` choices (`reuse` and `new_per_request`), apply the choice to the HTTP transport, include non-default policy in workload fingerprints and schema-v14 reports, and keep the uncalibrated new-connection policy outside preflight coverage.
+- Exercise an explicit zero-byte response through the native engine reference matrix and reconcile its body-byte ledger with the controlled fixture for every payload-size case.
+- Recompute the calibration workload fingerprint from report-persisted step metadata for the narrow single `GET /work` reference subset, reject altered saved step fields, and keep omitted workload details unverified.
+- Add JSON golden fixtures and round-trip tests for every supported HTTP report schema v1-v13, document versioned field semantics, and verify that missing legacy body observations remain unknown rather than becoming measured zero-byte bodies.
+- Centralize the current run-report schema at v13, let the insights reader preserve v13 window ledgers, and continue rejecting unknown future report schemas.
+- Upgrade HTTP run reports to schema v13 with per-step request and explicit profile-journey metrics in every configured observation window; fail on per-step window SLO breaches, require this evidence for positive offline demand assessments, and keep empty or undersampled windows inconclusive.
+- Limit the final observation window to the configured horizon and evaluate each explicit workflow profile's completed journeys independently so a slow minority workflow cannot pass under a healthy request aggregate.
+- Version calibration records with an opaque workload-shape fingerprint for healthy reference stages; compare exact declared journey shape offline and during run-quality recomputation, while keeping legacy records readable and fingerprint matches non-certifying.
+- Attach a recomputed per-step observed request-latency guardrail dimension when calibration is present; require 100 successful observations per step, screen p50/p95 against the local fixture's coarse 15–150 ms bounds, and keep percentile dependence and window representativeness explicitly unverified.
+- Compare complete per-step response-body sizes with the validated fixed 4 KiB preflight response and report `MATCHED`, `OUTSIDE_REFERENCE`, or `UNVERIFIED`; recompute the dimension from run fields and keep overall quality LIMITED while response timing and endpoint identity are unknown.
+- Upgrade HTTP run reports to schema v12 with per-step and per-window complete, interrupted, and oversized response-body read counts; record min/max/total bytes only for complete bounded bodies, reconcile these observations with HTTP response ledgers, and never store body content.
+- Share bounded calibration-record and scheduler-lag validation with the HTTP run command; `run --calibration` attaches sanitized preflight provenance and declared-dimension findings while keeping fixed-fixture response shape and endpoint identity explicitly inconclusive.
+- Mark window-mean process CPU at or above 90% of recorded GOMAXPROCS capacity as LIMITED sustained generator headroom; retain interval peaks as diagnostics and use the window mean for loopback CPU acceptance.
 - Report exact expected and observed dimensions for failed loopback calibration gates, including per-stage delivery, outcome, latency, generator health, lag, and independent server ledger; reject non-finite fixture latency.
 - Upgrade HTTP run reports to schema v11 with a workload-definition fingerprint; label legacy, mismatched workload, or mismatched generator-preflight comparisons `NOT_COMPARABLE`, and report application revision as the observed treatment.
 - Recompute measurement quality for every required phase during offline demand planning and reject persisted `VALID_WITHIN_ENVELOPE` claims that disagree with the underlying run fields.
@@ -22,6 +49,10 @@ This project follows a human-maintained changelog. No release exists yet.
 - Upgrade HTTP run reports to schema v7 for phase timing. Quality checks reconcile new phase counts for v7 while treating those fields as unknown in earlier reports.
 - Require adequate conditional P95 rank intervals, binomial error bounds, complete observation-window coverage, and variability across all independent trials before offline demand planning can report a goal met.
 - Require explicit `VALID_WITHIN_ENVELOPE` quality on every required sustained-campaign phase before offline demand planning can report a goal met; missing or limited evidence remains insufficient.
+- Exclude zero or non-finite generator process readings from health summaries, expose invalid sample counts as a measurement-quality limitation, and reject process-counter conversion overflow.
+- Report open-arrival scheduler lag sample count, p50/p95/maximum and the monotonic slot-to-admission measurement boundary; label timing accuracy as uncalibrated.
+- Add a bounded worker-exhaustion integration check that distinguishes locally dropped arrivals from requests received by an independently counted loopback server.
+- Add a bounded cancellation integration check that reconciles scheduled and admitted arrivals, incomplete client journeys, and independently observed server-side completion/cancellation counters.
 - Add a fail-fast PowerShell local validation script that runs the full Go test suite and verifies baseline, extended, repeated, and transport-matrix calibration artifacts.
 - Add a bounded, local-only HTTP transport fixture matrix (0/1/4/64 KiB, stream, 503, keep-alive/close, private TLS and controlled tail delays) with independent client/server ledgers, schema validation and Linux/Windows CI; distinguish transport checks from native scheduler calibration.
 - Compare preflight age and basic runtime/source compatibility offline without pretending OS metadata attests physical host identity; stale or mismatched evidence invalidates apparent fixture equivalence.
@@ -67,11 +98,15 @@ This project follows a human-maintained changelog. No release exists yet.
 - Safety-oriented caveats for small sample sizes, long-tail responses, shared sessions, dropped arrivals and uncontrolled comparisons.
 
 ### Fixed
+- Require exact arrival rate, rate ceiling, worker count, duration, timeout, mode, transport and connection policy when matching a workload profile; do not claim offline equivalence for unresolved environment-backed request bodies.
+- Classify non-timeout response-body read failures such as truncated responses as transport failures while preserving their HTTP status and incomplete-body observations as separate counters.
+- Count only successfully completed response-body reads in `body_count`; truncated and timed-out body reads are represented exclusively by `body_incomplete_count`, preserving phase-counter conservation and quality validation.
 - Check source updates before displaying the Eclipse startup splash/menu and avoid a redundant update check after selecting an interactive scenario.
 - Guided setup accepts bare domains and HTTPS origins with a trailing slash, and retries invalid addresses instead of aborting.
 - Removed third-party load-testing tool references from the interactive welcome banner.
 
 ### Added
+- Emit schema-v16 arrival accounting with externally cancelled planned starts separated from scheduler-late and worker-busy drops; preserve missing-versus-zero semantics for historical reports.
 - Branded sword splash screen and English numbered home menu for bare `damocline` and `start.cmd`, with safe choices for new, saved, current, help and exit.
 - Terminal-aware ANSI color support with plain-text fallback. Non-interactive commands remain unchanged.
 - Interactive, opt-in source update notifications with fast-forward Git safety checks, local automatic-update preference, and automatic restart after installing a new version.

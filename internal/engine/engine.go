@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptrace"
@@ -20,6 +21,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/LucasLuchetta/Damocline/internal/calibration"
 	"github.com/LucasLuchetta/Damocline/internal/config"
 	"github.com/LucasLuchetta/Damocline/internal/generatorhealth"
 	"github.com/LucasLuchetta/Damocline/internal/report"
@@ -34,6 +36,8 @@ type sample struct {
 	name               string
 	latency            time.Duration
 	trace              report.HTTPTrace
+	responseBodyState  report.ResponseBodyState
+	responseBodyBytes  int64
 	statusCode         int
 	assertionFailure   bool
 	tlsFailure         bool
@@ -53,7 +57,13 @@ type collector struct {
 	started      time.Time
 	window       time.Duration
 	observation  time.Duration
-	windows      []*report.MetricSet
+	windows      []*windowMetrics
+}
+
+type windowMetrics struct {
+	aggregate *report.MetricSet
+	steps     map[string]*report.MetricSet
+	profiles  map[string]*report.MetricSet
 }
 
 type thinkTimeTotal struct {
@@ -70,6 +80,12 @@ func newCollector(v config.Validated, started time.Time) *collector {
 	}
 	for _, profile := range v.Profiles {
 		c.profiles[profile.Name] = report.NewMetricSet()
+	}
+	if c.window > 0 {
+		windowCount := int((c.observation + c.window - 1) / c.window)
+		for index := 0; index < windowCount; index++ {
+			c.windowAtIndex(index)
+		}
 	}
 	return c
 }
@@ -90,6 +106,12 @@ func (c *collector) addJourney(profile string, latency time.Duration, success, c
 	defer c.mu.Unlock()
 	c.journeys.Record(latency, success, cancelled, reason)
 	c.profiles[profile].Record(latency, success, cancelled, reason)
+	if c.window > 0 {
+		elapsed := time.Since(c.started)
+		if elapsed < c.observation {
+			c.windowAt(elapsed).profiles[profile].Record(latency, success, cancelled, reason)
+		}
+	}
 }
 
 type profileSelector struct {
@@ -127,26 +149,56 @@ func (c *collector) add(s sample) {
 	c.steps[s.name].Record(s.latency, s.success, s.cancelled, s.reason)
 	c.aggregate.RecordHTTPOutcome(s.statusCode, s.reason, s.assertionFailure, s.tlsFailure)
 	c.steps[s.name].RecordHTTPOutcome(s.statusCode, s.reason, s.assertionFailure, s.tlsFailure)
+	if s.responseBodyState != "" {
+		c.aggregate.RecordResponseBody(s.responseBodyState, s.responseBodyBytes)
+		c.steps[s.name].RecordResponseBody(s.responseBodyState, s.responseBodyBytes)
+	}
 	c.stepTraces[s.name].Record(s.trace)
 	if c.window <= 0 {
 		return
 	}
 	elapsed := time.Since(c.started)
-	if elapsed > c.observation {
+	if elapsed >= c.observation {
 		return
 	}
 	index := int(elapsed / c.window)
 	if index < 0 {
 		return
 	}
-	for len(c.windows) <= index {
-		c.windows = append(c.windows, report.NewMetricSet())
+	window := c.windowAtIndex(index)
+	window.aggregate.Record(s.latency, s.success, s.cancelled, s.reason)
+	window.steps[s.name].Record(s.latency, s.success, s.cancelled, s.reason)
+	window.aggregate.RecordHTTPOutcome(s.statusCode, s.reason, s.assertionFailure, s.tlsFailure)
+	window.steps[s.name].RecordHTTPOutcome(s.statusCode, s.reason, s.assertionFailure, s.tlsFailure)
+	if s.responseBodyState != "" {
+		window.aggregate.RecordResponseBody(s.responseBodyState, s.responseBodyBytes)
+		window.steps[s.name].RecordResponseBody(s.responseBodyState, s.responseBodyBytes)
 	}
-	c.windows[index].Record(s.latency, s.success, s.cancelled, s.reason)
-	c.windows[index].RecordHTTPOutcome(s.statusCode, s.reason, s.assertionFailure, s.tlsFailure)
+}
+
+func (c *collector) windowAt(elapsed time.Duration) *windowMetrics {
+	return c.windowAtIndex(int(elapsed / c.window))
+}
+
+func (c *collector) windowAtIndex(index int) *windowMetrics {
+	for len(c.windows) <= index {
+		window := &windowMetrics{aggregate: report.NewMetricSet(), steps: make(map[string]*report.MetricSet, len(c.steps)), profiles: make(map[string]*report.MetricSet, len(c.profiles))}
+		for name := range c.steps {
+			window.steps[name] = report.NewMetricSet()
+		}
+		for name := range c.profiles {
+			window.profiles[name] = report.NewMetricSet()
+		}
+		c.windows = append(c.windows, window)
+	}
+	return c.windows[index]
 }
 
 func Run(parent context.Context, v config.Validated) report.Result {
+	return runWithTransport(parent, v, nil)
+}
+
+func runWithTransport(parent context.Context, v config.Validated, transport *http.Transport) report.Result {
 	started := time.Now()
 	generatorMonitor := generatorhealth.Start(250 * time.Millisecond)
 	// Stop admitting new work at the configured boundary, then allow any
@@ -159,10 +211,16 @@ func Run(parent context.Context, v config.Validated) report.Result {
 	coll := newCollector(v, started)
 	ticker := time.NewTicker(time.Second / time.Duration(v.Scenario.MaxRPS))
 	defer ticker.Stop()
-	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr := transport
+	if tr == nil {
+		tr = http.DefaultTransport.(*http.Transport).Clone()
+	} else {
+		tr = tr.Clone()
+	}
 	tr.MaxIdleConns = v.Scenario.Users * 3
 	tr.MaxIdleConnsPerHost = v.Scenario.Users * 2
 	tr.MaxConnsPerHost = v.Scenario.Users + 4
+	tr.DisableKeepAlives = v.Scenario.ConnectionPolicy == "new_per_request"
 	tr.ResponseHeaderTimeout = v.Timeout
 	tr.IdleConnTimeout = 15 * time.Second
 	defer tr.CloseIdleConnections()
@@ -311,6 +369,8 @@ func Run(parent context.Context, v config.Validated) report.Result {
 			}(i)
 		}
 	}
+	cancelledBeforeAdmission := arrivalStats.CancelledBeforeAdmission
+	arrivalsAdmitted := arrivalStats.Admitted
 	wg.Wait()
 	generatorSnapshot := generatorMonitor.Stop()
 	coll.mu.Lock()
@@ -327,7 +387,17 @@ func Run(parent context.Context, v config.Validated) report.Result {
 	windows := make([]report.WindowResult, 0, len(coll.windows))
 	for index, metrics := range coll.windows {
 		startSeconds := float64(index) * v.Window.Seconds()
-		windows = append(windows, report.WindowResult{StartSeconds: round(startSeconds), EndSeconds: round(startSeconds + v.Window.Seconds()), Metrics: metrics.Snapshot()})
+		endSeconds := math.Min(startSeconds+v.Window.Seconds(), v.Duration.Seconds())
+		window := report.WindowResult{StartSeconds: round(startSeconds), EndSeconds: round(endSeconds), Metrics: metrics.aggregate.Snapshot()}
+		for _, step := range v.Steps {
+			window.Steps = append(window.Steps, report.WindowMetric{Name: step.Name, Metrics: metrics.steps[step.Name].Snapshot()})
+		}
+		if len(v.Scenario.Profiles) > 0 {
+			for _, profile := range v.Profiles {
+				window.Profiles = append(window.Profiles, report.WindowMetric{Name: profile.Name, Metrics: metrics.profiles[profile.Name].Snapshot()})
+			}
+		}
+		windows = append(windows, window)
 	}
 	var profileResults []report.ProfileResult
 	var profileConfig []report.ProfileConfig
@@ -354,9 +424,9 @@ func Run(parent context.Context, v config.Validated) report.Result {
 	if v.Duration > 0 {
 		littleLawEstimate = float64(agg.Total) / v.Duration.Seconds() * agg.MeanMS / 1000
 	}
-	result := report.Result{SchemaVersion: 11, Name: v.Scenario.Name, Target: v.Base.Scheme + "://" + v.Base.Host, StartedAt: started.UTC().Format(time.RFC3339), ElapsedSeconds: round(elapsed.Seconds()), ObservationSeconds: round(v.Duration.Seconds()),
-		Config:  report.RunConfig{WorkloadRevision: v.Scenario.WorkloadRevision, ApplicationRevision: v.Scenario.ApplicationRevision, WorkloadFingerprint: v.WorkloadFingerprint, Environment: v.Scenario.Environment, ProfileMixBasis: v.Scenario.ProfileMixBasis, ProfileMixReference: v.Scenario.ProfileMixReference, Users: v.Scenario.Users, Duration: v.Scenario.Duration, RampUp: v.Scenario.RampUp, ThinkTime: v.Scenario.ThinkTime, RequestTimeout: v.Timeout.String(), MaxRPS: v.Scenario.MaxRPS, P95LimitMS: v.Scenario.P95LimitMS, MaxErrorRate: v.Scenario.MaxErrorRate, Mode: v.Scenario.Mode, ArrivalRate: v.Scenario.ArrivalRate, SeparateSessions: len(v.Cookies) > 0, MinSamplesPerStep: v.Scenario.MinSamplesPerStep, Profiles: profileConfig, WindowDuration: v.Window.String()},
-		Metrics: agg, Journeys: journeyMetrics, Steps: steps, Profiles: profileResults, Windows: windows, Outcome: "PASS", ErrorsRate: round(errorsRate), IterationsStarted: startedIterations.Load(), IterationsCompleted: completedIterations.Load(), ArrivalsScheduled: scheduledIterations.Load(), ArrivalsDropped: droppedIterations.Load(), ArrivalsDroppedLate: arrivalStats.DroppedLate, ArrivalsDroppedBusy: arrivalStats.DroppedBusy, SchedulerLagP95MS: float64(arrivalStats.P95Lag.Microseconds()) / 1000, SchedulerLagMaxMS: float64(arrivalStats.MaxLag.Microseconds()) / 1000, AverageInFlight: round(averageInFlight), LittleLawEstimate: round(littleLawEstimate), ObservedThinkTimeMS: ms(coll.thinkTime), ThinkTimeObservations: coll.thinkSamples,
+	result := report.Result{SchemaVersion: report.CurrentSchemaVersion, Name: v.Scenario.Name, Target: v.Base.Scheme + "://" + v.Base.Host, StartedAt: started.UTC().Format(time.RFC3339), ElapsedSeconds: round(elapsed.Seconds()), ObservationSeconds: round(v.Duration.Seconds()),
+		Config:  report.RunConfig{WorkloadRevision: v.Scenario.WorkloadRevision, ApplicationRevision: v.Scenario.ApplicationRevision, WorkloadFingerprint: v.WorkloadFingerprint, Environment: v.Scenario.Environment, ProfileMixBasis: v.Scenario.ProfileMixBasis, ProfileMixReference: v.Scenario.ProfileMixReference, Users: v.Scenario.Users, Duration: v.Scenario.Duration, RampUp: v.Scenario.RampUp, ThinkTime: v.Scenario.ThinkTime, RequestTimeout: v.Timeout.String(), ConnectionPolicy: v.Scenario.ConnectionPolicy, MaxRPS: v.Scenario.MaxRPS, P95LimitMS: v.Scenario.P95LimitMS, MaxErrorRate: v.Scenario.MaxErrorRate, Mode: v.Scenario.Mode, ArrivalRate: v.Scenario.ArrivalRate, SeparateSessions: len(v.Cookies) > 0, MinSamplesPerStep: v.Scenario.MinSamplesPerStep, Profiles: profileConfig, WindowDuration: v.Window.String()},
+		Metrics: agg, Journeys: journeyMetrics, Steps: steps, Profiles: profileResults, Windows: windows, Outcome: "PASS", ErrorsRate: round(errorsRate), IterationsStarted: startedIterations.Load(), IterationsCompleted: completedIterations.Load(), ArrivalsScheduled: scheduledIterations.Load(), ArrivalsAdmitted: &arrivalsAdmitted, ArrivalsDropped: droppedIterations.Load(), ArrivalsDroppedLate: arrivalStats.DroppedLate, ArrivalsDroppedBusy: arrivalStats.DroppedBusy, ArrivalsCancelledBeforeAdmission: &cancelledBeforeAdmission, SchedulerLagSamples: arrivalStats.LagSamples, SchedulerLagP50MS: float64(arrivalStats.P50Lag.Microseconds()) / 1000, SchedulerLagP95MS: float64(arrivalStats.P95Lag.Microseconds()) / 1000, SchedulerLagMaxMS: float64(arrivalStats.MaxLag.Microseconds()) / 1000, SchedulerLagMethod: calibration.SchedulerDispatchLagMethod, AverageInFlight: round(averageInFlight), LittleLawEstimate: round(littleLawEstimate), ObservedThinkTimeMS: ms(coll.thinkTime), ThinkTimeObservations: coll.thinkSamples,
 		Note: "Measured synthetic HTTP actors under the configured workload; not a universal server capacity or a browser-user count.", Generator: &generatorSnapshot}
 	if agg.Total == 0 || agg.Success == 0 || errorsRate > v.Scenario.MaxErrorRate || agg.P95MS > v.Scenario.P95LimitMS || result.ArrivalsDropped > 0 {
 		result.Outcome = "FAIL"
@@ -379,6 +449,34 @@ func Run(parent context.Context, v config.Validated) report.Result {
 			result.Outcome = "FAIL"
 			result.Warnings = append(result.Warnings, fmt.Sprintf("Observation window %.1f-%.1fs breached an SLO.", window.StartSeconds, window.EndSeconds))
 		}
+		for _, step := range window.Steps {
+			if step.Metrics.Total < v.Scenario.MinSamplesPerStep || step.Metrics.Success == 0 {
+				if result.Outcome == "PASS" {
+					result.Outcome = "INCONCLUSIVE"
+				}
+				result.Warnings = append(result.Warnings, fmt.Sprintf("A named step in observation window %.1f-%.1fs has insufficient completed samples.", window.StartSeconds, window.EndSeconds))
+				continue
+			}
+			stepErrorRate := float64(step.Metrics.Failures) / float64(step.Metrics.Total)
+			if step.Metrics.P95MS > v.Scenario.P95LimitMS || stepErrorRate > v.Scenario.MaxErrorRate {
+				result.Outcome = "FAIL"
+				result.Warnings = append(result.Warnings, fmt.Sprintf("A named step in observation window %.1f-%.1fs breached an SLO.", window.StartSeconds, window.EndSeconds))
+			}
+		}
+		for _, profile := range window.Profiles {
+			if profile.Metrics.Total < v.Scenario.MinSamplesPerStep || profile.Metrics.Success == 0 {
+				if result.Outcome == "PASS" {
+					result.Outcome = "INCONCLUSIVE"
+				}
+				result.Warnings = append(result.Warnings, fmt.Sprintf("A workflow profile in observation window %.1f-%.1fs has insufficient completed journeys.", window.StartSeconds, window.EndSeconds))
+				continue
+			}
+			profileErrorRate := float64(profile.Metrics.Failures) / float64(profile.Metrics.Total)
+			if profile.Metrics.P95MS > v.Scenario.P95LimitMS || profileErrorRate > v.Scenario.MaxErrorRate {
+				result.Outcome = "FAIL"
+				result.Warnings = append(result.Warnings, fmt.Sprintf("A workflow profile in observation window %.1f-%.1fs breached an SLO.", window.StartSeconds, window.EndSeconds))
+			}
+		}
 	}
 	if arrivalStats.DroppedLate > 0 {
 		result.Outcome = "INCONCLUSIVE"
@@ -398,6 +496,9 @@ func Run(parent context.Context, v config.Validated) report.Result {
 	}
 	if arrivalStats.DroppedLate > 0 {
 		result.Warnings = append(result.Warnings, "The load generator missed planned arrival deadlines; this trial cannot demonstrate a server capacity ceiling.")
+	}
+	if arrivalStats.CancelledBeforeAdmission > 0 {
+		result.Warnings = append(result.Warnings, "Planned arrivals not admitted before external test cancellation are counted separately from scheduler-late and busy-worker drops.")
 	}
 	if v.Scenario.Mode == "arrival" && !arrivalStats.Consistent() {
 		result.Outcome = "INCONCLUSIVE"
@@ -578,30 +679,55 @@ func execute(parent context.Context, client *http.Client, base *url.URL, timeout
 	}
 	defer res.Body.Close()
 	data, readErr := io.ReadAll(io.LimitReader(res.Body, maxResponseBytes+1))
+	responseBodyState := report.ResponseBodyIncomplete
+	if readErr == nil {
+		responseBodyState = report.ResponseBodyComplete
+		if len(data) > maxResponseBytes {
+			responseBodyState = report.ResponseBodyOversized
+		}
+	}
+	responseBodyBytes := int64(len(data))
+	if responseBodyState != report.ResponseBodyComplete {
+		responseBodyBytes = 0
+	}
 	d := time.Since(start)
 	traceMu.Lock()
 	if !firstByte.IsZero() {
-		trace.BodyCount++
 		trace.BodyMS += ms(time.Since(firstByte))
-	}
-	if !firstByte.IsZero() && readErr != nil {
-		trace.BodyIncompleteCount++
+		if readErr == nil {
+			trace.BodyCount++
+		} else {
+			trace.BodyIncompleteCount++
+		}
 	}
 	trace.CompleteCount++
 	trace.CompleteMS += ms(d)
 	observedTrace := trace
 	traceMu.Unlock()
+	responseSample := func(reason string) sample {
+		return sample{
+			name:              s.Name,
+			latency:           d,
+			trace:             observedTrace,
+			responseBodyState: responseBodyState,
+			responseBodyBytes: responseBodyBytes,
+			statusCode:        res.StatusCode,
+			reason:            reason,
+		}
+	}
 	if parent.Err() != nil {
-		return sample{name: s.Name, latency: d, trace: observedTrace, statusCode: res.StatusCode, cancelled: true, reason: "run_cancelled"}, nil
+		observed := responseSample("run_cancelled")
+		observed.cancelled = true
+		return observed, nil
 	}
 	if readErr != nil {
 		if errors.Is(readErr, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return sample{name: s.Name, latency: d, trace: observedTrace, statusCode: res.StatusCode, reason: "timeout"}, nil
+			return responseSample("timeout"), nil
 		}
-		return sample{name: s.Name, latency: d, trace: observedTrace, statusCode: res.StatusCode, reason: "body_read"}, nil
+		return responseSample("body_read"), nil
 	}
 	if len(data) > maxResponseBytes {
-		return sample{name: s.Name, latency: d, trace: observedTrace, statusCode: res.StatusCode, reason: "response_too_large"}, nil
+		return responseSample("response_too_large"), nil
 	}
 	ok := res.StatusCode >= 200 && res.StatusCode <= 299
 	if len(s.ExpectedStatus) > 0 {
@@ -614,16 +740,22 @@ func execute(parent context.Context, client *http.Client, base *url.URL, timeout
 		}
 	}
 	if !ok {
-		return sample{name: s.Name, latency: d, trace: observedTrace, statusCode: res.StatusCode, assertionFailure: len(s.ExpectedStatus) > 0, reason: fmt.Sprintf("http_%d", res.StatusCode)}, nil
+		observed := responseSample(fmt.Sprintf("http_%d", res.StatusCode))
+		observed.assertionFailure = len(s.ExpectedStatus) > 0
+		return observed, nil
 	}
 	if s.MustContain != "" && !bytes.Contains(data, []byte(s.MustContain)) {
-		return sample{name: s.Name, latency: d, trace: observedTrace, statusCode: res.StatusCode, assertionFailure: true, reason: "assertion_missing_text"}, nil
+		observed := responseSample("assertion_missing_text")
+		observed.assertionFailure = true
+		return observed, nil
 	}
 	extracted, err := extractValues(s.Extract, res.Header, data)
 	if err != nil {
-		return sample{name: s.Name, latency: d, trace: observedTrace, statusCode: res.StatusCode, reason: "extraction_failed"}, nil
+		return responseSample("extraction_failed"), nil
 	}
-	return sample{name: s.Name, latency: d, trace: observedTrace, statusCode: res.StatusCode, success: true}, extracted
+	observed := responseSample("")
+	observed.success = true
+	return observed, extracted
 }
 
 func isTLSFailure(err error) bool {
@@ -639,7 +771,7 @@ func isTLSFailure(err error) bool {
 	return strings.Contains(message, "tls") || strings.Contains(message, "x509") || strings.Contains(message, "certificate")
 }
 
-func ms(d time.Duration) float64 { return float64(d.Microseconds()) / 1000 }
+func ms(d time.Duration) float64 { return float64(d) / float64(time.Millisecond) }
 
 func interpolateURL(base *url.URL, pathTemplate string, variables map[string]string) (string, error) {
 	pathOnly, query, hasQuery := strings.Cut(pathTemplate, "?")

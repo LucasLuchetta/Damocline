@@ -10,26 +10,73 @@ import (
 	"sort"
 	"time"
 
+	"github.com/LucasLuchetta/Damocline/internal/calibration"
 	"github.com/LucasLuchetta/Damocline/internal/generatorhealth"
 	"github.com/LucasLuchetta/Damocline/internal/statistics"
 )
 
+// CurrentSchemaVersion is the newest persisted HTTP run report schema emitted
+// by the engine. Readers must reject future versions until their semantics are
+// reviewed and supported.
+const CurrentSchemaVersion = 17
+
 type MetricSet struct {
-	Total                 int             `json:"total"`
-	Success               int             `json:"success"`
-	Failures              int             `json:"failures"`
-	Cancelled             int             `json:"cancelled"`
-	P50MS                 float64         `json:"p50_ms"`
-	MeanMS                float64         `json:"mean_ms"`
-	P95MS                 float64         `json:"p95_ms"`
-	P95IID95LowerMS       float64         `json:"p95_iid_95_lower_ms,omitempty"`
-	P95IID95UpperMS       float64         `json:"p95_iid_95_upper_ms,omitempty"`
-	P95IID95Approximation bool            `json:"p95_iid_95_approximation,omitempty"`
-	P99MS                 float64         `json:"p99_ms"`
-	Reasons               map[string]int  `json:"failure_reasons,omitempty"`
-	HTTP                  HTTPDiagnostics `json:"http_diagnostics,omitempty"`
+	Total                 int                     `json:"total"`
+	Success               int                     `json:"success"`
+	Failures              int                     `json:"failures"`
+	Cancelled             int                     `json:"cancelled"`
+	P50MS                 float64                 `json:"p50_ms"`
+	MeanMS                float64                 `json:"mean_ms"`
+	P95MS                 float64                 `json:"p95_ms"`
+	P95IID95LowerMS       float64                 `json:"p95_iid_95_lower_ms,omitempty"`
+	P95IID95UpperMS       float64                 `json:"p95_iid_95_upper_ms,omitempty"`
+	P95IID95Approximation bool                    `json:"p95_iid_95_approximation,omitempty"`
+	P99MS                 float64                 `json:"p99_ms"`
+	Reasons               map[string]int          `json:"failure_reasons,omitempty"`
+	HTTP                  HTTPDiagnostics         `json:"http_diagnostics,omitempty"`
+	ResponseBody          ResponseBodyDiagnostics `json:"response_body,omitzero"`
 	durations             []time.Duration
 	totalDuration         time.Duration
+}
+
+// ResponseBodyDiagnostics summarizes body-read outcomes without preserving body data.
+type ResponseBodyDiagnostics struct {
+	CompleteObservations   int64 `json:"complete_observations"`
+	IncompleteObservations int64 `json:"incomplete_observations"`
+	OversizedObservations  int64 `json:"oversized_observations"`
+	MinBytes               int64 `json:"min_bytes"`
+	MaxBytes               int64 `json:"max_bytes"`
+	TotalBytes             int64 `json:"total_bytes"`
+}
+
+// ResponseBodyState classifies one response body's bounded read outcome.
+type ResponseBodyState string
+
+const (
+	ResponseBodyComplete   ResponseBodyState = "complete"
+	ResponseBodyIncomplete ResponseBodyState = "incomplete"
+	ResponseBodyOversized  ResponseBodyState = "oversized"
+)
+
+// RecordResponseBody adds one response body read outcome. Byte sizes are kept
+// only for complete bodies within the configured response limit.
+func (m *MetricSet) RecordResponseBody(state ResponseBodyState, size int64) {
+	d := &m.ResponseBody
+	switch state {
+	case ResponseBodyComplete:
+		if d.CompleteObservations == 0 || size < d.MinBytes {
+			d.MinBytes = size
+		}
+		if size > d.MaxBytes {
+			d.MaxBytes = size
+		}
+		d.CompleteObservations++
+		d.TotalBytes += size
+	case ResponseBodyIncomplete:
+		d.IncompleteObservations++
+	case ResponseBodyOversized:
+		d.OversizedObservations++
+	}
 }
 
 // HTTPDiagnostics counts observed HTTP responses and classified client-side
@@ -84,7 +131,7 @@ func (d *HTTPDiagnostics) Record(statusCode int, reason string, assertionFailure
 	switch reason {
 	case "timeout":
 		d.NetworkTimeouts++
-	case "transport":
+	case "transport", "body_read":
 		if !tlsFailure {
 			d.TransportFailures++
 		}
@@ -228,6 +275,7 @@ type RunConfig struct {
 	RampUp              string          `json:"ramp_up,omitempty"`
 	ThinkTime           string          `json:"think_time,omitempty"`
 	RequestTimeout      string          `json:"request_timeout"`
+	ConnectionPolicy    string          `json:"connection_policy,omitempty"`
 	MaxRPS              int             `json:"max_rps"`
 	P95LimitMS          float64         `json:"p95_limit_ms"`
 	MaxErrorRate        float64         `json:"max_error_rate"`
@@ -266,42 +314,79 @@ type ProfileResult struct {
 	ThinkTimeObservations int       `json:"think_time_observations,omitempty"`
 }
 type WindowResult struct {
-	StartSeconds float64   `json:"start_seconds"`
-	EndSeconds   float64   `json:"end_seconds"`
-	Metrics      MetricSet `json:"metrics"`
+	StartSeconds float64        `json:"start_seconds"`
+	EndSeconds   float64        `json:"end_seconds"`
+	Metrics      MetricSet      `json:"metrics"`
+	Steps        []WindowMetric `json:"steps,omitempty"`
+	Profiles     []WindowMetric `json:"profiles,omitempty"`
+}
+
+// WindowMetric retains an independent named-step or workflow ledger inside
+// one observation window. Names are already part of the sanitized run config.
+type WindowMetric struct {
+	Name    string    `json:"name"`
+	Metrics MetricSet `json:"metrics"`
 }
 type Result struct {
-	SchemaVersion         int                      `json:"schema_version"`
-	Name                  string                   `json:"name"`
-	Target                string                   `json:"target"`
-	StartedAt             string                   `json:"started_at"`
-	ElapsedSeconds        float64                  `json:"elapsed_seconds"`
-	ObservationSeconds    float64                  `json:"observation_seconds,omitempty"`
-	Config                RunConfig                `json:"config"`
-	Metrics               MetricSet                `json:"metrics"`
-	Journeys              MetricSet                `json:"journeys"`
-	Steps                 []StepResult             `json:"steps"`
-	Profiles              []ProfileResult          `json:"profiles,omitempty"`
-	Windows               []WindowResult           `json:"windows,omitempty"`
-	Outcome               string                   `json:"outcome"`
-	ErrorsRate            float64                  `json:"error_rate"`
-	Note                  string                   `json:"note"`
-	IterationsStarted     int64                    `json:"iterations_started"`
-	IterationsCompleted   int64                    `json:"iterations_completed"`
-	ArrivalsScheduled     int64                    `json:"arrivals_scheduled"`
-	ArrivalsDropped       int64                    `json:"arrivals_dropped"`
-	ArrivalsDroppedLate   int64                    `json:"arrivals_dropped_late,omitempty"`
-	ArrivalsDroppedBusy   int64                    `json:"arrivals_dropped_busy,omitempty"`
-	SchedulerLagP95MS     float64                  `json:"scheduler_lag_p95_ms,omitempty"`
-	SchedulerLagMaxMS     float64                  `json:"scheduler_lag_max_ms,omitempty"`
-	AverageInFlight       float64                  `json:"average_in_flight_requests,omitempty"`
-	LittleLawEstimate     float64                  `json:"little_law_in_flight_estimate,omitempty"`
-	ObservedThinkTimeMS   float64                  `json:"observed_think_time_ms,omitempty"`
-	ThinkTimeObservations int                      `json:"think_time_observations,omitempty"`
-	Warnings              []string                 `json:"warnings,omitempty"`
-	Generator             *generatorhealth.Summary `json:"generator,omitempty"`
-	Quality               *Quality                 `json:"data_quality,omitempty"`
-	Signals               []Signal                 `json:"diagnostic_signals,omitempty"`
+	SchemaVersion                    int                          `json:"schema_version"`
+	Name                             string                       `json:"name"`
+	Target                           string                       `json:"target"`
+	StartedAt                        string                       `json:"started_at"`
+	ElapsedSeconds                   float64                      `json:"elapsed_seconds"`
+	ObservationSeconds               float64                      `json:"observation_seconds,omitempty"`
+	Config                           RunConfig                    `json:"config"`
+	Metrics                          MetricSet                    `json:"metrics"`
+	Journeys                         MetricSet                    `json:"journeys"`
+	Steps                            []StepResult                 `json:"steps"`
+	Profiles                         []ProfileResult              `json:"profiles,omitempty"`
+	Windows                          []WindowResult               `json:"windows,omitempty"`
+	Outcome                          string                       `json:"outcome"`
+	ErrorsRate                       float64                      `json:"error_rate"`
+	Note                             string                       `json:"note"`
+	IterationsStarted                int64                        `json:"iterations_started"`
+	IterationsCompleted              int64                        `json:"iterations_completed"`
+	ArrivalsScheduled                int64                        `json:"arrivals_scheduled"`
+	ArrivalsAdmitted                 *int64                       `json:"arrivals_admitted,omitempty"`
+	ArrivalsDropped                  int64                        `json:"arrivals_dropped"`
+	ArrivalsDroppedLate              int64                        `json:"arrivals_dropped_late,omitempty"`
+	ArrivalsDroppedBusy              int64                        `json:"arrivals_dropped_busy,omitempty"`
+	ArrivalsCancelledBeforeAdmission *int64                       `json:"arrivals_cancelled_before_admission,omitempty"`
+	SchedulerLagSamples              int64                        `json:"scheduler_lag_samples,omitempty"`
+	SchedulerLagP50MS                float64                      `json:"scheduler_lag_p50_ms,omitempty"`
+	SchedulerLagP95MS                float64                      `json:"scheduler_lag_p95_ms,omitempty"`
+	SchedulerLagMaxMS                float64                      `json:"scheduler_lag_max_ms,omitempty"`
+	SchedulerLagMethod               string                       `json:"scheduler_lag_method,omitempty"`
+	AverageInFlight                  float64                      `json:"average_in_flight_requests,omitempty"`
+	LittleLawEstimate                float64                      `json:"little_law_in_flight_estimate,omitempty"`
+	ObservedThinkTimeMS              float64                      `json:"observed_think_time_ms,omitempty"`
+	ThinkTimeObservations            int                          `json:"think_time_observations,omitempty"`
+	Warnings                         []string                     `json:"warnings,omitempty"`
+	Generator                        *generatorhealth.Summary     `json:"generator,omitempty"`
+	Calibration                      *CalibrationEvidence         `json:"calibration,omitempty"`
+	ReferenceEvidence                *ControlledReferenceEvidence `json:"controlled_reference_evidence,omitempty"`
+	Quality                          *Quality                     `json:"data_quality,omitempty"`
+	Signals                          []Signal                     `json:"diagnostic_signals,omitempty"`
+}
+
+// CalibrationEvidence associates a run with sanitized local reference evidence.
+// It carries no target URL, credential, route or response body values.
+type CalibrationEvidence struct {
+	Record   calibration.Record   `json:"record"`
+	Coverage calibration.Coverage `json:"coverage"`
+}
+
+// ControlledReferenceEvidence records independent server counters collected
+// by the calibrator for its own child-process loopback soak. It is not endpoint
+// attestation for ordinary run commands or external applications.
+type ControlledReferenceEvidence struct {
+	Kind               string `json:"kind"`
+	FixtureFingerprint string `json:"fixture_fingerprint"`
+	ServerReceived     int64  `json:"server_received"`
+	ServerCompleted    int64  `json:"server_completed"`
+	ServerSuccess      int64  `json:"server_success"`
+	ServerFailures     int64  `json:"server_failures"`
+	ServerCancelled    int64  `json:"server_cancelled"`
+	ServerRejected     int64  `json:"server_rejected"`
 }
 
 const maxReportBytes = 16 << 20

@@ -28,6 +28,7 @@ type Scenario struct {
 	RampUp                 string    `json:"ramp_up"`
 	ThinkTime              string    `json:"think_time"`
 	Timeout                string    `json:"request_timeout"`
+	ConnectionPolicy       string    `json:"connection_policy,omitempty"`
 	MaxRPS                 int       `json:"max_rps"`
 	P95LimitMS             float64   `json:"p95_limit_ms"`
 	MaxErrorRate           float64   `json:"max_error_rate"`
@@ -190,6 +191,12 @@ func Parse(s Scenario, o Options) (Validated, error) {
 	}
 	if s.Mode != "closed" && s.Mode != "arrival" {
 		return v, errors.New("mode must be closed or arrival")
+	}
+	if s.ConnectionPolicy == "" {
+		s.ConnectionPolicy = "reuse"
+	}
+	if s.ConnectionPolicy != "reuse" && s.ConnectionPolicy != "new_per_request" {
+		return v, errors.New("connection_policy must be reuse or new_per_request")
 	}
 	if s.Mode == "arrival" {
 		if s.ArrivalRate < 1 || s.ArrivalRate > 100 {

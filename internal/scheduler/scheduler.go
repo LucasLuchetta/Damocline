@@ -9,16 +9,21 @@ import (
 
 // Stats reconciles all planned arrivals, including generator delays and VU shortage.
 type Stats struct {
-	Planned     int64
-	Admitted    int64
-	DroppedBusy int64
-	DroppedLate int64
-	MaxLag      time.Duration
-	P95Lag      time.Duration
-	lags        []time.Duration
+	Planned                  int64
+	Admitted                 int64
+	DroppedBusy              int64
+	DroppedLate              int64
+	CancelledBeforeAdmission int64
+	LagSamples               int64
+	P50Lag                   time.Duration
+	P95Lag                   time.Duration
+	MaxLag                   time.Duration
+	lags                     []time.Duration
 }
 
-func (s Stats) Dropped() int64   { return s.DroppedBusy + s.DroppedLate }
+func (s Stats) Dropped() int64 {
+	return s.DroppedBusy + s.DroppedLate + s.CancelledBeforeAdmission
+}
 func (s Stats) Consistent() bool { return s.Planned == s.Admitted+s.Dropped() }
 
 // DueCount computes the planned arrival count from monotonic elapsed time.
@@ -50,8 +55,11 @@ func (s *Stats) observe(lag time.Duration) {
 func (s *Stats) finish() Stats {
 	if len(s.lags) > 0 {
 		sort.Slice(s.lags, func(i, j int) bool { return s.lags[i] < s.lags[j] })
-		ix := (95*len(s.lags)+99)/100 - 1
-		s.P95Lag = s.lags[ix]
+		s.LagSamples = int64(len(s.lags))
+		p50Index := (50*len(s.lags)+99)/100 - 1
+		p95Index := (95*len(s.lags)+99)/100 - 1
+		s.P50Lag = s.lags[p50Index]
+		s.P95Lag = s.lags[p95Index]
 	}
 	s.lags = nil
 	return *s
@@ -82,7 +90,9 @@ func Drive(ctx context.Context, duration time.Duration, rate int, admit func() b
 			lag := now.Sub(intended)
 			stats.Planned++
 			stats.observe(lag)
-			if stopped || lag >= interval {
+			if stopped && now.Sub(start) < duration {
+				stats.CancelledBeforeAdmission++
+			} else if lag >= interval {
 				stats.DroppedLate++
 			} else if admit() {
 				stats.Admitted++

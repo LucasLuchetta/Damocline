@@ -1,6 +1,7 @@
 package generatorhealth
 
 import (
+	"math"
 	"runtime"
 	"strings"
 	"sync/atomic"
@@ -53,8 +54,56 @@ func TestAccumulatorProcessHealthPeaks(t *testing.T) {
 	a.add(reading{at: start.Add(2 * time.Second), maxProcs: 2, processCPUSeconds: 5.25, processRSSBytes: 150, processAvailable: true})
 	s := a.finish()
 	if s.ProcessSamples != 3 || s.ProcessCPUSamples != 2 || !s.ProcessCPUValid ||
-		s.PeakProcessRSSBytes != 200 || s.PeakProcessCPUUtilizationRatio != 0.5 {
+		s.PeakProcessRSSBytes != 200 || s.PeakProcessCPUUtilizationRatio != 0.5 || s.MeanProcessCPUUtilizationRatio != 0.3125 {
 		t.Fatalf("wrong process metrics summary: %+v", s)
+	}
+}
+
+func TestAccumulatorSeparatesProcessCPUPeakFromWindowMean(t *testing.T) {
+	start := time.Unix(0, 0)
+	var a accumulator
+	a.add(reading{at: start, maxProcs: 1, processCPUSeconds: 0, processRSSBytes: 100, processAvailable: true})
+	a.add(reading{at: start.Add(250 * time.Millisecond), maxProcs: 1, processCPUSeconds: 0.3, processRSSBytes: 100, processAvailable: true})
+	a.add(reading{at: start.Add(5 * time.Second), maxProcs: 1, processCPUSeconds: 0.4, processRSSBytes: 100, processAvailable: true})
+	s := a.finish()
+	if math.Abs(s.PeakProcessCPUUtilizationRatio-1.2) > 1e-9 || math.Abs(s.MeanProcessCPUUtilizationRatio-0.08) > 1e-9 {
+		t.Fatalf("short process CPU burst was not separated from sustained window use: %+v", s)
+	}
+}
+
+func TestAccumulatorExcludesZeroAndImplausibleProcessReadings(t *testing.T) {
+	start := time.Unix(0, 0)
+	var a accumulator
+	a.add(reading{at: start, maxProcs: 1, processCPUSeconds: 1, processRSSBytes: 0, processAvailable: true})
+	a.add(reading{at: start.Add(time.Second), maxProcs: 1, processCPUSeconds: math.Inf(1), processRSSBytes: 100, processAvailable: true})
+	a.add(reading{at: start.Add(2 * time.Second), maxProcs: 1, processCPUSeconds: 2, processRSSBytes: 100, processAvailable: true})
+	a.add(reading{at: start.Add(3 * time.Second), maxProcs: 1, processCPUSeconds: 3, processRSSBytes: 200, processAvailable: true})
+	summary := a.finish()
+	if summary.InvalidProcessSamples != 2 || summary.ProcessSamples != 2 || summary.ProcessCPUSamples != 1 ||
+		!summary.ProcessCPUValid || summary.PeakProcessRSSBytes != 200 {
+		t.Fatalf("invalid process readings were silently accepted or replaced: %+v", summary)
+	}
+}
+
+func TestAccumulatorDoesNotCreateProcessCPUSampleFromStaleTimestamps(t *testing.T) {
+	at := time.Unix(0, 0)
+	var a accumulator
+	a.add(reading{at: at, maxProcs: 1, processCPUSeconds: 1, processRSSBytes: 100, processAvailable: true})
+	a.add(reading{at: at, maxProcs: 1, processCPUSeconds: 1.5, processRSSBytes: 200, processAvailable: true})
+	summary := a.finish()
+	if summary.ProcessSamples != 2 || summary.ProcessCPUSamples != 0 || summary.ProcessCPUValid {
+		t.Fatalf("stale timestamp yielded process CPU evidence: %+v", summary)
+	}
+}
+
+func TestUnavailableProcessMetricsRemainUnknown(t *testing.T) {
+	start := time.Unix(0, 0)
+	var a accumulator
+	a.add(reading{at: start, maxProcs: 1})
+	a.add(reading{at: start.Add(time.Second), maxProcs: 1})
+	summary := a.finish()
+	if summary.ProcessSamples != 0 || summary.InvalidProcessSamples != 0 || summary.ProcessCPUValid || summary.PeakProcessRSSBytes != 0 {
+		t.Fatalf("unavailable process measurements must remain unknown: %+v", summary)
 	}
 }
 

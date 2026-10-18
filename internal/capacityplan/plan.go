@@ -143,16 +143,54 @@ func statisticalBlocker(evidence campaign.Result) string {
 			observationSeconds := run.ObservationSeconds
 			expectedStart := 0.0
 			for _, window := range run.Windows {
+				expectedEnd := math.Min(expectedStart+windowSeconds, observationSeconds)
 				if math.IsNaN(window.StartSeconds) || math.IsInf(window.StartSeconds, 0) ||
 					math.IsNaN(window.EndSeconds) || math.IsInf(window.EndSeconds, 0) ||
 					window.StartSeconds < 0 || window.EndSeconds <= window.StartSeconds ||
 					math.Abs(window.StartSeconds-expectedStart) > 0.001 ||
-					math.Abs((window.EndSeconds-window.StartSeconds)-windowSeconds) > 0.001 ||
-					window.EndSeconds > observationSeconds+windowSeconds+0.001 {
+					math.Abs(window.EndSeconds-expectedEnd) > 0.001 {
 					return "A required phase has missing, overlapping, or out-of-range SLO windows; demand remains INSUFFICIENT_EVIDENCE."
 				}
 				if blocker := metricSetBlocker(window.Metrics, run.Config.P95LimitMS, run.Config.MaxErrorRate); blocker != "" {
 					return "A required phase window " + blocker
+				}
+				if run.SchemaVersion < 13 || len(window.Steps) != len(run.Steps) {
+					return "A required phase lacks schema-v13 per-step SLO-window evidence; demand remains INSUFFICIENT_EVIDENCE."
+				}
+				expectedSteps := make(map[string]bool, len(run.Steps))
+				for _, step := range run.Steps {
+					expectedSteps[step.Name] = true
+				}
+				for _, windowStep := range window.Steps {
+					if !expectedSteps[windowStep.Name] {
+						return "A required phase has duplicate or unknown per-step SLO-window evidence; demand remains INSUFFICIENT_EVIDENCE."
+					}
+					delete(expectedSteps, windowStep.Name)
+					if blocker := metricSetBlocker(windowStep.Metrics, run.Config.P95LimitMS, run.Config.MaxErrorRate); blocker != "" {
+						return "A required phase per-step window " + blocker
+					}
+				}
+				if len(expectedSteps) > 0 {
+					return "A required phase omits one or more named steps from an SLO window; demand remains INSUFFICIENT_EVIDENCE."
+				}
+				if len(window.Profiles) != len(run.Config.Profiles) {
+					return "A required phase lacks schema-v13 per-profile journey-window evidence; demand remains INSUFFICIENT_EVIDENCE."
+				}
+				expectedProfiles := make(map[string]bool, len(run.Config.Profiles))
+				for _, profile := range run.Config.Profiles {
+					expectedProfiles[profile.Name] = true
+				}
+				for _, windowProfile := range window.Profiles {
+					if !expectedProfiles[windowProfile.Name] {
+						return "A required phase has duplicate or unknown per-profile journey-window evidence; demand remains INSUFFICIENT_EVIDENCE."
+					}
+					delete(expectedProfiles, windowProfile.Name)
+					if blocker := metricSetBlocker(windowProfile.Metrics, run.Config.P95LimitMS, run.Config.MaxErrorRate); blocker != "" {
+						return "A required phase per-profile journey window " + blocker
+					}
+				}
+				if len(expectedProfiles) > 0 {
+					return "A required phase omits one or more weighted profiles from a journey SLO window; demand remains INSUFFICIENT_EVIDENCE."
 				}
 				expectedStart = window.EndSeconds
 			}

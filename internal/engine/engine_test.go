@@ -1,12 +1,16 @@
 package engine
 
 import (
+	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -28,6 +32,18 @@ func scenario(t *testing.T, url string, steps []config.Step) config.Validated {
 	validated.Duration = 300 * time.Millisecond
 	return validated
 }
+
+func TestMillisecondsConversionRetainsSubMicrosecondDurations(t *testing.T) {
+	for _, duration := range []time.Duration{1 * time.Nanosecond, 999 * time.Nanosecond} {
+		if got := ms(duration); got <= 0 {
+			t.Fatalf("positive duration %s was truncated to %.9f ms", duration, got)
+		}
+	}
+	if got, want := ms(250*time.Microsecond), 0.25; got != want {
+		t.Fatalf("milliseconds conversion got %.9f, want %.9f", got, want)
+	}
+}
+
 func TestSuccess(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)
@@ -39,7 +55,7 @@ func TestSuccess(t *testing.T) {
 	if result.Metrics.Success < 1 || result.Metrics.Failures != 0 || result.Outcome != "PASS" {
 		t.Fatalf("unexpected report: %+v", result)
 	}
-	if result.SchemaVersion != 11 || result.Config.WorkloadFingerprint == "" || result.ObservationSeconds != v.Duration.Seconds() || result.Generator == nil || result.Generator.ProcessSamples < 2 || result.Generator.SamplingIntervalMS != 250 || result.Generator.MaxSampleGapMS <= 0 || result.Generator.SampleCollectionTotalMS < result.Generator.SampleCollectionMaxMS {
+	if result.SchemaVersion != report.CurrentSchemaVersion || result.Config.WorkloadFingerprint == "" || result.ObservationSeconds != v.Duration.Seconds() || result.Generator == nil || result.Generator.ProcessSamples < 2 || result.Generator.SamplingIntervalMS != 250 || result.Generator.MaxSampleGapMS <= 0 || result.Generator.SampleCollectionTotalMS < result.Generator.SampleCollectionMaxMS {
 		t.Fatalf("report must include workload fingerprint, observation window and generator process observations: %+v", result)
 	}
 }
@@ -120,6 +136,37 @@ func TestHTTPTraceBodyTimeoutIsMarkedIncomplete(t *testing.T) {
 	}
 }
 
+func TestTruncatedBodyReconcilesIndependentRequestLedger(t *testing.T) {
+	var received, handlerCompleted atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		received.Add(1)
+		defer handlerCompleted.Add(1)
+		w.Header().Set("Content-Length", "64")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("partial"))
+	}))
+	defer server.Close()
+
+	v := scenario(t, server.URL, []config.Step{{Name: "truncated", Path: "/"}})
+	v.Duration = 350 * time.Millisecond
+	v.Scenario.Users = 1
+	v.Scenario.MaxRPS = 10
+	r := Run(context.Background(), v)
+	step := r.Steps[0]
+	if r.Metrics.Total < 2 || received.Load() != int64(r.Metrics.Total) || handlerCompleted.Load() != received.Load() {
+		t.Fatalf("client and independent server request ledgers disagree: client=%+v received=%d handler_completed=%d", r.Metrics, received.Load(), handlerCompleted.Load())
+	}
+	if r.Metrics.Failures != r.Metrics.Total || r.Metrics.Reasons["body_read"] != r.Metrics.Total ||
+		r.Metrics.HTTP.TransportFailures != r.Metrics.Total || r.Metrics.HTTP.NetworkTimeouts != 0 ||
+		r.Metrics.ResponseBody.IncompleteObservations != int64(r.Metrics.Total) ||
+		step.HTTPTrace.BodyIncompleteCount != r.Metrics.Total || r.Outcome == "PASS" {
+		t.Fatalf("truncated response bodies were not classified as incomplete failures: aggregate=%+v step=%+v", r.Metrics, step)
+	}
+	if r.Quality == nil || r.Quality.State == report.QualityInvalid {
+		t.Fatalf("consistent truncated-body evidence must not invalidate request accounting: quality=%+v trace=%+v metrics=%+v", r.Quality, step.HTTPTrace, r.Metrics)
+	}
+}
+
 func TestJourneyTimingSeparatesRequestsAndObservedThinkTime(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(5 * time.Millisecond)
@@ -197,7 +244,7 @@ func TestHTTPDiagnosticsCountLocalFailureMatrix(t *testing.T) {
 		case "/expected":
 			w.WriteHeader(http.StatusAccepted)
 		case "/timeout":
-			time.Sleep(100 * time.Millisecond)
+			time.Sleep(3 * time.Second)
 			_, _ = w.Write([]byte("late"))
 		case "/large":
 			_, _ = w.Write(make([]byte, maxResponseBytes+1))
@@ -206,14 +253,14 @@ func TestHTTPDiagnosticsCountLocalFailureMatrix(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	s := config.Scenario{Name: "bounded local diagnostics", BaseURL: server.URL, Users: 1, Duration: "1s", WindowDuration: "1s", MaxRPS: 100, P95LimitMS: 1000, MaxErrorRate: 1, Timeout: "40ms", Steps: []config.Step{
-		{Name: "redirect", Path: "/redirect"}, {Name: "limited", Path: "/limited"}, {Name: "server error", Path: "/server-error"}, {Name: "assertion", Path: "/assertion", MustContain: "expected"}, {Name: "expected status", Path: "/expected", ExpectedStatus: []int{http.StatusNoContent}}, {Name: "timeout", Path: "/timeout"}, {Name: "large", Path: "/large"},
+	s := config.Scenario{Name: "bounded local diagnostics", BaseURL: server.URL, Users: 1, Duration: "1s", WindowDuration: "1s", MaxRPS: 100, MaxErrorRate: 1, Mode: "arrival", ArrivalRate: 1, P95LimitMS: 5000, Timeout: "2s", Steps: []config.Step{
+		{Name: "redirect", Path: "/redirect"}, {Name: "limited", Path: "/limited"}, {Name: "server error", Path: "/server-error"}, {Name: "assertion", Path: "/assertion", MustContain: "expected"}, {Name: "expected status", Path: "/expected", ExpectedStatus: []int{http.StatusNoContent}}, {Name: "large", Path: "/large"}, {Name: "timeout", Path: "/timeout"},
 	}}
 	v, err := config.Parse(s, config.Options{Authorized: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	v.Duration = 500 * time.Millisecond
+	v.Duration = time.Second
 	r := Run(context.Background(), v)
 	seenMu.Lock()
 	ledger := map[string]int{}
@@ -269,6 +316,231 @@ func TestHTTPDiagnosticsIdentifyTLSHandshakeFailure(t *testing.T) {
 	}
 	if r.Quality == nil || r.Quality.State == report.QualityInvalid {
 		t.Fatalf("classified TLS failure should remain arithmetically valid: %+v", r.Quality)
+	}
+}
+
+func TestHTTPDiagnosticsIdentifyLoopbackConnectionRefusal(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	address := listener.Addr().String()
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	v := scenario(t, "http://"+address, []config.Step{{Name: "refused", Method: http.MethodGet, Path: "/"}})
+	scenarioWithRefusal := v.Scenario
+	scenarioWithRefusal.Users = 1
+	scenarioWithRefusal.MaxRPS = 10
+	scenarioWithRefusal.Timeout = "100ms"
+	v, err = config.Parse(scenarioWithRefusal, config.Options{Authorized: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	v.Duration = 300 * time.Millisecond
+	r := Run(context.Background(), v)
+	if r.Metrics.Total == 0 || r.Metrics.Failures != r.Metrics.Total ||
+		r.Metrics.HTTP.TransportFailures != r.Metrics.Total ||
+		r.Metrics.HTTP.NetworkTimeouts != 0 || r.Metrics.HTTP.TLSFailures != 0 ||
+		r.Metrics.HTTP.Status2xx != 0 || len(r.Steps) != 1 ||
+		r.Steps[0].HTTPTrace.ConnectStartCount == 0 {
+		t.Fatalf("loopback connection refusal was not classified as a transport failure: metrics=%+v", r.Metrics)
+	}
+	if r.Quality == nil || r.Quality.State == report.QualityInvalid {
+		t.Fatalf("accounted refused connections must not corrupt measurement arithmetic: %+v", r.Quality)
+	}
+}
+
+func TestHTTPDiagnosticsIdentifyLoopbackTCPReset(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var accepted atomic.Int64
+	acceptDone := make(chan struct{})
+	go func() {
+		defer close(acceptDone)
+		for {
+			conn, acceptErr := listener.Accept()
+			if acceptErr != nil {
+				return
+			}
+			accepted.Add(1)
+			if tcp, ok := conn.(*net.TCPConn); ok {
+				_ = tcp.SetLinger(0)
+			}
+			_ = conn.Close()
+		}
+	}()
+	defer func() {
+		_ = listener.Close()
+		select {
+		case <-acceptDone:
+		case <-time.After(time.Second):
+			t.Error("loopback reset accept loop did not stop after listener close")
+		}
+	}()
+
+	v := scenario(t, "http://"+listener.Addr().String(), []config.Step{{Name: "reset", Method: http.MethodGet, Path: "/"}})
+	scenarioWithFreshConnections := v.Scenario
+	scenarioWithFreshConnections.Users = 1
+	scenarioWithFreshConnections.MaxRPS = 10
+	scenarioWithFreshConnections.Timeout = "100ms"
+	scenarioWithFreshConnections.ConnectionPolicy = "new_per_request"
+	v, err = config.Parse(scenarioWithFreshConnections, config.Options{Authorized: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	v.Duration = 300 * time.Millisecond
+	r := Run(context.Background(), v)
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	<-acceptDone
+
+	if r.Metrics.Total == 0 || r.Metrics.Failures != r.Metrics.Total ||
+		r.Metrics.HTTP.TransportFailures != r.Metrics.Total ||
+		r.Metrics.HTTP.NetworkTimeouts != 0 || r.Metrics.HTTP.TLSFailures != 0 ||
+		r.Metrics.HTTP.StatusCodes[http.StatusOK] != 0 || accepted.Load() == 0 {
+		t.Fatalf("loopback reset was not classified or no server-side connection was observed: metrics=%+v accepted_connections=%d", r.Metrics, accepted.Load())
+	}
+	if r.Quality == nil || r.Quality.State == report.QualityInvalid {
+		t.Fatalf("accounted TCP resets must not corrupt measurement arithmetic: %+v", r.Quality)
+	}
+}
+
+func TestHTTPDiagnosticsIdentifyInjectedLoopbackDNSFailure(t *testing.T) {
+	dnsConn, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dnsDone := make(chan struct{})
+	var queries atomic.Int64
+	go func() {
+		defer close(dnsDone)
+		buffer := make([]byte, 1500)
+		for {
+			n, addr, readErr := dnsConn.ReadFrom(buffer)
+			if readErr != nil {
+				return
+			}
+			queries.Add(1)
+			response, ok := nxDomainResponse(buffer[:n])
+			if !ok {
+				continue
+			}
+			if _, writeErr := dnsConn.WriteTo(response, addr); writeErr != nil {
+				return
+			}
+		}
+	}()
+	defer func() {
+		_ = dnsConn.Close()
+		select {
+		case <-dnsDone:
+		case <-time.After(time.Second):
+			t.Error("loopback DNS responder did not stop after close")
+		}
+	}()
+
+	resolver := &net.Resolver{
+		PreferGo: true,
+		Dial: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, "udp", dnsConn.LocalAddr().String())
+		},
+	}
+	dialer := &net.Dialer{Resolver: resolver}
+	transport := &http.Transport{DialContext: dialer.DialContext}
+	v := scenario(t, "https://damocline-g0-absent.invalid.", []config.Step{{Name: "dns_failure", Method: http.MethodGet, Path: "/"}})
+	scenarioWithSingleActor := v.Scenario
+	scenarioWithSingleActor.Users = 1
+	scenarioWithSingleActor.MaxRPS = 10
+	scenarioWithSingleActor.Timeout = "200ms"
+	v, err = config.Parse(scenarioWithSingleActor, config.Options{Authorized: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	v.Duration = 300 * time.Millisecond
+	r := runWithTransport(context.Background(), v, transport)
+	var dnsTrace report.HTTPTrace
+	if len(r.Steps) == 1 {
+		dnsTrace = r.Steps[0].HTTPTrace
+	}
+
+	if r.Metrics.Total == 0 || r.Metrics.Failures != r.Metrics.Total ||
+		r.Metrics.HTTP.TransportFailures != r.Metrics.Total ||
+		r.Metrics.HTTP.NetworkTimeouts != 0 || r.Metrics.HTTP.TLSFailures != 0 ||
+		r.Metrics.HTTP.Status2xx != 0 || len(r.Steps) != 1 ||
+		dnsTrace.DNSStartCount == 0 || dnsTrace.DNSCount == 0 ||
+		dnsTrace.ConnectStartCount != 0 || queries.Load() == 0 {
+		t.Fatalf("injected NXDOMAIN was not observed and classified as a pre-connect transport failure: metrics=%+v dns_trace=%+v resolver_queries=%d", r.Metrics, dnsTrace, queries.Load())
+	}
+	if r.Quality == nil || r.Quality.State == report.QualityInvalid {
+		t.Fatalf("accounted DNS failures must not corrupt measurement arithmetic: %+v", r.Quality)
+	}
+}
+
+func nxDomainResponse(query []byte) ([]byte, bool) {
+	if len(query) < 17 || binary.BigEndian.Uint16(query[4:6]) != 1 {
+		return nil, false
+	}
+	offset := 12
+	for {
+		if offset >= len(query) {
+			return nil, false
+		}
+		labelLength := int(query[offset])
+		offset++
+		if labelLength == 0 {
+			break
+		}
+		if labelLength&0xc0 != 0 || offset+labelLength > len(query) {
+			return nil, false
+		}
+		offset += labelLength
+	}
+	if offset+4 > len(query) {
+		return nil, false
+	}
+	response := append([]byte(nil), query[:offset+4]...)
+	response[2] |= 0x80 // Mark this DNS packet as a response.
+	response[3] = 0x83  // Recursion available and NXDOMAIN.
+	for index := 6; index < 12; index++ {
+		response[index] = 0
+	}
+	return response, true
+}
+
+func TestNativeEngineReconcilesTrustedLocalTLSRequests(t *testing.T) {
+	var received, completed atomic.Int64
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		received.Add(1)
+		defer completed.Add(1)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(bytes.Repeat([]byte("x"), 4096))
+	}))
+	server.EnableHTTP2 = false
+	server.StartTLS()
+	defer server.Close()
+
+	previousTransport := http.DefaultTransport
+	tlsTransport := server.Client().Transport.(*http.Transport).Clone()
+	tlsTransport.Proxy = nil
+	http.DefaultTransport = tlsTransport
+	defer func() { http.DefaultTransport = previousTransport }()
+
+	v := scenario(t, server.URL, []config.Step{{Name: "work", Method: http.MethodGet, Path: "/work"}})
+	v.Duration = 300 * time.Millisecond
+	r := Run(context.Background(), v)
+	if r.Outcome != "PASS" || r.Metrics.Total < 1 || r.Metrics.Success != r.Metrics.Total ||
+		r.Metrics.HTTP.TLSFailures != 0 || r.Steps[0].HTTPTrace.TLSCount < 1 {
+		t.Fatalf("native engine did not complete trusted TLS requests: outcome=%s metrics=%+v trace=%+v", r.Outcome, r.Metrics, r.Steps[0].HTTPTrace)
+	}
+	body := r.Steps[0].Metrics.ResponseBody
+	if body.CompleteObservations != int64(r.Metrics.Total) || body.MinBytes != 4096 || body.MaxBytes != 4096 ||
+		received.Load() != int64(r.Metrics.Total) || completed.Load() != received.Load() {
+		t.Fatalf("TLS body or independent server ledger did not reconcile: client=%+v server_received=%d server_completed=%d", body, received.Load(), completed.Load())
 	}
 }
 
@@ -408,8 +680,11 @@ func TestObservationWindowsExposeLateSLOBreach(t *testing.T) {
 	v.Window = 100 * time.Millisecond
 	v.Scenario.P95LimitMS = 20
 	r := Run(context.Background(), v)
-	if len(r.Windows) < 2 || r.Outcome != "FAIL" {
+	if len(r.Windows) < 2 || r.Outcome != "FAIL" || len(r.Windows[0].Steps) != 1 || len(r.Windows[1].Steps) != 1 {
 		t.Fatalf("late window degradation was not visible: %+v", r)
+	}
+	if r.Windows[0].Steps[0].Name != "page" || r.Windows[1].Steps[0].Metrics.Total == 0 {
+		t.Fatalf("per-step window evidence was not retained: %+v", r.Windows)
 	}
 	found := false
 	for _, warning := range r.Warnings {
@@ -419,6 +694,51 @@ func TestObservationWindowsExposeLateSLOBreach(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("window breach warning missing: %+v", r.Warnings)
+	}
+}
+
+func TestSlowMinorityProfileCannotHideInsideWindowAggregate(t *testing.T) {
+	started := time.Now()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/slow" {
+			time.Sleep(150 * time.Millisecond)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	s := config.Scenario{
+		Name: "weighted local window fixture", BaseURL: srv.URL, Users: 10,
+		Duration: "3s", Mode: "arrival", ArrivalRate: 100, MaxRPS: 100,
+		P95LimitMS: 75, MaxErrorRate: 0, MinSamplesPerStep: 1, WindowDuration: "1s",
+		Profiles: []config.Profile{
+			{Name: "rare_slow", Weight: 1, Steps: []config.Step{{Name: "rare_step", Path: "/slow"}}},
+			{Name: "common_fast", Weight: 99, Steps: []config.Step{{Name: "common_step", Path: "/fast"}}},
+		},
+	}
+	v, err := config.Parse(s, config.Options{Authorized: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := Run(context.Background(), v)
+	if r.Metrics.P95MS >= s.P95LimitMS {
+		t.Fatalf("fixture did not make the aggregate look healthy: aggregate p95 %.1f ms", r.Metrics.P95MS)
+	}
+	if r.Outcome == "PASS" {
+		t.Fatalf("slow minority journey must prevent an aggregate-only pass: %+v", r)
+	}
+	foundSlowWindow := false
+	for _, window := range r.Windows {
+		for _, profile := range window.Profiles {
+			if profile.Name == "rare_slow" && profile.Metrics.Total > 0 && profile.Metrics.P95MS > s.P95LimitMS {
+				foundSlowWindow = true
+			}
+		}
+	}
+	if !foundSlowWindow {
+		t.Fatalf("per-profile journey window evidence did not retain the slow workflow: %+v", r.Windows)
+	}
+	if time.Since(started) > 5*time.Second {
+		t.Fatal("bounded window fixture exceeded its five-second test ceiling")
 	}
 }
 
@@ -546,7 +866,7 @@ func TestPlannedArrivalAccountingWithSlowLocalServer(t *testing.T) {
 	if out.ArrivalsScheduled != out.IterationsStarted+out.ArrivalsDropped {
 		t.Fatalf("planned events do not reconcile: %+v", out)
 	}
-	if out.ArrivalsDropped != out.ArrivalsDroppedBusy+out.ArrivalsDroppedLate {
+	if out.ArrivalsAdmitted == nil || *out.ArrivalsAdmitted != out.IterationsStarted || out.ArrivalsCancelledBeforeAdmission == nil || out.ArrivalsDropped != out.ArrivalsDroppedBusy+out.ArrivalsDroppedLate+*out.ArrivalsCancelledBeforeAdmission {
 		t.Fatalf("dropped event reasons do not reconcile: %+v", out)
 	}
 	if out.ArrivalsDropped == 0 || out.Outcome == "PASS" {
@@ -575,6 +895,7 @@ func TestArrivalRunDrainsAdmittedWorkAfterScheduleWindow(t *testing.T) {
 	r := Run(context.Background(), v)
 	ledger := fixture.Snapshot()
 	if r.ArrivalsScheduled != 6 || r.ArrivalsDropped != 0 || r.IterationsCompleted != r.IterationsStarted ||
+		r.ArrivalsAdmitted == nil || *r.ArrivalsAdmitted != r.IterationsStarted ||
 		r.Metrics.Cancelled != 0 || r.Outcome != "PASS" || r.ObservationSeconds != v.Duration.Seconds() ||
 		r.ElapsedSeconds <= r.ObservationSeconds {
 		t.Fatalf("admitted arrivals should drain after scheduling stops: %+v", r)
@@ -715,7 +1036,7 @@ func TestRunIncludesLocalGeneratorHealth(t *testing.T) {
 	defer srv.Close()
 	v := scenario(t, srv.URL, []config.Step{{Name: "page", Path: "/"}})
 	result := Run(context.Background(), v)
-	if result.Generator == nil || result.Generator.Samples < 2 ||
+	if result.SchemaVersion != report.CurrentSchemaVersion || result.ArrivalsAdmitted == nil || *result.ArrivalsAdmitted != 0 || result.Generator == nil || result.Generator.Samples < 2 ||
 		result.Generator.PeakGoroutines < 1 || result.Generator.PeakHeapAllocBytes == 0 {
 		t.Fatalf("generator health not sampled: %+v", result.Generator)
 	}
@@ -744,5 +1065,61 @@ func TestResponseBodyLimitIsReported(t *testing.T) {
 	r := Run(context.Background(), v)
 	if r.Metrics.Reasons["response_too_large"] == 0 || r.Outcome == "PASS" {
 		t.Fatalf("oversized responses must be bounded and fail visibly: %+v", r)
+	}
+	if r.Metrics.ResponseBody.OversizedObservations != int64(r.Metrics.HTTP.UnexpectedResponseSizes) || r.Metrics.ResponseBody.CompleteObservations != 0 {
+		t.Fatalf("oversized bodies must be counted without claiming their full size: %+v", r.Metrics.ResponseBody)
+	}
+}
+
+func TestResponseBodySizesMatchIndependentLoopbackLedger(t *testing.T) {
+	sizes := []int{0, 16, 1024, 4096}
+	var mu sync.Mutex
+	var requests, total int64
+	var minimum, maximum int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		size := sizes[requests%int64(len(sizes))]
+		requests++
+		total += int64(size)
+		if requests == 1 || int64(size) < minimum {
+			minimum = int64(size)
+		}
+		if int64(size) > maximum {
+			maximum = int64(size)
+		}
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(bytes.Repeat([]byte("synthetic-private-response"), (size+25)/26)[:size])
+	}))
+	defer server.Close()
+
+	v := scenario(t, server.URL, []config.Step{{Name: "payload", Path: "/"}})
+	v.Duration = 900 * time.Millisecond
+	v.Scenario.Users = 1
+	v.Scenario.MaxRPS = 10
+	r := Run(context.Background(), v)
+	mu.Lock()
+	ledger := struct{ requests, total, minimum, maximum int64 }{requests, total, minimum, maximum}
+	mu.Unlock()
+	if ledger.requests < 3 || r.SchemaVersion != report.CurrentSchemaVersion || len(r.Steps) != 1 {
+		t.Fatalf("expected bounded current-schema run with independent loopback requests: ledger=%+v report=%+v", ledger, r)
+	}
+	for label, observed := range map[string]report.ResponseBodyDiagnostics{
+		"aggregate": r.Metrics.ResponseBody,
+		"step":      r.Steps[0].Metrics.ResponseBody,
+	} {
+		if observed.CompleteObservations != ledger.requests || observed.TotalBytes != ledger.total || observed.MinBytes != ledger.minimum || observed.MaxBytes != ledger.maximum || observed.IncompleteObservations != 0 || observed.OversizedObservations != 0 {
+			t.Fatalf("%s response-size summary differs from independent server ledger: summary=%+v ledger=%+v", label, observed, ledger)
+		}
+	}
+	if r.Quality == nil || r.Quality.State == report.QualityInvalid {
+		t.Fatalf("response-body ledger did not validate against the independent server ledger: %+v", r.Quality)
+	}
+	encoded, err := json.Marshal(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), "synthetic-private-response") {
+		t.Fatal("report must not preserve response-body values")
 	}
 }

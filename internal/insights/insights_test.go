@@ -5,10 +5,13 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/LucasLuchetta/Damocline/internal/calibration"
 	"github.com/LucasLuchetta/Damocline/internal/generatorhealth"
 	"github.com/LucasLuchetta/Damocline/internal/hostmon"
 	"github.com/LucasLuchetta/Damocline/internal/report"
@@ -34,6 +37,69 @@ func TestReportCallsOutSingleVUAndTailNotServerUpgrade(t *testing.T) {
 	for _, part := range []string{"SERVER UPGRADE: NOT JUSTIFIED", "Only one virtual user", "Long-tail latency", "max_rps setting", "Complete journey p95"} {
 		if !strings.Contains(b.String(), part) {
 			t.Fatalf("expected %q in output: %s", part, b.String())
+		}
+	}
+}
+
+func TestReportExplainsArrivalSchedulerLagDistribution(t *testing.T) {
+	r := synthetic()
+	r.Config.Mode = "arrival"
+	r.SchedulerLagSamples = 4
+	r.SchedulerLagP50MS = 1
+	r.SchedulerLagP95MS = 2
+	r.SchedulerLagMaxMS = 3
+	var output bytes.Buffer
+	Write(&output, r, nil, nil)
+	for _, expected := range []string{
+		"over 4 planned arrivals", "p50 1.0 ms", "p95 2.0 ms", "max 3.0 ms",
+		"monotonic slot-to-admission", "not a calibrated clock-accuracy bound",
+	} {
+		if !strings.Contains(output.String(), expected) {
+			t.Fatalf("report is missing %q: %s", expected, output.String())
+		}
+	}
+}
+
+func TestReportShowsSchedulerAdmissionsSeparatelyFromWorkerStarts(t *testing.T) {
+	r := synthetic()
+	r.SchemaVersion = 17
+	admitted := int64(9)
+	r.ArrivalsAdmitted = &admitted
+	cancelled := int64(0)
+	r.ArrivalsCancelledBeforeAdmission = &cancelled
+	r.IterationsStarted = 8
+	var output bytes.Buffer
+	Write(&output, r, nil, nil)
+	if !strings.Contains(output.String(), "Scheduler-admitted arrivals do not reconcile with worker-started iterations.") {
+		t.Fatalf("report did not expose the scheduler-to-worker mismatch: %s", output.String())
+	}
+}
+
+func TestReportExplainsResponseBodySizesWithoutBodyContent(t *testing.T) {
+	r := synthetic()
+	r.SchemaVersion = 12
+	r.Steps[0].Metrics.ResponseBody = report.ResponseBodyDiagnostics{
+		CompleteObservations:   8,
+		IncompleteObservations: 1,
+		OversizedObservations:  2,
+		MinBytes:               16,
+		MaxBytes:               4096,
+		TotalBytes:             12000,
+	}
+	r.Calibration = &report.CalibrationEvidence{Coverage: calibration.Coverage{
+		Status:     "INCONCLUSIVE",
+		Dimensions: []calibration.Dimension{{Name: "observed_response_size", Status: "MATCHED", Reason: "every step matched"}},
+	}}
+	r.Quality = &report.Quality{State: report.QualityLimited, Findings: []string{"fixture identity remains unverified"}}
+	var output bytes.Buffer
+	Write(&output, r, nil, nil)
+	for _, expected := range []string{
+		"8 complete bodies (16-4096 bytes; 12000 bytes total)",
+		"1 interrupted reads", "2 oversized bodies", "do not establish expected-workload equivalence",
+		"observed_response_size: MATCHED — every step matched", "Measurement quality: LIMITED",
+	} {
+		if !strings.Contains(output.String(), expected) {
+			t.Fatalf("report is missing %q: %s", expected, output.String())
 		}
 	}
 }
@@ -128,10 +194,34 @@ func TestComparisonRequiresMatchingWorkloadFingerprint(t *testing.T) {
 
 func TestComparisonOnlyMatchesDeclaredWorkload(t *testing.T) {
 	prev, current := synthetic(), synthetic()
+	prev.SchemaVersion, current.SchemaVersion = report.CurrentSchemaVersion, report.CurrentSchemaVersion
+	prev.Config.ConnectionPolicy, current.Config.ConnectionPolicy = "reuse", "reuse"
 	var out strings.Builder
 	writeComparison(&out, prev, current)
 	if !strings.Contains(out.String(), "MATCHED_DECLARED_WORKLOAD") || !strings.Contains(out.String(), "do not embed loopback preflight/calibration evidence") || strings.Contains(out.String(), "MATCHED_DECLARED_CONDITIONS") {
 		t.Fatalf("matching declared workload was overstated as controlled evidence: %s", out.String())
+	}
+}
+
+func TestComparisonRejectsDifferentConnectionPolicy(t *testing.T) {
+	prev, current := synthetic(), synthetic()
+	prev.SchemaVersion, current.SchemaVersion = report.CurrentSchemaVersion, report.CurrentSchemaVersion
+	prev.Config.ConnectionPolicy, current.Config.ConnectionPolicy = "reuse", "new_per_request"
+	var out strings.Builder
+	writeComparison(&out, prev, current)
+	if !strings.Contains(out.String(), "Comparison eligibility: NOT_COMPARABLE") {
+		t.Fatalf("different connection policies must block comparison: %s", out.String())
+	}
+}
+
+func TestComparisonRejectsLegacyReportsWithUnknownConnectionPolicy(t *testing.T) {
+	prev, current := synthetic(), synthetic()
+	prev.SchemaVersion, current.SchemaVersion = 13, report.CurrentSchemaVersion
+	current.Config.ConnectionPolicy = "reuse"
+	var out strings.Builder
+	writeComparison(&out, prev, current)
+	if !strings.Contains(out.String(), "NOT_COMPARABLE") || !strings.Contains(out.String(), "Older report schemas do not record connection policy") {
+		t.Fatalf("legacy connection-policy absence must block comparison explicitly: %s", out.String())
 	}
 }
 
@@ -338,9 +428,231 @@ func TestReadRunAcceptsSchemaElevenWorkloadFingerprint(t *testing.T) {
 	if err := os.WriteFile(path, data, 0600); err != nil {
 		t.Fatal(err)
 	}
+	if bytes.Contains(data, []byte(`"response_body"`)) {
+		t.Fatal("schema-v11 report must not imply response-body shape was measured")
+	}
 	got, err := ReadRun(path)
 	if err != nil || got.SchemaVersion != 11 || got.Config.WorkloadFingerprint != r.Config.WorkloadFingerprint {
 		t.Fatalf("schema-v11 workload fingerprint report not readable: %+v err=%v", got, err)
+	}
+}
+
+func TestReadRunAcceptsSchemaTwelveResponseBodyMeasurements(t *testing.T) {
+	r := synthetic()
+	r.SchemaVersion = 12
+	r.ObservationSeconds = 30
+	r.Steps[0].Metrics.ResponseBody = report.ResponseBodyDiagnostics{
+		CompleteObservations: 4,
+		MinBytes:             0,
+		MaxBytes:             2048,
+		TotalBytes:           4096,
+	}
+	path := filepath.Join(t.TempDir(), "schema-v12-response-body.json")
+	if err := report.WriteJSON(path, r); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ReadRun(path)
+	if err != nil || got.SchemaVersion != 12 || got.Steps[0].Metrics.ResponseBody.TotalBytes != 4096 {
+		t.Fatalf("schema-v12 response-body report not readable: %+v err=%v", got, err)
+	}
+}
+
+func TestReadRunAcceptsCurrentSchemaFourteenConnectionPolicyAndWindowLedgers(t *testing.T) {
+	r := synthetic()
+	r.SchemaVersion = report.CurrentSchemaVersion
+	r.Config.ConnectionPolicy = "reuse"
+	zeroCancelledBeforeAdmission := int64(0)
+	r.ArrivalsCancelledBeforeAdmission = &zeroCancelledBeforeAdmission
+	zeroAdmitted := int64(0)
+	r.ArrivalsAdmitted = &zeroAdmitted
+	r.ObservationSeconds = 30
+	r.Config.WindowDuration = "1s"
+	r.Windows = []report.WindowResult{{StartSeconds: 0, EndSeconds: 1,
+		Steps: []report.WindowMetric{{Name: r.Steps[0].Name, Metrics: r.Steps[0].Metrics}},
+	}}
+	path := filepath.Join(t.TempDir(), "schema-v14-windows.json")
+	if err := report.WriteJSON(path, r); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ReadRun(path)
+	if err != nil || got.SchemaVersion != report.CurrentSchemaVersion || len(got.Windows) != 1 || len(got.Windows[0].Steps) != 1 {
+		t.Fatalf("current-schema window report not readable: %+v err=%v", got, err)
+	}
+}
+
+func TestReadRunRejectsUnknownCurrentConnectionPolicy(t *testing.T) {
+	r := synthetic()
+	r.SchemaVersion = report.CurrentSchemaVersion
+	r.Config.ConnectionPolicy = "unknown"
+	zero := int64(0)
+	r.ArrivalsCancelledBeforeAdmission = &zero
+	r.ArrivalsAdmitted = &zero
+	path := filepath.Join(t.TempDir(), "unknown-connection-policy.json")
+	if err := report.WriteJSON(path, r); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadRun(path); err == nil {
+		t.Fatal("current report with unknown connection policy was accepted")
+	}
+}
+
+func TestReadRunRejectsUnknownFutureSchema(t *testing.T) {
+	r := synthetic()
+	r.SchemaVersion = report.CurrentSchemaVersion + 1
+	path := filepath.Join(t.TempDir(), "future-schema.json")
+	if err := report.WriteJSON(path, r); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadRun(path); err == nil {
+		t.Fatal("report with an unknown future schema was accepted")
+	}
+}
+
+func TestSupportedReportSchemaGoldensRoundTrip(t *testing.T) {
+	for version := 1; version <= report.CurrentSchemaVersion; version++ {
+		t.Run("schema-v"+strconv.Itoa(version), func(t *testing.T) {
+			path := filepath.Join("testdata", "reports", "schema-v"+strconv.Itoa(version)+".json")
+			got, err := ReadRun(path)
+			if err != nil {
+				t.Fatalf("read supported report fixture: %v", err)
+			}
+			if got.SchemaVersion != version {
+				t.Fatalf("fixture schema changed: got %d want %d", got.SchemaVersion, version)
+			}
+			data, err := json.Marshal(got)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var roundTrip report.Result
+			if err := json.Unmarshal(data, &roundTrip); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(got, roundTrip) {
+				t.Fatalf("schema-v%d report changed across JSON round-trip:\n got: %#v\n want: %#v", version, roundTrip, got)
+			}
+			switch version {
+			case 3:
+				if got.Generator == nil || got.Generator.Samples != 3 {
+					t.Fatal("schema-v3 generator observations were not preserved")
+				}
+			case 4:
+				if got.ObservationSeconds != 1 || got.Generator == nil || got.Generator.ProcessSamples != 2 {
+					t.Fatal("schema-v4 observation or process fields were not preserved")
+				}
+			case 5:
+				if len(got.Profiles) != 1 || got.Profiles[0].Name != "browse" {
+					t.Fatal("schema-v5 profile ledger was not preserved")
+				}
+			case 6:
+				if !got.Metrics.P95IID95Approximation || got.Metrics.P95IID95UpperMS != 2 {
+					t.Fatal("schema-v6 percentile interval was not preserved")
+				}
+			case 7:
+				if len(got.Steps) != 1 || got.Steps[0].HTTPTrace.RequestAttemptCount != 1 {
+					t.Fatal("schema-v7 phase trace was not preserved")
+				}
+			case 8:
+				if got.Metrics.HTTP.StatusCodes[200] != 1 {
+					t.Fatal("schema-v8 status ledger was not preserved")
+				}
+			case 9:
+				if got.Config.ProfileMixReference != "synthetic-v1" {
+					t.Fatal("schema-v9 provenance was not preserved")
+				}
+			case 10:
+				if got.Generator == nil || got.Generator.SamplingIntervalMS != 250 {
+					t.Fatal("schema-v10 sampler cadence was not preserved")
+				}
+			case 11:
+				if got.Config.WorkloadFingerprint == "" {
+					t.Fatal("schema-v11 workload fingerprint was not preserved")
+				}
+			case 12:
+				if got.Steps[0].Metrics.ResponseBody.CompleteObservations != 1 || got.Steps[0].Metrics.ResponseBody.MinBytes != 0 {
+					t.Fatal("schema-v12 complete zero-byte body observation was not preserved")
+				}
+			case 13:
+				if len(got.Windows) != 1 || len(got.Windows[0].Steps) != 1 {
+					t.Fatal("schema-v13 named window ledger was not preserved")
+				}
+			case 14:
+				if got.Config.ConnectionPolicy != "reuse" {
+					t.Fatal("schema-v14 connection policy was not preserved")
+				}
+			case 15:
+				if got.Config.ConnectionPolicy != "reuse" {
+					t.Fatal("schema-v15 connection policy was not preserved")
+				}
+			case 16:
+				if got.ArrivalsCancelledBeforeAdmission == nil || *got.ArrivalsCancelledBeforeAdmission != 2 {
+					t.Fatal("schema-v16 cancelled-arrival counter was not preserved")
+				}
+			case 17:
+				if got.ArrivalsAdmitted == nil || *got.ArrivalsAdmitted != 0 {
+					t.Fatal("schema-v17 admitted-arrival counter was not preserved")
+				}
+			}
+		})
+	}
+}
+
+func TestReadRunRequiresSchema16CancellationEvidence(t *testing.T) {
+	zero := int64(0)
+	for _, tc := range []struct {
+		name         string
+		version      int
+		cancellation *int64
+	}{
+		{name: "current missing", version: 16},
+		{name: "legacy unexpected", version: 15, cancellation: &zero},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := synthetic()
+			r.SchemaVersion = tc.version
+			r.ArrivalsCancelledBeforeAdmission = tc.cancellation
+			data, err := json.Marshal(r)
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(t.TempDir(), "report.json")
+			if err := os.WriteFile(path, data, 0600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := ReadRun(path); err == nil {
+				t.Fatal("report with schema-incompatible arrival cancellation evidence was accepted")
+			}
+		})
+	}
+}
+
+func TestReadRunRequiresSchema17AdmissionEvidence(t *testing.T) {
+	zero := int64(0)
+	for _, tc := range []struct {
+		name     string
+		version  int
+		admitted *int64
+	}{
+		{name: "current missing", version: 17},
+		{name: "legacy unexpected", version: 16, admitted: &zero},
+		{name: "current negative", version: 17, admitted: func() *int64 { n := int64(-1); return &n }()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := synthetic()
+			r.SchemaVersion = tc.version
+			r.ArrivalsCancelledBeforeAdmission = &zero
+			r.ArrivalsAdmitted = tc.admitted
+			data, err := json.Marshal(r)
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(t.TempDir(), "report.json")
+			if err := os.WriteFile(path, data, 0600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := ReadRun(path); err == nil {
+				t.Fatal("report with schema-incompatible admitted-arrival evidence was accepted")
+			}
+		})
 	}
 }
 
