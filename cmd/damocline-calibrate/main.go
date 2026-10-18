@@ -147,7 +147,7 @@ func runFixture() error {
 			return
 		}
 		current.Load().ServeHTTP(w, r)
-	}), ReadHeaderTimeout: 2 * time.Second, IdleTimeout: 5 * time.Second, MaxHeaderBytes: 8 << 10}
+	}), ConnContext: h.ConnContext, ReadHeaderTimeout: 2 * time.Second, IdleTimeout: 5 * time.Second, MaxHeaderBytes: 8 << 10}
 	finished := make(chan error, 1)
 	go func() { finished <- server.Serve(listener) }()
 	fmt.Println("READY " + listener.Addr().String())
@@ -649,6 +649,7 @@ func workloadProfileObservation(profile calibration.WorkloadProfile, run report.
 		ClientResponseTotalBytes: body.TotalBytes,
 		ServerReceived:           after.Received - before.Received,
 		ServerCompleted:          after.Completed - before.Completed,
+		ServerTCPConnections:     after.ProfileTCPConnections[profile.Path] - before.ProfileTCPConnections[profile.Path],
 		ServerRequestBodyBytes:   after.RequestBodyBytes - before.RequestBodyBytes,
 		ServerResponseBodyBytes:  after.ResponseBodyBytes - before.ResponseBodyBytes,
 	}
@@ -675,6 +676,8 @@ func checkWorkloadProfile(profile calibration.WorkloadProfile, run report.Result
 		body.MaxBytes == int64(profile.ResponseBodyBytes) && body.TotalBytes == expectedResponseBytes
 	serverLedgerMatches := observation.ServerReceived == planned && observation.ServerCompleted == planned &&
 		observation.ServerRequestBodyBytes == expectedRequestBytes && observation.ServerResponseBodyBytes == expectedResponseBytes
+	expectedTCPConnections, hasExpectedTCPConnections := calibration.ExpectedReferenceTCPConnections(profile, planned)
+	tcpConnectionLedgerMatches := hasExpectedTCPConnections && observation.ServerTCPConnections == expectedTCPConnections
 	var issues []string
 	if !hasRecognizedMeasurementQuality(run.Quality) {
 		state := "missing"
@@ -683,12 +686,12 @@ func checkWorkloadProfile(profile calibration.WorkloadProfile, run report.Result
 		}
 		issues = append(issues, fmt.Sprintf("workload profile %s measurement quality: expected VALID_WITHIN_ENVELOPE or LIMITED, got %s", profile.ID, state))
 	}
-	if !arrivalsMatch || !requestMetricsMatch || !responseMetricsMatch || !serverLedgerMatches || run.Outcome != "PASS" {
+	if !arrivalsMatch || !requestMetricsMatch || !responseMetricsMatch || !serverLedgerMatches || !tcpConnectionLedgerMatches || run.Outcome != "PASS" {
 		issues = append(issues, fmt.Sprintf(
-			"workload profile %s did not reconcile: planned=%d arrivals=%d/%d/%d dropped=%d lag_samples=%d requests=%d/%d failures=%d client_body=%+v server=%+v outcome=%s",
+			"workload profile %s did not reconcile: planned=%d arrivals=%d/%d/%d dropped=%d lag_samples=%d requests=%d/%d failures=%d client_body=%+v server=%+v tcp_connections=%d expected_tcp_connections=%d outcome=%s",
 			profile.ID, planned, run.ArrivalsScheduled, run.IterationsStarted, run.IterationsCompleted,
 			run.ArrivalsDropped, run.SchedulerLagSamples, run.Metrics.Success, run.Metrics.Total,
-			run.Metrics.Failures, body, observation, run.Outcome,
+			run.Metrics.Failures, body, observation, observation.ServerTCPConnections, expectedTCPConnections, run.Outcome,
 		))
 	}
 	return issues

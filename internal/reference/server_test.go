@@ -28,7 +28,8 @@ func TestControlSnapshotDoesNotEnterWorkRequestLedger(t *testing.T) {
 	var snapshot Snapshot
 	err = json.NewDecoder(response.Body).Decode(&snapshot)
 	_ = response.Body.Close()
-	if err != nil || response.StatusCode != http.StatusOK || snapshot != (Snapshot{}) {
+	if err != nil || response.StatusCode != http.StatusOK || snapshot.Received != 0 || snapshot.Completed != 0 ||
+		snapshot.ProfileTCPConnections["/work"] != 0 {
 		t.Fatalf("control read altered or failed to read the work ledger: status=%d snapshot=%+v err=%v", response.StatusCode, snapshot, err)
 	}
 	response, err = http.Get(srv.URL + "/work")
@@ -39,6 +40,51 @@ func TestControlSnapshotDoesNotEnterWorkRequestLedger(t *testing.T) {
 	_ = response.Body.Close()
 	if response.StatusCode != http.StatusOK || h.Snapshot().Received != 1 || h.Snapshot().Completed != 1 {
 		t.Fatalf("work request was not independently counted: status=%d snapshot=%+v", response.StatusCode, h.Snapshot())
+	}
+}
+
+func TestSnapshotCountsDistinctAcceptedConnectionsByProfile(t *testing.T) {
+	tests := []struct {
+		name             string
+		disableKeepAlive bool
+		wantConnections  int64
+	}{
+		{name: "reusable connection", wantConnections: 1},
+		{name: "new connection per request", disableKeepAlive: true, wantConnections: 3},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			h, err := New(Config{MaxConcurrent: 2, MaxRequests: 10, Profiles: []WorkloadProfile{
+				{ID: "synthetic-get", Method: http.MethodGet, Path: "/matrix/get", ResponseBodyBytes: 1},
+			}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			server := httptest.NewUnstartedServer(h)
+			server.Config.ConnContext = h.ConnContext
+			server.Start()
+			defer server.Close()
+
+			transport := &http.Transport{DisableKeepAlives: test.disableKeepAlive}
+			client := &http.Client{Transport: transport, Timeout: time.Second}
+			defer transport.CloseIdleConnections()
+			for range 3 {
+				response, err := client.Get(server.URL + "/matrix/get")
+				if err != nil {
+					t.Fatal(err)
+				}
+				_, readErr := io.Copy(io.Discard, response.Body)
+				closeErr := response.Body.Close()
+				if readErr != nil || closeErr != nil || response.StatusCode != http.StatusOK {
+					t.Fatalf("fixture response failed: status=%d read=%v close=%v", response.StatusCode, readErr, closeErr)
+				}
+			}
+
+			snapshot := h.Snapshot()
+			if snapshot.Received != 3 || snapshot.Completed != 3 || snapshot.ProfileTCPConnections["/matrix/get"] != test.wantConnections {
+				t.Fatalf("server-side TCP ledger mismatch: want %d distinct connections, got %+v", test.wantConnections, snapshot)
+			}
+		})
 	}
 }
 
