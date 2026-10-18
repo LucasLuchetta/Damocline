@@ -5,6 +5,7 @@ This project follows a human-maintained changelog. No release exists yet.
 ## [Unreleased]
 
 ### Added
+- Add native-engine loopback tests for resolver-injected DNS NXDOMAIN, connection refusal, and TCP reset; keep DNS queries and accepted TCP sockets distinct from HTTP request receipt.
 - Add a schema-v3 workload-shape calibration matrix executed through the native HTTP engine for exact 0/1/4/64 KiB GET response profiles and a synthetic 4 KiB POST body; reconcile arrivals and client body observations with independent child-fixture request and byte counters.
 - Preserve sub-microsecond `time.Duration` observations when converting HTTP trace totals to fractional milliseconds, avoiding zero-valued phase sums from integer microsecond truncation.
 - Require every healthy generator-calibration stage to reconcile complete response counts and exact 4 KiB min/max/total bytes in both aggregate and per-step engine reports before the fixture is accepted.
