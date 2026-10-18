@@ -5,6 +5,7 @@ This project follows a human-maintained changelog. No release exists yet.
 ## [Unreleased]
 
 ### Added
+- Add native-engine loopback tests for connection refusal and TCP reset classification; keep accepted TCP connection observations distinct from application request receipt.
 - Require the controlled 10-arrival/s soak to reconcile every scheduler lag sample, use the engine's canonical dispatch-lag method identifier, and stay within fixture-specific p95 (<=50 ms) and maximum (<100 ms) screening limits before calibration or report recomputation can accept `VALID_WITHIN_ENVELOPE`.
 - Emit schema-v17 scheduler-admission counts and reject current reports where planned arrivals, admissions, worker-started iterations and drop categories do not reconcile.
 - Emit schema-v16 arrival accounting with externally cancelled planned starts separated from scheduler-late and worker-busy drops; preserve missing-versus-zero semantics for historical reports.

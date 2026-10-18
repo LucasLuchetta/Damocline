@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -302,6 +303,97 @@ func TestHTTPDiagnosticsIdentifyTLSHandshakeFailure(t *testing.T) {
 	}
 	if r.Quality == nil || r.Quality.State == report.QualityInvalid {
 		t.Fatalf("classified TLS failure should remain arithmetically valid: %+v", r.Quality)
+	}
+}
+
+func TestHTTPDiagnosticsIdentifyLoopbackConnectionRefusal(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	address := listener.Addr().String()
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	v := scenario(t, "http://"+address, []config.Step{{Name: "refused", Method: http.MethodGet, Path: "/"}})
+	scenarioWithRefusal := v.Scenario
+	scenarioWithRefusal.Users = 1
+	scenarioWithRefusal.MaxRPS = 10
+	scenarioWithRefusal.Timeout = "100ms"
+	v, err = config.Parse(scenarioWithRefusal, config.Options{Authorized: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	v.Duration = 300 * time.Millisecond
+	r := Run(context.Background(), v)
+	if r.Metrics.Total == 0 || r.Metrics.Failures != r.Metrics.Total ||
+		r.Metrics.HTTP.TransportFailures != r.Metrics.Total ||
+		r.Metrics.HTTP.NetworkTimeouts != 0 || r.Metrics.HTTP.TLSFailures != 0 ||
+		r.Metrics.HTTP.Status2xx != 0 || len(r.Steps) != 1 ||
+		r.Steps[0].HTTPTrace.ConnectStartCount == 0 {
+		t.Fatalf("loopback connection refusal was not classified as a transport failure: metrics=%+v", r.Metrics)
+	}
+	if r.Quality == nil || r.Quality.State == report.QualityInvalid {
+		t.Fatalf("accounted refused connections must not corrupt measurement arithmetic: %+v", r.Quality)
+	}
+}
+
+func TestHTTPDiagnosticsIdentifyLoopbackTCPReset(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var accepted atomic.Int64
+	acceptDone := make(chan struct{})
+	go func() {
+		defer close(acceptDone)
+		for {
+			conn, acceptErr := listener.Accept()
+			if acceptErr != nil {
+				return
+			}
+			accepted.Add(1)
+			if tcp, ok := conn.(*net.TCPConn); ok {
+				_ = tcp.SetLinger(0)
+			}
+			_ = conn.Close()
+		}
+	}()
+	defer func() {
+		_ = listener.Close()
+		select {
+		case <-acceptDone:
+		case <-time.After(time.Second):
+			t.Error("loopback reset accept loop did not stop after listener close")
+		}
+	}()
+
+	v := scenario(t, "http://"+listener.Addr().String(), []config.Step{{Name: "reset", Method: http.MethodGet, Path: "/"}})
+	scenarioWithFreshConnections := v.Scenario
+	scenarioWithFreshConnections.Users = 1
+	scenarioWithFreshConnections.MaxRPS = 10
+	scenarioWithFreshConnections.Timeout = "100ms"
+	scenarioWithFreshConnections.ConnectionPolicy = "new_per_request"
+	v, err = config.Parse(scenarioWithFreshConnections, config.Options{Authorized: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	v.Duration = 300 * time.Millisecond
+	r := Run(context.Background(), v)
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	<-acceptDone
+
+	if r.Metrics.Total == 0 || r.Metrics.Failures != r.Metrics.Total ||
+		r.Metrics.HTTP.TransportFailures != r.Metrics.Total ||
+		r.Metrics.HTTP.NetworkTimeouts != 0 || r.Metrics.HTTP.TLSFailures != 0 ||
+		r.Metrics.HTTP.StatusCodes[http.StatusOK] != 0 || accepted.Load() == 0 {
+		t.Fatalf("loopback reset was not classified or no server-side connection was observed: metrics=%+v accepted_connections=%d", r.Metrics, accepted.Load())
+	}
+	if r.Quality == nil || r.Quality.State == report.QualityInvalid {
+		t.Fatalf("accounted TCP resets must not corrupt measurement arithmetic: %+v", r.Quality)
 	}
 }
 
