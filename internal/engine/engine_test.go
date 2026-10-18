@@ -427,7 +427,7 @@ func TestHTTPDiagnosticsIdentifyInjectedLoopbackDNSFailure(t *testing.T) {
 				return
 			}
 			queries.Add(1)
-			response, ok := nxDomainResponse(buffer[:n])
+			response, ok := dnsResponse(buffer[:n], 3)
 			if !ok {
 				continue
 			}
@@ -543,7 +543,78 @@ func TestHTTPDiagnosticsClassifyInjectedDNSLookupTimeoutAsTimeout(t *testing.T) 
 	}
 }
 
-func nxDomainResponse(query []byte) ([]byte, bool) {
+func TestHTTPDiagnosticsClassifyInjectedDNSServFailAsDNSFailure(t *testing.T) {
+	dnsConn, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dnsDone := make(chan struct{})
+	var queries atomic.Int64
+	go func() {
+		defer close(dnsDone)
+		buffer := make([]byte, 1500)
+		for {
+			n, addr, readErr := dnsConn.ReadFrom(buffer)
+			if readErr != nil {
+				return
+			}
+			queries.Add(1)
+			response, ok := dnsResponse(buffer[:n], 2)
+			if !ok {
+				continue
+			}
+			if _, writeErr := dnsConn.WriteTo(response, addr); writeErr != nil {
+				return
+			}
+		}
+	}()
+	defer func() {
+		_ = dnsConn.Close()
+		select {
+		case <-dnsDone:
+		case <-time.After(time.Second):
+			t.Error("loopback DNS SERVFAIL responder did not stop after close")
+		}
+	}()
+
+	resolver := &net.Resolver{
+		PreferGo:     true,
+		StrictErrors: true,
+		Dial: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, "udp", dnsConn.LocalAddr().String())
+		},
+	}
+	dialer := &net.Dialer{Resolver: resolver}
+	transport := &http.Transport{DialContext: dialer.DialContext}
+	v := scenario(t, "https://damocline-g0-servfail.invalid.", []config.Step{{Name: "dns_servfail", Method: http.MethodGet, Path: "/"}})
+	s := v.Scenario
+	s.Users = 1
+	s.MaxRPS = 10
+	s.Timeout = "500ms"
+	v, err = config.Parse(s, config.Options{Authorized: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	v.Duration = 300 * time.Millisecond
+	r := runWithTransport(context.Background(), v, transport)
+	var dnsTrace report.HTTPTrace
+	if len(r.Steps) == 1 {
+		dnsTrace = r.Steps[0].HTTPTrace
+	}
+
+	if r.Metrics.Total == 0 || r.Metrics.Failures != r.Metrics.Total ||
+		r.Metrics.HTTP.DNSFailures != r.Metrics.Total || r.Metrics.HTTP.NetworkTimeouts != 0 ||
+		r.Metrics.HTTP.ConnectionFailures != 0 || r.Metrics.HTTP.TransportFailures != r.Metrics.Total ||
+		r.Metrics.HTTP.TLSFailures != 0 || r.Metrics.HTTP.Status2xx != 0 ||
+		len(r.Steps) != 1 || dnsTrace.DNSStartCount == 0 || dnsTrace.ConnectStartCount != 0 || queries.Load() == 0 {
+		t.Fatalf("injected DNS SERVFAIL was not classified as a DNS resolution failure: metrics=%+v dns_trace=%+v resolver_queries=%d", r.Metrics, dnsTrace, queries.Load())
+	}
+	if r.Quality == nil || r.Quality.State == report.QualityInvalid {
+		t.Fatalf("accounted DNS SERVFAIL must not corrupt measurement arithmetic: %+v", r.Quality)
+	}
+}
+
+func dnsResponse(query []byte, responseCode byte) ([]byte, bool) {
 	if len(query) < 17 || binary.BigEndian.Uint16(query[4:6]) != 1 {
 		return nil, false
 	}
@@ -566,8 +637,8 @@ func nxDomainResponse(query []byte) ([]byte, bool) {
 		return nil, false
 	}
 	response := append([]byte(nil), query[:offset+4]...)
-	response[2] |= 0x80 // Mark this DNS packet as a response.
-	response[3] = 0x83  // Recursion available and NXDOMAIN.
+	response[2] |= 0x80                        // Mark this DNS packet as a response.
+	response[3] = 0x80 | (responseCode & 0x0f) // Response with the requested DNS status.
 	for index := 6; index < 12; index++ {
 		response[index] = 0
 	}
