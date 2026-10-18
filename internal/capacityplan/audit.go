@@ -105,6 +105,7 @@ func AuditCampaign(e campaign.Result) CampaignAudit {
 	}
 	if a.RequiredPhases == 0 {
 		inconclusive = true
+		limited = true
 		a.Findings = append(a.Findings, "No completed required phases are available for review.")
 	}
 	if invalid {
