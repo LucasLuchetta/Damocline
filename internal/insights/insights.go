@@ -39,7 +39,7 @@ func ReadRun(path string) (report.Result, error) {
 	if err := readJSON(path, &r); err != nil {
 		return r, err
 	}
-	if r.SchemaVersion < 1 || r.SchemaVersion > 11 || r.Name == "" || r.Metrics.Total < 0 || r.Metrics.Success < 0 || r.Metrics.Failures < 0 || r.Metrics.Success+r.Metrics.Failures != r.Metrics.Total || r.Config.Users < 1 || r.ElapsedSeconds <= 0 || (r.SchemaVersion >= 4 && r.ObservationSeconds <= 0) || (r.SchemaVersion >= 11 && !validFingerprint(r.Config.WorkloadFingerprint)) {
+	if r.SchemaVersion < 1 || r.SchemaVersion > 12 || r.Name == "" || r.Metrics.Total < 0 || r.Metrics.Success < 0 || r.Metrics.Failures < 0 || r.Metrics.Success+r.Metrics.Failures != r.Metrics.Total || r.Config.Users < 1 || r.ElapsedSeconds <= 0 || (r.SchemaVersion >= 4 && r.ObservationSeconds <= 0) || (r.SchemaVersion >= 11 && !validFingerprint(r.Config.WorkloadFingerprint)) {
 		return report.Result{}, errors.New("not a valid Damocline HTTP run report")
 	}
 	return r, nil
@@ -211,6 +211,10 @@ func Evaluate(r report.Result, host *hostmon.Result) Assessment {
 		a.Findings = append(a.Findings, Finding{"CAUTION", fmt.Sprintf("%d requests were cancelled at the run boundary and excluded from completed-request percentiles.", r.Metrics.Cancelled)})
 	}
 	for _, st := range r.Steps {
+		body := st.Metrics.ResponseBody
+		if r.SchemaVersion >= 12 && (body.CompleteObservations > 0 || body.IncompleteObservations > 0 || body.OversizedObservations > 0) {
+			a.Findings = append(a.Findings, Finding{"INFO", fmt.Sprintf("Step %q response body reader observed %d complete bodies (%d-%d bytes; %d bytes total), %d interrupted reads, and %d oversized bodies. Sizes exclude body contents and do not establish expected-workload equivalence.", st.Name, body.CompleteObservations, body.MinBytes, body.MaxBytes, body.TotalBytes, body.IncompleteObservations, body.OversizedObservations)})
+		}
 		if st.Metrics.Total == 0 {
 			a.Findings = append(a.Findings, Finding{"CAUTION", fmt.Sprintf("Step %q received no complete samples.", st.Name)})
 			continue

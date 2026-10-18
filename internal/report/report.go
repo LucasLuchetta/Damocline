@@ -16,21 +16,62 @@ import (
 )
 
 type MetricSet struct {
-	Total                 int             `json:"total"`
-	Success               int             `json:"success"`
-	Failures              int             `json:"failures"`
-	Cancelled             int             `json:"cancelled"`
-	P50MS                 float64         `json:"p50_ms"`
-	MeanMS                float64         `json:"mean_ms"`
-	P95MS                 float64         `json:"p95_ms"`
-	P95IID95LowerMS       float64         `json:"p95_iid_95_lower_ms,omitempty"`
-	P95IID95UpperMS       float64         `json:"p95_iid_95_upper_ms,omitempty"`
-	P95IID95Approximation bool            `json:"p95_iid_95_approximation,omitempty"`
-	P99MS                 float64         `json:"p99_ms"`
-	Reasons               map[string]int  `json:"failure_reasons,omitempty"`
-	HTTP                  HTTPDiagnostics `json:"http_diagnostics,omitempty"`
+	Total                 int                     `json:"total"`
+	Success               int                     `json:"success"`
+	Failures              int                     `json:"failures"`
+	Cancelled             int                     `json:"cancelled"`
+	P50MS                 float64                 `json:"p50_ms"`
+	MeanMS                float64                 `json:"mean_ms"`
+	P95MS                 float64                 `json:"p95_ms"`
+	P95IID95LowerMS       float64                 `json:"p95_iid_95_lower_ms,omitempty"`
+	P95IID95UpperMS       float64                 `json:"p95_iid_95_upper_ms,omitempty"`
+	P95IID95Approximation bool                    `json:"p95_iid_95_approximation,omitempty"`
+	P99MS                 float64                 `json:"p99_ms"`
+	Reasons               map[string]int          `json:"failure_reasons,omitempty"`
+	HTTP                  HTTPDiagnostics         `json:"http_diagnostics,omitempty"`
+	ResponseBody          ResponseBodyDiagnostics `json:"response_body,omitzero"`
 	durations             []time.Duration
 	totalDuration         time.Duration
+}
+
+// ResponseBodyDiagnostics summarizes body-read outcomes without preserving body data.
+type ResponseBodyDiagnostics struct {
+	CompleteObservations   int64 `json:"complete_observations"`
+	IncompleteObservations int64 `json:"incomplete_observations"`
+	OversizedObservations  int64 `json:"oversized_observations"`
+	MinBytes               int64 `json:"min_bytes"`
+	MaxBytes               int64 `json:"max_bytes"`
+	TotalBytes             int64 `json:"total_bytes"`
+}
+
+// ResponseBodyState classifies one response body's bounded read outcome.
+type ResponseBodyState string
+
+const (
+	ResponseBodyComplete   ResponseBodyState = "complete"
+	ResponseBodyIncomplete ResponseBodyState = "incomplete"
+	ResponseBodyOversized  ResponseBodyState = "oversized"
+)
+
+// RecordResponseBody adds one response body read outcome. Byte sizes are kept
+// only for complete bodies within the configured response limit.
+func (m *MetricSet) RecordResponseBody(state ResponseBodyState, size int64) {
+	d := &m.ResponseBody
+	switch state {
+	case ResponseBodyComplete:
+		if d.CompleteObservations == 0 || size < d.MinBytes {
+			d.MinBytes = size
+		}
+		if size > d.MaxBytes {
+			d.MaxBytes = size
+		}
+		d.CompleteObservations++
+		d.TotalBytes += size
+	case ResponseBodyIncomplete:
+		d.IncompleteObservations++
+	case ResponseBodyOversized:
+		d.OversizedObservations++
+	}
 }
 
 // HTTPDiagnostics counts observed HTTP responses and classified client-side

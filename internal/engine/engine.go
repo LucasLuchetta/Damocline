@@ -34,6 +34,8 @@ type sample struct {
 	name               string
 	latency            time.Duration
 	trace              report.HTTPTrace
+	responseBodyState  report.ResponseBodyState
+	responseBodyBytes  int64
 	statusCode         int
 	assertionFailure   bool
 	tlsFailure         bool
@@ -127,6 +129,10 @@ func (c *collector) add(s sample) {
 	c.steps[s.name].Record(s.latency, s.success, s.cancelled, s.reason)
 	c.aggregate.RecordHTTPOutcome(s.statusCode, s.reason, s.assertionFailure, s.tlsFailure)
 	c.steps[s.name].RecordHTTPOutcome(s.statusCode, s.reason, s.assertionFailure, s.tlsFailure)
+	if s.responseBodyState != "" {
+		c.aggregate.RecordResponseBody(s.responseBodyState, s.responseBodyBytes)
+		c.steps[s.name].RecordResponseBody(s.responseBodyState, s.responseBodyBytes)
+	}
 	c.stepTraces[s.name].Record(s.trace)
 	if c.window <= 0 {
 		return
@@ -144,6 +150,9 @@ func (c *collector) add(s sample) {
 	}
 	c.windows[index].Record(s.latency, s.success, s.cancelled, s.reason)
 	c.windows[index].RecordHTTPOutcome(s.statusCode, s.reason, s.assertionFailure, s.tlsFailure)
+	if s.responseBodyState != "" {
+		c.windows[index].RecordResponseBody(s.responseBodyState, s.responseBodyBytes)
+	}
 }
 
 func Run(parent context.Context, v config.Validated) report.Result {
@@ -354,7 +363,7 @@ func Run(parent context.Context, v config.Validated) report.Result {
 	if v.Duration > 0 {
 		littleLawEstimate = float64(agg.Total) / v.Duration.Seconds() * agg.MeanMS / 1000
 	}
-	result := report.Result{SchemaVersion: 11, Name: v.Scenario.Name, Target: v.Base.Scheme + "://" + v.Base.Host, StartedAt: started.UTC().Format(time.RFC3339), ElapsedSeconds: round(elapsed.Seconds()), ObservationSeconds: round(v.Duration.Seconds()),
+	result := report.Result{SchemaVersion: 12, Name: v.Scenario.Name, Target: v.Base.Scheme + "://" + v.Base.Host, StartedAt: started.UTC().Format(time.RFC3339), ElapsedSeconds: round(elapsed.Seconds()), ObservationSeconds: round(v.Duration.Seconds()),
 		Config:  report.RunConfig{WorkloadRevision: v.Scenario.WorkloadRevision, ApplicationRevision: v.Scenario.ApplicationRevision, WorkloadFingerprint: v.WorkloadFingerprint, Environment: v.Scenario.Environment, ProfileMixBasis: v.Scenario.ProfileMixBasis, ProfileMixReference: v.Scenario.ProfileMixReference, Users: v.Scenario.Users, Duration: v.Scenario.Duration, RampUp: v.Scenario.RampUp, ThinkTime: v.Scenario.ThinkTime, RequestTimeout: v.Timeout.String(), MaxRPS: v.Scenario.MaxRPS, P95LimitMS: v.Scenario.P95LimitMS, MaxErrorRate: v.Scenario.MaxErrorRate, Mode: v.Scenario.Mode, ArrivalRate: v.Scenario.ArrivalRate, SeparateSessions: len(v.Cookies) > 0, MinSamplesPerStep: v.Scenario.MinSamplesPerStep, Profiles: profileConfig, WindowDuration: v.Window.String()},
 		Metrics: agg, Journeys: journeyMetrics, Steps: steps, Profiles: profileResults, Windows: windows, Outcome: "PASS", ErrorsRate: round(errorsRate), IterationsStarted: startedIterations.Load(), IterationsCompleted: completedIterations.Load(), ArrivalsScheduled: scheduledIterations.Load(), ArrivalsDropped: droppedIterations.Load(), ArrivalsDroppedLate: arrivalStats.DroppedLate, ArrivalsDroppedBusy: arrivalStats.DroppedBusy, SchedulerLagSamples: arrivalStats.LagSamples, SchedulerLagP50MS: float64(arrivalStats.P50Lag.Microseconds()) / 1000, SchedulerLagP95MS: float64(arrivalStats.P95Lag.Microseconds()) / 1000, SchedulerLagMaxMS: float64(arrivalStats.MaxLag.Microseconds()) / 1000, SchedulerLagMethod: "monotonic due-slot dispatch lag; includes timer wake-up and callback admission", AverageInFlight: round(averageInFlight), LittleLawEstimate: round(littleLawEstimate), ObservedThinkTimeMS: ms(coll.thinkTime), ThinkTimeObservations: coll.thinkSamples,
 		Note: "Measured synthetic HTTP actors under the configured workload; not a universal server capacity or a browser-user count.", Generator: &generatorSnapshot}
@@ -578,6 +587,17 @@ func execute(parent context.Context, client *http.Client, base *url.URL, timeout
 	}
 	defer res.Body.Close()
 	data, readErr := io.ReadAll(io.LimitReader(res.Body, maxResponseBytes+1))
+	responseBodyState := report.ResponseBodyIncomplete
+	if readErr == nil {
+		responseBodyState = report.ResponseBodyComplete
+		if len(data) > maxResponseBytes {
+			responseBodyState = report.ResponseBodyOversized
+		}
+	}
+	responseBodyBytes := int64(len(data))
+	if responseBodyState != report.ResponseBodyComplete {
+		responseBodyBytes = 0
+	}
 	d := time.Since(start)
 	traceMu.Lock()
 	if !firstByte.IsZero() {
@@ -591,17 +611,30 @@ func execute(parent context.Context, client *http.Client, base *url.URL, timeout
 	trace.CompleteMS += ms(d)
 	observedTrace := trace
 	traceMu.Unlock()
+	responseSample := func(reason string) sample {
+		return sample{
+			name:              s.Name,
+			latency:           d,
+			trace:             observedTrace,
+			responseBodyState: responseBodyState,
+			responseBodyBytes: responseBodyBytes,
+			statusCode:        res.StatusCode,
+			reason:            reason,
+		}
+	}
 	if parent.Err() != nil {
-		return sample{name: s.Name, latency: d, trace: observedTrace, statusCode: res.StatusCode, cancelled: true, reason: "run_cancelled"}, nil
+		observed := responseSample("run_cancelled")
+		observed.cancelled = true
+		return observed, nil
 	}
 	if readErr != nil {
 		if errors.Is(readErr, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return sample{name: s.Name, latency: d, trace: observedTrace, statusCode: res.StatusCode, reason: "timeout"}, nil
+			return responseSample("timeout"), nil
 		}
-		return sample{name: s.Name, latency: d, trace: observedTrace, statusCode: res.StatusCode, reason: "body_read"}, nil
+		return responseSample("body_read"), nil
 	}
 	if len(data) > maxResponseBytes {
-		return sample{name: s.Name, latency: d, trace: observedTrace, statusCode: res.StatusCode, reason: "response_too_large"}, nil
+		return responseSample("response_too_large"), nil
 	}
 	ok := res.StatusCode >= 200 && res.StatusCode <= 299
 	if len(s.ExpectedStatus) > 0 {
@@ -614,16 +647,22 @@ func execute(parent context.Context, client *http.Client, base *url.URL, timeout
 		}
 	}
 	if !ok {
-		return sample{name: s.Name, latency: d, trace: observedTrace, statusCode: res.StatusCode, assertionFailure: len(s.ExpectedStatus) > 0, reason: fmt.Sprintf("http_%d", res.StatusCode)}, nil
+		observed := responseSample(fmt.Sprintf("http_%d", res.StatusCode))
+		observed.assertionFailure = len(s.ExpectedStatus) > 0
+		return observed, nil
 	}
 	if s.MustContain != "" && !bytes.Contains(data, []byte(s.MustContain)) {
-		return sample{name: s.Name, latency: d, trace: observedTrace, statusCode: res.StatusCode, assertionFailure: true, reason: "assertion_missing_text"}, nil
+		observed := responseSample("assertion_missing_text")
+		observed.assertionFailure = true
+		return observed, nil
 	}
 	extracted, err := extractValues(s.Extract, res.Header, data)
 	if err != nil {
-		return sample{name: s.Name, latency: d, trace: observedTrace, statusCode: res.StatusCode, reason: "extraction_failed"}, nil
+		return responseSample("extraction_failed"), nil
 	}
-	return sample{name: s.Name, latency: d, trace: observedTrace, statusCode: res.StatusCode, success: true}, extracted
+	observed := responseSample("")
+	observed.success = true
+	return observed, extracted
 }
 
 func isTLSFailure(err error) bool {
