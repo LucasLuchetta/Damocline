@@ -50,6 +50,9 @@ func ReadRun(path string) (report.Result, error) {
 		(r.SchemaVersion < 17 && r.ArrivalsAdmitted != nil) {
 		return report.Result{}, errors.New("report admitted-arrival evidence does not match its schema")
 	}
+	if !report.HasValidFailureClassification(r) {
+		return report.Result{}, errors.New("report HTTP failure-classification evidence does not match its schema")
+	}
 	return r, nil
 }
 

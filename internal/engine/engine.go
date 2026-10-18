@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"net"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptrace"
@@ -672,8 +673,14 @@ func execute(parent context.Context, client *http.Client, base *url.URL, timeout
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			return sample{name: s.Name, latency: d, trace: observedTrace, reason: "timeout"}, nil
 		}
+		if isDNSFailure(err) {
+			return sample{name: s.Name, latency: d, trace: observedTrace, reason: "dns_failure"}, nil
+		}
 		if isTLSFailure(err) {
 			return sample{name: s.Name, latency: d, trace: observedTrace, reason: "transport", tlsFailure: true}, nil
+		}
+		if isConnectionEstablishmentFailure(err) {
+			return sample{name: s.Name, latency: d, trace: observedTrace, reason: "connection_failure"}, nil
 		}
 		return sample{name: s.Name, latency: d, trace: observedTrace, reason: "transport"}, nil
 	}
@@ -756,6 +763,22 @@ func execute(parent context.Context, client *http.Client, base *url.URL, timeout
 	observed := responseSample("")
 	observed.success = true
 	return observed, extracted
+}
+
+func isDNSFailure(err error) bool {
+	var dnsErr *net.DNSError
+	return errors.As(err, &dnsErr)
+}
+
+func isConnectionEstablishmentFailure(err error) bool {
+	if isDNSFailure(err) {
+		return false
+	}
+	var opErr *net.OpError
+	if !errors.As(err, &opErr) {
+		return false
+	}
+	return opErr.Op == "dial" || opErr.Op == "connect"
 }
 
 func isTLSFailure(err error) bool {
