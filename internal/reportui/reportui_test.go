@@ -11,7 +11,7 @@ import (
 )
 
 func TestHandlerRendersReport(t *testing.T) {
-	h := Handler(report.Result{Name: "Local report", SchemaVersion: 12, Outcome: "PASS", Metrics: report.MetricSet{Total: 2, P95MS: 100, HTTP: report.HTTPDiagnostics{StatusCodes: map[int]int{429: 1}, Status4xx: 1, RateLimitedResponses: 1}}, Journeys: report.MetricSet{Total: 1, P95MS: 250}, ObservedThinkTimeMS: 60, ThinkTimeObservations: 1, Calibration: &report.CalibrationEvidence{Coverage: calibration.Coverage{Status: "INCONCLUSIVE", Dimensions: []calibration.Dimension{{Name: "observed_response_size", Status: "MATCHED", Reason: "every step matched"}}}}, Quality: &report.Quality{State: report.QualityLimited, Findings: []string{"endpoint identity remains unverified"}}, Steps: []report.StepResult{{Name: "page", Metrics: report.MetricSet{ResponseBody: report.ResponseBodyDiagnostics{CompleteObservations: 2, MinBytes: 12, MaxBytes: 40, TotalBytes: 52}}, HTTPTrace: report.HTTPTrace{FirstByteCount: 1, FirstByteMS: 12, TLSCount: 1, TLSMS: 3}}}})
+	h := Handler(report.Result{Name: "Local report", SchemaVersion: 13, Outcome: "PASS", Metrics: report.MetricSet{Total: 2, P95MS: 100, HTTP: report.HTTPDiagnostics{StatusCodes: map[int]int{429: 1}, Status4xx: 1, RateLimitedResponses: 1}}, Journeys: report.MetricSet{Total: 1, P95MS: 250}, ObservedThinkTimeMS: 60, ThinkTimeObservations: 1, Calibration: &report.CalibrationEvidence{Coverage: calibration.Coverage{Status: "INCONCLUSIVE", Dimensions: []calibration.Dimension{{Name: "observed_response_size", Status: "MATCHED", Reason: "every step matched"}}}}, Quality: &report.Quality{State: report.QualityLimited, Findings: []string{"endpoint identity remains unverified"}}, Steps: []report.StepResult{{Name: "page", Metrics: report.MetricSet{ResponseBody: report.ResponseBodyDiagnostics{CompleteObservations: 2, MinBytes: 12, MaxBytes: 40, TotalBytes: 52}}, HTTPTrace: report.HTTPTrace{FirstByteCount: 1, FirstByteMS: 12, TLSCount: 1, TLSMS: 3}}}, Windows: []report.WindowResult{{StartSeconds: 0, EndSeconds: 1, Steps: []report.WindowMetric{{Name: "page", Metrics: report.MetricSet{Total: 2, P95MS: 120}}}, Profiles: []report.WindowMetric{{Name: "checkout", Metrics: report.MetricSet{Total: 1, P95MS: 300}}}}}})
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/", nil))
 	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "Local report") || !strings.Contains(w.Body.String(), "page") {
@@ -31,6 +31,9 @@ func TestHandlerRendersReport(t *testing.T) {
 	}
 	if !strings.Contains(w.Body.String(), "Calibration coverage: INCONCLUSIVE") || !strings.Contains(w.Body.String(), "observed_response_size") || !strings.Contains(w.Body.String(), "Measurement quality: LIMITED") {
 		t.Fatalf("report view omitted calibration dimension or quality state: %s", w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "0-1s") || !strings.Contains(w.Body.String(), "step page") || !strings.Contains(w.Body.String(), "profile checkout") {
+		t.Fatalf("report view omitted per-step or per-profile window evidence: %s", w.Body.String())
 	}
 }
 

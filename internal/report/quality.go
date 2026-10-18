@@ -2,6 +2,7 @@ package report
 
 import (
 	"math"
+	"time"
 
 	"github.com/LucasLuchetta/Damocline/internal/calibration"
 )
@@ -212,6 +213,9 @@ func AssessQuality(r Result) *Quality {
 		}
 	}
 	if r.SchemaVersion >= 8 {
+		if r.SchemaVersion >= 13 && r.Config.WindowDuration != "" && !validObservationWindowBounds(r) {
+			invalidate("Configured observation windows are missing, overlapping, or outside the workload horizon.")
+		}
 		for _, window := range r.Windows {
 			if !validHTTPDiagnostics(window.Metrics.HTTP, window.Metrics.Total, window.Metrics.Cancelled) {
 				invalidate("Observation-window HTTP outcome counters are inconsistent.")
@@ -225,6 +229,13 @@ func AssessQuality(r Result) *Quality {
 				invalidate("Observation-window response-body observations do not reconcile with HTTP responses.")
 				break
 			}
+			if r.SchemaVersion >= 13 && !validWindowNamedMetrics(r, window) {
+				invalidate("Observation-window named step or profile ledgers are missing, duplicated, or inconsistent.")
+				break
+			}
+		}
+		if r.SchemaVersion >= 13 && !validWindowProfileTotals(r) {
+			invalidate("Observation-window profile journeys exceed or do not match the persisted profile ledgers.")
 		}
 	}
 	// Check each independent ledger against the aggregate when its coverage is
@@ -377,6 +388,135 @@ func AssessQuality(r Result) *Quality {
 	return q
 }
 
+func validObservationWindowBounds(r Result) bool {
+	duration, err := time.ParseDuration(r.Config.WindowDuration)
+	if err != nil {
+		return false
+	}
+	if duration == 0 {
+		return len(r.Windows) == 0
+	}
+	if duration < 0 || r.ObservationSeconds <= 0 || math.IsNaN(r.ObservationSeconds) || math.IsInf(r.ObservationSeconds, 0) {
+		return false
+	}
+	windowSeconds := duration.Seconds()
+	expectedCount := int(math.Ceil(r.ObservationSeconds / windowSeconds))
+	if expectedCount <= 0 || len(r.Windows) != expectedCount {
+		return false
+	}
+	for index, window := range r.Windows {
+		expectedStart := float64(index) * windowSeconds
+		expectedEnd := math.Min(expectedStart+windowSeconds, r.ObservationSeconds)
+		if math.IsNaN(window.StartSeconds) || math.IsInf(window.StartSeconds, 0) ||
+			math.IsNaN(window.EndSeconds) || math.IsInf(window.EndSeconds, 0) ||
+			math.Abs(window.StartSeconds-expectedStart) > 0.001 ||
+			math.Abs(window.EndSeconds-expectedEnd) > 0.001 {
+			return false
+		}
+	}
+	return true
+}
+
+func validWindowNamedMetrics(r Result, window WindowResult) bool {
+	if len(window.Steps) != len(r.Steps) || len(window.Profiles) != len(r.Config.Profiles) {
+		return false
+	}
+	stepNames := make(map[string]bool, len(r.Steps))
+	for _, step := range r.Steps {
+		stepNames[step.Name] = true
+	}
+	profileNames := make(map[string]bool, len(r.Config.Profiles))
+	for _, profile := range r.Config.Profiles {
+		profileNames[profile.Name] = true
+	}
+	var stepTotal, stepSuccess, stepFailures, stepCancelled int
+	var stepHTTP HTTPDiagnostics
+	var stepBodies ResponseBodyDiagnostics
+	for _, named := range window.Steps {
+		if !stepNames[named.Name] || !validWindowMetricSet(named.Metrics) {
+			return false
+		}
+		if named.Metrics.Total > window.Metrics.Total-stepTotal || named.Metrics.Success > window.Metrics.Success-stepSuccess ||
+			named.Metrics.Failures > window.Metrics.Failures-stepFailures || named.Metrics.Cancelled > window.Metrics.Cancelled-stepCancelled ||
+			!addHTTPDiagnostics(&stepHTTP, named.Metrics.HTTP) || !addResponseBodyDiagnostics(&stepBodies, named.Metrics.ResponseBody) {
+			return false
+		}
+		stepTotal += named.Metrics.Total
+		stepSuccess += named.Metrics.Success
+		stepFailures += named.Metrics.Failures
+		stepCancelled += named.Metrics.Cancelled
+		delete(stepNames, named.Name)
+	}
+	if len(stepNames) != 0 || stepTotal != window.Metrics.Total || stepSuccess != window.Metrics.Success ||
+		stepFailures != window.Metrics.Failures || stepCancelled != window.Metrics.Cancelled ||
+		!equalHTTPDiagnostics(stepHTTP, window.Metrics.HTTP) || !equalResponseBodyDiagnostics(stepBodies, window.Metrics.ResponseBody) {
+		return false
+	}
+	for _, named := range window.Profiles {
+		if !profileNames[named.Name] || !validWindowMetricSet(named.Metrics) {
+			return false
+		}
+		delete(profileNames, named.Name)
+	}
+	return len(stepNames) == 0 && len(profileNames) == 0
+}
+
+func validWindowMetricSet(metrics MetricSet) bool {
+	if metrics.Total < 0 || metrics.Success < 0 || metrics.Failures < 0 || metrics.Cancelled < 0 ||
+		metrics.Success > metrics.Total || metrics.Failures != metrics.Total-metrics.Success {
+		return false
+	}
+	latencies := []float64{metrics.MeanMS, metrics.P50MS, metrics.P95MS, metrics.P99MS, metrics.P95IID95LowerMS, metrics.P95IID95UpperMS}
+	for _, latency := range latencies {
+		if math.IsNaN(latency) || math.IsInf(latency, 0) || latency < 0 {
+			return false
+		}
+	}
+	if metrics.P50MS > metrics.P95MS || metrics.P95MS > metrics.P99MS ||
+		metrics.P95IID95UpperMS < metrics.P95IID95LowerMS ||
+		(metrics.P95IID95Approximation && metrics.P95IID95UpperMS == 0 && metrics.P95MS > 0) {
+		return false
+	}
+	return validHTTPDiagnostics(metrics.HTTP, metrics.Total, metrics.Cancelled) &&
+		validResponseBodyDiagnostics(metrics.ResponseBody, responseStatusCount(metrics.HTTP), metrics.HTTP.UnexpectedResponseSizes)
+}
+
+func validWindowProfileTotals(r Result) bool {
+	if len(r.Profiles) != len(r.Config.Profiles) {
+		return false
+	}
+	configured := make(map[string]bool, len(r.Config.Profiles))
+	for _, profile := range r.Config.Profiles {
+		if configured[profile.Name] {
+			return false
+		}
+		configured[profile.Name] = true
+	}
+	profileTotals := make(map[string]int, len(r.Profiles))
+	for _, profile := range r.Profiles {
+		if !configured[profile.Name] {
+			return false
+		}
+		configured[profile.Name] = false
+		profileTotals[profile.Name] = profile.Journeys.Total
+	}
+	for _, exists := range configured {
+		if exists {
+			return false
+		}
+	}
+	windowTotals := make(map[string]int, len(profileTotals))
+	for _, window := range r.Windows {
+		for _, profile := range window.Profiles {
+			if profile.Metrics.Total > profileTotals[profile.Name]-windowTotals[profile.Name] {
+				return false
+			}
+			windowTotals[profile.Name] += profile.Metrics.Total
+		}
+	}
+	return true
+}
+
 func validHTTPTrace(t HTTPTrace) bool {
 	counts := []int{t.RequestAttemptCount, t.WriteCount, t.WriteFailedCount, t.DNSStartCount, t.RateWaitCount, t.RateWaitCancelledCount, t.DNSCount, t.ConnectCount, t.ConnectStartCount, t.TLSCount, t.TLSStartCount, t.FirstByteCount, t.BodyCount, t.BodyIncompleteCount, t.CompleteCount}
 	for _, count := range counts {
@@ -525,26 +665,54 @@ func AssessObservedResponseLatency(r Result) calibration.Dimension {
 		return dimension
 	}
 	for _, step := range r.Steps {
-		metrics := step.Metrics
-		insufficientSamples := metrics.Total < minObservedLatencySamples || metrics.Success < minObservedLatencySamples
-		p50NonFinite := math.IsNaN(metrics.P50MS) || math.IsInf(metrics.P50MS, 0)
-		p95NonFinite := math.IsNaN(metrics.P95MS) || math.IsInf(metrics.P95MS, 0)
-		percentilesOutOfOrder := metrics.P50MS < 0 || metrics.P95MS < metrics.P50MS
-		invalidPercentiles := p50NonFinite || p95NonFinite || percentilesOutOfOrder
-		if insufficientSamples || invalidPercentiles {
+		outside, sufficient := latencyGuardrail(step.Metrics)
+		if !sufficient {
 			return dimension
 		}
-		p50Outside := metrics.P50MS < calibration.HealthyLatencyMinMS || metrics.P50MS > calibration.HealthyLatencyMaxMS
-		p95Outside := metrics.P95MS < calibration.HealthyLatencyMinMS || metrics.P95MS > calibration.HealthyLatencyMaxMS
-		if p50Outside || p95Outside {
+		if outside {
 			dimension.Status = "OUTSIDE_REFERENCE"
 			dimension.Reason = "One or more observed per-step request p50/p95 values fall outside the local fixture guardrail."
 			return dimension
 		}
+		if r.SchemaVersion >= 13 && r.Config.WindowDuration != "" {
+			for _, window := range r.Windows {
+				var found bool
+				for _, windowStep := range window.Steps {
+					if windowStep.Name != step.Name {
+						continue
+					}
+					found = true
+					outside, sufficient = latencyGuardrail(windowStep.Metrics)
+					break
+				}
+				if !found || !sufficient {
+					return dimension
+				}
+				if outside {
+					dimension.Status = "OUTSIDE_REFERENCE"
+					dimension.Reason = "One or more observed per-step request p50/p95 values in an observation window fall outside the local fixture guardrail."
+					return dimension
+				}
+			}
+		}
 	}
 	dimension.Status = "MATCHED"
-	dimension.Reason = "Every named step has at least 100 successful request observations and its observed p50/p95 fall within the local fixture guardrail."
+	dimension.Reason = "Every named step and configured observation window has at least 100 successful observations and descriptive p50/p95 values within the local fixture guardrail."
 	return dimension
+}
+
+func latencyGuardrail(metrics MetricSet) (outside, sufficient bool) {
+	if metrics.Total < minObservedLatencySamples || metrics.Success < minObservedLatencySamples {
+		return false, false
+	}
+	p50Invalid := math.IsNaN(metrics.P50MS) || math.IsInf(metrics.P50MS, 0) || metrics.P50MS < 0
+	p95Invalid := math.IsNaN(metrics.P95MS) || math.IsInf(metrics.P95MS, 0) || metrics.P95MS < metrics.P50MS
+	if p50Invalid || p95Invalid {
+		return false, false
+	}
+	p50Outside := metrics.P50MS < calibration.HealthyLatencyMinMS || metrics.P50MS > calibration.HealthyLatencyMaxMS
+	p95Outside := metrics.P95MS < calibration.HealthyLatencyMinMS || metrics.P95MS > calibration.HealthyLatencyMaxMS
+	return p50Outside || p95Outside, true
 }
 
 // AssessDeclaredWorkloadShape recomputes the workload fingerprint comparison
