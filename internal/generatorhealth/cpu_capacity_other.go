@@ -2,9 +2,13 @@
 
 package generatorhealth
 
-func currentCPUCapacity(maxProcs int) cpuCapacity {
-	if maxProcs < 1 {
+func currentCPUCapacity(logicalCPUs, maxProcs int) cpuCapacity {
+	if logicalCPUs < 1 || maxProcs < 1 {
 		return cpuCapacity{}
 	}
-	return cpuCapacity{cores: float64(maxProcs), source: "runtime_gomaxprocs", known: true}
+	capacity := logicalCPUs
+	if maxProcs < capacity {
+		capacity = maxProcs
+	}
+	return cpuCapacity{cores: float64(capacity), source: "runtime_logical_cpus_and_gomaxprocs", known: true}
 }

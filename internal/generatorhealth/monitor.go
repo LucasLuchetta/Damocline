@@ -22,6 +22,7 @@ type Summary struct {
 	SampleCollectionTotalMS        float64 `json:"sample_collection_total_ms,omitempty"`
 	SampleCollectionMaxMS          float64 `json:"sample_collection_max_ms,omitempty"`
 	MaxSampleGapMS                 float64 `json:"max_sample_gap_ms,omitempty"`
+	LogicalCPUs                    int     `json:"logical_cpus"`
 	GOMAXPROCS                     int     `json:"gomaxprocs"`
 	CPUCapacityCores               float64 `json:"cpu_capacity_cores,omitempty"`
 	CPUCapacitySource              string  `json:"cpu_capacity_source,omitempty"`
@@ -43,7 +44,7 @@ type Summary struct {
 	Note                           string  `json:"note"`
 }
 
-const note = "Generator-side Go runtime and supported OS process samples only; RSS is not total host memory. CPU utilization is normalized to detected CPU capacity, including a finite Linux cgroup quota when available. An unavailable CPU limit is not treated as unlimited. The peak is the highest sampled interval and may reflect a short burst. Sampling may miss brief peaks and does not describe the target application."
+const note = "Generator-side Go runtime and supported OS process samples only; RSS is not total host memory. CPU utilization is normalized to detected capacity bounded by logical CPUs, GOMAXPROCS, and finite Linux cgroup CPU quotas across the process hierarchy. An unavailable quota is not treated as unlimited. The peak is the highest sampled interval and may reflect a short burst. Sampling may miss brief peaks and does not describe the target application."
 
 type reading struct {
 	at                time.Time
@@ -51,6 +52,7 @@ type reading struct {
 	heap              uint64
 	goroutines        int
 	gcCycles          uint32
+	logicalCPUs       int
 	maxProcs          int
 	cpuCapacity       float64
 	cpuCapacitySource string
@@ -77,6 +79,7 @@ func sampleRuntime() reading {
 		heap:         mem.HeapAlloc,
 		goroutines:   runtime.NumGoroutine(),
 		gcCycles:     mem.NumGC,
+		logicalCPUs:  runtime.NumCPU(),
 		maxProcs:     runtime.GOMAXPROCS(0),
 		cpuAvailable: valid,
 	}
@@ -120,6 +123,7 @@ func (a *accumulator) add(r reading) {
 	}
 	if a.summary.Samples == 0 {
 		a.base = r
+		a.summary.LogicalCPUs = r.logicalCPUs
 		a.summary.GOMAXPROCS = r.maxProcs
 		a.summary.CPUCapacityCores = r.cpuCapacity
 		a.summary.CPUCapacitySource = r.cpuCapacitySource
@@ -221,7 +225,8 @@ func capacityCores(r reading) float64 {
 }
 
 func sameCPUCapacity(left, right reading) bool {
-	return left.maxProcs == right.maxProcs && left.maxProcs > 0 &&
+	return left.logicalCPUs == right.logicalCPUs && left.logicalCPUs > 0 &&
+		left.maxProcs == right.maxProcs && left.maxProcs > 0 &&
 		capacityCores(left) == capacityCores(right) && left.cpuCapacitySource == right.cpuCapacitySource &&
 		left.cpuCapacityKnown == right.cpuCapacityKnown
 }

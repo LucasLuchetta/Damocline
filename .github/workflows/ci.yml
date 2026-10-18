@@ -29,9 +29,9 @@ jobs:
       - name: Smoke test source CLI
         run: go run ./cmd/damocline help
       - name: Reconcile extended local reference workload
-        run: go run ./cmd/damocline-calibrate --extended --out .damocline/calibration/ci-reference.json
+        run: docker run --rm --cpus=4 --memory=4g --pids-limit=256 -v "$PWD:/workspace" -w /workspace golang:1.24.13-bookworm go run ./cmd/damocline-calibrate --extended --out .damocline/calibration/ci-reference.json
       - name: Validate bounded transport fixtures
-        run: go run ./cmd/damocline-calibrate --transport-matrix --out .damocline/calibration/ci-transport.json
+        run: docker run --rm --cpus=4 --memory=4g --pids-limit=256 -v "$PWD:/workspace" -w /workspace golang:1.24.13-bookworm go run ./cmd/damocline-calibrate --transport-matrix --out .damocline/calibration/ci-transport.json
 
 # CI verifies source compatibility but intentionally does not publish prebuilt binaries.
 

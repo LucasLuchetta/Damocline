@@ -13,16 +13,32 @@ import (
 )
 
 func validSyntheticQualityRun() Result {
-	capacity := generatorhealth.CurrentCPUCapacity()
+	testRuntime := qualityTestRuntime()
 	return Result{
 		ElapsedSeconds: 10, ObservationSeconds: 10,
 		Config:  RunConfig{Users: 10, MaxRPS: 100, Mode: "arrival", ArrivalRate: 10},
 		Metrics: MetricSet{Total: 100, Success: 100}, Journeys: MetricSet{Total: 100, Success: 100},
 		IterationsStarted: 100, IterationsCompleted: 100, ArrivalsScheduled: 100,
 		Generator: &generatorhealth.Summary{Samples: 10, GoCPUValid: true, ProcessSamples: 10, ProcessCPUValid: true,
-			CPUCapacityCores: capacity.Cores, CPUCapacitySource: capacity.Source, CPUCapacityKnown: capacity.Known},
+			LogicalCPUs: testRuntime.LogicalCPUs, GOMAXPROCS: testRuntime.GOMAXPROCS,
+			CPUCapacityCores: testRuntime.CPUCapacityCores, CPUCapacitySource: testRuntime.CPUCapacitySource,
+			CPUCapacityKnown: testRuntime.CPUCapacityKnown},
 		Outcome: "PASS",
 	}
+}
+
+func qualityTestRuntime() calibration.Runtime {
+	runtime := calibration.CurrentRuntime()
+	if runtime.LogicalCPUs < 1 {
+		runtime.LogicalCPUs = 1
+	}
+	if runtime.GOMAXPROCS < 1 {
+		runtime.GOMAXPROCS = 1
+	}
+	runtime.CPUCapacityCores = float64(min(runtime.LogicalCPUs, runtime.GOMAXPROCS))
+	runtime.CPUCapacitySource = "test_fixture_runtime_capacity"
+	runtime.CPUCapacityKnown = true
+	return runtime
 }
 
 func generatorFromRuntime(runtime calibration.Runtime) calibration.Generator {
@@ -37,7 +53,7 @@ func generatorFromRuntime(runtime calibration.Runtime) calibration.Generator {
 func TestQualityKeepsAttachedCalibrationLimitedWhileTargetEvidenceIsUnknown(t *testing.T) {
 	r := validSyntheticQualityRun()
 	r.SchemaVersion = 10
-	local := calibration.CurrentRuntime()
+	local := qualityTestRuntime()
 	r.Generator.GOMAXPROCS = local.GOMAXPROCS
 	r.Generator.ObservedSeconds = 10
 	r.Generator.SamplingIntervalMS = 250
@@ -196,7 +212,7 @@ func TestControlledReferenceClaimWithoutCalibrationCannotUpgradeQuality(t *testi
 
 func TestControlledReferenceEvidenceRejectsAlteredFixtureFingerprint(t *testing.T) {
 	now := time.Now().UTC()
-	local := calibration.CurrentRuntime()
+	local := qualityTestRuntime()
 	rec, err := calibration.NewRecord(now.Add(-time.Minute), now,
 		generatorFromRuntime(local),
 		calibration.Fixture{NetworkMode: "loopback_same_host_separate_process", WorkloadModel: "open_loop_journey_arrivals", Method: "GET", HealthyResponseBytes: 4096, HealthyDelay: "20ms", StageDuration: "5s", SoakDuration: "30s", StageUsers: 10, MaximumRPS: 100, Repeats: 1, HealthyRates: []int{2, 5, 10}},
@@ -246,7 +262,7 @@ func TestControlledReferenceSchedulerLagRequiresCompleteSamplesAndFixtureBounds(
 
 func TestDeclaredWorkloadShapeDoesNotTrustFingerprintForUnpersistedShape(t *testing.T) {
 	r := Result{SchemaVersion: 13, Config: RunConfig{WorkloadFingerprint: "sha256:" + strings.Repeat("a", 64)}}
-	runtimeInfo := calibration.CurrentRuntime()
+	runtimeInfo := qualityTestRuntime()
 	rec, err := calibration.NewRecord(time.Now().Add(-time.Minute), time.Now(), generatorFromRuntime(runtimeInfo),
 		calibration.Fixture{NetworkMode: "loopback_same_host_separate_process", WorkloadModel: "open_loop_journey_arrivals", Method: "GET", HealthyResponseBytes: 4096, HealthyDelay: "20ms", StageDuration: "5s", SoakDuration: "30s", StageUsers: 10, MaximumRPS: 100, Repeats: 1, HealthyRates: []int{2, 5, 10}},
 		[]calibration.Stage{{ArrivalRate: 2, Scheduled: 10, Started: 10, Completed: 10, Outcome: "PASS"}, {ArrivalRate: 5, Scheduled: 25, Started: 25, Completed: 25, Outcome: "PASS"}, {ArrivalRate: 10, Scheduled: 50, Started: 50, Completed: 50, Outcome: "PASS"}}, "REFERENCE_SMOKE_PASSED")
@@ -345,6 +361,22 @@ func TestSchemaEighteenRequiresVerifiedEffectiveCPUCapacity(t *testing.T) {
 	r.Generator.CPUCapacityCores = 13
 	if q := AssessQuality(r); !strings.Contains(strings.Join(q.Findings, " "), "CPU capacity evidence is inconsistent") {
 		t.Fatalf("capacity greater than GOMAXPROCS must be invalid: %+v", q)
+	}
+}
+
+func TestSchemaNineteenRequiresLogicalCPUCapacityEvidence(t *testing.T) {
+	r := validSyntheticQualityRun()
+	r.SchemaVersion = 19
+	r.Generator.LogicalCPUs = 0
+	if quality := AssessQuality(r); quality.State != QualityInvalid {
+		t.Fatalf("missing logical CPU evidence must be invalid for schema 19: %+v", quality)
+	}
+	r = validSyntheticQualityRun()
+	r.SchemaVersion = 19
+	r.Generator.LogicalCPUs = 2
+	r.Generator.CPUCapacityCores = 4
+	if quality := AssessQuality(r); quality.State != QualityInvalid {
+		t.Fatalf("capacity above logical CPUs must be invalid: %+v", quality)
 	}
 }
 

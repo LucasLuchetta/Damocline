@@ -17,7 +17,7 @@ type CPUCapacity struct {
 }
 
 func capacityAtSample() cpuCapacity {
-	return currentCPUCapacity(runtime.GOMAXPROCS(0))
+	return currentCPUCapacity(runtime.NumCPU(), runtime.GOMAXPROCS(0))
 }
 
 // CurrentCPUCapacity returns a current CPU capacity estimate and its evidence

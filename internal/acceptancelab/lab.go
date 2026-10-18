@@ -45,6 +45,7 @@ type Options struct {
 	RunTimeout      time.Duration
 	Runner          Runner
 	qualityAssessor func(report.Result) *report.Quality
+	runtimeProvider func() calibration.Runtime
 }
 
 // Runner executes the calibrator without invoking a shell. Output streams are
@@ -190,6 +191,9 @@ func Run(ctx context.Context, options Options) (Manifest, error) {
 	}
 	started := time.Now().UTC()
 	runtimeInfo := calibration.CurrentRuntime()
+	if options.runtimeProvider != nil {
+		runtimeInfo = options.runtimeProvider()
+	}
 	manifest := Manifest{
 		SchemaVersion: SchemaVersion,
 		Status:        "RUNNING",

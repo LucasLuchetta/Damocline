@@ -14,9 +14,9 @@ var processCPUPressureSink atomic.Uint64
 func TestAccumulatorPeakAndGoCPUOccupancy(t *testing.T) {
 	start := time.Unix(0, 0)
 	var a accumulator
-	a.add(reading{at: start, heap: 100, goroutines: 3, gcCycles: 4, maxProcs: 2, cpuAvailable: true, cpuTotal: 10, cpuIdle: 7})
-	a.add(reading{at: start.Add(time.Second), heap: 400, goroutines: 12, gcCycles: 5, maxProcs: 2, cpuAvailable: true, cpuTotal: 12, cpuIdle: 8})
-	a.add(reading{at: start.Add(2 * time.Second), heap: 200, goroutines: 7, gcCycles: 6, maxProcs: 2, cpuAvailable: true, cpuTotal: 14, cpuIdle: 9})
+	a.add(reading{at: start, heap: 100, goroutines: 3, gcCycles: 4, logicalCPUs: 2, maxProcs: 2, cpuAvailable: true, cpuTotal: 10, cpuIdle: 7})
+	a.add(reading{at: start.Add(time.Second), heap: 400, goroutines: 12, gcCycles: 5, logicalCPUs: 2, maxProcs: 2, cpuAvailable: true, cpuTotal: 12, cpuIdle: 8})
+	a.add(reading{at: start.Add(2 * time.Second), heap: 200, goroutines: 7, gcCycles: 6, logicalCPUs: 2, maxProcs: 2, cpuAvailable: true, cpuTotal: 14, cpuIdle: 9})
 	s := a.finish()
 	if s.Samples != 3 || s.PeakHeapAllocBytes != 400 || s.PeakGoroutines != 12 || s.GCCycles != 2 {
 		t.Fatalf("bad runtime peaks and deltas: %+v", s)
@@ -38,7 +38,7 @@ func TestAccumulatorRecordsSampleCostAndMaximumGap(t *testing.T) {
 		at   time.Duration
 		cost time.Duration
 	}{{0, time.Millisecond}, {250 * time.Millisecond, 2 * time.Millisecond}, {800 * time.Millisecond, 3 * time.Millisecond}} {
-		a.add(reading{at: start.Add(sample.at), collectionTime: sample.cost, maxProcs: 1})
+		a.add(reading{at: start.Add(sample.at), collectionTime: sample.cost, logicalCPUs: 1, maxProcs: 1})
 	}
 	s := a.finish()
 	if s.Samples != 3 || s.SamplingIntervalMS != 250 || s.SampleCollectionTotalMS != 6 || s.SampleCollectionMaxMS != 3 || s.MaxSampleGapMS != 550 {
@@ -49,9 +49,9 @@ func TestAccumulatorRecordsSampleCostAndMaximumGap(t *testing.T) {
 func TestAccumulatorProcessHealthPeaks(t *testing.T) {
 	start := time.Unix(0, 0)
 	var a accumulator
-	a.add(reading{at: start, maxProcs: 2, processCPUSeconds: 4, processRSSBytes: 100, processAvailable: true})
-	a.add(reading{at: start.Add(time.Second), maxProcs: 2, processCPUSeconds: 5, processRSSBytes: 200, processAvailable: true})
-	a.add(reading{at: start.Add(2 * time.Second), maxProcs: 2, processCPUSeconds: 5.25, processRSSBytes: 150, processAvailable: true})
+	a.add(reading{at: start, logicalCPUs: 2, maxProcs: 2, processCPUSeconds: 4, processRSSBytes: 100, processAvailable: true})
+	a.add(reading{at: start.Add(time.Second), logicalCPUs: 2, maxProcs: 2, processCPUSeconds: 5, processRSSBytes: 200, processAvailable: true})
+	a.add(reading{at: start.Add(2 * time.Second), logicalCPUs: 2, maxProcs: 2, processCPUSeconds: 5.25, processRSSBytes: 150, processAvailable: true})
 	s := a.finish()
 	if s.ProcessSamples != 3 || s.ProcessCPUSamples != 2 || !s.ProcessCPUValid ||
 		s.PeakProcessRSSBytes != 200 || s.PeakProcessCPUUtilizationRatio != 0.5 || s.MeanProcessCPUUtilizationRatio != 0.3125 {
@@ -64,14 +64,14 @@ func TestAccumulatorNormalizesCPUByEffectiveQuota(t *testing.T) {
 	var a accumulator
 	for i := 0; i < 3; i++ {
 		a.add(reading{
-			at: start.Add(time.Duration(i) * time.Second), maxProcs: 12,
-			cpuCapacity: 4, cpuCapacitySource: "cgroup_v2_cpu_quota", cpuCapacityKnown: true,
+			at: start.Add(time.Duration(i) * time.Second), logicalCPUs: 12, maxProcs: 12,
+			cpuCapacity: 4, cpuCapacitySource: "cgroup_v2_cpu_quota_hierarchy", cpuCapacityKnown: true,
 			cpuAvailable: true, cpuTotal: float64(10 + i*4), cpuIdle: 8,
 			processCPUSeconds: float64(i), processRSSBytes: 100, processAvailable: true,
 		})
 	}
 	summary := a.finish()
-	if !summary.CPUCapacityKnown || summary.CPUCapacityCores != 4 || summary.CPUCapacitySource != "cgroup_v2_cpu_quota" ||
+	if !summary.CPUCapacityKnown || summary.CPUCapacityCores != 4 || summary.CPUCapacitySource != "cgroup_v2_cpu_quota_hierarchy" ||
 		!summary.GoCPUValid || math.Abs(summary.GoCPUUtilizationRatio-1) > 1e-9 ||
 		!summary.ProcessCPUValid || math.Abs(summary.MeanProcessCPUUtilizationRatio-0.25) > 1e-9 {
 		t.Fatalf("CPU observations were not normalized to the cgroup quota: %+v", summary)
@@ -83,8 +83,8 @@ func TestAccumulatorInvalidatesChangingCPUCapacity(t *testing.T) {
 	var a accumulator
 	for i, capacity := range []float64{4, 2} {
 		a.add(reading{
-			at: start.Add(time.Duration(i) * time.Second), maxProcs: 12,
-			cpuCapacity: capacity, cpuCapacitySource: "cgroup_v2_cpu_quota", cpuCapacityKnown: true,
+			at: start.Add(time.Duration(i) * time.Second), logicalCPUs: 12, maxProcs: 12,
+			cpuCapacity: capacity, cpuCapacitySource: "cgroup_v2_cpu_quota_hierarchy", cpuCapacityKnown: true,
 			cpuAvailable: true, cpuTotal: float64(10 + i*2), cpuIdle: 8,
 			processCPUSeconds: float64(i), processRSSBytes: 100, processAvailable: true,
 		})
@@ -98,9 +98,9 @@ func TestAccumulatorInvalidatesChangingCPUCapacity(t *testing.T) {
 func TestAccumulatorSeparatesProcessCPUPeakFromWindowMean(t *testing.T) {
 	start := time.Unix(0, 0)
 	var a accumulator
-	a.add(reading{at: start, maxProcs: 1, processCPUSeconds: 0, processRSSBytes: 100, processAvailable: true})
-	a.add(reading{at: start.Add(250 * time.Millisecond), maxProcs: 1, processCPUSeconds: 0.3, processRSSBytes: 100, processAvailable: true})
-	a.add(reading{at: start.Add(5 * time.Second), maxProcs: 1, processCPUSeconds: 0.4, processRSSBytes: 100, processAvailable: true})
+	a.add(reading{at: start, logicalCPUs: 1, maxProcs: 1, processCPUSeconds: 0, processRSSBytes: 100, processAvailable: true})
+	a.add(reading{at: start.Add(250 * time.Millisecond), logicalCPUs: 1, maxProcs: 1, processCPUSeconds: 0.3, processRSSBytes: 100, processAvailable: true})
+	a.add(reading{at: start.Add(5 * time.Second), logicalCPUs: 1, maxProcs: 1, processCPUSeconds: 0.4, processRSSBytes: 100, processAvailable: true})
 	s := a.finish()
 	if math.Abs(s.PeakProcessCPUUtilizationRatio-1.2) > 1e-9 || math.Abs(s.MeanProcessCPUUtilizationRatio-0.08) > 1e-9 {
 		t.Fatalf("short process CPU burst was not separated from sustained window use: %+v", s)
@@ -110,10 +110,10 @@ func TestAccumulatorSeparatesProcessCPUPeakFromWindowMean(t *testing.T) {
 func TestAccumulatorExcludesZeroAndImplausibleProcessReadings(t *testing.T) {
 	start := time.Unix(0, 0)
 	var a accumulator
-	a.add(reading{at: start, maxProcs: 1, processCPUSeconds: 1, processRSSBytes: 0, processAvailable: true})
-	a.add(reading{at: start.Add(time.Second), maxProcs: 1, processCPUSeconds: math.Inf(1), processRSSBytes: 100, processAvailable: true})
-	a.add(reading{at: start.Add(2 * time.Second), maxProcs: 1, processCPUSeconds: 2, processRSSBytes: 100, processAvailable: true})
-	a.add(reading{at: start.Add(3 * time.Second), maxProcs: 1, processCPUSeconds: 3, processRSSBytes: 200, processAvailable: true})
+	a.add(reading{at: start, logicalCPUs: 1, maxProcs: 1, processCPUSeconds: 1, processRSSBytes: 0, processAvailable: true})
+	a.add(reading{at: start.Add(time.Second), logicalCPUs: 1, maxProcs: 1, processCPUSeconds: math.Inf(1), processRSSBytes: 100, processAvailable: true})
+	a.add(reading{at: start.Add(2 * time.Second), logicalCPUs: 1, maxProcs: 1, processCPUSeconds: 2, processRSSBytes: 100, processAvailable: true})
+	a.add(reading{at: start.Add(3 * time.Second), logicalCPUs: 1, maxProcs: 1, processCPUSeconds: 3, processRSSBytes: 200, processAvailable: true})
 	summary := a.finish()
 	if summary.InvalidProcessSamples != 2 || summary.ProcessSamples != 2 || summary.ProcessCPUSamples != 1 ||
 		!summary.ProcessCPUValid || summary.PeakProcessRSSBytes != 200 {
@@ -124,8 +124,8 @@ func TestAccumulatorExcludesZeroAndImplausibleProcessReadings(t *testing.T) {
 func TestAccumulatorDoesNotCreateProcessCPUSampleFromStaleTimestamps(t *testing.T) {
 	at := time.Unix(0, 0)
 	var a accumulator
-	a.add(reading{at: at, maxProcs: 1, processCPUSeconds: 1, processRSSBytes: 100, processAvailable: true})
-	a.add(reading{at: at, maxProcs: 1, processCPUSeconds: 1.5, processRSSBytes: 200, processAvailable: true})
+	a.add(reading{at: at, logicalCPUs: 1, maxProcs: 1, processCPUSeconds: 1, processRSSBytes: 100, processAvailable: true})
+	a.add(reading{at: at, logicalCPUs: 1, maxProcs: 1, processCPUSeconds: 1.5, processRSSBytes: 200, processAvailable: true})
 	summary := a.finish()
 	if summary.ProcessSamples != 2 || summary.ProcessCPUSamples != 0 || summary.ProcessCPUValid {
 		t.Fatalf("stale timestamp yielded process CPU evidence: %+v", summary)
@@ -146,10 +146,20 @@ func TestUnavailableProcessMetricsRemainUnknown(t *testing.T) {
 func TestCPUIsUnknownWhenGOMAXPROCSChanges(t *testing.T) {
 	var a accumulator
 	start := time.Unix(0, 0)
-	a.add(reading{at: start, maxProcs: 2, cpuAvailable: true, cpuTotal: 10, cpuIdle: 2})
-	a.add(reading{at: start.Add(time.Second), maxProcs: 4, cpuAvailable: true, cpuTotal: 11, cpuIdle: 3})
+	a.add(reading{at: start, logicalCPUs: 2, maxProcs: 2, cpuAvailable: true, cpuTotal: 10, cpuIdle: 2})
+	a.add(reading{at: start.Add(time.Second), logicalCPUs: 4, maxProcs: 4, cpuAvailable: true, cpuTotal: 11, cpuIdle: 3})
 	if a.finish().GoCPUValid {
 		t.Fatal("should not synthesize a CPU utilization ratio across a changing CPU entitlement")
+	}
+}
+
+func TestCPUIsUnknownWhenLogicalCPUCountChanges(t *testing.T) {
+	var a accumulator
+	start := time.Unix(0, 0)
+	a.add(reading{at: start, logicalCPUs: 8, maxProcs: 8, cpuAvailable: true, cpuTotal: 10, cpuIdle: 2})
+	a.add(reading{at: start.Add(time.Second), logicalCPUs: 4, maxProcs: 4, cpuAvailable: true, cpuTotal: 11, cpuIdle: 3})
+	if summary := a.finish(); summary.GoCPUValid || summary.CPUCapacityKnown {
+		t.Fatalf("should not synthesize CPU evidence across changing logical CPU capacity: %+v", summary)
 	}
 }
 

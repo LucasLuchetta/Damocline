@@ -162,6 +162,9 @@ func AssessQuality(r Result) *Quality {
 				limit("Effective generator CPU capacity could not be established from runtime and cgroup evidence.")
 			}
 		}
+		if r.SchemaVersion >= 19 && (g.LogicalCPUs < 1 || g.CPUCapacityCores > float64(g.LogicalCPUs)) {
+			invalidate("Generator logical CPU and effective-capacity evidence is inconsistent.")
+		}
 		if g.ProcessCPUValid && g.MeanProcessCPUUtilizationRatio >= 0.9 {
 			limit("Mean generator process CPU reached at least 90% of detected CPU capacity; sustained generator headroom is not established.")
 		}
