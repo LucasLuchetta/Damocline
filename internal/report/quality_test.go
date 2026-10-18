@@ -51,6 +51,36 @@ func TestQualityKeepsAttachedCalibrationLimitedWhileTargetEvidenceIsUnknown(t *t
 	if q.State != QualityLimited || !strings.Contains(strings.Join(q.Findings, " "), "response shape and controlled fixture identity") {
 		t.Fatalf("attached fixed-fixture calibration cannot upgrade unknown target evidence: %+v", q)
 	}
+	r.SchemaVersion = 12
+	observedSize := AssessObservedResponseSize(r, int64(rec.Fixture.HealthyResponseBytes))
+	r.Calibration.Coverage.Dimensions = append(r.Calibration.Coverage.Dimensions, observedSize)
+	q = AssessQuality(r)
+	if q.State != QualityLimited || !strings.Contains(strings.Join(q.Findings, " "), "complete per-step evidence is insufficient") {
+		t.Fatalf("missing observed body sizes must remain limited: %+v", q)
+	}
+	observedIndex := len(r.Calibration.Coverage.Dimensions) - 1
+	r.Calibration.Coverage.Dimensions[observedIndex].Status = "MATCHED"
+	if q := AssessQuality(r); q.State != QualityInvalid {
+		t.Fatalf("persisted response-size MATCHED status must be recomputed: %+v", q)
+	}
+	body := ResponseBodyDiagnostics{CompleteObservations: 100, MinBytes: 4096, MaxBytes: 4096, TotalBytes: 409600}
+	http := HTTPDiagnostics{StatusCodes: map[int]int{200: 100}, Status2xx: 100}
+	step := StepResult{
+		Metrics:   MetricSet{Total: 100, Success: 100, HTTP: http, ResponseBody: body},
+		HTTPTrace: HTTPTrace{RequestAttemptCount: 100, WriteCount: 100, RateWaitCount: 100, FirstByteCount: 100, BodyCount: 100, CompleteCount: 100},
+	}
+	r.Metrics.HTTP = http
+	r.Metrics.ResponseBody = body
+	r.Steps = []StepResult{step}
+	r.Calibration.Coverage.Dimensions[observedIndex] = AssessObservedResponseSize(r, int64(rec.Fixture.HealthyResponseBytes))
+	q = AssessQuality(r)
+	if q.State != QualityLimited || !strings.Contains(strings.Join(q.Findings, " "), "response timing distribution and endpoint identity remain unverified") {
+		t.Fatalf("matching fixed body size cannot certify the broader response envelope: %+v", q)
+	}
+	r.Calibration.Coverage.Dimensions[observedIndex].Status = "OUTSIDE_REFERENCE"
+	if q := AssessQuality(r); q.State != QualityInvalid {
+		t.Fatalf("persisted response-size mismatch must be recomputed: %+v", q)
+	}
 	r.Calibration.Coverage.Dimensions = []calibration.Dimension{{Name: "arrival_rate", Status: "MATCHED", Reason: "matched"}}
 	if q := AssessQuality(r); q.State != QualityInvalid {
 		t.Fatalf("missing mandatory unknowns should invalidate calibration coverage: %+v", q)
@@ -115,6 +145,37 @@ func TestQualityReconcilesResponseBodyShapeWithoutCertifyingIt(t *testing.T) {
 				t.Fatalf("inconsistent response-size evidence must be INVALID: %+v", q)
 			}
 		})
+	}
+}
+
+func TestObservedResponseSizeCoverageUsesEveryStepAndConservativeStates(t *testing.T) {
+	makeStep := func(complete, incomplete int64, minimum, maximum int64) StepResult {
+		return StepResult{Metrics: MetricSet{
+			HTTP: HTTPDiagnostics{StatusCodes: map[int]int{200: int(complete + incomplete)}, Status2xx: int(complete + incomplete)},
+			ResponseBody: ResponseBodyDiagnostics{
+				CompleteObservations:   complete,
+				IncompleteObservations: incomplete,
+				MinBytes:               minimum,
+				MaxBytes:               maximum,
+				TotalBytes:             complete * minimum,
+			},
+		}}
+	}
+	r := Result{SchemaVersion: 12, Steps: []StepResult{makeStep(3, 0, 4096, 4096)}}
+	if got := AssessObservedResponseSize(r, 4096); got.Status != "MATCHED" {
+		t.Fatalf("complete exact-size observations should match only the fixed size dimension: %+v", got)
+	}
+	r.Steps = append(r.Steps, makeStep(0, 0, 0, 0))
+	if got := AssessObservedResponseSize(r, 4096); got.Status != "UNVERIFIED" {
+		t.Fatalf("every named step needs complete evidence: %+v", got)
+	}
+	r.Steps[1] = makeStep(2, 0, 1024, 4096)
+	if got := AssessObservedResponseSize(r, 4096); got.Status != "OUTSIDE_REFERENCE" {
+		t.Fatalf("a variable size outside the exact fixture response should not match: %+v", got)
+	}
+	r.Steps = []StepResult{makeStep(1, 1, 4096, 4096)}
+	if got := AssessObservedResponseSize(r, 4096); got.Status != "UNVERIFIED" {
+		t.Fatalf("interrupted response reads cannot establish a complete size envelope: %+v", got)
 	}
 }
 

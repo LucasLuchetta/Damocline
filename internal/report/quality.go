@@ -281,6 +281,7 @@ func AssessQuality(r Result) *Quality {
 		invalidate("Attached generator calibration record is malformed or inconsistent.")
 	} else {
 		unverified := make(map[string]bool)
+		observedSizeDimensions := 0
 		for _, dimension := range r.Calibration.Coverage.Dimensions {
 			if dimension.Name == "" || (dimension.Status != "MATCHED" && dimension.Status != "OUTSIDE_REFERENCE" && dimension.Status != "UNVERIFIED") {
 				invalidate("Attached calibration coverage contains an invalid dimension.")
@@ -289,11 +290,36 @@ func AssessQuality(r Result) *Quality {
 			if dimension.Status != "MATCHED" {
 				unverified[dimension.Name] = true
 			}
+			if dimension.Name == "observed_response_size" {
+				observedSizeDimensions++
+				if r.SchemaVersion >= 12 && dimension != AssessObservedResponseSize(r, int64(r.Calibration.Record.Fixture.HealthyResponseBytes)) {
+					invalidate("Attached observed response-size status disagrees with run measurements.")
+				}
+			}
 		}
 		if r.Calibration.Coverage.Status != "INCONCLUSIVE" || !unverified["response_shape"] || !unverified["fixture_identity"] {
 			invalidate("Attached calibration coverage omits required response-shape or fixture-identity uncertainty.")
 		} else {
-			limit("Calibration is attached, but response shape and controlled fixture identity remain unverified.")
+			if r.SchemaVersion >= 12 && observedSizeDimensions != 1 {
+				invalidate("Attached calibration coverage omits unique observed response-size evidence.")
+			}
+			if observedSizeDimensions == 1 {
+				for _, dimension := range r.Calibration.Coverage.Dimensions {
+					if dimension.Name != "observed_response_size" {
+						continue
+					}
+					switch dimension.Status {
+					case "MATCHED":
+						limit("Observed response sizes match the fixed fixture size, but response timing distribution and endpoint identity remain unverified.")
+					case "OUTSIDE_REFERENCE":
+						limit("One or more observed response sizes are outside the fixed fixture size; generator equivalence is not established.")
+					default:
+						limit("Observed response sizes cannot be compared because complete per-step evidence is insufficient.")
+					}
+				}
+			} else {
+				limit("Calibration is attached, but response shape and controlled fixture identity remain unverified.")
+			}
 		}
 	}
 	return q
@@ -398,6 +424,39 @@ func equalHTTPDiagnostics(a, b HTTPDiagnostics) bool {
 }
 
 const maxMeasuredResponseBodyBytes int64 = 2 << 20
+
+// AssessObservedResponseSize compares complete response bodies in every named
+// step with the one fixed response size in the validated preflight fixture.
+// It does not assess timing, endpoint identity, or representativeness.
+func AssessObservedResponseSize(r Result, expectedBytes int64) calibration.Dimension {
+	dimension := calibration.Dimension{
+		Name:   "observed_response_size",
+		Status: "UNVERIFIED",
+		Reason: "Complete per-step response-body observations are unavailable for comparison.",
+	}
+	if r.SchemaVersion < 12 || expectedBytes < 0 || expectedBytes > maxMeasuredResponseBodyBytes || len(r.Steps) == 0 {
+		return dimension
+	}
+	for _, step := range r.Steps {
+		body := step.Metrics.ResponseBody
+		responses := responseStatusCount(step.Metrics.HTTP)
+		if !validResponseBodyDiagnostics(body, responses, step.Metrics.HTTP.UnexpectedResponseSizes) {
+			return dimension
+		}
+		if body.OversizedObservations > 0 ||
+			(body.CompleteObservations > 0 && (body.MinBytes != expectedBytes || body.MaxBytes != expectedBytes)) {
+			dimension.Status = "OUTSIDE_REFERENCE"
+			dimension.Reason = "One or more observed complete response bodies differ from the fixed calibration response size."
+			return dimension
+		}
+		if body.CompleteObservations == 0 || body.IncompleteObservations > 0 {
+			return dimension
+		}
+	}
+	dimension.Status = "MATCHED"
+	dimension.Reason = "Every named step returned complete bodies at the fixed calibration response size in this run."
+	return dimension
+}
 
 func responseStatusCount(d HTTPDiagnostics) int64 {
 	var total int64

@@ -288,6 +288,18 @@ func Write(w io.Writer, r report.Result, host *hostmon.Result, previous *report.
 	for _, f := range a.Findings {
 		fmt.Fprintf(w, "  [%s] %s\n", f.Level, f.Text)
 	}
+	if r.Calibration != nil {
+		fmt.Fprintf(w, "\nCalibration coverage: %s\n", r.Calibration.Coverage.Status)
+		for _, dimension := range r.Calibration.Coverage.Dimensions {
+			fmt.Fprintf(w, "  %s: %s — %s\n", dimension.Name, dimension.Status, dimension.Reason)
+		}
+	}
+	if r.Quality != nil {
+		fmt.Fprintf(w, "\nMeasurement quality: %s\n", r.Quality.State)
+		for _, finding := range r.Quality.Findings {
+			fmt.Fprintf(w, "  - %s\n", finding)
+		}
+	}
 	if previous != nil {
 		writeComparison(w, *previous, r)
 	}

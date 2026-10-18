@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/LucasLuchetta/Damocline/internal/calibration"
 	"github.com/LucasLuchetta/Damocline/internal/generatorhealth"
 	"github.com/LucasLuchetta/Damocline/internal/hostmon"
 	"github.com/LucasLuchetta/Damocline/internal/report"
@@ -68,11 +69,17 @@ func TestReportExplainsResponseBodySizesWithoutBodyContent(t *testing.T) {
 		MaxBytes:               4096,
 		TotalBytes:             12000,
 	}
+	r.Calibration = &report.CalibrationEvidence{Coverage: calibration.Coverage{
+		Status:     "INCONCLUSIVE",
+		Dimensions: []calibration.Dimension{{Name: "observed_response_size", Status: "MATCHED", Reason: "every step matched"}},
+	}}
+	r.Quality = &report.Quality{State: report.QualityLimited, Findings: []string{"fixture identity remains unverified"}}
 	var output bytes.Buffer
 	Write(&output, r, nil, nil)
 	for _, expected := range []string{
 		"8 complete bodies (16-4096 bytes; 12000 bytes total)",
 		"1 interrupted reads", "2 oversized bodies", "do not establish expected-workload equivalence",
+		"observed_response_size: MATCHED — every step matched", "Measurement quality: LIMITED",
 	} {
 		if !strings.Contains(output.String(), expected) {
 			t.Fatalf("report is missing %q: %s", expected, output.String())

@@ -67,12 +67,21 @@ func writePassingCalibration(t *testing.T, mutate func(*[]int64)) string {
 func TestAttachCalibrationRecordsUnknownsWithoutPromotingQuality(t *testing.T) {
 	path := writePassingCalibration(t, nil)
 	scenario := config.Scenario{Name: "synthetic", BaseURL: "http://127.0.0.1:8080", Mode: "arrival", ArrivalRate: 10, Users: 10, MaxRPS: 100, Duration: "5s", Timeout: "1s", Steps: []config.Step{{Name: "read", Method: "GET", Path: "/"}}}
-	result := report.Result{ElapsedSeconds: 5, ObservationSeconds: 5, Config: report.RunConfig{Users: 10, MaxRPS: 100, Mode: "arrival", ArrivalRate: 10}}
+	result := report.Result{SchemaVersion: 12, ElapsedSeconds: 5, ObservationSeconds: 5, Config: report.RunConfig{Users: 10, MaxRPS: 100, Mode: "arrival", ArrivalRate: 10}}
 	if err := attachCalibration(&result, scenario, path, time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}
 	if result.Calibration == nil || result.Calibration.Coverage.Status != "INCONCLUSIVE" {
 		t.Fatalf("calibration should attach with inconclusive coverage: %+v", result.Calibration)
+	}
+	var observedSize *calibration.Dimension
+	for i := range result.Calibration.Coverage.Dimensions {
+		if result.Calibration.Coverage.Dimensions[i].Name == "observed_response_size" {
+			observedSize = &result.Calibration.Coverage.Dimensions[i]
+		}
+	}
+	if observedSize == nil || observedSize.Status != "UNVERIFIED" {
+		t.Fatalf("missing run body sizes must be visible as UNVERIFIED: %+v", result.Calibration.Coverage.Dimensions)
 	}
 	if result.Quality == nil || result.Quality.State == report.QualityValid {
 		t.Fatalf("fixed fixture does not prove target response or fixture identity: %+v", result.Quality)
