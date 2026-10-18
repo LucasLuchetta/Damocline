@@ -5,6 +5,7 @@ This project follows a human-maintained changelog. No release exists yet.
 ## [Unreleased]
 
 ### Added
+- Centralize the current run-report schema at v13, let the insights reader preserve v13 window ledgers, and continue rejecting unknown future report schemas.
 - Upgrade HTTP run reports to schema v13 with per-step request and explicit profile-journey metrics in every configured observation window; fail on per-step window SLO breaches, require this evidence for positive offline demand assessments, and keep empty or undersampled windows inconclusive.
 - Limit the final observation window to the configured horizon and evaluate each explicit workflow profile's completed journeys independently so a slow minority workflow cannot pass under a healthy request aggregate.
 - Version calibration records with an opaque workload-shape fingerprint for healthy reference stages; compare exact declared journey shape offline and during run-quality recomputation, while keeping legacy records readable and fingerprint matches non-certifying.
