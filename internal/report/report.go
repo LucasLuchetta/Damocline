@@ -15,6 +15,11 @@ import (
 	"github.com/LucasLuchetta/Damocline/internal/statistics"
 )
 
+// CurrentSchemaVersion is the newest persisted HTTP run report schema emitted
+// by the engine. Readers must reject future versions until their semantics are
+// reviewed and supported.
+const CurrentSchemaVersion = 13
+
 type MetricSet struct {
 	Total                 int                     `json:"total"`
 	Success               int                     `json:"success"`

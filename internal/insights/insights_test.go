@@ -416,6 +416,36 @@ func TestReadRunAcceptsSchemaTwelveResponseBodyMeasurements(t *testing.T) {
 	}
 }
 
+func TestReadRunAcceptsCurrentSchemaThirteenWindowLedgers(t *testing.T) {
+	r := synthetic()
+	r.SchemaVersion = report.CurrentSchemaVersion
+	r.ObservationSeconds = 30
+	r.Config.WindowDuration = "1s"
+	r.Windows = []report.WindowResult{{StartSeconds: 0, EndSeconds: 1,
+		Steps: []report.WindowMetric{{Name: r.Steps[0].Name, Metrics: r.Steps[0].Metrics}},
+	}}
+	path := filepath.Join(t.TempDir(), "schema-v13-windows.json")
+	if err := report.WriteJSON(path, r); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ReadRun(path)
+	if err != nil || got.SchemaVersion != report.CurrentSchemaVersion || len(got.Windows) != 1 || len(got.Windows[0].Steps) != 1 {
+		t.Fatalf("current-schema window report not readable: %+v err=%v", got, err)
+	}
+}
+
+func TestReadRunRejectsUnknownFutureSchema(t *testing.T) {
+	r := synthetic()
+	r.SchemaVersion = report.CurrentSchemaVersion + 1
+	path := filepath.Join(t.TempDir(), "future-schema.json")
+	if err := report.WriteJSON(path, r); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadRun(path); err == nil {
+		t.Fatal("report with an unknown future schema was accepted")
+	}
+}
+
 func TestComparisonRequiresMatchingMixProvenance(t *testing.T) {
 	old, current := synthetic(), synthetic()
 	old.Config.WorkloadRevision, current.Config.WorkloadRevision = "rev-1", "rev-1"
