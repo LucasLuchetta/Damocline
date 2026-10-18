@@ -38,16 +38,17 @@ Scenario fields:
 | `max_error_rate` | Maximum completed-request error fraction. |
 | `think_time` | Delay between steps in a VU journey. |
 | `think_time_range` | Optional `{ "min": "10ms", "max": "40ms" }` uniform between-step pause; maximum 30s. Use instead of `think_time` at the same level. |
-| `workload_seed` | Optional positive integer for reproducible timing choices; defaults to 1 when a range is used. |
+| `think_time_samples` | Optional list of 2–32 durations between 0 and 30s, such as `["100ms", "100ms", "500ms"]`; repeated values carry higher relative frequency. Use instead of fixed or uniform timing at the same level. |
+| `workload_seed` | Optional positive integer for reproducible timing choices; defaults to 1 when a variable policy is used. |
 | `per_vu_cookie_env_prefix` | Optional prefix for independent session cookies. |
-| `profiles` | Optional replacement for `steps`: 2-10 named weighted workflows, each with `name`, `weight`, `steps`, and optional `think_time` or `think_time_range` override. |
+| `profiles` | Optional replacement for `steps`: 2-10 named weighted workflows, each with `name`, `weight`, `steps`, and an optional fixed, uniform, or discrete timing override. |
 | `extract` | Optional map of response values to capture using exactly one `json_pointer` or `header` selector. |
 | `window_duration` | Optional 1s-60s request-metric window. Every sampled window must meet the request p95 and error SLOs. |
 
 Use either top-level `steps` or `profiles`, never both. [`examples/weighted-profiles-readonly.json`](../examples/weighted-profiles-readonly.json) shows a three-profile read-only mix. Profile weights describe the planned mix. In closed mode, configure at least one VU per profile; in arrival mode, inspect actual profile starts in the report. HTTP redirects are not followed. A redirect to login is a failure unless explicitly listed as expected (not recommended for an authenticated page test).
 
-[`examples/seeded-weighted-readonly.json`](../examples/seeded-weighted-readonly.json) shows three two-step workflows with a scenario timing range, a profile range override, and a fixed-pause override. Replace its documentation origin and routes with authorized read-only endpoints before running it. The seed recreates configured pause decisions under the same actor/arrival schedule; actual elapsed timing and achieved throughput can still vary.
-Every profile using a timing range needs at least two steps, because the pause occurs only between steps.
+[`examples/seeded-weighted-readonly.json`](../examples/seeded-weighted-readonly.json) shows three two-step workflows with a scenario timing range, a discrete-sample profile override, and a fixed-pause override. Replace its documentation origin and routes with authorized read-only endpoints before running it. The seed recreates configured pause decisions under the same actor/arrival schedule; actual elapsed timing and achieved throughput can still vary.
+Every profile using variable timing needs at least two steps, because the pause occurs only between steps.
 
 Scenario JSON files are limited to 1 MiB including trailing whitespace. Generated JSON report artifacts are limited to 16 MiB; the writer rejects larger output before creating or replacing the file. These byte caps complement the bounded VU, rate, duration, step, and response-body limits.
 
