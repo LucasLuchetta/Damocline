@@ -23,6 +23,10 @@ const (
 	QualityValid   = "VALID_WITHIN_ENVELOPE"
 	QualityLimited = "LIMITED"
 	QualityInvalid = "INVALID"
+	// SamplerCollectionWallLimit is a conservative screening threshold, not a
+	// calibrated estimate of CPU overhead. Collection wall time at or above 5%
+	// of the observation window is material enough to limit the measurement.
+	SamplerCollectionWallLimit = 0.05
 )
 
 // AssessQuality uses only aggregate invariants and reported generator
@@ -160,6 +164,9 @@ func AssessQuality(r Result) *Quality {
 		}
 		if g.SamplingIntervalMS > 0 && g.SampleCollectionMaxMS > g.SamplingIntervalMS {
 			limit("A generator health sample took longer than the configured sampling interval.")
+		}
+		if g.ObservedSeconds > 0 && g.SampleCollectionTotalMS/(g.ObservedSeconds*1000) >= SamplerCollectionWallLimit {
+			limit("Generator health collection occupied at least 5% of the observation window; collection wall time is a screening signal, not a CPU-overhead estimate.")
 		}
 		if g.ProcessSamples > 0 && g.PeakProcessRSSBytes == 0 {
 			limit("Generator process sampling reported no resident-memory value.")
