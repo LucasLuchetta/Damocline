@@ -17,6 +17,7 @@ func attachCalibration(result *report.Result, scenario config.Scenario, path str
 	coverage.Dimensions = append(
 		coverage.Dimensions,
 		report.AssessObservedResponseSize(*result, int64(record.Fixture.HealthyResponseBytes)),
+		report.AssessObservedResponseLatency(*result),
 	)
 	result.Calibration = &report.CalibrationEvidence{Record: record, Coverage: coverage}
 	result.Quality = report.AssessQuality(*result)

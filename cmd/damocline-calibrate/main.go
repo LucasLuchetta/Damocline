@@ -20,6 +20,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/LucasLuchetta/Damocline/internal/calibration"
 	"github.com/LucasLuchetta/Damocline/internal/config"
 	"github.com/LucasLuchetta/Damocline/internal/engine"
 	"github.com/LucasLuchetta/Damocline/internal/protocolcheck"
@@ -487,7 +488,9 @@ func checkStage(rate int, planned int64, run report.Result) []string {
 }
 
 func inLatencyEnvelope(value float64) bool {
-	return !math.IsNaN(value) && !math.IsInf(value, 0) && value >= 15 && value <= 150
+	finite := !math.IsNaN(value) && !math.IsInf(value, 0)
+	withinBounds := value >= calibration.HealthyLatencyMinMS && value <= calibration.HealthyLatencyMaxMS
+	return finite && withinBounds
 }
 
 func below(value, limit float64) bool {
