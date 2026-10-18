@@ -14,4 +14,4 @@ Use bounded loopback fixtures to induce refused connections and TCP resets throu
 
 ## Consequences
 
-The failure matrix covers two local pre-response transport cases without asserting a request reached the application. DNS resolver injection and broader TLS-certificate behavior remain separate gaps. These fixtures establish classification behavior, not network-path performance or a generator envelope.
+The failure matrix covers two local pre-response transport cases without asserting a request reached the application. Resolver-injected NXDOMAIN is covered separately in ADR 0052. DNS timeout/SERVFAIL and broader TLS-certificate behavior remain gaps. These fixtures establish classification behavior, not network-path performance or a generator envelope.

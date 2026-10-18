@@ -3,6 +3,7 @@ package engine
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"net"
 	"net/http"
@@ -395,6 +396,108 @@ func TestHTTPDiagnosticsIdentifyLoopbackTCPReset(t *testing.T) {
 	if r.Quality == nil || r.Quality.State == report.QualityInvalid {
 		t.Fatalf("accounted TCP resets must not corrupt measurement arithmetic: %+v", r.Quality)
 	}
+}
+
+func TestHTTPDiagnosticsIdentifyInjectedLoopbackDNSFailure(t *testing.T) {
+	dnsConn, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dnsDone := make(chan struct{})
+	var queries atomic.Int64
+	go func() {
+		defer close(dnsDone)
+		buffer := make([]byte, 1500)
+		for {
+			n, addr, readErr := dnsConn.ReadFrom(buffer)
+			if readErr != nil {
+				return
+			}
+			queries.Add(1)
+			response, ok := nxDomainResponse(buffer[:n])
+			if !ok {
+				continue
+			}
+			if _, writeErr := dnsConn.WriteTo(response, addr); writeErr != nil {
+				return
+			}
+		}
+	}()
+	defer func() {
+		_ = dnsConn.Close()
+		select {
+		case <-dnsDone:
+		case <-time.After(time.Second):
+			t.Error("loopback DNS responder did not stop after close")
+		}
+	}()
+
+	resolver := &net.Resolver{
+		PreferGo: true,
+		Dial: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, "udp", dnsConn.LocalAddr().String())
+		},
+	}
+	dialer := &net.Dialer{Resolver: resolver}
+	transport := &http.Transport{DialContext: dialer.DialContext}
+	v := scenario(t, "https://damocline-g0-absent.invalid.", []config.Step{{Name: "dns_failure", Method: http.MethodGet, Path: "/"}})
+	scenarioWithSingleActor := v.Scenario
+	scenarioWithSingleActor.Users = 1
+	scenarioWithSingleActor.MaxRPS = 10
+	scenarioWithSingleActor.Timeout = "200ms"
+	v, err = config.Parse(scenarioWithSingleActor, config.Options{Authorized: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	v.Duration = 300 * time.Millisecond
+	r := runWithTransport(context.Background(), v, transport)
+	var dnsTrace report.HTTPTrace
+	if len(r.Steps) == 1 {
+		dnsTrace = r.Steps[0].HTTPTrace
+	}
+
+	if r.Metrics.Total == 0 || r.Metrics.Failures != r.Metrics.Total ||
+		r.Metrics.HTTP.TransportFailures != r.Metrics.Total ||
+		r.Metrics.HTTP.NetworkTimeouts != 0 || r.Metrics.HTTP.TLSFailures != 0 ||
+		r.Metrics.HTTP.Status2xx != 0 || len(r.Steps) != 1 ||
+		dnsTrace.DNSStartCount == 0 || dnsTrace.DNSCount == 0 ||
+		dnsTrace.ConnectStartCount != 0 || queries.Load() == 0 {
+		t.Fatalf("injected NXDOMAIN was not observed and classified as a pre-connect transport failure: metrics=%+v dns_trace=%+v resolver_queries=%d", r.Metrics, dnsTrace, queries.Load())
+	}
+	if r.Quality == nil || r.Quality.State == report.QualityInvalid {
+		t.Fatalf("accounted DNS failures must not corrupt measurement arithmetic: %+v", r.Quality)
+	}
+}
+
+func nxDomainResponse(query []byte) ([]byte, bool) {
+	if len(query) < 17 || binary.BigEndian.Uint16(query[4:6]) != 1 {
+		return nil, false
+	}
+	offset := 12
+	for {
+		if offset >= len(query) {
+			return nil, false
+		}
+		labelLength := int(query[offset])
+		offset++
+		if labelLength == 0 {
+			break
+		}
+		if labelLength&0xc0 != 0 || offset+labelLength > len(query) {
+			return nil, false
+		}
+		offset += labelLength
+	}
+	if offset+4 > len(query) {
+		return nil, false
+	}
+	response := append([]byte(nil), query[:offset+4]...)
+	response[2] |= 0x80 // Mark this DNS packet as a response.
+	response[3] = 0x83  // Recursion available and NXDOMAIN.
+	for index := 6; index < 12; index++ {
+		response[index] = 0
+	}
+	return response, true
 }
 
 func TestNativeEngineReconcilesTrustedLocalTLSRequests(t *testing.T) {

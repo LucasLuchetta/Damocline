@@ -195,6 +195,10 @@ func (c *collector) windowAtIndex(index int) *windowMetrics {
 }
 
 func Run(parent context.Context, v config.Validated) report.Result {
+	return runWithTransport(parent, v, nil)
+}
+
+func runWithTransport(parent context.Context, v config.Validated, transport *http.Transport) report.Result {
 	started := time.Now()
 	generatorMonitor := generatorhealth.Start(250 * time.Millisecond)
 	// Stop admitting new work at the configured boundary, then allow any
@@ -207,7 +211,12 @@ func Run(parent context.Context, v config.Validated) report.Result {
 	coll := newCollector(v, started)
 	ticker := time.NewTicker(time.Second / time.Duration(v.Scenario.MaxRPS))
 	defer ticker.Stop()
-	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr := transport
+	if tr == nil {
+		tr = http.DefaultTransport.(*http.Transport).Clone()
+	} else {
+		tr = tr.Clone()
+	}
 	tr.MaxIdleConns = v.Scenario.Users * 3
 	tr.MaxIdleConnsPerHost = v.Scenario.Users * 2
 	tr.MaxConnsPerHost = v.Scenario.Users + 4
