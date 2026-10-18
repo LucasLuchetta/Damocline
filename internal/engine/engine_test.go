@@ -122,6 +122,36 @@ func TestHTTPTraceBodyTimeoutIsMarkedIncomplete(t *testing.T) {
 	}
 }
 
+func TestTruncatedBodyReconcilesIndependentRequestLedger(t *testing.T) {
+	var received, handlerCompleted atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		received.Add(1)
+		defer handlerCompleted.Add(1)
+		w.Header().Set("Content-Length", "64")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("partial"))
+	}))
+	defer server.Close()
+
+	v := scenario(t, server.URL, []config.Step{{Name: "truncated", Path: "/"}})
+	v.Duration = 350 * time.Millisecond
+	v.Scenario.Users = 1
+	v.Scenario.MaxRPS = 10
+	r := Run(context.Background(), v)
+	step := r.Steps[0]
+	if r.Metrics.Total < 2 || received.Load() != int64(r.Metrics.Total) || handlerCompleted.Load() != received.Load() {
+		t.Fatalf("client and independent server request ledgers disagree: client=%+v received=%d handler_completed=%d", r.Metrics, received.Load(), handlerCompleted.Load())
+	}
+	if r.Metrics.Failures != r.Metrics.Total || r.Metrics.Reasons["body_read"] != r.Metrics.Total ||
+		r.Metrics.ResponseBody.IncompleteObservations != int64(r.Metrics.Total) ||
+		step.HTTPTrace.BodyIncompleteCount != r.Metrics.Total || r.Outcome == "PASS" {
+		t.Fatalf("truncated response bodies were not classified as incomplete failures: aggregate=%+v step=%+v", r.Metrics, step)
+	}
+	if r.Quality == nil || r.Quality.State == report.QualityInvalid {
+		t.Fatalf("consistent truncated-body evidence must not invalidate request accounting: quality=%+v trace=%+v metrics=%+v", r.Quality, step.HTTPTrace, r.Metrics)
+	}
+}
+
 func TestJourneyTimingSeparatesRequestsAndObservedThinkTime(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(5 * time.Millisecond)

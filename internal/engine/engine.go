@@ -678,11 +678,12 @@ func execute(parent context.Context, client *http.Client, base *url.URL, timeout
 	d := time.Since(start)
 	traceMu.Lock()
 	if !firstByte.IsZero() {
-		trace.BodyCount++
 		trace.BodyMS += ms(time.Since(firstByte))
-	}
-	if !firstByte.IsZero() && readErr != nil {
-		trace.BodyIncompleteCount++
+		if readErr == nil {
+			trace.BodyCount++
+		} else {
+			trace.BodyIncompleteCount++
+		}
 	}
 	trace.CompleteCount++
 	trace.CompleteMS += ms(d)
