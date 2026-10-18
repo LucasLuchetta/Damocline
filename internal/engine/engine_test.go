@@ -32,6 +32,18 @@ func scenario(t *testing.T, url string, steps []config.Step) config.Validated {
 	validated.Duration = 300 * time.Millisecond
 	return validated
 }
+
+func TestMillisecondsConversionRetainsSubMicrosecondDurations(t *testing.T) {
+	for _, duration := range []time.Duration{1 * time.Nanosecond, 999 * time.Nanosecond} {
+		if got := ms(duration); got <= 0 {
+			t.Fatalf("positive duration %s was truncated to %.9f ms", duration, got)
+		}
+	}
+	if got, want := ms(250*time.Microsecond), 0.25; got != want {
+		t.Fatalf("milliseconds conversion got %.9f, want %.9f", got, want)
+	}
+}
+
 func TestSuccess(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)

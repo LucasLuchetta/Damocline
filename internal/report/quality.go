@@ -501,6 +501,7 @@ func controlledReferenceEvidenceValid(r Result) bool {
 	e := r.ReferenceEvidence
 	if r.SchemaVersion < 17 || e == nil || e.Kind != "calibrator_child_process_loopback_soak_v1" ||
 		r.Calibration == nil || calibration.ValidateRecord(r.Calibration.Record) != nil ||
+		r.Calibration.Record.SchemaVersion < 3 ||
 		r.Calibration.Record.Status != "REFERENCE_SMOKE_PASSED" ||
 		e.FixtureFingerprint != r.Calibration.Record.ScenarioFingerprintSHA256 {
 		return false
@@ -919,6 +920,15 @@ func AssessDeclaredWorkloadShape(r Result, record calibration.Record) calibratio
 			Status: "OUTSIDE_REFERENCE",
 			Reason: "The saved step metadata differs from the single GET /work reference workload.",
 		}
+	}
+	if record.SchemaVersion >= 3 {
+		return calibration.AssessDeclaredWorkloadShape(config.Scenario{
+			Name: "Saved controlled reference workload", BaseURL: r.Target,
+			Users: r.Config.Users, Duration: r.Config.Duration, Timeout: r.Config.RequestTimeout,
+			MaxRPS: r.Config.MaxRPS, Mode: r.Config.Mode, ArrivalRate: r.Config.ArrivalRate,
+			ConnectionPolicy: connectionPolicy,
+			Steps:            []config.Step{{Name: step.Name, Method: step.Method, Path: step.Path}},
+		}, record)
 	}
 	// The fingerprint covers fields not serialized in Run reports (headers,
 	// assertions, body templates, extracts and session details). Only accept the

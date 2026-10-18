@@ -16,7 +16,7 @@ func TestAssessmentMatchesOnlyDeclaredFixtureDimensionsAndKeepsUnknowns(t *testi
 	a.Preflight.StartedAt = now.Add(-2 * time.Minute).Format(time.RFC3339Nano)
 	a.Preflight.FinishedAt = now.Add(-time.Minute).Format(time.RFC3339Nano)
 	s := config.Scenario{Name: "synthetic", BaseURL: "http://127.0.0.1:8080", Mode: "arrival", ArrivalRate: 10, Users: 10,
-		MaxRPS: 100, Duration: "5s", Timeout: "1s", Steps: []config.Step{{Name: "read", Method: "GET", Path: "/synthetic"}}}
+		MaxRPS: 50, Duration: "5s", Timeout: "1s", Steps: []config.Step{{Name: "read", Method: "GET", Path: "/synthetic"}}}
 	c := AssessScenario(s, a.Preflight, local, now)
 	if c.Status != "INCONCLUSIVE" {
 		t.Fatalf("unverified target evidence must remain inconclusive: %+v", c)
@@ -38,6 +38,49 @@ func TestAssessmentMatchesOnlyDeclaredFixtureDimensionsAndKeepsUnknowns(t *testi
 	}
 	if statuses["declared_workload_shape"] != "OUTSIDE_REFERENCE" {
 		t.Fatalf("different request path must not be treated as equivalent: %+v", c.Dimensions)
+	}
+}
+
+func TestMatrixWorkloadShapeMatchesExactPOSTBodySizeWithoutRecordingBody(t *testing.T) {
+	a := passingArtifact(t)
+	scenario := config.Scenario{
+		BaseURL: "http://127.0.0.1", Users: 10, Duration: "5s", Timeout: "1s",
+		MaxRPS: 50, Mode: "arrival", ArrivalRate: 10,
+		Steps: []config.Step{{Name: "submit", Method: "POST", Path: "/matrix/post-4k", BodyEnv: "DAMOCLINE_TEST_BODY"}},
+	}
+	t.Setenv("DAMOCLINE_TEST_BODY", strings.Repeat("x", 4<<10))
+	matched := AssessDeclaredWorkloadShape(scenario, a.Preflight)
+	if matched.Status != "MATCHED" {
+		t.Fatalf("exact POST path and body size should match: %+v", matched)
+	}
+	t.Setenv("DAMOCLINE_TEST_BODY", strings.Repeat("x", (4<<10)-1))
+	if got := AssessDeclaredWorkloadShape(scenario, a.Preflight); got.Status != "OUTSIDE_REFERENCE" {
+		t.Fatalf("different POST body size must be outside matrix: %+v", got)
+	}
+	t.Setenv("DAMOCLINE_TEST_BODY", strings.Repeat("x", 4<<10))
+	scenario.BaseURL = "https://127.0.0.1"
+	if got := AssessDeclaredWorkloadShape(scenario, a.Preflight); got.Status != "OUTSIDE_REFERENCE" {
+		t.Fatalf("HTTPS declaration must not match an HTTP-only profile: %+v", got)
+	}
+	if strings.Contains(matched.Reason, "DAMOCLINE_TEST_BODY") || strings.Contains(matched.Reason, strings.Repeat("x", 32)) {
+		t.Fatal("workload assessment leaked request body input")
+	}
+}
+
+func TestMatrixRateCeilingRequiresExactCalibratedPair(t *testing.T) {
+	a := passingArtifact(t)
+	local := CurrentRuntime()
+	a.Preflight.Generator.RunnerVersion = local.RunnerVersion
+	now := time.Now().UTC()
+	a.Preflight.StartedAt = now.Add(-2 * time.Minute).Format(time.RFC3339Nano)
+	a.Preflight.FinishedAt = now.Add(-time.Minute).Format(time.RFC3339Nano)
+	scenario := config.Scenario{BaseURL: "http://127.0.0.1", Mode: "arrival", ArrivalRate: 10, Users: 10,
+		MaxRPS: 51, Duration: "5s", Timeout: "1s", Steps: []config.Step{{Method: "GET", Path: "/work"}}}
+	coverage := AssessScenario(scenario, a.Preflight, local, now)
+	for _, dimension := range coverage.Dimensions {
+		if dimension.Name == "request_rate_ceiling" && dimension.Status != "OUTSIDE_REFERENCE" {
+			t.Fatalf("untested rate ceiling must not match: %+v", dimension)
+		}
 	}
 }
 
@@ -65,7 +108,7 @@ func TestDeclaredWorkloadShapeRequiresExactFingerprintAndVersionedRecord(t *test
 	rec := a.Preflight
 	scenario := config.Scenario{
 		BaseURL: "http://127.0.0.1:8080", Users: 10, Duration: "5s", Timeout: "1s",
-		MaxRPS: 50, Mode: "arrival", ArrivalRate: 2,
+		MaxRPS: 50, Mode: "arrival", ArrivalRate: 10,
 		Steps: []config.Step{{Name: "work", Method: "GET", Path: "/work"}},
 	}
 	matched := AssessDeclaredWorkloadShape(scenario, rec)
