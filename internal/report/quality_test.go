@@ -13,13 +13,24 @@ import (
 )
 
 func validSyntheticQualityRun() Result {
+	capacity := generatorhealth.CurrentCPUCapacity()
 	return Result{
 		ElapsedSeconds: 10, ObservationSeconds: 10,
 		Config:  RunConfig{Users: 10, MaxRPS: 100, Mode: "arrival", ArrivalRate: 10},
 		Metrics: MetricSet{Total: 100, Success: 100}, Journeys: MetricSet{Total: 100, Success: 100},
 		IterationsStarted: 100, IterationsCompleted: 100, ArrivalsScheduled: 100,
-		Generator: &generatorhealth.Summary{Samples: 10, GoCPUValid: true, ProcessSamples: 10, ProcessCPUValid: true},
-		Outcome:   "PASS",
+		Generator: &generatorhealth.Summary{Samples: 10, GoCPUValid: true, ProcessSamples: 10, ProcessCPUValid: true,
+			CPUCapacityCores: capacity.Cores, CPUCapacitySource: capacity.Source, CPUCapacityKnown: capacity.Known},
+		Outcome: "PASS",
+	}
+}
+
+func generatorFromRuntime(runtime calibration.Runtime) calibration.Generator {
+	return calibration.Generator{
+		OS: runtime.OS, Arch: runtime.Arch, LogicalCPUs: runtime.LogicalCPUs,
+		GOMAXPROCS: runtime.GOMAXPROCS, CPUCapacityCores: runtime.CPUCapacityCores,
+		CPUCapacitySource: runtime.CPUCapacitySource, CPUCapacityKnown: runtime.CPUCapacityKnown,
+		GoVersion: runtime.GoVersion, RunnerVersion: runtime.RunnerVersion,
 	}
 }
 
@@ -39,7 +50,7 @@ func TestQualityKeepsAttachedCalibrationLimitedWhileTargetEvidenceIsUnknown(t *t
 	r.Generator.PeakHeapAllocBytes = 1024
 	r.Generator.PeakGoroutines = 2
 	rec, err := calibration.NewRecord(time.Now().Add(-time.Minute), time.Now(),
-		calibration.Generator{OS: local.OS, Arch: local.Arch, LogicalCPUs: local.LogicalCPUs, GOMAXPROCS: local.GOMAXPROCS, GoVersion: local.GoVersion, RunnerVersion: local.RunnerVersion},
+		generatorFromRuntime(local),
 		calibration.Fixture{NetworkMode: "loopback_same_host_separate_process", WorkloadModel: "open_loop_journey_arrivals", Method: "GET", HealthyResponseBytes: 4096, HealthyDelay: "20ms", StageDuration: "5s", SoakDuration: "30s", StageUsers: 10, MaximumRPS: 100, Repeats: 1, HealthyRates: []int{2, 5, 10}},
 		[]calibration.Stage{{ArrivalRate: 2, Scheduled: 10, Started: 10, Completed: 10, Outcome: "PASS"}, {ArrivalRate: 5, Scheduled: 25, Started: 25, Completed: 25, Outcome: "PASS"}, {ArrivalRate: 10, Scheduled: 50, Started: 50, Completed: 50, Outcome: "PASS"}}, "REFERENCE_SMOKE_PASSED")
 	if err != nil {
@@ -187,7 +198,7 @@ func TestControlledReferenceEvidenceRejectsAlteredFixtureFingerprint(t *testing.
 	now := time.Now().UTC()
 	local := calibration.CurrentRuntime()
 	rec, err := calibration.NewRecord(now.Add(-time.Minute), now,
-		calibration.Generator{OS: local.OS, Arch: local.Arch, LogicalCPUs: local.LogicalCPUs, GOMAXPROCS: local.GOMAXPROCS, GoVersion: local.GoVersion, RunnerVersion: local.RunnerVersion},
+		generatorFromRuntime(local),
 		calibration.Fixture{NetworkMode: "loopback_same_host_separate_process", WorkloadModel: "open_loop_journey_arrivals", Method: "GET", HealthyResponseBytes: 4096, HealthyDelay: "20ms", StageDuration: "5s", SoakDuration: "30s", StageUsers: 10, MaximumRPS: 100, Repeats: 1, HealthyRates: []int{2, 5, 10}},
 		[]calibration.Stage{{ArrivalRate: 2, Scheduled: 10, Started: 10, Completed: 10, Outcome: "PASS"}, {ArrivalRate: 5, Scheduled: 25, Started: 25, Completed: 25, Outcome: "PASS"}, {ArrivalRate: 10, Scheduled: 50, Started: 50, Completed: 50, Outcome: "PASS"}}, "REFERENCE_SMOKE_PASSED")
 	if err != nil {
@@ -236,7 +247,7 @@ func TestControlledReferenceSchedulerLagRequiresCompleteSamplesAndFixtureBounds(
 func TestDeclaredWorkloadShapeDoesNotTrustFingerprintForUnpersistedShape(t *testing.T) {
 	r := Result{SchemaVersion: 13, Config: RunConfig{WorkloadFingerprint: "sha256:" + strings.Repeat("a", 64)}}
 	runtimeInfo := calibration.CurrentRuntime()
-	rec, err := calibration.NewRecord(time.Now().Add(-time.Minute), time.Now(), calibration.Generator{OS: runtimeInfo.OS, Arch: runtimeInfo.Arch, LogicalCPUs: runtimeInfo.LogicalCPUs, GOMAXPROCS: runtimeInfo.GOMAXPROCS, GoVersion: runtimeInfo.GoVersion, RunnerVersion: runtimeInfo.RunnerVersion},
+	rec, err := calibration.NewRecord(time.Now().Add(-time.Minute), time.Now(), generatorFromRuntime(runtimeInfo),
 		calibration.Fixture{NetworkMode: "loopback_same_host_separate_process", WorkloadModel: "open_loop_journey_arrivals", Method: "GET", HealthyResponseBytes: 4096, HealthyDelay: "20ms", StageDuration: "5s", SoakDuration: "30s", StageUsers: 10, MaximumRPS: 100, Repeats: 1, HealthyRates: []int{2, 5, 10}},
 		[]calibration.Stage{{ArrivalRate: 2, Scheduled: 10, Started: 10, Completed: 10, Outcome: "PASS"}, {ArrivalRate: 5, Scheduled: 25, Started: 25, Completed: 25, Outcome: "PASS"}, {ArrivalRate: 10, Scheduled: 50, Started: 50, Completed: 50, Outcome: "PASS"}}, "REFERENCE_SMOKE_PASSED")
 	if err != nil {
@@ -317,6 +328,23 @@ func TestQualityNoLocalCapacityCertificateEvenForPerfectDelivery(t *testing.T) {
 	}
 	if strings.Contains(string(data), "VALID_WITHIN_ENVELOPE") {
 		t.Fatal("cannot claim validated capacity")
+	}
+}
+
+func TestSchemaEighteenRequiresVerifiedEffectiveCPUCapacity(t *testing.T) {
+	r := validSyntheticQualityRun()
+	r.SchemaVersion = CurrentSchemaVersion
+	r.Generator.GOMAXPROCS = 12
+	r.Generator.CPUCapacityCores = 12
+	r.Generator.CPUCapacitySource = "cgroup_cpu_limit_unavailable"
+	r.Generator.CPUCapacityKnown = false
+	if q := AssessQuality(r); q.State == QualityValid || !strings.Contains(strings.Join(q.Findings, " "), "Effective generator CPU capacity could not be established") {
+		t.Fatalf("unknown CPU entitlement must limit measurement quality: %+v", q)
+	}
+	r.Generator.CPUCapacityKnown = true
+	r.Generator.CPUCapacityCores = 13
+	if q := AssessQuality(r); !strings.Contains(strings.Join(q.Findings, " "), "CPU capacity evidence is inconsistent") {
+		t.Fatalf("capacity greater than GOMAXPROCS must be invalid: %+v", q)
 	}
 }
 

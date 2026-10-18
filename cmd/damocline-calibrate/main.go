@@ -25,6 +25,7 @@ import (
 	"github.com/LucasLuchetta/Damocline/internal/calibration"
 	"github.com/LucasLuchetta/Damocline/internal/config"
 	"github.com/LucasLuchetta/Damocline/internal/engine"
+	"github.com/LucasLuchetta/Damocline/internal/generatorhealth"
 	"github.com/LucasLuchetta/Damocline/internal/protocolcheck"
 	"github.com/LucasLuchetta/Damocline/internal/reference"
 	"github.com/LucasLuchetta/Damocline/internal/report"
@@ -393,6 +394,10 @@ func runMatrix(path string, repeats int, extended bool) error {
 	result.Checks = append(result.Checks, checkSoak(result.SoakRun)...)
 	result.Checks = append(result.Checks, checkOverload(result.OverloadRun, result.OverloadServer)...)
 	result.Checks = append(result.Checks, checkFailures(result.FailureRun, result.FailureServer)...)
+	capacity := generatorhealth.CurrentCPUCapacity()
+	if !capacity.Known {
+		result.Checks = append(result.Checks, "effective generator CPU capacity could not be established from runtime and cgroup evidence")
+	}
 	if result.SchedulerLag.Status != "PASSED" {
 		for i, observation := range result.SchedulerLag.Observations {
 			if observation.Outcome != "PASSED" {
@@ -416,6 +421,7 @@ func runMatrix(path string, repeats int, extended bool) error {
 		preflightGenerator{
 			OS: runtime.GOOS, Arch: runtime.GOARCH, LogicalCPUs: runtime.NumCPU(),
 			GOMAXPROCS: runtime.GOMAXPROCS(0), GoVersion: runtime.Version(),
+			CPUCapacityCores: capacity.Cores, CPUCapacitySource: capacity.Source, CPUCapacityKnown: capacity.Known,
 			RunnerVersion: sourceRunnerVersion(),
 		},
 		preflightFixture{

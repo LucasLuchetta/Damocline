@@ -8,7 +8,9 @@ import (
 func runtimeForCalibration(a assessment) localRuntime {
 	g := a.Preflight.Generator
 	return localRuntime{OS: g.OS, Arch: g.Arch, GoVersion: g.GoVersion,
-		LogicalCPUs: g.LogicalCPUs, GOMAXPROCS: g.GOMAXPROCS, RunnerVersion: g.RunnerVersion}
+		LogicalCPUs: g.LogicalCPUs, GOMAXPROCS: g.GOMAXPROCS,
+		CPUCapacityCores: g.CPUCapacityCores, CPUCapacitySource: g.CPUCapacitySource,
+		CPUCapacityKnown: g.CPUCapacityKnown, RunnerVersion: g.RunnerVersion}
 }
 
 func TestProvenanceMarksFreshnessAndHostUncertaintySeparately(t *testing.T) {
@@ -44,6 +46,18 @@ func TestProvenanceRejectsStaleClockSkewAndDifferentRuntimes(t *testing.T) {
 	findDimension(t, r, "runtime_compatibility", coverageOutside)
 	if r.Shape != "NOT_ESTABLISHED" {
 		t.Fatal("mismatched runtime must invalidate apparent fixture resemblance")
+	}
+}
+
+func TestProvenanceRejectsDifferentCPUEntitlement(t *testing.T) {
+	a := validCoverageCalibration(t, true)
+	local := runtimeForCalibration(a)
+	local.CPUCapacityCores /= 2
+	r := compareScenarioToReference(referenceShapedScenario(), a, nil)
+	r.checkProvenance(a, nil, time.Date(2026, 10, 17, 12, 2, 0, 0, time.UTC), local)
+	findDimension(t, r, "runtime_compatibility", coverageOutside)
+	if r.Shape != "NOT_ESTABLISHED" {
+		t.Fatal("a different CPU entitlement cannot reuse the prior calibration envelope")
 	}
 }
 

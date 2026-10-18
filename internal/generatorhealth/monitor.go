@@ -23,6 +23,9 @@ type Summary struct {
 	SampleCollectionMaxMS          float64 `json:"sample_collection_max_ms,omitempty"`
 	MaxSampleGapMS                 float64 `json:"max_sample_gap_ms,omitempty"`
 	GOMAXPROCS                     int     `json:"gomaxprocs"`
+	CPUCapacityCores               float64 `json:"cpu_capacity_cores,omitempty"`
+	CPUCapacitySource              string  `json:"cpu_capacity_source,omitempty"`
+	CPUCapacityKnown               bool    `json:"cpu_capacity_known"`
 	PeakHeapAllocBytes             uint64  `json:"peak_heap_alloc_bytes"`
 	PeakGoroutines                 int     `json:"peak_goroutines"`
 	GCCycles                       uint32  `json:"gc_cycles"`
@@ -40,7 +43,7 @@ type Summary struct {
 	Note                           string  `json:"note"`
 }
 
-const note = "Generator-side Go runtime and supported OS process samples only; RSS is not total host memory. Mean process CPU is normalized to GOMAXPROCS; the peak is the highest sampled interval and may reflect a short burst. Sampling may miss brief peaks and does not describe the target application."
+const note = "Generator-side Go runtime and supported OS process samples only; RSS is not total host memory. CPU utilization is normalized to detected CPU capacity, including a finite Linux cgroup quota when available. An unavailable CPU limit is not treated as unlimited. The peak is the highest sampled interval and may reflect a short burst. Sampling may miss brief peaks and does not describe the target application."
 
 type reading struct {
 	at                time.Time
@@ -49,6 +52,9 @@ type reading struct {
 	goroutines        int
 	gcCycles          uint32
 	maxProcs          int
+	cpuCapacity       float64
+	cpuCapacitySource string
+	cpuCapacityKnown  bool
 	cpuTotal          float64
 	cpuIdle           float64
 	cpuAvailable      bool
@@ -74,6 +80,10 @@ func sampleRuntime() reading {
 		maxProcs:     runtime.GOMAXPROCS(0),
 		cpuAvailable: valid,
 	}
+	capacity := capacityAtSample()
+	s.cpuCapacity = capacity.cores
+	s.cpuCapacitySource = capacity.source
+	s.cpuCapacityKnown = capacity.known
 	if valid {
 		s.cpuTotal = cpu[0].Value.Float64()
 		s.cpuIdle = cpu[1].Value.Float64()
@@ -94,10 +104,14 @@ type accumulator struct {
 	processBase        reading
 	hasProcessBase     bool
 	hasPreviousProcess bool
+	capacityChanged    bool
 }
 
 func (a *accumulator) add(r reading) {
 	if a.summary.Samples > 0 {
+		if !sameCPUCapacity(a.latest, r) {
+			a.capacityChanged = true
+		}
 		gap := r.at.Sub(a.latest.at)
 		gapMS := float64(gap.Microseconds()) / 1000
 		if gapMS > a.summary.MaxSampleGapMS {
@@ -107,6 +121,9 @@ func (a *accumulator) add(r reading) {
 	if a.summary.Samples == 0 {
 		a.base = r
 		a.summary.GOMAXPROCS = r.maxProcs
+		a.summary.CPUCapacityCores = r.cpuCapacity
+		a.summary.CPUCapacitySource = r.cpuCapacitySource
+		a.summary.CPUCapacityKnown = r.cpuCapacityKnown
 	}
 	a.latest = r
 	a.summary.Samples++
@@ -134,9 +151,9 @@ func (a *accumulator) add(r reading) {
 			a.processBase = r
 			a.hasProcessBase = true
 		}
-		if a.hasPreviousProcess && r.at.After(a.previousProcess.at) && r.maxProcs == a.previousProcess.maxProcs && r.maxProcs > 0 && r.processCPUSeconds >= a.previousProcess.processCPUSeconds {
+		if a.hasPreviousProcess && r.at.After(a.previousProcess.at) && sameCPUCapacity(r, a.previousProcess) && r.processCPUSeconds >= a.previousProcess.processCPUSeconds {
 			deltaSeconds := r.at.Sub(a.previousProcess.at).Seconds()
-			cpuCapacity := deltaSeconds * float64(r.maxProcs)
+			cpuCapacity := deltaSeconds * capacityCores(r)
 			if cpuCapacity > 0 {
 				ratio := (r.processCPUSeconds - a.previousProcess.processCPUSeconds) / cpuCapacity
 				if ratio >= 0 {
@@ -158,6 +175,10 @@ func (a *accumulator) add(r reading) {
 func (a *accumulator) finish() Summary {
 	s := a.summary
 	s.Note = note
+	if a.capacityChanged {
+		s.CPUCapacityKnown = false
+		s.CPUCapacitySource = "changed_during_window"
+	}
 	if s.Samples == 0 {
 		return s
 	}
@@ -170,19 +191,18 @@ func (a *accumulator) finish() Summary {
 		s.GCCycles = a.latest.gcCycles - a.base.gcCycles
 	}
 	if a.hasProcessBase && a.hasPreviousProcess && a.previousProcess.at.After(a.processBase.at) &&
-		a.processBase.maxProcs == a.previousProcess.maxProcs && a.processBase.maxProcs > 0 &&
+		sameCPUCapacity(a.processBase, a.previousProcess) &&
 		a.previousProcess.processCPUSeconds >= a.processBase.processCPUSeconds {
-		capacity := a.previousProcess.at.Sub(a.processBase.at).Seconds() * float64(a.processBase.maxProcs)
+		capacity := a.previousProcess.at.Sub(a.processBase.at).Seconds() * capacityCores(a.processBase)
 		if capacity > 0 {
 			s.MeanProcessCPUUtilizationRatio = (a.previousProcess.processCPUSeconds - a.processBase.processCPUSeconds) / capacity
 		}
 	}
-	if secs > 0 && a.base.cpuAvailable && a.latest.cpuAvailable &&
-		a.base.maxProcs == a.latest.maxProcs && a.base.maxProcs > 0 {
+	if secs > 0 && a.base.cpuAvailable && a.latest.cpuAvailable && sameCPUCapacity(a.base, a.latest) {
 		busyBegin := a.base.cpuTotal - a.base.cpuIdle
 		busyEnd := a.latest.cpuTotal - a.latest.cpuIdle
 		busyDelta := busyEnd - busyBegin
-		capacity := secs * float64(a.base.maxProcs)
+		capacity := secs * capacityCores(a.base)
 		if busyDelta >= 0 && busyDelta <= capacity*1.05 {
 			s.GoCPUBusySeconds = busyDelta
 			s.GoCPUCapacitySeconds = capacity
@@ -191,6 +211,19 @@ func (a *accumulator) finish() Summary {
 		}
 	}
 	return s
+}
+
+func capacityCores(r reading) float64 {
+	if r.cpuCapacity > 0 {
+		return r.cpuCapacity
+	}
+	return float64(r.maxProcs)
+}
+
+func sameCPUCapacity(left, right reading) bool {
+	return left.maxProcs == right.maxProcs && left.maxProcs > 0 &&
+		capacityCores(left) == capacityCores(right) && left.cpuCapacitySource == right.cpuCapacitySource &&
+		left.cpuCapacityKnown == right.cpuCapacityKnown
 }
 
 // Monitor records a bounded set of in-process runtime samples; only aggregate

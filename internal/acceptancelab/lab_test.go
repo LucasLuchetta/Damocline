@@ -274,6 +274,34 @@ func TestQualityRecomputationRejectsSelfDeclaredPositiveState(t *testing.T) {
 	t.Fatal("quality recomputation gate was absent")
 }
 
+func TestManifestRuntimeRequiresMatchingVerifiedCPUEntitlement(t *testing.T) {
+	runtimeInfo := calibration.CurrentRuntime()
+	environment := Environment{
+		OS: runtimeInfo.OS, Architecture: runtimeInfo.Arch, GoVersion: runtimeInfo.GoVersion,
+		RunnerVersion: runtimeInfo.RunnerVersion, LogicalCPUs: runtimeInfo.LogicalCPUs,
+		GOMAXPROCS: runtimeInfo.GOMAXPROCS, CPUCapacityCores: runtimeInfo.CPUCapacityCores,
+		CPUCapacitySource: runtimeInfo.CPUCapacitySource, CPUCapacityKnown: runtimeInfo.CPUCapacityKnown,
+	}
+	generator := calibration.Generator{
+		OS: runtimeInfo.OS, Arch: runtimeInfo.Arch, GoVersion: runtimeInfo.GoVersion,
+		LogicalCPUs: runtimeInfo.LogicalCPUs, GOMAXPROCS: runtimeInfo.GOMAXPROCS,
+		CPUCapacityCores: runtimeInfo.CPUCapacityCores, CPUCapacitySource: runtimeInfo.CPUCapacitySource,
+		CPUCapacityKnown: runtimeInfo.CPUCapacityKnown, RunnerVersion: "different-binary-is-expected",
+	}
+	attempt := Attempt{RuntimeFingerprint: generatorRuntimeFingerprint(generator)}
+	if gate := assessManifestRuntime(environment, []Attempt{attempt}); gate.Status != "PASSED" {
+		t.Fatalf("matching verified CPU capacity was rejected: %+v", gate)
+	}
+	environment.CPUCapacityCores++
+	if gate := assessManifestRuntime(environment, []Attempt{attempt}); gate.Status != "FAILED" {
+		t.Fatalf("different CPU entitlement must fail repeat equivalence: %+v", gate)
+	}
+	environment.CPUCapacityKnown = false
+	if gate := assessManifestRuntime(environment, []Attempt{attempt}); gate.Status != "FAILED" {
+		t.Fatalf("unknown CPU entitlement must not pass: %+v", gate)
+	}
+}
+
 func TestLimitedWriterCapsEvidenceAndReportsTruncation(t *testing.T) {
 	var output strings.Builder
 	writer := &limitedWriter{writer: &output, limit: 4}
@@ -336,12 +364,15 @@ func syntheticCalibration() calibrationDocument {
 	var document calibrationDocument
 	document.SchemaVersion = 1
 	document.Status = "REFERENCE_SMOKE_PASSED"
-	document.Preflight.SchemaVersion = 6
+	document.Preflight.SchemaVersion = 7
 	document.Preflight.ScenarioFingerprint = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-	document.Preflight.Generator.OS = "windows"
-	document.Preflight.Generator.Arch = "amd64"
-	document.Preflight.Generator.GoVersion = "go1.26.3"
-	document.Preflight.Generator.RunnerVersion = "exe-sha256:fixture"
+	runtimeInfo := calibration.CurrentRuntime()
+	document.Preflight.Generator = calibration.Generator{
+		OS: runtimeInfo.OS, Arch: runtimeInfo.Arch, LogicalCPUs: runtimeInfo.LogicalCPUs,
+		GOMAXPROCS: runtimeInfo.GOMAXPROCS, CPUCapacityCores: runtimeInfo.CPUCapacityCores,
+		CPUCapacitySource: runtimeInfo.CPUCapacitySource, CPUCapacityKnown: runtimeInfo.CPUCapacityKnown,
+		GoVersion: runtimeInfo.GoVersion, RunnerVersion: runtimeInfo.RunnerVersion,
+	}
 	document.Preflight.Fixture.HealthyRates = []int{2, 5, 10}
 	shapes := []calibratedProfile{
 		{ID: "get-4k-response-shape", Method: "GET", Path: "/work", ResponseBodyBytes: 4096},

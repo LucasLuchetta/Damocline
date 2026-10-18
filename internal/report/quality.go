@@ -154,8 +154,16 @@ func AssessQuality(r Result) *Quality {
 			(!g.ProcessCPUValid && g.ProcessCPUSamples > 0) {
 			invalidate("Generator sampling fields contradict their sample coverage.")
 		}
+		if r.SchemaVersion >= 18 {
+			if g.CPUCapacityCores <= 0 || math.IsNaN(g.CPUCapacityCores) || math.IsInf(g.CPUCapacityCores, 0) ||
+				g.CPUCapacitySource == "" || g.CPUCapacityCores > float64(g.GOMAXPROCS) {
+				invalidate("Generator CPU capacity evidence is inconsistent.")
+			} else if !g.CPUCapacityKnown {
+				limit("Effective generator CPU capacity could not be established from runtime and cgroup evidence.")
+			}
+		}
 		if g.ProcessCPUValid && g.MeanProcessCPUUtilizationRatio >= 0.9 {
-			limit("Mean generator process CPU reached at least 90% of recorded GOMAXPROCS capacity; sustained generator headroom is not established.")
+			limit("Mean generator process CPU reached at least 90% of detected CPU capacity; sustained generator headroom is not established.")
 		}
 		if g.SamplingIntervalMS <= 0 || g.Samples < 2 {
 			limit("Generator sampling interval or sample coverage is unavailable.")
@@ -508,9 +516,15 @@ func controlledReferenceEvidenceValid(r Result) bool {
 	e := r.ReferenceEvidence
 	if r.SchemaVersion < 17 || e == nil || e.Kind != "calibrator_child_process_loopback_soak_v1" ||
 		r.Calibration == nil || calibration.ValidateRecord(r.Calibration.Record) != nil ||
-		r.Calibration.Record.SchemaVersion < 3 ||
+		r.Calibration.Record.SchemaVersion < 7 ||
 		r.Calibration.Record.Status != "REFERENCE_SMOKE_PASSED" ||
 		e.FixtureFingerprint != r.Calibration.Record.ScenarioFingerprintSHA256 {
+		return false
+	}
+	if r.Generator == nil || !r.Generator.CPUCapacityKnown ||
+		r.Generator.CPUCapacityCores != r.Calibration.Record.Generator.CPUCapacityCores ||
+		r.Generator.CPUCapacitySource != r.Calibration.Record.Generator.CPUCapacitySource ||
+		r.Generator.GOMAXPROCS != r.Calibration.Record.Generator.GOMAXPROCS {
 		return false
 	}
 	u, err := url.Parse(r.Target)

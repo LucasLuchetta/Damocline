@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/LucasLuchetta/Damocline/internal/config"
+	"github.com/LucasLuchetta/Damocline/internal/generatorhealth"
 )
 
 type Dimension struct {
@@ -22,12 +23,15 @@ type Coverage struct {
 }
 
 type Runtime struct {
-	OS            string
-	Arch          string
-	GoVersion     string
-	LogicalCPUs   int
-	GOMAXPROCS    int
-	RunnerVersion string
+	OS                string
+	Arch              string
+	GoVersion         string
+	LogicalCPUs       int
+	GOMAXPROCS        int
+	CPUCapacityCores  float64
+	CPUCapacitySource string
+	CPUCapacityKnown  bool
+	RunnerVersion     string
 }
 
 // AssessScenario compares only declarative inputs with the fixed reference
@@ -51,8 +55,13 @@ func AssessScenario(s config.Scenario, rec Record, local Runtime, now time.Time)
 	}
 	g := rec.Generator
 	if g.OS != local.OS || g.Arch != local.Arch || g.GoVersion != local.GoVersion ||
-		g.LogicalCPUs != local.LogicalCPUs || g.GOMAXPROCS != local.GOMAXPROCS {
+		g.LogicalCPUs != local.LogicalCPUs || g.GOMAXPROCS != local.GOMAXPROCS ||
+		(rec.SchemaVersion >= 7 && (g.CPUCapacityCores != local.CPUCapacityCores || g.CPUCapacitySource != local.CPUCapacitySource || g.CPUCapacityKnown != local.CPUCapacityKnown)) {
 		add("generator_runtime", "OUTSIDE_REFERENCE", "Current generator OS, architecture, Go version or CPU configuration differs from the calibration.")
+	} else if rec.SchemaVersion < 7 {
+		add("generator_runtime", "UNVERIFIED", "Legacy calibration does not record effective CPU capacity or its cgroup evidence source.")
+	} else if !g.CPUCapacityKnown || !local.CPUCapacityKnown {
+		add("generator_runtime", "UNVERIFIED", "CPU quota or effective capacity could not be verified for both calibration and current generator.")
 	} else if g.RunnerVersion == "source-development" || local.RunnerVersion == "source-development" {
 		add("generator_runtime", "UNVERIFIED", "Runtime metadata matches but the exact runner source revision is unavailable.")
 	} else if g.RunnerVersion != local.RunnerVersion {
@@ -369,5 +378,6 @@ func AssessWorkloadFingerprint(fingerprint, mixBasis, mixReference string, rec R
 }
 
 func CurrentRuntime() Runtime {
-	return Runtime{OS: runtime.GOOS, Arch: runtime.GOARCH, GoVersion: runtime.Version(), LogicalCPUs: runtime.NumCPU(), GOMAXPROCS: runtime.GOMAXPROCS(0), RunnerVersion: SourceRunnerVersion()}
+	capacity := generatorhealth.CurrentCPUCapacity()
+	return Runtime{OS: runtime.GOOS, Arch: runtime.GOARCH, GoVersion: runtime.Version(), LogicalCPUs: runtime.NumCPU(), GOMAXPROCS: runtime.GOMAXPROCS(0), CPUCapacityCores: capacity.Cores, CPUCapacitySource: capacity.Source, CPUCapacityKnown: capacity.Known, RunnerVersion: SourceRunnerVersion()}
 }

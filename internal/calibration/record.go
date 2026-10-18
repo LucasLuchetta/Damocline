@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"regexp"
 	"runtime/debug"
@@ -16,7 +17,7 @@ import (
 
 // The preflight record is embedded in the existing calibration JSON. It
 // identifies the tested loopback fixture, never a customer target or session.
-const SchemaVersion = 6
+const SchemaVersion = 7
 const minimumSupportedSchemaVersion = 1
 
 // Healthy response latency bounds are the fixed coarse guardrail used by the
@@ -32,12 +33,15 @@ const (
 )
 
 type Generator struct {
-	OS            string `json:"os"`
-	Arch          string `json:"arch"`
-	LogicalCPUs   int    `json:"logical_cpus"`
-	GOMAXPROCS    int    `json:"gomaxprocs"`
-	GoVersion     string `json:"go_version"`
-	RunnerVersion string `json:"runner_version"`
+	OS                string  `json:"os"`
+	Arch              string  `json:"arch"`
+	LogicalCPUs       int     `json:"logical_cpus"`
+	GOMAXPROCS        int     `json:"gomaxprocs"`
+	CPUCapacityCores  float64 `json:"cpu_capacity_cores"`
+	CPUCapacitySource string  `json:"cpu_capacity_source"`
+	CPUCapacityKnown  bool    `json:"cpu_capacity_known"`
+	GoVersion         string  `json:"go_version"`
+	RunnerVersion     string  `json:"runner_version"`
 }
 
 type Fixture struct {
@@ -339,6 +343,15 @@ func ValidateRecord(rec Record) error {
 		!versionPattern.MatchString(g.GoVersion) || !versionPattern.MatchString(g.RunnerVersion) ||
 		g.LogicalCPUs < 1 || g.GOMAXPROCS < 1 {
 		return errors.New("invalid or unsafe generator metadata")
+	}
+	if rec.SchemaVersion >= 7 {
+		if g.CPUCapacityCores <= 0 || math.IsNaN(g.CPUCapacityCores) || math.IsInf(g.CPUCapacityCores, 0) ||
+			g.CPUCapacityCores > float64(g.GOMAXPROCS) || !versionPattern.MatchString(g.CPUCapacitySource) {
+			return errors.New("invalid or unsafe effective CPU capacity metadata")
+		}
+		if rec.Status == "REFERENCE_SMOKE_PASSED" && !g.CPUCapacityKnown {
+			return errors.New("passing calibration lacks verified effective CPU capacity evidence")
+		}
 	}
 	f := rec.Fixture
 	if f.NetworkMode != "loopback_same_host_separate_process" ||

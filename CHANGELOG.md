@@ -5,6 +5,9 @@ This project follows a human-maintained changelog. No release exists yet.
 ## [Unreleased]
 
 ### Added
+- Record effective generator CPU entitlement separately from logical CPUs and GOMAXPROCS; normalize Linux process/runtime CPU observations against cgroup v1/v2 quotas when verifiable, and fail closed on unknown capacity for positive quality.
+- Advance report schema to v18, calibration preflight to schema v7, and repeated acceptance manifest to v3 with effective CPU capacity/source evidence and exact runtime-equivalence checks.
+- Add Linux Docker Desktop/WSL2 runtime evidence: two bounded loopback acceptance repeats passed with a 4-core cgroup quota, 12 logical CPUs, and GOMAXPROCS=12; this is not bare-metal or cross-host validation.
 - Advance preflight calibration to schema v6 with independent per-profile counts of distinct accepted TCP connections; require one connection for the serialized reusable fixture and one per request for `new_per_request`, while preserving schema-v1 through v5 readers.
 - Advance the repeated acceptance manifest to schema v2 and require every exact request-shape, connection-policy, and arrival-rate profile to reconcile independent TCP connection counts alongside requests and bytes.
 - Expand the calibration reference matrix to schema v5 with exact five-shape coverage for both reusable and new-per-request HTTP connections at 2, 5, and 10 arrivals/s; preserve archived v3 and v4 validation and require exact control-tuple matching in offline coverage.

@@ -34,7 +34,9 @@ func passingArtifact(t *testing.T) artifact {
 	start := time.Now().UTC().Truncate(time.Second)
 	runtime := CurrentRuntime()
 	g := Generator{OS: runtime.OS, Arch: runtime.Arch, LogicalCPUs: runtime.LogicalCPUs,
-		GOMAXPROCS: runtime.GOMAXPROCS, GoVersion: runtime.GoVersion, RunnerVersion: runtime.RunnerVersion}
+		GOMAXPROCS: runtime.GOMAXPROCS, CPUCapacityCores: runtime.CPUCapacityCores,
+		CPUCapacitySource: runtime.CPUCapacitySource, CPUCapacityKnown: runtime.CPUCapacityKnown,
+		GoVersion: runtime.GoVersion, RunnerVersion: runtime.RunnerVersion}
 	f := Fixture{NetworkMode: "loopback_same_host_separate_process", WorkloadModel: "open_loop_journey_arrivals",
 		Method: "GET", HealthyResponseBytes: 4096, HealthyDelay: "20ms", StageDuration: "5s", SoakDuration: "30s",
 		StageUsers: 10, MaximumRPS: 100, Repeats: 1, HealthyRates: []int{2, 5, 10}, WorkloadProfiles: ReferenceWorkloadProfiles()}
@@ -211,6 +213,14 @@ func TestSchemaSixRequiresExactTCPConnectionEvidence(t *testing.T) {
 				t.Fatal("schema-v6 calibration accepted incorrect per-profile TCP connection evidence")
 			}
 		})
+	}
+}
+
+func TestSchemaSevenRejectsPassingCalibrationWithoutVerifiedCPUCapacity(t *testing.T) {
+	a := passingArtifact(t)
+	a.Preflight.Generator.CPUCapacityKnown = false
+	if err := ValidateRecord(a.Preflight); err == nil {
+		t.Fatal("passing schema-v7 calibration accepted unknown effective CPU capacity")
 	}
 }
 
