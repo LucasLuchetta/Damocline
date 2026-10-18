@@ -44,6 +44,11 @@ func TestQualityKeepsAttachedCalibrationLimitedWhileTargetEvidenceIsUnknown(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
+	referenceWorkloadFingerprint, err := calibration.ReferenceWorkloadFingerprint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.Config.WorkloadFingerprint = referenceWorkloadFingerprint
 	r.Calibration = &CalibrationEvidence{Record: rec, Coverage: calibration.Coverage{Status: "INCONCLUSIVE", Dimensions: []calibration.Dimension{
 		{Name: "response_shape", Status: "UNVERIFIED", Reason: "unknown"}, {Name: "fixture_identity", Status: "UNVERIFIED", Reason: "unknown"},
 	}}}
@@ -54,7 +59,8 @@ func TestQualityKeepsAttachedCalibrationLimitedWhileTargetEvidenceIsUnknown(t *t
 	r.SchemaVersion = 12
 	observedSize := AssessObservedResponseSize(r, int64(rec.Fixture.HealthyResponseBytes))
 	observedLatency := AssessObservedResponseLatency(r)
-	r.Calibration.Coverage.Dimensions = append(r.Calibration.Coverage.Dimensions, observedSize, observedLatency)
+	workloadShape := AssessDeclaredWorkloadShape(r, rec)
+	r.Calibration.Coverage.Dimensions = append(r.Calibration.Coverage.Dimensions, observedSize, observedLatency, workloadShape)
 	q = AssessQuality(r)
 	if q.State != QualityLimited || !strings.Contains(strings.Join(q.Findings, " "), "complete per-step evidence is insufficient") {
 		t.Fatalf("missing observed body sizes must remain limited: %+v", q)

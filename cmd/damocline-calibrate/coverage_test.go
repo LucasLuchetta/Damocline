@@ -39,7 +39,7 @@ func referenceShapedScenario() config.Scenario {
 		Name: "synthetic", BaseURL: "http://127.0.0.1:8080",
 		Mode: "arrival", ArrivalRate: 10, Users: 10,
 		MaxRPS: 50, Duration: "5s", Timeout: "1s",
-		Steps: []config.Step{{Name: "read", Method: "GET", Path: "/work"}},
+		Steps: []config.Step{{Name: "work", Method: "GET", Path: "/work"}},
 	}
 }
 
@@ -68,9 +68,11 @@ func TestOfflineReferenceShapeNeverBecomesCapacityApproval(t *testing.T) {
 	findDimension(t, got, "workload_model", coverageMatched)
 	findDimension(t, got, "arrival_rate", coverageMatched)
 	findDimension(t, got, "actor_budget", coverageMatched)
+	findDimension(t, got, "declared_workload_shape", coverageMatched)
 	findDimension(t, got, "response_body_size", coverageUnknown)
 	findDimension(t, got, "connections_and_server_identity", coverageUnknown)
-	findDimension(t, got, "generator_equivalence", coverageUnknown)
+	findDimension(t, got, "generator_host_identity", coverageUnknown)
+	findDimension(t, got, "generator_workload_headroom", coverageUnknown)
 }
 
 func TestUnobservedRateMustNotInterpolateOrBorrowExtendedEnvelope(t *testing.T) {
@@ -152,6 +154,7 @@ func TestFailedAndMissingCalibrationNeverYieldPassingRates(t *testing.T) {
 		t.Fatalf("failed calibration exposed passing rates: %+v", got)
 	}
 	findDimension(t, got, "calibration", coverageOutside)
+	findDimension(t, got, "declared_workload_shape", coverageMatched)
 	missing := compareScenarioToReference(referenceShapedScenario(), assessment{}, errors.New("missing"))
 	findDimension(t, missing, "calibration", coverageUnknown)
 	findDimension(t, missing, "arrival_rate", coverageUnknown)

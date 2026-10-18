@@ -33,6 +33,46 @@ func TestAssessmentMatchesOnlyDeclaredFixtureDimensionsAndKeepsUnknowns(t *testi
 	if statuses["response_shape"] != "UNVERIFIED" || statuses["fixture_identity"] != "UNVERIFIED" {
 		t.Fatalf("response and identity uncertainty must be explicit: %+v", c.Dimensions)
 	}
+	if statuses["declared_workload_shape"] != "OUTSIDE_REFERENCE" {
+		t.Fatalf("different request path must not be treated as equivalent: %+v", c.Dimensions)
+	}
+}
+
+func TestDeclaredWorkloadShapeRequiresExactFingerprintAndVersionedRecord(t *testing.T) {
+	a := passingArtifact(t)
+	rec := a.Preflight
+	scenario := config.Scenario{
+		BaseURL: "http://127.0.0.1:8080", Users: 10, Duration: "5s", Timeout: "1s",
+		MaxRPS: 50, Mode: "arrival", ArrivalRate: 2,
+		Steps: []config.Step{{Name: "work", Method: "GET", Path: "/work"}},
+	}
+	matched := AssessDeclaredWorkloadShape(scenario, rec)
+	if matched.Status != "MATCHED" {
+		t.Fatalf("exact fixed-fixture request shape should match within its narrow scope: %+v", matched)
+	}
+	scenario.Steps[0].Path = "/search"
+	if got := AssessDeclaredWorkloadShape(scenario, rec); got.Status != "OUTSIDE_REFERENCE" {
+		t.Fatalf("different path must be outside the exact workload fingerprint: %+v", got)
+	}
+	scenario.Steps[0].Path = "/work"
+	scenario.ProfileMixBasis = "sanitized_analytics"
+	scenario.ProfileMixReference = "summary-v1"
+	if got := AssessDeclaredWorkloadShape(scenario, rec); got.Status != "OUTSIDE_REFERENCE" {
+		t.Fatalf("externally sourced mix cannot match the one-profile fixture: %+v", got)
+	}
+	rec.SchemaVersion = 1
+	rec.FixtureWorkloadFingerprint = ""
+	if got := AssessDeclaredWorkloadShape(scenario, rec); got.Status != "UNVERIFIED" {
+		t.Fatalf("legacy calibration without workload fingerprint must be unknown: %+v", got)
+	}
+}
+
+func TestSchemaTwoRejectsAlteredWorkloadFingerprint(t *testing.T) {
+	a := passingArtifact(t)
+	a.Preflight.FixtureWorkloadFingerprint = "sha256:" + strings.Repeat("0", 64)
+	if err := ValidateRecord(a.Preflight); err == nil {
+		t.Fatal("altered reference workload fingerprint was accepted")
+	}
 }
 
 func TestAssessmentRejectsUnmeasuredRateAndStaleRuntime(t *testing.T) {

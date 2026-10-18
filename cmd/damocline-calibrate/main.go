@@ -258,7 +258,7 @@ func runMatrix(path string, repeats int, extended bool) error {
 	for _, rate := range rates {
 		scenario := config.Scenario{Name: "Local reference " + strconv.Itoa(rate) + " arrivals/s", BaseURL: "http://" + address,
 			Users: 10, Duration: stageDuration.String(), MaxRPS: max(50, rate), Mode: "arrival", ArrivalRate: rate,
-			Timeout: "1s", P95LimitMS: 500, MaxErrorRate: 0, Steps: []config.Step{{Name: "work", Method: "GET", Path: "/work", ExpectedStatus: []int{200}}}}
+			Timeout: "1s", P95LimitMS: 500, MaxErrorRate: 0, Steps: []config.Step{{Name: "work", Method: "GET", Path: "/work"}}}
 		v, err := config.Parse(scenario, config.Options{Authorized: true})
 		if err != nil {
 			return err
@@ -267,7 +267,7 @@ func runMatrix(path string, repeats int, extended bool) error {
 	}
 	soakScenario := config.Scenario{Name: "Local reference sustained 10 arrivals/s", BaseURL: "http://" + address,
 		Users: 10, Duration: soakDuration.String(), MaxRPS: 50, Mode: "arrival", ArrivalRate: 10,
-		Timeout: "1s", P95LimitMS: 500, MaxErrorRate: 0, Steps: []config.Step{{Name: "work", Method: "GET", Path: "/work", ExpectedStatus: []int{200}}}}
+		Timeout: "1s", P95LimitMS: 500, MaxErrorRate: 0, Steps: []config.Step{{Name: "work", Method: "GET", Path: "/work"}}}
 	soakValidated, err := config.Parse(soakScenario, config.Options{Authorized: true})
 	if err != nil {
 		return err
