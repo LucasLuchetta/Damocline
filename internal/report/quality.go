@@ -168,9 +168,24 @@ func AssessQuality(r Result) *Quality {
 			invalidate("Named-step HTTP outcome counters are inconsistent.")
 			break
 		}
+		if r.SchemaVersion >= 12 && !validResponseBodyDiagnostics(
+			s.Metrics.ResponseBody,
+			responseStatusCount(s.Metrics.HTTP),
+			s.Metrics.HTTP.UnexpectedResponseSizes,
+		) {
+			invalidate("Named-step response-body observations do not reconcile with HTTP responses.")
+			break
+		}
 	}
 	if r.SchemaVersion >= 8 && !validHTTPDiagnostics(r.Metrics.HTTP, r.Metrics.Total, r.Metrics.Cancelled) {
 		invalidate("Aggregate HTTP outcome counters are inconsistent.")
+	}
+	if r.SchemaVersion >= 12 && !validResponseBodyDiagnostics(
+		r.Metrics.ResponseBody,
+		responseStatusCount(r.Metrics.HTTP),
+		r.Metrics.HTTP.UnexpectedResponseSizes,
+	) {
+		invalidate("Aggregate response-body observations do not reconcile with HTTP responses.")
 	}
 	if r.SchemaVersion >= 8 && len(r.Steps) > 0 {
 		var summed HTTPDiagnostics
@@ -183,11 +198,31 @@ func AssessQuality(r Result) *Quality {
 		if !equalHTTPDiagnostics(summed, r.Metrics.HTTP) {
 			invalidate("Named-step HTTP outcome counters do not reconcile with aggregate outcomes.")
 		}
+		if r.SchemaVersion >= 12 {
+			var summedBodies ResponseBodyDiagnostics
+			for _, step := range r.Steps {
+				if !addResponseBodyDiagnostics(&summedBodies, step.Metrics.ResponseBody) {
+					invalidate("Named-step response-body observations overflow their aggregate.")
+					break
+				}
+			}
+			if !equalResponseBodyDiagnostics(summedBodies, r.Metrics.ResponseBody) {
+				invalidate("Named-step response-body observations do not reconcile with aggregate measurements.")
+			}
+		}
 	}
 	if r.SchemaVersion >= 8 {
 		for _, window := range r.Windows {
 			if !validHTTPDiagnostics(window.Metrics.HTTP, window.Metrics.Total, window.Metrics.Cancelled) {
 				invalidate("Observation-window HTTP outcome counters are inconsistent.")
+				break
+			}
+			if r.SchemaVersion >= 12 && !validResponseBodyDiagnostics(
+				window.Metrics.ResponseBody,
+				responseStatusCount(window.Metrics.HTTP),
+				window.Metrics.HTTP.UnexpectedResponseSizes,
+			) {
+				invalidate("Observation-window response-body observations do not reconcile with HTTP responses.")
 				break
 			}
 		}
@@ -360,4 +395,81 @@ func equalHTTPDiagnostics(a, b HTTPDiagnostics) bool {
 		}
 	}
 	return true
+}
+
+const maxMeasuredResponseBodyBytes int64 = 2 << 20
+
+func responseStatusCount(d HTTPDiagnostics) int64 {
+	var total int64
+	for _, count := range d.StatusCodes {
+		if count < 0 || int64(count) > math.MaxInt64-total {
+			return -1
+		}
+		total += int64(count)
+	}
+	return total
+}
+
+func validResponseBodyDiagnostics(d ResponseBodyDiagnostics, responses int64, oversizedHTTPCount int) bool {
+	invalidCounts := responses < 0 || oversizedHTTPCount < 0 ||
+		d.CompleteObservations < 0 || d.IncompleteObservations < 0 || d.OversizedObservations < 0
+	invalidSizes := d.TotalBytes < 0 || d.MinBytes < 0 || d.MaxBytes < 0
+	if invalidCounts || invalidSizes {
+		return false
+	}
+	if d.CompleteObservations > math.MaxInt64-d.IncompleteObservations ||
+		d.CompleteObservations+d.IncompleteObservations > math.MaxInt64-d.OversizedObservations {
+		return false
+	}
+	if d.CompleteObservations+d.IncompleteObservations+d.OversizedObservations != responses ||
+		d.OversizedObservations != int64(oversizedHTTPCount) {
+		return false
+	}
+	if d.CompleteObservations == 0 {
+		return d.MinBytes == 0 && d.MaxBytes == 0 && d.TotalBytes == 0
+	}
+	if d.MinBytes > d.MaxBytes || d.MaxBytes > maxMeasuredResponseBodyBytes ||
+		d.MinBytes > math.MaxInt64/d.CompleteObservations || d.MaxBytes > math.MaxInt64/d.CompleteObservations {
+		return false
+	}
+	return d.TotalBytes >= d.CompleteObservations*d.MinBytes &&
+		d.TotalBytes <= d.CompleteObservations*d.MaxBytes
+}
+
+func addResponseBodyDiagnostics(dst *ResponseBodyDiagnostics, src ResponseBodyDiagnostics) bool {
+	add := func(left, right int64) (int64, bool) {
+		if left < 0 || right < 0 || right > math.MaxInt64-left {
+			return 0, false
+		}
+		return left + right, true
+	}
+	var ok bool
+	if dst.CompleteObservations, ok = add(dst.CompleteObservations, src.CompleteObservations); !ok {
+		return false
+	}
+	if dst.IncompleteObservations, ok = add(dst.IncompleteObservations, src.IncompleteObservations); !ok {
+		return false
+	}
+	if dst.OversizedObservations, ok = add(dst.OversizedObservations, src.OversizedObservations); !ok {
+		return false
+	}
+	if dst.TotalBytes, ok = add(dst.TotalBytes, src.TotalBytes); !ok {
+		return false
+	}
+	if src.CompleteObservations > 0 {
+		if dst.CompleteObservations == src.CompleteObservations || src.MinBytes < dst.MinBytes {
+			dst.MinBytes = src.MinBytes
+		}
+		if src.MaxBytes > dst.MaxBytes {
+			dst.MaxBytes = src.MaxBytes
+		}
+	}
+	return true
+}
+
+func equalResponseBodyDiagnostics(a, b ResponseBodyDiagnostics) bool {
+	return a.CompleteObservations == b.CompleteObservations &&
+		a.IncompleteObservations == b.IncompleteObservations &&
+		a.OversizedObservations == b.OversizedObservations &&
+		a.MinBytes == b.MinBytes && a.MaxBytes == b.MaxBytes && a.TotalBytes == b.TotalBytes
 }

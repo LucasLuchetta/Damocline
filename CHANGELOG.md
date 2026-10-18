@@ -5,6 +5,7 @@ This project follows a human-maintained changelog. No release exists yet.
 ## [Unreleased]
 
 ### Added
+- Upgrade HTTP run reports to schema v12 with per-step and per-window complete, interrupted, and oversized response-body read counts; record min/max/total bytes only for complete bounded bodies, reconcile these observations with HTTP response ledgers, and never store body content.
 - Share bounded calibration-record and scheduler-lag validation with the HTTP run command; `run --calibration` attaches sanitized preflight provenance and declared-dimension findings while keeping fixed-fixture response shape and endpoint identity explicitly inconclusive.
 - Mark window-mean process CPU at or above 90% of recorded GOMAXPROCS capacity as LIMITED sustained generator headroom; retain interval peaks as diagnostics and use the window mean for loopback CPU acceptance.
 - Report exact expected and observed dimensions for failed loopback calibration gates, including per-stage delivery, outcome, latency, generator health, lag, and independent server ledger; reject non-finite fixture latency.

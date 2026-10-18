@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -39,7 +40,7 @@ func TestSuccess(t *testing.T) {
 	if result.Metrics.Success < 1 || result.Metrics.Failures != 0 || result.Outcome != "PASS" {
 		t.Fatalf("unexpected report: %+v", result)
 	}
-	if result.SchemaVersion != 11 || result.Config.WorkloadFingerprint == "" || result.ObservationSeconds != v.Duration.Seconds() || result.Generator == nil || result.Generator.ProcessSamples < 2 || result.Generator.SamplingIntervalMS != 250 || result.Generator.MaxSampleGapMS <= 0 || result.Generator.SampleCollectionTotalMS < result.Generator.SampleCollectionMaxMS {
+	if result.SchemaVersion != 12 || result.Config.WorkloadFingerprint == "" || result.ObservationSeconds != v.Duration.Seconds() || result.Generator == nil || result.Generator.ProcessSamples < 2 || result.Generator.SamplingIntervalMS != 250 || result.Generator.MaxSampleGapMS <= 0 || result.Generator.SampleCollectionTotalMS < result.Generator.SampleCollectionMaxMS {
 		t.Fatalf("report must include workload fingerprint, observation window and generator process observations: %+v", result)
 	}
 }
@@ -744,5 +745,61 @@ func TestResponseBodyLimitIsReported(t *testing.T) {
 	r := Run(context.Background(), v)
 	if r.Metrics.Reasons["response_too_large"] == 0 || r.Outcome == "PASS" {
 		t.Fatalf("oversized responses must be bounded and fail visibly: %+v", r)
+	}
+	if r.Metrics.ResponseBody.OversizedObservations != int64(r.Metrics.HTTP.UnexpectedResponseSizes) || r.Metrics.ResponseBody.CompleteObservations != 0 {
+		t.Fatalf("oversized bodies must be counted without claiming their full size: %+v", r.Metrics.ResponseBody)
+	}
+}
+
+func TestResponseBodySizesMatchIndependentLoopbackLedger(t *testing.T) {
+	sizes := []int{0, 16, 1024, 4096}
+	var mu sync.Mutex
+	var requests, total int64
+	var minimum, maximum int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		size := sizes[requests%int64(len(sizes))]
+		requests++
+		total += int64(size)
+		if requests == 1 || int64(size) < minimum {
+			minimum = int64(size)
+		}
+		if int64(size) > maximum {
+			maximum = int64(size)
+		}
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(bytes.Repeat([]byte("synthetic-private-response"), (size+25)/26)[:size])
+	}))
+	defer server.Close()
+
+	v := scenario(t, server.URL, []config.Step{{Name: "payload", Path: "/"}})
+	v.Duration = 900 * time.Millisecond
+	v.Scenario.Users = 1
+	v.Scenario.MaxRPS = 10
+	r := Run(context.Background(), v)
+	mu.Lock()
+	ledger := struct{ requests, total, minimum, maximum int64 }{requests, total, minimum, maximum}
+	mu.Unlock()
+	if ledger.requests < 3 || r.SchemaVersion != 12 || len(r.Steps) != 1 {
+		t.Fatalf("expected bounded schema-v12 run with independent loopback requests: ledger=%+v report=%+v", ledger, r)
+	}
+	for label, observed := range map[string]report.ResponseBodyDiagnostics{
+		"aggregate": r.Metrics.ResponseBody,
+		"step":      r.Steps[0].Metrics.ResponseBody,
+	} {
+		if observed.CompleteObservations != ledger.requests || observed.TotalBytes != ledger.total || observed.MinBytes != ledger.minimum || observed.MaxBytes != ledger.maximum || observed.IncompleteObservations != 0 || observed.OversizedObservations != 0 {
+			t.Fatalf("%s response-size summary differs from independent server ledger: summary=%+v ledger=%+v", label, observed, ledger)
+		}
+	}
+	if r.Quality == nil || r.Quality.State == report.QualityInvalid {
+		t.Fatalf("response-body ledger did not validate against the independent server ledger: %+v", r.Quality)
+	}
+	encoded, err := json.Marshal(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), "synthetic-private-response") {
+		t.Fatal("report must not preserve response-body values")
 	}
 }

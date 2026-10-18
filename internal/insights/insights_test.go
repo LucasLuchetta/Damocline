@@ -56,6 +56,29 @@ func TestReportExplainsArrivalSchedulerLagDistribution(t *testing.T) {
 		}
 	}
 }
+
+func TestReportExplainsResponseBodySizesWithoutBodyContent(t *testing.T) {
+	r := synthetic()
+	r.SchemaVersion = 12
+	r.Steps[0].Metrics.ResponseBody = report.ResponseBodyDiagnostics{
+		CompleteObservations:   8,
+		IncompleteObservations: 1,
+		OversizedObservations:  2,
+		MinBytes:               16,
+		MaxBytes:               4096,
+		TotalBytes:             12000,
+	}
+	var output bytes.Buffer
+	Write(&output, r, nil, nil)
+	for _, expected := range []string{
+		"8 complete bodies (16-4096 bytes; 12000 bytes total)",
+		"1 interrupted reads", "2 oversized bodies", "do not establish expected-workload equivalence",
+	} {
+		if !strings.Contains(output.String(), expected) {
+			t.Fatalf("report is missing %q: %s", expected, output.String())
+		}
+	}
+}
 func TestFailureAndDroppedArrivals(t *testing.T) {
 	r := synthetic()
 	r.Outcome = "FAIL"
@@ -357,9 +380,32 @@ func TestReadRunAcceptsSchemaElevenWorkloadFingerprint(t *testing.T) {
 	if err := os.WriteFile(path, data, 0600); err != nil {
 		t.Fatal(err)
 	}
+	if bytes.Contains(data, []byte(`"response_body"`)) {
+		t.Fatal("schema-v11 report must not imply response-body shape was measured")
+	}
 	got, err := ReadRun(path)
 	if err != nil || got.SchemaVersion != 11 || got.Config.WorkloadFingerprint != r.Config.WorkloadFingerprint {
 		t.Fatalf("schema-v11 workload fingerprint report not readable: %+v err=%v", got, err)
+	}
+}
+
+func TestReadRunAcceptsSchemaTwelveResponseBodyMeasurements(t *testing.T) {
+	r := synthetic()
+	r.SchemaVersion = 12
+	r.ObservationSeconds = 30
+	r.Steps[0].Metrics.ResponseBody = report.ResponseBodyDiagnostics{
+		CompleteObservations: 4,
+		MinBytes:             0,
+		MaxBytes:             2048,
+		TotalBytes:           4096,
+	}
+	path := filepath.Join(t.TempDir(), "schema-v12-response-body.json")
+	if err := report.WriteJSON(path, r); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ReadRun(path)
+	if err != nil || got.SchemaVersion != 12 || got.Steps[0].Metrics.ResponseBody.TotalBytes != 4096 {
+		t.Fatalf("schema-v12 response-body report not readable: %+v err=%v", got, err)
 	}
 }
 

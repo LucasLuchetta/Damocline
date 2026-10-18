@@ -72,6 +72,52 @@ func TestQualityNoLocalCapacityCertificateEvenForPerfectDelivery(t *testing.T) {
 	}
 }
 
+func TestQualityReconcilesResponseBodyShapeWithoutCertifyingIt(t *testing.T) {
+	r := validSyntheticQualityRun()
+	r.SchemaVersion = 12
+	r.Generator = &generatorhealth.Summary{
+		Samples: 10, ObservedSeconds: 10, SamplingIntervalMS: 250,
+		SampleCollectionTotalMS: 1, SampleCollectionMaxMS: 0.5, MaxSampleGapMS: 250,
+		GOMAXPROCS: 1, PeakHeapAllocBytes: 1024, PeakGoroutines: 2,
+		GoCPUCapacitySeconds: 10, GoCPUValid: true,
+		ProcessSamples: 10, ProcessCPUSamples: 10, PeakProcessRSSBytes: 4096, ProcessCPUValid: true,
+	}
+	r.SchedulerLagSamples = r.ArrivalsScheduled
+	r.SchedulerLagMethod = "synthetic deterministic fixture"
+	r.Metrics.HTTP = HTTPDiagnostics{
+		StatusCodes: map[int]int{200: 3},
+		Status2xx:   3,
+	}
+	r.Metrics.ResponseBody = ResponseBodyDiagnostics{
+		CompleteObservations: 3,
+		MinBytes:             1,
+		MaxBytes:             4,
+		TotalBytes:           6,
+	}
+	if q := AssessQuality(r); q.State != QualityLimited {
+		t.Fatalf("well-formed size observations alone cannot certify the envelope: %+v", q)
+	}
+	for name, mutate := range map[string]func(*Result){
+		"response count mismatch": func(result *Result) {
+			result.Metrics.ResponseBody.CompleteObservations = 2
+		},
+		"impossible byte total": func(result *Result) {
+			result.Metrics.ResponseBody.TotalBytes = 2
+		},
+		"oversized count mismatch": func(result *Result) {
+			result.Metrics.ResponseBody.OversizedObservations = 1
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			invalid := r
+			mutate(&invalid)
+			if q := AssessQuality(invalid); q.State != QualityInvalid {
+				t.Fatalf("inconsistent response-size evidence must be INVALID: %+v", q)
+			}
+		})
+	}
+}
+
 func TestQualityLimitsStaleGeneratorSamplingAndRejectsMalformedSampling(t *testing.T) {
 	base := validSyntheticQualityRun()
 	base.SchemaVersion = 10
