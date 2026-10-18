@@ -5,34 +5,19 @@ import (
 	"math"
 	"time"
 
+	"github.com/LucasLuchetta/Damocline/internal/calibration"
 	"github.com/LucasLuchetta/Damocline/internal/scheduler"
 )
 
 const (
-	schedulerLagMethod    = "monotonic planned-slot to scheduler-processing time"
-	schedulerLagRate      = 20
-	schedulerLagDuration  = 250 * time.Millisecond
-	schedulerLagTolerance = 50 * time.Millisecond
+	schedulerLagMethod    = calibration.SchedulerLagMethod
+	schedulerLagRate      = calibration.SchedulerLagRate
+	schedulerLagDuration  = calibration.SchedulerLagDuration
+	schedulerLagTolerance = calibration.SchedulerLagTolerance
 )
 
-type schedulerLagCalibration struct {
-	Method       string                    `json:"method"`
-	Rate         int                       `json:"arrival_rate_per_second"`
-	Duration     string                    `json:"duration"`
-	ToleranceMS  float64                   `json:"absolute_tolerance_ms"`
-	Observations []schedulerLagObservation `json:"observations"`
-	Status       string                    `json:"status"`
-}
-
-type schedulerLagObservation struct {
-	InjectedPauseMS  float64 `json:"injected_pause_ms"`
-	ExpectedMaxLagMS float64 `json:"expected_max_lag_ms"`
-	ObservedMaxLagMS float64 `json:"observed_max_lag_ms"`
-	Planned          int64   `json:"planned"`
-	Admitted         int64   `json:"admitted"`
-	Dropped          int64   `json:"dropped"`
-	Outcome          string  `json:"outcome"`
-}
+type schedulerLagCalibration = calibration.SchedulerLag
+type schedulerLagObservation = calibration.SchedulerLagObservation
 
 // calibrateSchedulerLag injects bounded scheduler-thread pauses. It measures
 // planned-slot lateness, not HTTP transport latency or real-host capacity.
@@ -77,36 +62,7 @@ func calibrateSchedulerLag() schedulerLagCalibration {
 }
 
 func validSchedulerLagCalibration(c schedulerLagCalibration) bool {
-	if c.Method != schedulerLagMethod || c.Rate != schedulerLagRate ||
-		c.Duration != schedulerLagDuration.String() ||
-		c.ToleranceMS != float64(schedulerLagTolerance.Microseconds())/1000 ||
-		len(c.Observations) != 9 || (c.Status != "PASSED" && c.Status != "FAILED") {
-		return false
-	}
-	index := 0
-	allPassed := true
-	for _, pause := range []time.Duration{90, 130, 210} {
-		expected := pause*time.Millisecond - time.Second/schedulerLagRate
-		for range 3 {
-			o := c.Observations[index]
-			deviation := math.Abs(float64(o.ObservedMaxLagMS - float64(expected.Microseconds())/1000))
-			withinTolerance := deviation <= c.ToleranceMS
-			if !withinTolerance {
-				allPassed = false
-			}
-			if o.InjectedPauseMS != float64(pause) ||
-				o.ExpectedMaxLagMS != float64(expected.Microseconds())/1000 ||
-				math.IsNaN(o.ObservedMaxLagMS) || math.IsInf(o.ObservedMaxLagMS, 0) || o.ObservedMaxLagMS < 0 ||
-				o.Planned != scheduler.DueCount(schedulerLagDuration, time.Second/schedulerLagRate, schedulerLagDuration) ||
-				o.Admitted < 0 || o.Dropped < 0 || o.Admitted+o.Dropped != o.Planned ||
-				(o.Outcome != "PASSED" && o.Outcome != "FAILED") ||
-				(o.Outcome == "PASSED") != withinTolerance {
-				return false
-			}
-			index++
-		}
-	}
-	return (c.Status == "PASSED") == allPassed
+	return calibration.ValidateSchedulerLag(c)
 }
 
 func passedSchedulerLagCalibration() schedulerLagCalibration {

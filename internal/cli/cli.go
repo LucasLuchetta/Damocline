@@ -99,7 +99,7 @@ Usage:
 	  damocline dashboard --file run.json [--addr 127.0.0.1:8787]
   damocline goal --file capacity.json --peak-users 20 [--growth-percent 25] [--reserve-percent 20]
 	  damocline plan --campaign campaign.json --peak-users 20 [--growth-percent 25] [--reserve-percent 20]
-  damocline run --config scenario.json --authorized [--out reports/run.json]
+  damocline run --config scenario.json --authorized [--calibration reports/reference.json] [--out reports/run.json]
   damocline run --config scenario.json --dry-run
   damocline explore --config scenario.json --min-users 2 --max-users 20 --stage-duration 20s --repeats 2 --authorized
 	  damocline campaign --config scenario.json --warmup 30s --observation 2m --recovery 30s --repeats 2 --authorized
@@ -132,6 +132,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	insecure := fs.Bool("allow-insecure-http", false, "allow plaintext HTTP outside loopback")
 	dry := fs.Bool("dry-run", false, "validate and display a sanitized plan without sending traffic")
 	out := fs.String("out", "", "write a JSON report (file permissions 0600)")
+	calibrationFile := fs.String("calibration", "", "attach a validated local generator calibration artifact")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -174,6 +175,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	result := engine.Run(ctx, validated)
+	if *calibrationFile != "" {
+		if calibrationErr := attachCalibration(&result, validated.Scenario, *calibrationFile, time.Now().UTC()); calibrationErr != nil {
+			result.Warnings = append(result.Warnings, "The requested local generator calibration could not be validated and was not attached.")
+		}
+	}
 	fmt.Fprintf(stdout, "Result: %s | requests: %d (%d passed, %d failed, %d cancelled) | p95: %.1f ms | error rate: %.2f%% | %.1f req/s\n", result.Outcome, result.Metrics.Total, result.Metrics.Success, result.Metrics.Failures, result.Metrics.Cancelled, result.Metrics.P95MS, result.ErrorsRate*100, float64(result.Metrics.Total)/result.WindowSeconds())
 	fmt.Fprintf(stdout, "HTTP responses: 1xx=%d 2xx=%d 3xx=%d 4xx=%d 5xx=%d; redirects=%d, 429=%d, assertions=%d, timeouts=%d, TLS failures=%d, transport failures=%d, oversized=%d.\n", result.Metrics.HTTP.Status1xx, result.Metrics.HTTP.Status2xx, result.Metrics.HTTP.Status3xx, result.Metrics.HTTP.Status4xx, result.Metrics.HTTP.Status5xx, result.Metrics.HTTP.RedirectResponses, result.Metrics.HTTP.RateLimitedResponses, result.Metrics.HTTP.AssertionFailures, result.Metrics.HTTP.NetworkTimeouts, result.Metrics.HTTP.TLSFailures, result.Metrics.HTTP.TransportFailures, result.Metrics.HTTP.UnexpectedResponseSizes)
 	if result.Metrics.P95IID95Approximation {

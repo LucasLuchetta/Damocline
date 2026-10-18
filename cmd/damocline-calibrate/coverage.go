@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/LucasLuchetta/Damocline/internal/calibration"
 	"github.com/LucasLuchetta/Damocline/internal/config"
 )
 
@@ -68,6 +69,9 @@ func loadCalibrationForCoverage(path string) (assessment, error) {
 	data, err := io.ReadAll(io.LimitReader(f, maxCalibrationBytes+1))
 	if err != nil || len(data) > maxCalibrationBytes {
 		return result, errors.New("local calibration file exceeds the read limit or cannot be read")
+	}
+	if _, err := calibration.ValidateArtifactBytes(data, false); err != nil {
+		return result, errors.New("local calibration has an unsupported, inconsistent, or invalid preflight record")
 	}
 	if err := json.Unmarshal(data, &result); err != nil {
 		return result, errors.New("local calibration file is not valid JSON")

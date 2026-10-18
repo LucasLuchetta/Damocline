@@ -5,6 +5,7 @@ This project follows a human-maintained changelog. No release exists yet.
 ## [Unreleased]
 
 ### Added
+- Share bounded calibration-record and scheduler-lag validation with the HTTP run command; `run --calibration` attaches sanitized preflight provenance and declared-dimension findings while keeping fixed-fixture response shape and endpoint identity explicitly inconclusive.
 - Mark window-mean process CPU at or above 90% of recorded GOMAXPROCS capacity as LIMITED sustained generator headroom; retain interval peaks as diagnostics and use the window mean for loopback CPU acceptance.
 - Report exact expected and observed dimensions for failed loopback calibration gates, including per-stage delivery, outcome, latency, generator health, lag, and independent server ledger; reject non-finite fixture latency.
 - Upgrade HTTP run reports to schema v11 with a workload-definition fingerprint; label legacy, mismatched workload, or mismatched generator-preflight comparisons `NOT_COMPARABLE`, and report application revision as the observed treatment.
