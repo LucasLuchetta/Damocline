@@ -15,7 +15,7 @@ func auditFixture() campaign.Result {
 		r := report.Result{
 			SchemaVersion: 1, Outcome: "PASS", Target: "http://127.0.0.1:18080",
 			ElapsedSeconds: 10, ObservationSeconds: 10,
-			Config: report.RunConfig{Users: 2, Duration: "10s", WindowDuration: "2.5s", P95LimitMS: 1000, MaxErrorRate: 0.1},
+			Config: report.RunConfig{Users: 2, Duration: "10s", WindowDuration: "2.5s", MaxRPS: 40, P95LimitMS: 1000, MaxErrorRate: 0.1},
 			Metrics: report.MetricSet{Total: 80, Success: 80, P95MS: 100},
 		}
 		for i := 0; i < 4; i++ {

@@ -17,7 +17,7 @@ func TestAuditCommandIsOfflineAndProducesMachineReadableEvidence(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "audit.json")
 	evidence := campaign.Result{SchemaVersion: campaign.CurrentSchemaVersion,
 		Scenario: "offline", BaseUsers: 2, Repeats: 2, Outcome: "INCONCLUSIVE",
-		Trials: []campaign.Trial{{Number: 1, Outcome: "INCONCLUSIVE"}},
+		Trials: []campaign.Trial{{Number: 1, Outcome: "INCONCLUSIVE"}, {Number: 2, Outcome: "INCONCLUSIVE"}},
 	}
 	if err := report.WriteAnyJSON(path, evidence); err != nil {
 		t.Fatal(err)
