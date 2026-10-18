@@ -53,6 +53,18 @@ The existing fixture measures a 20 ms, 4 KiB, unencrypted IPv4-loopback GET. Sce
 
 A missing, failed, inconsistent, oversized, or unsupported calibration produces an inconclusive comparison, never acceptance. The output deliberately omits scenario names, URLs, routes, headers, credentials and extracted values. Treat the input and local calibration files as private.
 
+## Attach local preflight evidence to a run
+
+An authorized run may attach the locally saved calibration record:
+
+```powershell
+go run ./cmd/damocline run --config scenario.local.json --authorized --calibration .damocline/calibration/reference.json --out .damocline/reports/run.json
+```
+
+The run command revalidates the bounded artifact, its stage ledgers and all nine scheduler-lag observations, then compares only declared workload controls with the fixed reference. It records the sanitized calibration metadata and per-dimension findings in the report. A mismatch or unusable artifact is not attached and is reported generically; the run itself remains subject to its normal authorization and bounds.
+
+This association is an evidence improvement, **not acceptance**. The JSON fixture artifact is not cryptographically signed, runtime metadata does not authenticate a physical host, and a scenario file cannot prove the endpoint is the reference server or that live responses match the fixture's 4 KiB/20 ms shape. Those required dimensions remain `UNVERIFIED`, so this command cannot produce `VALID_WITHIN_ENVELOPE` or certify application capacity. Do not treat an attached artifact as a certificate.
+
 ## Expanded transport-only reference matrix (G0-03 partial)
 
 Use the optional bounded fixture matrix to exercise Go HTTP transports with an **independent** client/server ledger, without contacting an application or using actual user data:

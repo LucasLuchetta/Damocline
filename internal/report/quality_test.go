@@ -5,7 +5,9 @@ import (
 	"math"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/LucasLuchetta/Damocline/internal/calibration"
 	"github.com/LucasLuchetta/Damocline/internal/generatorhealth"
 )
 
@@ -17,6 +19,41 @@ func validSyntheticQualityRun() Result {
 		IterationsStarted: 100, IterationsCompleted: 100, ArrivalsScheduled: 100,
 		Generator: &generatorhealth.Summary{Samples: 10, GoCPUValid: true, ProcessSamples: 10, ProcessCPUValid: true},
 		Outcome:   "PASS",
+	}
+}
+
+func TestQualityKeepsAttachedCalibrationLimitedWhileTargetEvidenceIsUnknown(t *testing.T) {
+	r := validSyntheticQualityRun()
+	r.SchemaVersion = 10
+	local := calibration.CurrentRuntime()
+	r.Generator.GOMAXPROCS = local.GOMAXPROCS
+	r.Generator.ObservedSeconds = 10
+	r.Generator.SamplingIntervalMS = 250
+	r.Generator.SampleCollectionTotalMS = 1
+	r.Generator.SampleCollectionMaxMS = 0.5
+	r.Generator.MaxSampleGapMS = 250
+	r.Generator.ProcessCPUSamples = r.Generator.ProcessSamples
+	r.Generator.PeakProcessRSSBytes = 4096
+	r.Generator.GoCPUCapacitySeconds = 10
+	r.Generator.PeakHeapAllocBytes = 1024
+	r.Generator.PeakGoroutines = 2
+	rec, err := calibration.NewRecord(time.Now().Add(-time.Minute), time.Now(),
+		calibration.Generator{OS: local.OS, Arch: local.Arch, LogicalCPUs: local.LogicalCPUs, GOMAXPROCS: local.GOMAXPROCS, GoVersion: local.GoVersion, RunnerVersion: local.RunnerVersion},
+		calibration.Fixture{NetworkMode: "loopback_same_host_separate_process", WorkloadModel: "open_loop_journey_arrivals", Method: "GET", HealthyResponseBytes: 4096, HealthyDelay: "20ms", StageDuration: "5s", SoakDuration: "30s", StageUsers: 10, MaximumRPS: 100, Repeats: 1, HealthyRates: []int{2, 5, 10}},
+		[]calibration.Stage{{ArrivalRate: 2, Scheduled: 10, Started: 10, Completed: 10, Outcome: "PASS"}, {ArrivalRate: 5, Scheduled: 25, Started: 25, Completed: 25, Outcome: "PASS"}, {ArrivalRate: 10, Scheduled: 50, Started: 50, Completed: 50, Outcome: "PASS"}}, "REFERENCE_SMOKE_PASSED")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.Calibration = &CalibrationEvidence{Record: rec, Coverage: calibration.Coverage{Status: "INCONCLUSIVE", Dimensions: []calibration.Dimension{
+		{Name: "response_shape", Status: "UNVERIFIED", Reason: "unknown"}, {Name: "fixture_identity", Status: "UNVERIFIED", Reason: "unknown"},
+	}}}
+	q := AssessQuality(r)
+	if q.State != QualityLimited || !strings.Contains(strings.Join(q.Findings, " "), "response shape and controlled fixture identity") {
+		t.Fatalf("attached fixed-fixture calibration cannot upgrade unknown target evidence: %+v", q)
+	}
+	r.Calibration.Coverage.Dimensions = []calibration.Dimension{{Name: "arrival_rate", Status: "MATCHED", Reason: "matched"}}
+	if q := AssessQuality(r); q.State != QualityInvalid {
+		t.Fatalf("missing mandatory unknowns should invalidate calibration coverage: %+v", q)
 	}
 }
 

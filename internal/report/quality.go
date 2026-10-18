@@ -1,6 +1,10 @@
 package report
 
-import "math"
+import (
+	"math"
+
+	"github.com/LucasLuchetta/Damocline/internal/calibration"
+)
 
 // Quality describes whether arithmetic delivery/accounting evidence can be
 // trusted. It is orthogonal to SLO Outcome. Positive calibration equivalence
@@ -236,7 +240,27 @@ func AssessQuality(r Result) *Quality {
 			invalidate("Profile journey ledger does not reconcile with aggregate journeys.")
 		}
 	}
-	limit("No equivalent, fresh, host-validated generator preflight was attached; workload-specific capacity is not certified.")
+	if r.Calibration == nil {
+		limit("No local generator preflight is attached; workload-specific generator equivalence is unverified.")
+	} else if err := calibration.ValidateRecord(r.Calibration.Record); err != nil {
+		invalidate("Attached generator calibration record is malformed or inconsistent.")
+	} else {
+		unverified := make(map[string]bool)
+		for _, dimension := range r.Calibration.Coverage.Dimensions {
+			if dimension.Name == "" || (dimension.Status != "MATCHED" && dimension.Status != "OUTSIDE_REFERENCE" && dimension.Status != "UNVERIFIED") {
+				invalidate("Attached calibration coverage contains an invalid dimension.")
+				break
+			}
+			if dimension.Status != "MATCHED" {
+				unverified[dimension.Name] = true
+			}
+		}
+		if r.Calibration.Coverage.Status != "INCONCLUSIVE" || !unverified["response_shape"] || !unverified["fixture_identity"] {
+			invalidate("Attached calibration coverage omits required response-shape or fixture-identity uncertainty.")
+		} else {
+			limit("Calibration is attached, but response shape and controlled fixture identity remain unverified.")
+		}
+	}
 	return q
 }
 

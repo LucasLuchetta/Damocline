@@ -10,6 +10,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/LucasLuchetta/Damocline/internal/calibration"
 	"github.com/LucasLuchetta/Damocline/internal/generatorhealth"
 	"github.com/LucasLuchetta/Damocline/internal/statistics"
 )
@@ -303,8 +304,16 @@ type Result struct {
 	ThinkTimeObservations int                      `json:"think_time_observations,omitempty"`
 	Warnings              []string                 `json:"warnings,omitempty"`
 	Generator             *generatorhealth.Summary `json:"generator,omitempty"`
+	Calibration           *CalibrationEvidence     `json:"calibration,omitempty"`
 	Quality               *Quality                 `json:"data_quality,omitempty"`
 	Signals               []Signal                 `json:"diagnostic_signals,omitempty"`
+}
+
+// CalibrationEvidence associates a run with sanitized local reference evidence.
+// It carries no target URL, credential, route or response body values.
+type CalibrationEvidence struct {
+	Record   calibration.Record   `json:"record"`
+	Coverage calibration.Coverage `json:"coverage"`
 }
 
 const maxReportBytes = 16 << 20
