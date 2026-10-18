@@ -909,14 +909,20 @@ func TestArrivalRunDrainsAdmittedWorkAfterScheduleWindow(t *testing.T) {
 }
 
 func TestCancelledRunCannotPass(t *testing.T) {
+	requestStarted := make(chan struct{}, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		time.Sleep(500 * time.Millisecond)
-		w.WriteHeader(http.StatusOK)
+		requestStarted <- struct{}{}
+		<-r.Context().Done()
 	}))
 	defer server.Close()
 	v := scenario(t, server.URL, []config.Step{{Name: "slow", Path: "/"}})
-	v.Duration = 50 * time.Millisecond
-	r := Run(context.Background(), v)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		<-requestStarted
+		cancel()
+	}()
+	r := Run(ctx, v)
 	if r.Metrics.Cancelled == 0 || r.Outcome == "PASS" {
 		t.Fatalf("a run with cancelled requests must not pass: %+v", r)
 	}
