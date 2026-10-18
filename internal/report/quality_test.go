@@ -271,6 +271,19 @@ func TestObservedResponseSizeCoverageUsesEveryStepAndConservativeStates(t *testi
 	}
 }
 
+func TestLegacyMissingResponseBodyIsUnknownRatherThanZeroBytes(t *testing.T) {
+	r := Result{SchemaVersion: 11, Steps: []StepResult{{Name: "read", Metrics: MetricSet{Total: 1, Success: 1}}}}
+	if got := AssessObservedResponseSize(r, 0); got.Status != "UNVERIFIED" {
+		t.Fatalf("a legacy report without body measurements must not be treated as a measured empty body: %+v", got)
+	}
+	r.SchemaVersion = 12
+	r.Steps[0].Metrics.HTTP = HTTPDiagnostics{StatusCodes: map[int]int{200: 1}, Status2xx: 1}
+	r.Steps[0].Metrics.ResponseBody = ResponseBodyDiagnostics{CompleteObservations: 1}
+	if got := AssessObservedResponseSize(r, 0); got.Status != "MATCHED" {
+		t.Fatalf("a recorded complete zero-byte body must remain distinct from a missing legacy value: %+v", got)
+	}
+}
+
 func TestAssessObservedResponseLatencyRequiresSamplesAndChecksEveryStep(t *testing.T) {
 	r := Result{SchemaVersion: 12, Steps: []StepResult{{Metrics: MetricSet{Total: 99, Success: 99, P50MS: 20, P95MS: 30}}}}
 	if got := AssessObservedResponseLatency(r); got.Status != "UNVERIFIED" {
