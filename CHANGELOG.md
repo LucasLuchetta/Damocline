@@ -5,6 +5,10 @@ This project follows a human-maintained changelog. No release exists yet.
 ## [Unreleased]
 
 ### Added
+- Expand the calibration reference matrix to schema v5 with exact five-shape coverage for both reusable and new-per-request HTTP connections at 2, 5, and 10 arrivals/s; preserve archived v3 and v4 validation and require exact control-tuple matching in offline coverage.
+- Reconcile aggregate calibrator server counts from each profile's recorded duration so mixed five-second and two-second workload windows cannot be miscounted.
+- Fix the first schema-v5 runtime discrepancy: the aggregate ledger had treated all 30 profiles as five seconds, overstating expected server requests by 255.
+- Extend offline request-mix recognition to the calibrated single synthetic POST shape; continue matching its body only by local byte length and never persist its contents.
 - Add a bounded end-to-end G0 acceptance command that repeats calibrations in fresh processes, independently verifies exact profile/rate and soak ledgers, checks overload and HTTP-failure controls, runs the local transport matrix, and preserves per-attempt reports and logs on failures.
 - Record descriptive p95 spread across acceptance repeats without presenting it as statistical confidence; require each persisted controlled-soak quality result to recompute from its stored report before the lab can pass.
 - Expand calibration schema v4 into 15 native-engine request-shape/rate pairs (five exact shapes at 2, 5, and 10 arrivals/s), reconciled per run with independent loopback server counters; preserve schema-v3 artifacts and their narrower coverage.

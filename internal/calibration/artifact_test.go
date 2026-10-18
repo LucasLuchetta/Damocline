@@ -58,7 +58,8 @@ func passingWorkloadObservations() []WorkloadObservation {
 	profiles := ReferenceWorkloadProfiles()
 	observations := make([]WorkloadObservation, 0, len(profiles))
 	for _, profile := range profiles {
-		planned := int64(profile.ArrivalRate * 5)
+		duration, _ := time.ParseDuration(profile.Duration)
+		planned := int64(profile.ArrivalRate) * int64(duration/time.Second)
 		requestBytes := int64(profile.RequestBodyBytes) * planned
 		responseBytes := int64(profile.ResponseBodyBytes) * planned
 		observations = append(observations, WorkloadObservation{
@@ -73,7 +74,7 @@ func passingWorkloadObservations() []WorkloadObservation {
 	return observations
 }
 
-func TestSchemaFourRejectsAlteredOrMissingWorkloadEvidence(t *testing.T) {
+func TestSchemaFiveRejectsAlteredOrMissingWorkloadEvidence(t *testing.T) {
 	tests := []struct {
 		name   string
 		mutate func(*Record)
@@ -93,7 +94,7 @@ func TestSchemaFourRejectsAlteredOrMissingWorkloadEvidence(t *testing.T) {
 			artifact := passingArtifact(t)
 			test.mutate(&artifact.Preflight)
 			if err := ValidateRecord(artifact.Preflight); err == nil {
-				t.Fatal("altered schema-v4 workload evidence was accepted")
+				t.Fatal("altered schema-v5 workload evidence was accepted")
 			}
 		})
 	}
@@ -101,12 +102,12 @@ func TestSchemaFourRejectsAlteredOrMissingWorkloadEvidence(t *testing.T) {
 
 func TestReferenceMatrixCoversOnlyExactShapeAndRatePairs(t *testing.T) {
 	profiles := ReferenceWorkloadProfiles()
-	if len(profiles) != 15 {
-		t.Fatalf("got %d workload profiles, want 15 exact shape/rate pairs", len(profiles))
+	if len(profiles) != 30 {
+		t.Fatalf("got %d workload profiles, want 30 exact shape/connection/rate pairs", len(profiles))
 	}
 	seen := make(map[string]bool, len(profiles))
 	for _, profile := range profiles {
-		key := fmt.Sprintf("%s|%d", profile.Path, profile.ArrivalRate)
+		key := fmt.Sprintf("%s|%s|%d", profile.Path, profile.ConnectionPolicy, profile.ArrivalRate)
 		if seen[key] {
 			t.Fatalf("duplicate exact workload pair %s", key)
 		}
@@ -116,11 +117,42 @@ func TestReferenceMatrixCoversOnlyExactShapeAndRatePairs(t *testing.T) {
 		}
 	}
 	for _, shape := range referenceWorkloadShapes() {
-		for _, rate := range WorkloadMatrixArrivalRates() {
-			if !seen[fmt.Sprintf("%s|%d", shape.Path, rate)] {
-				t.Fatalf("missing exact pair path=%s rate=%d", shape.Path, rate)
+		for _, connectionPolicy := range []string{"reuse", "new_per_request"} {
+			for _, rate := range WorkloadMatrixArrivalRates() {
+				key := fmt.Sprintf("%s|%s|%d", shape.Path, connectionPolicy, rate)
+				if !seen[key] {
+					t.Fatalf("missing exact pair path=%s connection_policy=%s rate=%d", shape.Path, connectionPolicy, rate)
+				}
 			}
 		}
+	}
+}
+
+func TestSchemaFourArtifactsRemainReadableWithOriginalMatrix(t *testing.T) {
+	a := passingArtifact(t)
+	a.Preflight.SchemaVersion = 4
+	a.Preflight.Fixture.WorkloadProfiles = referenceWorkloadProfilesV4()
+	a.Preflight.WorkloadObservations = passingObservationsForProfiles(referenceWorkloadProfilesV4())
+	fingerprint, err := Fingerprint(a.Preflight.Fixture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.Preflight.ScenarioFingerprintSHA256 = fingerprint
+	if err := ValidateRecord(a.Preflight); err != nil {
+		t.Fatalf("schema-v4 artifact no longer validates: %v", err)
+	}
+}
+
+func TestSchemaFiveRejectsAlteredConnectionPolicyTuple(t *testing.T) {
+	a := passingArtifact(t)
+	a.Preflight.Fixture.WorkloadProfiles[15].Duration = "5s"
+	fingerprint, err := Fingerprint(a.Preflight.Fixture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.Preflight.ScenarioFingerprintSHA256 = fingerprint
+	if err := ValidateRecord(a.Preflight); err == nil {
+		t.Fatal("schema-v5 matrix accepted an altered new-per-request duration")
 	}
 }
 
@@ -142,7 +174,8 @@ func TestSchemaThreeArtifactsRemainReadableWithOriginalMatrix(t *testing.T) {
 func passingObservationsForProfiles(profiles []WorkloadProfile) []WorkloadObservation {
 	observations := make([]WorkloadObservation, 0, len(profiles))
 	for _, profile := range profiles {
-		planned := int64(profile.ArrivalRate * 5)
+		duration, _ := time.ParseDuration(profile.Duration)
+		planned := int64(profile.ArrivalRate) * int64(duration/time.Second)
 		requestBytes := int64(profile.RequestBodyBytes) * planned
 		responseBytes := int64(profile.ResponseBodyBytes) * planned
 		observations = append(observations, WorkloadObservation{

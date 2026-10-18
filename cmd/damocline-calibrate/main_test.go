@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/LucasLuchetta/Damocline/internal/calibration"
 	"github.com/LucasLuchetta/Damocline/internal/generatorhealth"
@@ -241,7 +242,8 @@ func passingStageFixture() report.Result {
 }
 
 func passingWorkloadProfileFixture(profile calibration.WorkloadProfile) (report.Result, calibration.WorkloadObservation) {
-	planned := int64(profile.ArrivalRate) * 5
+	duration, _ := time.ParseDuration(profile.Duration)
+	planned := int64(profile.ArrivalRate) * int64(duration/time.Second)
 	responseBytes := int64(profile.ResponseBodyBytes)
 	body := report.ResponseBodyDiagnostics{
 		CompleteObservations: planned, MinBytes: responseBytes, MaxBytes: responseBytes,

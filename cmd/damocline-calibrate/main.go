@@ -382,7 +382,12 @@ func runMatrix(path string, repeats int, extended bool) error {
 	}
 	var workloadPlanned int64
 	for _, profile := range workloadProfiles {
-		workloadPlanned += int64(profile.ArrivalRate) * 5
+		duration, err := time.ParseDuration(profile.Duration)
+		if err != nil || duration <= 0 || duration%time.Second != 0 {
+			result.Checks = append(result.Checks, fmt.Sprintf("workload profile %s has invalid duration %q", profile.ID, profile.Duration))
+			continue
+		}
+		workloadPlanned += int64(profile.ArrivalRate) * int64(duration/time.Second)
 	}
 	result.Checks = append(result.Checks, check(result.Runs, result.Server, rates, workloadPlanned)...)
 	result.Checks = append(result.Checks, checkSoak(result.SoakRun)...)
@@ -650,7 +655,8 @@ func workloadProfileObservation(profile calibration.WorkloadProfile, run report.
 }
 
 func checkWorkloadProfile(profile calibration.WorkloadProfile, run report.Result, observation calibration.WorkloadObservation) []string {
-	planned := int64(profile.ArrivalRate) * 5
+	duration, _ := time.ParseDuration(profile.Duration)
+	planned := int64(profile.ArrivalRate) * int64(duration/time.Second)
 	expectedRequestBytes := int64(profile.RequestBodyBytes) * planned
 	expectedResponseBytes := int64(profile.ResponseBodyBytes) * planned
 	arrivalsMatch := run.ArrivalsScheduled == planned && run.ArrivalsAdmitted != nil &&

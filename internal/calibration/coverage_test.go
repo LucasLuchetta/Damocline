@@ -84,7 +84,7 @@ func TestMatrixRateCeilingRequiresExactCalibratedPair(t *testing.T) {
 	}
 }
 
-func TestConnectionPolicyOutsideReferenceIsExplicit(t *testing.T) {
+func TestConnectionPolicyRequiresExactProfileControls(t *testing.T) {
 	a := passingArtifact(t)
 	local := CurrentRuntime()
 	a.Preflight.Generator.RunnerVersion = local.RunnerVersion
@@ -92,15 +92,49 @@ func TestConnectionPolicyOutsideReferenceIsExplicit(t *testing.T) {
 	a.Preflight.StartedAt = now.Add(-2 * time.Minute).Format(time.RFC3339Nano)
 	a.Preflight.FinishedAt = now.Add(-time.Minute).Format(time.RFC3339Nano)
 	scenario := config.Scenario{BaseURL: "http://127.0.0.1", Mode: "arrival", ArrivalRate: 10, Users: 10,
-		MaxRPS: 100, Duration: "5s", Timeout: "1s", ConnectionPolicy: "new_per_request",
+		MaxRPS: 50, Duration: "2s", Timeout: "1s", ConnectionPolicy: "new_per_request",
 		Steps: []config.Step{{Name: "work", Method: "GET", Path: "/work"}}}
 	coverage := AssessScenario(scenario, a.Preflight, local, now)
 	for _, dimension := range coverage.Dimensions {
-		if dimension.Name == "connection_policy" && dimension.Status == "OUTSIDE_REFERENCE" {
-			return
+		if dimension.Name == "connection_policy" && dimension.Status != "MATCHED" {
+			t.Fatalf("exact new-connection profile should match: %+v", coverage.Dimensions)
 		}
 	}
-	t.Fatalf("new-per-request policy must be outside a reuse-only calibration: %+v", coverage.Dimensions)
+	if got := AssessDeclaredWorkloadShape(scenario, a.Preflight); got.Status != "MATCHED" {
+		t.Fatalf("exact new-connection workload fingerprint should match: %+v", got)
+	}
+	scenario.Duration = "5s"
+	coverage = AssessScenario(scenario, a.Preflight, local, now)
+	for _, dimension := range coverage.Dimensions {
+		if dimension.Name == "connection_policy" && dimension.Status != "OUTSIDE_REFERENCE" {
+			t.Fatalf("new-connection policy with reusable-profile duration must not match: %+v", dimension)
+		}
+	}
+}
+
+func TestNewConnectionProfileDoesNotInterpolateRates(t *testing.T) {
+	a := passingArtifact(t)
+	scenario := config.Scenario{BaseURL: "http://127.0.0.1", Mode: "arrival", ArrivalRate: 7, Users: 10,
+		MaxRPS: 100, Duration: "2s", Timeout: "1s", ConnectionPolicy: "new_per_request",
+		Steps: []config.Step{{Method: "GET", Path: "/work"}}}
+	if got := exactProfileControlsMatch(a.Preflight.Fixture.WorkloadProfiles, scenario, scenario.ConnectionPolicy); got {
+		t.Fatal("an unmeasured arrival rate must not inherit a neighboring connection profile")
+	}
+}
+
+func TestExactReferenceSoakRetainsControlledReuseCoverage(t *testing.T) {
+	scenario := config.Scenario{Mode: "arrival", ArrivalRate: 10, Users: 10, MaxRPS: 50,
+		Duration: "30s", Timeout: "1s"}
+	if !exactReferenceSoakControlsMatch(scenario, "reuse") {
+		t.Fatal("the fixed controlled reuse soak should retain its exact reference controls")
+	}
+	if exactReferenceSoakControlsMatch(scenario, "new_per_request") {
+		t.Fatal("the 30-second soak must not imply new-per-request calibration")
+	}
+	scenario.MaxRPS = 100
+	if exactReferenceSoakControlsMatch(scenario, "reuse") {
+		t.Fatal("a different request-rate ceiling must not inherit the controlled soak")
+	}
 }
 
 func TestDeclaredWorkloadShapeRequiresExactFingerprintAndVersionedRecord(t *testing.T) {
