@@ -13,37 +13,42 @@ import (
 )
 
 const (
-	cgroupV2QuotaSource = "cgroup_v2_cpu_quota"
-	cgroupV1QuotaSource = "cgroup_v1_cpu_quota"
+	cgroupV2QuotaSource = "cgroup_v2_cpu_quota_hierarchy"
+	cgroupV1QuotaSource = "cgroup_v1_cpu_quota_hierarchy"
+	maxCgroupAncestors  = 256
 )
 
-func currentCPUCapacity(maxProcs int) cpuCapacity {
-	return cpuCapacityFromQuota(maxProcs, "/", "/proc/self/cgroup", "/proc/self/mountinfo")
+func currentCPUCapacity(logicalCPUs, maxProcs int) cpuCapacity {
+	return cpuCapacityFromQuota(logicalCPUs, maxProcs, "/", "/proc/self/cgroup", "/proc/self/mountinfo")
 }
 
-func cpuCapacityFromQuota(maxProcs int, root, cgroupFile, mountInfoFile string) cpuCapacity {
-	if maxProcs < 1 {
+func cpuCapacityFromQuota(logicalCPUs, maxProcs int, root, cgroupFile, mountInfoFile string) cpuCapacity {
+	if logicalCPUs < 1 || maxProcs < 1 {
 		return cpuCapacity{}
+	}
+	runtimeCapacity := float64(logicalCPUs)
+	if maxProcs < logicalCPUs {
+		runtimeCapacity = float64(maxProcs)
 	}
 	quotaCores, source, found, known := readLinuxCPUQuota(root, cgroupFile, mountInfoFile)
 	if !found {
-		return cpuCapacity{cores: float64(maxProcs), source: "cgroup_cpu_limit_unavailable", known: false}
+		return cpuCapacity{cores: runtimeCapacity, source: "cgroup_cpu_limit_unavailable", known: false}
 	}
 	if !known {
-		return cpuCapacity{cores: float64(maxProcs), source: "cgroup_cpu_limit_unreadable", known: false}
+		return cpuCapacity{cores: runtimeCapacity, source: "cgroup_cpu_limit_unreadable", known: false}
 	}
 	if quotaCores <= 0 {
-		return cpuCapacity{cores: float64(maxProcs), source: "runtime_gomaxprocs", known: true}
+		return cpuCapacity{cores: runtimeCapacity, source: "runtime_logical_cpus_and_gomaxprocs", known: true}
 	}
-	capacity := effectiveCapacity(maxProcs, quotaCores)
+	capacity := effectiveCapacity(logicalCPUs, maxProcs, quotaCores)
 	return cpuCapacity{cores: capacity, source: source, known: capacity > 0 && !math.IsInf(capacity, 0) && !math.IsNaN(capacity)}
 }
 
-func effectiveCapacity(maxProcs int, quotaCores float64) float64 {
-	if maxProcs < 1 || quotaCores <= 0 || math.IsNaN(quotaCores) || math.IsInf(quotaCores, 0) {
+func effectiveCapacity(logicalCPUs, maxProcs int, quotaCores float64) float64 {
+	if logicalCPUs < 1 || maxProcs < 1 || quotaCores <= 0 || math.IsNaN(quotaCores) || math.IsInf(quotaCores, 0) {
 		return 0
 	}
-	return math.Min(float64(maxProcs), quotaCores)
+	return math.Min(math.Min(float64(logicalCPUs), float64(maxProcs)), quotaCores)
 }
 
 // readLinuxCPUQuota returns the effective finite CPU quota when the process's
@@ -66,24 +71,60 @@ func readLinuxCPUQuota(root, cgroupFile, mountInfoFile string) (cores float64, s
 	if err != nil {
 		return 0, "", true, false
 	}
+	rootQuotaCores, rootErr := readHierarchicalCPUQuota(root, mount.point, directory, version)
+	quotaSource := cgroupV1QuotaSource
 	if version == 2 {
-		quota, period, unlimited, err := readV2CPUQuota(filepath.Join(directory, "cpu.max"))
+		quotaSource = cgroupV2QuotaSource
+	}
+	if rootErr != nil {
+		return 0, quotaSource, true, false
+	}
+	return rootQuotaCores, quotaSource, true, true
+}
+
+// readHierarchicalCPUQuota walks from the process cgroup to the mounted
+// hierarchy root and returns the tightest finite quota. Any missing or
+// malformed ancestor evidence leaves the result unknown.
+func readHierarchicalCPUQuota(root, mountPoint, processDirectory string, version int) (float64, error) {
+	mountDirectory := filepath.Clean(filepath.Join(root, strings.TrimPrefix(mountPoint, "/")))
+	directory := filepath.Clean(processDirectory)
+	if !isWithinDirectory(mountDirectory, directory) {
+		return 0, errors.New("process cgroup directory is outside the mounted hierarchy")
+	}
+	var minimum float64
+	for depth := 0; depth < maxCgroupAncestors; depth++ {
+		var quota, period float64
+		var unlimited bool
+		var err error
+		if version == 2 {
+			quota, period, unlimited, err = readV2CPUQuota(filepath.Join(directory, "cpu.max"))
+		} else {
+			quota, period, unlimited, err = readV1CPUQuota(directory)
+		}
 		if err != nil {
-			return 0, cgroupV2QuotaSource, true, false
+			return 0, err
 		}
-		if unlimited {
-			return 0, cgroupV2QuotaSource, true, true
+		if !unlimited {
+			cores := quota / period
+			if minimum == 0 || cores < minimum {
+				minimum = cores
+			}
 		}
-		return quota / period, cgroupV2QuotaSource, true, true
+		if directory == mountDirectory {
+			return minimum, nil
+		}
+		parent := filepath.Dir(directory)
+		if parent == directory || !isWithinDirectory(mountDirectory, parent) {
+			return 0, errors.New("cgroup hierarchy did not reach its mount root")
+		}
+		directory = parent
 	}
-	quota, period, unlimited, err := readV1CPUQuota(directory)
-	if err != nil {
-		return 0, cgroupV1QuotaSource, true, false
-	}
-	if unlimited {
-		return 0, cgroupV1QuotaSource, true, true
-	}
-	return quota / period, cgroupV1QuotaSource, true, true
+	return 0, errors.New("cgroup hierarchy exceeds the supported ancestor depth")
+}
+
+func isWithinDirectory(parent, child string) bool {
+	relative, err := filepath.Rel(parent, child)
+	return err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(os.PathSeparator))
 }
 
 type cgroupMount struct {

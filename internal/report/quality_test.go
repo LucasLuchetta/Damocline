@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"math"
 	"net/http"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -20,6 +21,7 @@ func validSyntheticQualityRun() Result {
 		Metrics: MetricSet{Total: 100, Success: 100}, Journeys: MetricSet{Total: 100, Success: 100},
 		IterationsStarted: 100, IterationsCompleted: 100, ArrivalsScheduled: 100,
 		Generator: &generatorhealth.Summary{Samples: 10, GoCPUValid: true, ProcessSamples: 10, ProcessCPUValid: true,
+			LogicalCPUs: runtime.NumCPU(), GOMAXPROCS: runtime.GOMAXPROCS(0),
 			CPUCapacityCores: capacity.Cores, CPUCapacitySource: capacity.Source, CPUCapacityKnown: capacity.Known},
 		Outcome: "PASS",
 	}
@@ -345,6 +347,22 @@ func TestSchemaEighteenRequiresVerifiedEffectiveCPUCapacity(t *testing.T) {
 	r.Generator.CPUCapacityCores = 13
 	if q := AssessQuality(r); !strings.Contains(strings.Join(q.Findings, " "), "CPU capacity evidence is inconsistent") {
 		t.Fatalf("capacity greater than GOMAXPROCS must be invalid: %+v", q)
+	}
+}
+
+func TestSchemaNineteenRequiresLogicalCPUCapacityEvidence(t *testing.T) {
+	r := validSyntheticQualityRun()
+	r.SchemaVersion = 19
+	r.Generator.LogicalCPUs = 0
+	if quality := AssessQuality(r); quality.State != QualityInvalid {
+		t.Fatalf("missing logical CPU evidence must be invalid for schema 19: %+v", quality)
+	}
+	r = validSyntheticQualityRun()
+	r.SchemaVersion = 19
+	r.Generator.LogicalCPUs = 2
+	r.Generator.CPUCapacityCores = 4
+	if quality := AssessQuality(r); quality.State != QualityInvalid {
+		t.Fatalf("capacity above logical CPUs must be invalid: %+v", quality)
 	}
 }
 

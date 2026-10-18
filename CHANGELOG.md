@@ -5,6 +5,8 @@ This project follows a human-maintained changelog. No release exists yet.
 ## [Unreleased]
 
 ### Added
+- Validate hierarchical quota handling with two bounded Docker Desktop/WSL2 acceptance repeats: all 13 gates per run passed, including 980/980 independent loopback requests and 10/10 transport cases. Evidence remains local and gitignored.
+- Walk Linux cgroup v1/v2 CPU quota ancestors and use the tightest finite quota, bounded by logical CPUs and GOMAXPROCS; persist logical CPU count in report schema v19 and fail closed on incomplete ancestor evidence.
 - Record effective generator CPU entitlement separately from logical CPUs and GOMAXPROCS; normalize Linux process/runtime CPU observations against cgroup v1/v2 quotas when verifiable, and fail closed on unknown capacity for positive quality.
 - Advance report schema to v18, calibration preflight to schema v7, and repeated acceptance manifest to v3 with effective CPU capacity/source evidence and exact runtime-equivalence checks.
 - Add Linux Docker Desktop/WSL2 runtime evidence: two bounded loopback acceptance repeats passed with a 4-core cgroup quota, 12 logical CPUs, and GOMAXPROCS=12; this is not bare-metal or cross-host validation.
@@ -118,6 +120,7 @@ This project follows a human-maintained changelog. No release exists yet.
 - Removed third-party load-testing tool references from the interactive welcome banner.
 
 ### Added
+- Validate hierarchical quota handling with two bounded Docker Desktop/WSL2 acceptance repeats: all 13 gates per run passed, including 980/980 independent loopback requests and 10/10 transport cases. Evidence remains local and gitignored.
 - Emit schema-v16 arrival accounting with externally cancelled planned starts separated from scheduler-late and worker-busy drops; preserve missing-versus-zero semantics for historical reports.
 - Branded sword splash screen and English numbered home menu for bare `damocline` and `start.cmd`, with safe choices for new, saved, current, help and exit.
 - Terminal-aware ANSI color support with plain-text fallback. Non-interactive commands remain unchanged.

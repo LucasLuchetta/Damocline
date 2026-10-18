@@ -21,7 +21,7 @@
     "samples": 2,
     "gomaxprocs": 12,
     "cpu_capacity_cores": 4,
-    "cpu_capacity_source": "cgroup_v2_cpu_quota",
+    "cpu_capacity_source": "cgroup_v2_cpu_quota_hierarchy",
     "cpu_capacity_known": true
   },
   "steps": [

@@ -17,8 +17,9 @@ import (
 
 // CurrentSchemaVersion is the newest persisted HTTP run report schema emitted
 // by the engine. Readers must reject future versions until their semantics are
-// reviewed and supported.
-const CurrentSchemaVersion = 18
+// reviewed and supported. Version 19 records the runtime's logical CPU count
+// independently from GOMAXPROCS and effective CPU quota.
+const CurrentSchemaVersion = 19
 
 type MetricSet struct {
 	Total                 int                     `json:"total"`
