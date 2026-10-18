@@ -54,8 +54,20 @@ func TestAccumulatorProcessHealthPeaks(t *testing.T) {
 	a.add(reading{at: start.Add(2 * time.Second), maxProcs: 2, processCPUSeconds: 5.25, processRSSBytes: 150, processAvailable: true})
 	s := a.finish()
 	if s.ProcessSamples != 3 || s.ProcessCPUSamples != 2 || !s.ProcessCPUValid ||
-		s.PeakProcessRSSBytes != 200 || s.PeakProcessCPUUtilizationRatio != 0.5 {
+		s.PeakProcessRSSBytes != 200 || s.PeakProcessCPUUtilizationRatio != 0.5 || s.MeanProcessCPUUtilizationRatio != 0.3125 {
 		t.Fatalf("wrong process metrics summary: %+v", s)
+	}
+}
+
+func TestAccumulatorSeparatesProcessCPUPeakFromWindowMean(t *testing.T) {
+	start := time.Unix(0, 0)
+	var a accumulator
+	a.add(reading{at: start, maxProcs: 1, processCPUSeconds: 0, processRSSBytes: 100, processAvailable: true})
+	a.add(reading{at: start.Add(250 * time.Millisecond), maxProcs: 1, processCPUSeconds: 0.3, processRSSBytes: 100, processAvailable: true})
+	a.add(reading{at: start.Add(5 * time.Second), maxProcs: 1, processCPUSeconds: 0.4, processRSSBytes: 100, processAvailable: true})
+	s := a.finish()
+	if math.Abs(s.PeakProcessCPUUtilizationRatio-1.2) > 1e-9 || math.Abs(s.MeanProcessCPUUtilizationRatio-0.08) > 1e-9 {
+		t.Fatalf("short process CPU burst was not separated from sustained window use: %+v", s)
 	}
 }
 

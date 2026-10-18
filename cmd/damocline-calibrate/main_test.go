@@ -62,3 +62,20 @@ func TestCheckStageRejectsNonFiniteLatency(t *testing.T) {
 		t.Fatalf("non-finite latency must fail the fixture gate with a precise diagnostic: %v", issues)
 	}
 }
+
+func TestCheckStageUsesSustainedProcessCPUAndReportsIntervalPeak(t *testing.T) {
+	metrics := report.MetricSet{Total: 10, Success: 10, P50MS: 20, P95MS: 25}
+	base := report.Result{ArrivalsScheduled: 10, IterationsStarted: 10, IterationsCompleted: 10,
+		Metrics: metrics, Journeys: metrics, Outcome: "PASS", Quality: &report.Quality{State: report.QualityLimited},
+		Generator: &generatorhealth.Summary{Samples: 2, GoCPUValid: true, ProcessSamples: 2, ProcessCPUValid: true,
+			PeakProcessRSSBytes: 1, PeakProcessCPUUtilizationRatio: 1.3, MeanProcessCPUUtilizationRatio: 0.08}}
+	if issues := checkStage(2, 10, base); len(issues) != 0 {
+		t.Fatalf("an isolated interval peak must remain diagnostic when sustained CPU stays within the envelope: %v", issues)
+	}
+	base.Generator.MeanProcessCPUUtilizationRatio = 0.9
+	issues := checkStage(2, 10, base)
+	joined := strings.Join(issues, "\n")
+	if !strings.Contains(joined, "stage 2 generator envelope") || !strings.Contains(joined, "process_cpu_mean=0.900") || !strings.Contains(joined, "process_cpu_peak=1.300") {
+		t.Fatalf("sustained process CPU at the threshold must fail with both mean and peak values: %s", joined)
+	}
+}

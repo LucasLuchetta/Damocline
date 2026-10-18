@@ -70,7 +70,7 @@ func AssessQuality(r Result) *Quality {
 	}
 	if r.SchemaVersion >= 10 && r.Generator != nil {
 		g := r.Generator
-		values := []float64{g.ObservedSeconds, g.SamplingIntervalMS, g.SampleCollectionTotalMS, g.SampleCollectionMaxMS, g.MaxSampleGapMS, g.GoCPUBusySeconds, g.GoCPUCapacitySeconds, g.GoCPUUtilizationRatio, g.PeakProcessCPUUtilizationRatio}
+		values := []float64{g.ObservedSeconds, g.SamplingIntervalMS, g.SampleCollectionTotalMS, g.SampleCollectionMaxMS, g.MaxSampleGapMS, g.GoCPUBusySeconds, g.GoCPUCapacitySeconds, g.GoCPUUtilizationRatio, g.PeakProcessCPUUtilizationRatio, g.MeanProcessCPUUtilizationRatio}
 		for _, value := range values {
 			if math.IsNaN(value) || math.IsInf(value, 0) || value < 0 {
 				invalidate("Generator sampling observations contain invalid values.")
@@ -88,8 +88,8 @@ func AssessQuality(r Result) *Quality {
 			(!g.ProcessCPUValid && g.ProcessCPUSamples > 0) {
 			invalidate("Generator sampling fields contradict their sample coverage.")
 		}
-		if g.ProcessCPUValid && g.PeakProcessCPUUtilizationRatio >= 0.9 {
-			limit("Generator process CPU reached at least 90% of recorded GOMAXPROCS capacity; generator headroom is not established.")
+		if g.ProcessCPUValid && g.MeanProcessCPUUtilizationRatio >= 0.9 {
+			limit("Mean generator process CPU reached at least 90% of recorded GOMAXPROCS capacity; sustained generator headroom is not established.")
 		}
 		if g.SamplingIntervalMS <= 0 || g.Samples < 2 {
 			limit("Generator sampling interval or sample coverage is unavailable.")

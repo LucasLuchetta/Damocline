@@ -10,7 +10,7 @@ Generator-health reports included sample counts and peaks but did not show wheth
 
 ## Decision
 
-Schema-v10 run summaries record the requested sampler interval, maximum monotonic sample-to-sample gap, and total/maximum wall time spent collecting each runtime and supported process snapshot. Quality validation treats malformed counters/timings as INVALID and a gap longer than two configured intervals as LIMITED. Process CPU is normalized by recorded GOMAXPROCS and includes OS process CPU time; values above 100% are not by themselves invalid because the process counter is not the Go scheduler's P occupancy. At 90% or higher, generator headroom is marked LIMITED. Collection wall time is reported as a proxy; it is not relabeled as CPU overhead.
+Schema-v10 run summaries record the requested sampler interval, maximum monotonic sample-to-sample gap, and total/maximum wall time spent collecting each runtime and supported process snapshot. Quality validation treats malformed counters/timings as INVALID and a gap longer than two configured intervals as LIMITED. Mean process CPU is normalized by recorded GOMAXPROCS and includes OS process CPU time. A window-mean ratio at or above 90% marks sustained generator headroom LIMITED. The maximum adjacent 250 ms interval ratio remains diagnostic; it can exceed 100% because OS process CPU includes system activity that is not bounded by Go P occupancy, and does not alone establish sustained saturation. Collection wall time is reported as a proxy; it is not relabeled as CPU overhead.
 
 ## Consequences
 

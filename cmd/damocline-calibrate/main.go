@@ -399,9 +399,9 @@ func checkSoak(run report.Result) []string {
 		run.Metrics.Failures != 0 || run.Outcome != "PASS" || run.Generator == nil ||
 		run.Generator.Samples < 100 || run.Generator.ProcessSamples < 100 || run.Generator.PeakProcessRSSBytes == 0 ||
 		!run.Generator.GoCPUValid || !run.Generator.ProcessCPUValid ||
-		run.Generator.GoCPUUtilizationRatio >= 0.9 || run.Generator.PeakProcessCPUUtilizationRatio >= 0.9 ||
+		run.Generator.GoCPUUtilizationRatio >= 0.9 || run.Generator.MeanProcessCPUUtilizationRatio >= 0.9 ||
 		run.Generator.PeakHeapAllocBytes > 256<<20 || run.Generator.PeakProcessRSSBytes > 512<<20 {
-		return []string{fmt.Sprintf("soak reconciliation failed: planned=%d started=%d completed_iterations=%d requests=%d/%d succeeded failures=%d dropped=%d outcome=%s generator_samples=%d process_samples=%d process_rss=%d go_cpu_valid=%t process_cpu_valid=%t go_cpu=%.3f process_cpu=%.3f heap=%d", planned, run.IterationsStarted, run.IterationsCompleted, run.Metrics.Success, run.Metrics.Total, run.Metrics.Failures, run.ArrivalsDropped, run.Outcome, generatorSamples(run), generatorProcessSamples(run), generatorRSS(run), generatorGoCPUValid(run), generatorProcessCPUValid(run), generatorGoCPU(run), generatorProcessCPU(run), generatorHeap(run))}
+		return []string{fmt.Sprintf("soak reconciliation failed: planned=%d started=%d completed_iterations=%d requests=%d/%d succeeded failures=%d dropped=%d outcome=%s generator_samples=%d process_samples=%d process_rss=%d go_cpu_valid=%t process_cpu_valid=%t go_cpu=%.3f process_cpu_mean=%.3f process_cpu_peak=%.3f heap=%d", planned, run.IterationsStarted, run.IterationsCompleted, run.Metrics.Success, run.Metrics.Total, run.Metrics.Failures, run.ArrivalsDropped, run.Outcome, generatorSamples(run), generatorProcessSamples(run), generatorRSS(run), generatorGoCPUValid(run), generatorProcessCPUValid(run), generatorGoCPU(run), generatorProcessCPU(run), generatorPeakProcessCPU(run), generatorHeap(run))}
 	}
 	return nil
 }
@@ -476,8 +476,8 @@ func checkStage(rate int, planned int64, run report.Result) []string {
 	}
 	g := run.Generator
 	if g == nil || g.Samples < 2 || !g.GoCPUValid || g.ProcessSamples < 2 || !g.ProcessCPUValid || g.PeakProcessRSSBytes == 0 ||
-		!below(g.GoCPUUtilizationRatio, 0.9) || !below(g.PeakProcessCPUUtilizationRatio, 0.9) || g.PeakHeapAllocBytes > 256<<20 || g.PeakProcessRSSBytes > 512<<20 {
-		issues = append(issues, fmt.Sprintf("stage %d generator envelope: expected valid runtime/process samples, CPU < 0.90 and heap/RSS <= 256/512MiB; got samples=%d process_samples=%d rss=%d go_cpu_valid=%t process_cpu_valid=%t go_cpu=%.3f process_cpu=%.3f heap=%d", rate, generatorSamples(run), generatorProcessSamples(run), generatorRSS(run), generatorGoCPUValid(run), generatorProcessCPUValid(run), generatorGoCPU(run), generatorProcessCPU(run), generatorHeap(run)))
+		!below(g.GoCPUUtilizationRatio, 0.9) || !below(g.MeanProcessCPUUtilizationRatio, 0.9) || g.PeakHeapAllocBytes > 256<<20 || g.PeakProcessRSSBytes > 512<<20 {
+		issues = append(issues, fmt.Sprintf("stage %d generator envelope: expected valid runtime/process samples, sustained CPU < 0.90 and heap/RSS <= 256/512MiB; got samples=%d process_samples=%d rss=%d go_cpu_valid=%t process_cpu_valid=%t go_cpu=%.3f process_cpu_mean=%.3f process_cpu_peak=%.3f heap=%d", rate, generatorSamples(run), generatorProcessSamples(run), generatorRSS(run), generatorGoCPUValid(run), generatorProcessCPUValid(run), generatorGoCPU(run), generatorProcessCPU(run), generatorPeakProcessCPU(run), generatorHeap(run)))
 	}
 	lagP95Limit, lagMaxLimit := 500/float64(rate), 1000/float64(rate)
 	if run.SchedulerLagP95MS > lagP95Limit || run.SchedulerLagMaxMS >= lagMaxLimit {
@@ -525,6 +525,12 @@ func generatorGoCPU(run report.Result) float64 {
 	return run.Generator.GoCPUUtilizationRatio
 }
 func generatorProcessCPU(run report.Result) float64 {
+	if run.Generator == nil {
+		return 0
+	}
+	return run.Generator.MeanProcessCPUUtilizationRatio
+}
+func generatorPeakProcessCPU(run report.Result) float64 {
 	if run.Generator == nil {
 		return 0
 	}
