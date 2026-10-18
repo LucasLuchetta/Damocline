@@ -105,7 +105,9 @@ Use a campaign when a short exploratory probe is insufficient. Each trial runs w
 .\damocline.exe campaign --config .\myapp.local.json --warmup 30s --observation 5m --spike-users 20 --spike-duration 30s --recovery 30s --repeats 2 --authorized --out reports\campaign.json
 ```
 
-The whole campaign is bounded to 15 minutes. Observation can last up to 10 minutes; warm-up, spike, and recovery are bounded to 3 minutes. An optional spike must use more VUs than the base scenario and stays inside the existing 50-VU safety ceiling. The campaign stops at the first non-passing trial. Configure `window_duration` in the scenario to evaluate request p95 and errors throughout an observation phase. It records phase reports for later comparison. It does not yet provide percentile confidence intervals or a sustained-capacity certificate.
+The whole campaign is bounded to 15 minutes. Observation can last up to 10 minutes; warm-up, spike, and recovery are bounded to 3 minutes. An optional spike must use more VUs than the base scenario and stays inside the existing 50-VU safety ceiling. The campaign stops at the first non-passing trial. The default wall-time cap includes up to 30 seconds of drain per scheduled phase and repeat; an explicit `--budget` may be shorter, in which case it can abort during drain. An aborted trial records whether the campaign deadline expired or its caller interrupted it. The dry run prints the effective cap and every planned trial/phase with its duration and VU level.
+
+Configure `window_duration` in the scenario to control request p95 and error windows. When omitted, the campaign creates at least four windows per non-warm-up phase, each no longer than 30 seconds. Schema-v2 reports distinguish observed PASS/FAIL from invalid delivery and incomplete evidence. Observation requires at least three complete windows with 20 requests each: a first-to-last p95 rise above both 20% and 5 ms, or throughput loss above 20%, is labeled `NON_STATIONARY` and makes the campaign inconclusive. A passing screen means only that this large drift was not detected. It does not establish stationarity or sustainable capacity.
 
 Assess a completed campaign against an owner demand target without making HTTP
 requests:
@@ -119,7 +121,7 @@ observation and recovery phases. It calculates the required synthetic
 workload-equivalent actor count and reports whether the recorded base VU level
 exactly matched that target **under the saved test conditions**. It is not a prediction of
 server capacity, a diagnosis of the limiting component, or a recommendation to
-buy infrastructure.
+buy infrastructure. Schema-v2 evidence also requires the exact planned phase order, load, duration, target, classification and recomputed drift screen. Older schema-v1 reports remain readable but cannot support a positive demand conclusion.
 
 ## Synthetic write data and explicit cleanup
 
