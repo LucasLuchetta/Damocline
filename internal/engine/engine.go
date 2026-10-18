@@ -762,7 +762,7 @@ func isTLSFailure(err error) bool {
 	return strings.Contains(message, "tls") || strings.Contains(message, "x509") || strings.Contains(message, "certificate")
 }
 
-func ms(d time.Duration) float64 { return float64(d.Microseconds()) / 1000 }
+func ms(d time.Duration) float64 { return float64(d) / float64(time.Millisecond) }
 
 func interpolateURL(base *url.URL, pathTemplate string, variables map[string]string) (string, error) {
 	pathOnly, query, hasQuery := strings.Cut(pathTemplate, "?")

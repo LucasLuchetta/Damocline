@@ -36,11 +36,11 @@ func passingArtifact(t *testing.T) artifact {
 		GOMAXPROCS: runtime.GOMAXPROCS, GoVersion: runtime.GoVersion, RunnerVersion: runtime.RunnerVersion}
 	f := Fixture{NetworkMode: "loopback_same_host_separate_process", WorkloadModel: "open_loop_journey_arrivals",
 		Method: "GET", HealthyResponseBytes: 4096, HealthyDelay: "20ms", StageDuration: "5s", SoakDuration: "30s",
-		StageUsers: 10, MaximumRPS: 100, Repeats: 1, HealthyRates: []int{2, 5, 10}}
-	stages := []Stage{{ArrivalRate: 2, Scheduled: 10, Started: 10, Completed: 10, Outcome: "PASS"},
-		{ArrivalRate: 5, Scheduled: 25, Started: 25, Completed: 25, Outcome: "PASS"},
-		{ArrivalRate: 10, Scheduled: 50, Started: 50, Completed: 50, Outcome: "PASS"}}
-	rec, err := NewRecord(start, start.Add(time.Minute), g, f, stages, "REFERENCE_SMOKE_PASSED")
+		StageUsers: 10, MaximumRPS: 100, Repeats: 1, HealthyRates: []int{2, 5, 10}, WorkloadProfiles: ReferenceWorkloadProfiles()}
+	stages := []Stage{{ArrivalRate: 2, MaxRPS: 50, Scheduled: 10, Started: 10, Completed: 10, Outcome: "PASS"},
+		{ArrivalRate: 5, MaxRPS: 50, Scheduled: 25, Started: 25, Completed: 25, Outcome: "PASS"},
+		{ArrivalRate: 10, MaxRPS: 50, Scheduled: 50, Started: 50, Completed: 50, Outcome: "PASS"}}
+	rec, err := NewRecord(start, start.Add(time.Minute), g, f, stages, "REFERENCE_SMOKE_PASSED", passingWorkloadObservations())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,6 +51,51 @@ func passingArtifact(t *testing.T) artifact {
 	a := artifact{SchemaVersion: 1, Status: rec.Status, Preflight: rec, Runs: runs}
 	a.SchedulerLag = passedLagFixture()
 	return a
+}
+
+func passingWorkloadObservations() []WorkloadObservation {
+	profiles := ReferenceWorkloadProfiles()
+	observations := make([]WorkloadObservation, 0, len(profiles))
+	for _, profile := range profiles {
+		planned := int64(profile.ArrivalRate * 5)
+		requestBytes := int64(profile.RequestBodyBytes) * planned
+		responseBytes := int64(profile.ResponseBodyBytes) * planned
+		observations = append(observations, WorkloadObservation{
+			ProfileID: profile.ID, Scheduled: planned, Admitted: planned, Started: planned,
+			Completed: planned, Outcome: "PASS", ClientCompleteBodyObservations: planned,
+			ClientResponseMinBytes: int64(profile.ResponseBodyBytes),
+			ClientResponseMaxBytes: int64(profile.ResponseBodyBytes), ClientResponseTotalBytes: responseBytes,
+			ServerReceived: planned, ServerCompleted: planned,
+			ServerRequestBodyBytes: requestBytes, ServerResponseBodyBytes: responseBytes,
+		})
+	}
+	return observations
+}
+
+func TestSchemaThreeRejectsAlteredOrMissingWorkloadEvidence(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*Record)
+	}{
+		{"missing profile", func(record *Record) {
+			record.Fixture.WorkloadProfiles = record.Fixture.WorkloadProfiles[:len(record.Fixture.WorkloadProfiles)-1]
+		}},
+		{"missing observation", func(record *Record) {
+			record.WorkloadObservations = record.WorkloadObservations[:len(record.WorkloadObservations)-1]
+		}},
+		{"request bytes altered", func(record *Record) { record.WorkloadObservations[4].ServerRequestBodyBytes-- }},
+		{"response bytes altered", func(record *Record) { record.WorkloadObservations[1].ClientResponseTotalBytes++ }},
+		{"rate pair altered", func(record *Record) { record.Fixture.WorkloadProfiles[0].MaxRPS++ }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			artifact := passingArtifact(t)
+			test.mutate(&artifact.Preflight)
+			if err := ValidateRecord(artifact.Preflight); err == nil {
+				t.Fatal("altered schema-v3 workload evidence was accepted")
+			}
+		})
+	}
 }
 
 func TestLoadRecordRequiresValidArtifactAndReconciledStageLedgers(t *testing.T) {

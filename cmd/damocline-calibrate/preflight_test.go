@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/LucasLuchetta/Damocline/internal/calibration"
 )
 
 func testPreflightInputs(extended bool, repeats int) (preflightGenerator, preflightFixture, []preflightStage) {
@@ -30,12 +32,37 @@ func testPreflightInputs(extended bool, repeats int) (preflightGenerator, prefli
 			f.HealthyRates = append(f.HealthyRates, rate)
 			n := int64(rate * 5)
 			stages = append(stages, preflightStage{
-				ArrivalRate: rate, Scheduled: n, Started: n,
+				ArrivalRate: rate, MaxRPS: max(50, rate), Scheduled: n, Started: n,
 				Completed: n, Outcome: "PASS",
 			})
 		}
 	}
 	return g, f, stages
+}
+
+func passingWorkloadObservations() []preflightWorkloadObservation {
+	profiles := preflightWorkloadProfilesForTest()
+	observations := make([]preflightWorkloadObservation, 0, len(profiles))
+	for _, profile := range profiles {
+		planned := int64(profile.ArrivalRate * 5)
+		requestBytes := int64(profile.RequestBodyBytes) * planned
+		responseBytes := int64(profile.ResponseBodyBytes) * planned
+		observations = append(observations, preflightWorkloadObservation{
+			ProfileID: profile.ID, Scheduled: planned, Admitted: planned,
+			Started: planned, Completed: planned, Outcome: "PASS",
+			ClientCompleteBodyObservations: planned,
+			ClientResponseMinBytes:         int64(profile.ResponseBodyBytes),
+			ClientResponseMaxBytes:         int64(profile.ResponseBodyBytes),
+			ClientResponseTotalBytes:       responseBytes,
+			ServerReceived:                 planned, ServerCompleted: planned,
+			ServerRequestBodyBytes: requestBytes, ServerResponseBodyBytes: responseBytes,
+		})
+	}
+	return observations
+}
+
+func preflightWorkloadProfilesForTest() []calibration.WorkloadProfile {
+	return calibration.ReferenceWorkloadProfiles()
 }
 
 func TestPreflightRoundTripVersionAndEvidence(t *testing.T) {
@@ -49,8 +76,9 @@ func TestPreflightRoundTripVersionAndEvidence(t *testing.T) {
 		{false, 3, 10},
 	} {
 		g, f, stages := testPreflightInputs(tc.extended, tc.repeats)
+		f.WorkloadProfiles = preflightWorkloadProfilesForTest()
 		start := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
-		rec, err := newPreflightRecord(start, start.Add(time.Minute), g, f, stages, "REFERENCE_SMOKE_PASSED")
+		rec, err := newPreflightRecord(start, start.Add(time.Minute), g, f, stages, "REFERENCE_SMOKE_PASSED", passingWorkloadObservations())
 		if err != nil {
 			t.Fatal(err)
 		}

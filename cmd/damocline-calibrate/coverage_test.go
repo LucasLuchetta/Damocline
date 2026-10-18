@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/LucasLuchetta/Damocline/internal/calibration"
 	"github.com/LucasLuchetta/Damocline/internal/config"
 	"github.com/LucasLuchetta/Damocline/internal/report"
 )
@@ -19,8 +20,9 @@ import (
 func validCoverageCalibration(t *testing.T, extended bool) assessment {
 	t.Helper()
 	g, f, stages := testPreflightInputs(extended, 1)
+	f.WorkloadProfiles = calibration.ReferenceWorkloadProfiles()
 	start := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
-	p, err := newPreflightRecord(start, start.Add(time.Minute), g, f, stages, "REFERENCE_SMOKE_PASSED")
+	p, err := newPreflightRecord(start, start.Add(time.Minute), g, f, stages, "REFERENCE_SMOKE_PASSED", passingWorkloadObservations())
 	if err != nil {
 		t.Fatal(err)
 	}
