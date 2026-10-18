@@ -98,6 +98,58 @@ func TestQualityLimitsExcludedInvalidProcessSamples(t *testing.T) {
 	}
 }
 
+func TestQualityLimitsHighProcessCPUWithoutCallingItMalformed(t *testing.T) {
+	r := validSyntheticQualityRun()
+	r.SchemaVersion = 10
+	g := *r.Generator
+	g.GOMAXPROCS = 1
+	g.ObservedSeconds = 10
+	g.SamplingIntervalMS = 250
+	g.SampleCollectionTotalMS = 2
+	g.SampleCollectionMaxMS = 0.5
+	g.MaxSampleGapMS = 250
+	g.ProcessSamples = g.Samples
+	g.ProcessCPUSamples = g.ProcessSamples - 1
+	g.ProcessCPUValid = true
+	g.PeakProcessCPUUtilizationRatio = 1.3
+	g.MeanProcessCPUUtilizationRatio = 1.3
+	g.PeakProcessRSSBytes = 4096
+	g.GoCPUCapacitySeconds = 10
+	g.PeakHeapAllocBytes = 1024
+	g.PeakGoroutines = 2
+	r.Generator = &g
+	q := AssessQuality(r)
+	if q.State != QualityLimited || !strings.Contains(strings.Join(q.Findings, " "), "Mean generator process CPU reached at least 90%") {
+		t.Fatalf("high process CPU should limit generator-quality evidence without being called invalid: %+v", q)
+	}
+}
+
+func TestQualityUsesWindowMeanInsteadOfIsolatedProcessCPUPeak(t *testing.T) {
+	r := validSyntheticQualityRun()
+	r.SchemaVersion = 10
+	g := *r.Generator
+	g.GOMAXPROCS = 1
+	g.ObservedSeconds = 10
+	g.SamplingIntervalMS = 250
+	g.SampleCollectionTotalMS = 2
+	g.SampleCollectionMaxMS = 0.5
+	g.MaxSampleGapMS = 250
+	g.ProcessSamples = g.Samples
+	g.ProcessCPUSamples = g.ProcessSamples - 1
+	g.ProcessCPUValid = true
+	g.PeakProcessRSSBytes = 4096
+	g.PeakProcessCPUUtilizationRatio = 1.3
+	g.MeanProcessCPUUtilizationRatio = 0.08
+	g.GoCPUCapacitySeconds = 10
+	g.PeakHeapAllocBytes = 1024
+	g.PeakGoroutines = 2
+	r.Generator = &g
+	q := AssessQuality(r)
+	if strings.Contains(strings.Join(q.Findings, " "), "sustained generator headroom") {
+		t.Fatalf("an isolated interval peak should not be called sustained process CPU saturation: %+v", q)
+	}
+}
+
 func TestQualityRejectsCorruptedAccounting(t *testing.T) {
 	for _, mutate := range []func(*Result){
 		func(r *Result) { r.Metrics.Success++ },
