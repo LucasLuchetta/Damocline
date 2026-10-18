@@ -17,3 +17,5 @@ The reader does not directly inspect cpuset restrictions or dynamically monitor 
 ## Consequences
 
 Deterministic fixtures cover tight parent quotas and missing parent files for cgroup v1/v2; the report quality evaluator rejects impossible or absent schema-v19 logical CPU evidence. Two Docker Desktop/WSL2 repeated acceptance runs passed all 13 gates each, with 980/980 independent loopback requests and 10/10 transport cases; both manifests record hierarchical quota evidence. This does not establish bare-metal Linux, cross-host equivalence, or a universal CPU capacity result.
+
+Linux CI calibrator smoke runs now use a container with an explicit four-core quota, memory ceiling, and process limit because the hosted runner does not expose verifiable quota ancestry. Positive unit fixtures inject a synthetic capacity; production runtime detection remains fail-closed. This provides reproducible container evidence and does not claim hosted-runner or bare-metal equivalence.

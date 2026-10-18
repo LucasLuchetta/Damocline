@@ -32,7 +32,7 @@ func TestSourceRunnerVersionHasStableVerifiableIdentity(t *testing.T) {
 func passingArtifact(t *testing.T) artifact {
 	t.Helper()
 	start := time.Now().UTC().Truncate(time.Second)
-	runtime := CurrentRuntime()
+	runtime := testRuntime()
 	g := Generator{OS: runtime.OS, Arch: runtime.Arch, LogicalCPUs: runtime.LogicalCPUs,
 		GOMAXPROCS: runtime.GOMAXPROCS, CPUCapacityCores: runtime.CPUCapacityCores,
 		CPUCapacitySource: runtime.CPUCapacitySource, CPUCapacityKnown: runtime.CPUCapacityKnown,
@@ -54,6 +54,21 @@ func passingArtifact(t *testing.T) artifact {
 	a := artifact{SchemaVersion: 1, Status: rec.Status, Preflight: rec, Runs: runs}
 	a.SchedulerLag = passedLagFixture()
 	return a
+}
+
+func testRuntime() Runtime {
+	runtime := CurrentRuntime()
+	if runtime.LogicalCPUs < 1 {
+		runtime.LogicalCPUs = 1
+	}
+	if runtime.GOMAXPROCS < 1 {
+		runtime.GOMAXPROCS = 1
+	}
+	capacity := min(runtime.LogicalCPUs, runtime.GOMAXPROCS)
+	runtime.CPUCapacityCores = float64(capacity)
+	runtime.CPUCapacitySource = "test_fixture_runtime_capacity"
+	runtime.CPUCapacityKnown = true
+	return runtime
 }
 
 func passingWorkloadObservations() []WorkloadObservation {

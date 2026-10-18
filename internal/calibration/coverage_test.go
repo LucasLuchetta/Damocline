@@ -10,7 +10,7 @@ import (
 
 func TestAssessmentMatchesOnlyDeclaredFixtureDimensionsAndKeepsUnknowns(t *testing.T) {
 	a := passingArtifact(t)
-	local := CurrentRuntime()
+	local := testRuntime()
 	a.Preflight.Generator.RunnerVersion = local.RunnerVersion
 	now := time.Now().UTC()
 	a.Preflight.StartedAt = now.Add(-2 * time.Minute).Format(time.RFC3339Nano)
@@ -69,7 +69,7 @@ func TestMatrixWorkloadShapeMatchesExactPOSTBodySizeWithoutRecordingBody(t *test
 
 func TestMatrixRateCeilingRequiresExactCalibratedPair(t *testing.T) {
 	a := passingArtifact(t)
-	local := CurrentRuntime()
+	local := testRuntime()
 	a.Preflight.Generator.RunnerVersion = local.RunnerVersion
 	now := time.Now().UTC()
 	a.Preflight.StartedAt = now.Add(-2 * time.Minute).Format(time.RFC3339Nano)
@@ -86,7 +86,7 @@ func TestMatrixRateCeilingRequiresExactCalibratedPair(t *testing.T) {
 
 func TestConnectionPolicyRequiresExactProfileControls(t *testing.T) {
 	a := passingArtifact(t)
-	local := CurrentRuntime()
+	local := testRuntime()
 	a.Preflight.Generator.RunnerVersion = local.RunnerVersion
 	now := time.Now().UTC()
 	a.Preflight.StartedAt = now.Add(-2 * time.Minute).Format(time.RFC3339Nano)
@@ -176,7 +176,7 @@ func TestSchemaTwoRejectsAlteredWorkloadFingerprint(t *testing.T) {
 
 func TestAssessmentRejectsUnmeasuredRateAndStaleRuntime(t *testing.T) {
 	a := passingArtifact(t)
-	local := CurrentRuntime()
+	local := testRuntime()
 	a.Preflight.Generator.RunnerVersion = local.RunnerVersion
 	a.Preflight.StartedAt = time.Now().Add(-26 * time.Hour).UTC().Format(time.RFC3339Nano)
 	a.Preflight.FinishedAt = time.Now().Add(-25 * time.Hour).UTC().Format(time.RFC3339Nano)
@@ -198,7 +198,7 @@ func TestAssessmentRejectsUnmeasuredRateAndStaleRuntime(t *testing.T) {
 
 func TestAssessmentDoesNotCallMissingRevisionAMismatch(t *testing.T) {
 	a := passingArtifact(t)
-	local := CurrentRuntime()
+	local := testRuntime()
 	a.Preflight.Generator.RunnerVersion = "source-development"
 	now := time.Now().UTC()
 	a.Preflight.StartedAt = now.Add(-2 * time.Minute).Format(time.RFC3339Nano)

@@ -5,6 +5,7 @@ This project follows a human-maintained changelog. No release exists yet.
 ## [Unreleased]
 
 ### Added
+- Run Linux CI calibration inside a bounded container so cgroup CPU capacity is verifiable; use deterministic CPU-capacity fixtures in positive unit tests.
 - Validate hierarchical quota handling with two bounded Docker Desktop/WSL2 acceptance repeats: all 13 gates per run passed, including 980/980 independent loopback requests and 10/10 transport cases. Evidence remains local and gitignored.
 - Walk Linux cgroup v1/v2 CPU quota ancestors and use the tightest finite quota, bounded by logical CPUs and GOMAXPROCS; persist logical CPU count in report schema v19 and fail closed on incomplete ancestor evidence.
 - Record effective generator CPU entitlement separately from logical CPUs and GOMAXPROCS; normalize Linux process/runtime CPU observations against cgroup v1/v2 quotas when verifiable, and fail closed on unknown capacity for positive quality.

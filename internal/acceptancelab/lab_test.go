@@ -21,6 +21,7 @@ func TestRunPersistsPassingRepeatedEvidence(t *testing.T) {
 	result, err := Run(context.Background(), Options{
 		CalibratorPath: calibrator, OutputDir: outDir, Repeats: 2,
 		RunTimeout: 30 * time.Second, Runner: &fixtureRunner{}, qualityAssessor: persistedQualityForHarnessTest,
+		runtimeProvider: verifiedTestRuntime,
 	})
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -70,6 +71,7 @@ func TestRunPreservesFailedAttemptAndContinues(t *testing.T) {
 	result, err := Run(context.Background(), Options{
 		CalibratorPath: calibrator, OutputDir: outDir, Repeats: 2,
 		RunTimeout: 30 * time.Second, Runner: runner, qualityAssessor: persistedQualityForHarnessTest,
+		runtimeProvider: verifiedTestRuntime,
 	})
 	if err == nil {
 		t.Fatal("expected the failed calibration repeat to prevent acceptance")
@@ -275,7 +277,7 @@ func TestQualityRecomputationRejectsSelfDeclaredPositiveState(t *testing.T) {
 }
 
 func TestManifestRuntimeRequiresMatchingVerifiedCPUEntitlement(t *testing.T) {
-	runtimeInfo := calibration.CurrentRuntime()
+	runtimeInfo := verifiedTestRuntime()
 	environment := Environment{
 		OS: runtimeInfo.OS, Architecture: runtimeInfo.Arch, GoVersion: runtimeInfo.GoVersion,
 		RunnerVersion: runtimeInfo.RunnerVersion, LogicalCPUs: runtimeInfo.LogicalCPUs,
@@ -366,7 +368,7 @@ func syntheticCalibration() calibrationDocument {
 	document.Status = "REFERENCE_SMOKE_PASSED"
 	document.Preflight.SchemaVersion = 7
 	document.Preflight.ScenarioFingerprint = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-	runtimeInfo := calibration.CurrentRuntime()
+	runtimeInfo := verifiedTestRuntime()
 	document.Preflight.Generator = calibration.Generator{
 		OS: runtimeInfo.OS, Arch: runtimeInfo.Arch, LogicalCPUs: runtimeInfo.LogicalCPUs,
 		GOMAXPROCS: runtimeInfo.GOMAXPROCS, CPUCapacityCores: runtimeInfo.CPUCapacityCores,
@@ -476,6 +478,20 @@ func syntheticCalibration() calibrationDocument {
 	document.FailureRun.Outcome = "FAIL"
 	document.FailureServer = calibrationServer{Received: 10, Completed: 10, Success: 8, Failures: 2}
 	return document
+}
+
+func verifiedTestRuntime() calibration.Runtime {
+	runtimeInfo := calibration.CurrentRuntime()
+	if runtimeInfo.LogicalCPUs < 1 {
+		runtimeInfo.LogicalCPUs = 1
+	}
+	if runtimeInfo.GOMAXPROCS < 1 {
+		runtimeInfo.GOMAXPROCS = 1
+	}
+	runtimeInfo.CPUCapacityCores = float64(min(runtimeInfo.LogicalCPUs, runtimeInfo.GOMAXPROCS))
+	runtimeInfo.CPUCapacitySource = "test_fixture_runtime_capacity"
+	runtimeInfo.CPUCapacityKnown = true
+	return runtimeInfo
 }
 
 func syntheticTransport() []byte {
