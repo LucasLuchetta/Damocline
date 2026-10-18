@@ -557,6 +557,10 @@ func TestSupportedReportSchemaGoldensRoundTrip(t *testing.T) {
 				if got.Config.ConnectionPolicy != "reuse" {
 					t.Fatal("schema-v14 connection policy was not preserved")
 				}
+			case 15:
+				if got.Config.ConnectionPolicy != "reuse" {
+					t.Fatal("schema-v15 connection policy was not preserved")
+				}
 			}
 		})
 	}

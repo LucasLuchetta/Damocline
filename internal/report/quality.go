@@ -2,6 +2,8 @@ package report
 
 import (
 	"math"
+	"net"
+	"net/url"
 	"time"
 
 	"github.com/LucasLuchetta/Damocline/internal/calibration"
@@ -10,8 +12,8 @@ import (
 
 // Quality describes whether arithmetic delivery/accounting evidence can be
 // trusted. It is orthogonal to SLO Outcome. Positive calibration equivalence
-// is not yet available, so this first slice intentionally never produces
-// VALID_WITHIN_ENVELOPE for an arbitrary application run.
+// is available only for the calibrator-owned loopback soak with independently
+// reconciled server counters.
 type Quality struct {
 	State    string   `json:"state"`
 	Findings []string `json:"findings"`
@@ -28,6 +30,7 @@ const (
 // No secrets, hostnames, routes or individual response content are reported.
 func AssessQuality(r Result) *Quality {
 	q := &Quality{State: QualityLimited}
+	controlledReference := false
 	invalidate := func(reason string) {
 		q.State = QualityInvalid
 		q.Findings = append(q.Findings, reason)
@@ -295,10 +298,13 @@ func AssessQuality(r Result) *Quality {
 	} else if err := calibration.ValidateRecord(r.Calibration.Record); err != nil {
 		invalidate("Attached generator calibration record is malformed or inconsistent.")
 	} else {
+		controlledReference = controlledReferenceEvidenceValid(r)
 		unverified := make(map[string]bool)
 		observedSizeDimensions := 0
 		observedLatencyDimensions := 0
 		workloadShapeDimensions := 0
+		responseShapeDimensions := 0
+		fixtureIdentityDimensions := 0
 		for _, dimension := range r.Calibration.Coverage.Dimensions {
 			if dimension.Name == "" || (dimension.Status != "MATCHED" && dimension.Status != "OUTSIDE_REFERENCE" && dimension.Status != "UNVERIFIED") {
 				invalidate("Attached calibration coverage contains an invalid dimension.")
@@ -306,6 +312,26 @@ func AssessQuality(r Result) *Quality {
 			}
 			if dimension.Status != "MATCHED" {
 				unverified[dimension.Name] = true
+			}
+			if dimension.Name == "response_shape" {
+				responseShapeDimensions++
+				expected := "UNVERIFIED"
+				if controlledReference {
+					expected = "MATCHED"
+				}
+				if r.SchemaVersion >= 15 && dimension.Status != expected {
+					invalidate("Attached response-shape status disagrees with controlled fixture observations.")
+				}
+			}
+			if dimension.Name == "fixture_identity" {
+				fixtureIdentityDimensions++
+				expected := "UNVERIFIED"
+				if controlledReference {
+					expected = "MATCHED"
+				}
+				if r.SchemaVersion >= 15 && dimension.Status != expected {
+					invalidate("Attached fixture-identity status disagrees with controlled server evidence.")
+				}
 			}
 			if dimension.Name == "observed_response_size" {
 				observedSizeDimensions++
@@ -326,7 +352,21 @@ func AssessQuality(r Result) *Quality {
 				}
 			}
 		}
-		if r.Calibration.Coverage.Status != "INCONCLUSIVE" || !unverified["response_shape"] || !unverified["fixture_identity"] {
+		if controlledReference {
+			if r.Calibration.Coverage.Status != "MATCHED" || unverified["response_shape"] || unverified["fixture_identity"] {
+				invalidate("Controlled reference coverage status is inconsistent with its observed evidence.")
+			}
+			if responseShapeDimensions != 1 || fixtureIdentityDimensions != 1 || observedSizeDimensions != 1 ||
+				observedLatencyDimensions != 1 || workloadShapeDimensions != 1 {
+				invalidate("Controlled reference coverage omits or duplicates a required evidence dimension.")
+			}
+			for _, dimension := range r.Calibration.Coverage.Dimensions {
+				if dimension.Status != "MATCHED" {
+					invalidate("A controlled reference qualification contains an unmatched required calibration dimension.")
+					break
+				}
+			}
+		} else if r.Calibration.Coverage.Status != "INCONCLUSIVE" || !unverified["response_shape"] || !unverified["fixture_identity"] {
 			invalidate("Attached calibration coverage omits required response-shape or fixture-identity uncertainty.")
 		} else {
 			if r.SchemaVersion >= 12 && observedSizeDimensions != 1 {
@@ -338,6 +378,9 @@ func AssessQuality(r Result) *Quality {
 			if r.SchemaVersion >= 12 && workloadShapeDimensions != 1 {
 				invalidate("Attached calibration coverage omits unique declared workload-shape evidence.")
 			}
+			if r.SchemaVersion >= 15 && (responseShapeDimensions != 1 || fixtureIdentityDimensions != 1) {
+				invalidate("Current calibration coverage omits unique response-shape or fixture-identity evidence.")
+			}
 			if observedSizeDimensions == 1 {
 				for _, dimension := range r.Calibration.Coverage.Dimensions {
 					if dimension.Name != "observed_response_size" {
@@ -345,7 +388,9 @@ func AssessQuality(r Result) *Quality {
 					}
 					switch dimension.Status {
 					case "MATCHED":
-						limit("Observed response sizes match the fixed fixture size, but response timing distribution and endpoint identity remain unverified.")
+						if !controlledReference {
+							limit("Observed response sizes match the fixed fixture size, but response timing distribution and endpoint identity remain unverified.")
+						}
 					case "OUTSIDE_REFERENCE":
 						limit("One or more observed response sizes are outside the fixed fixture size; generator equivalence is not established.")
 					default:
@@ -362,8 +407,10 @@ func AssessQuality(r Result) *Quality {
 					}
 					switch dimension.Status {
 					case "MATCHED":
-						limit("Observed request p50 and p95 fall within the local fixture guardrail; " +
-							"percentile dependence and observation-window representativeness remain unverified.")
+						if !controlledReference {
+							limit("Observed request p50 and p95 fall within the local fixture guardrail; " +
+								"percentile dependence and observation-window representativeness remain unverified.")
+						}
 					case "OUTSIDE_REFERENCE":
 						limit("One or more observed request percentiles fall outside the local fixture guardrail; " +
 							"this does not identify the cause.")
@@ -379,7 +426,9 @@ func AssessQuality(r Result) *Quality {
 					}
 					switch dimension.Status {
 					case "MATCHED":
-						limit("The declared request/session shape matches the fixed calibration; runtime headroom, endpoint identity, and application behavior are separate evidence gates.")
+						if !controlledReference {
+							limit("The declared request/session shape matches the fixed calibration; runtime headroom, endpoint identity, and application behavior are separate evidence gates.")
+						}
 					case "OUTSIDE_REFERENCE":
 						limit("The declared request/session shape is outside the fixed calibration workload.")
 					default:
@@ -389,7 +438,56 @@ func AssessQuality(r Result) *Quality {
 			}
 		}
 	}
+	if controlledReference && q.State != QualityInvalid && len(q.Findings) == 0 {
+		q.State = QualityValid
+	}
 	return q
+}
+
+func controlledReferenceEvidenceValid(r Result) bool {
+	e := r.ReferenceEvidence
+	if r.SchemaVersion < 15 || e == nil || e.Kind != "calibrator_child_process_loopback_soak_v1" ||
+		r.Calibration == nil || calibration.ValidateRecord(r.Calibration.Record) != nil ||
+		r.Calibration.Record.Status != "REFERENCE_SMOKE_PASSED" ||
+		e.FixtureFingerprint != r.Calibration.Record.ScenarioFingerprintSHA256 {
+		return false
+	}
+	u, err := url.Parse(r.Target)
+	if err != nil || u == nil || u.Scheme != "http" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" ||
+		net.ParseIP(u.Hostname()) == nil || !net.ParseIP(u.Hostname()).Equal(net.ParseIP("127.0.0.1")) {
+		return false
+	}
+	f := r.Calibration.Record.Fixture
+	if f.NetworkMode != "loopback_same_host_separate_process" || f.HealthyResponseBytes != 4096 || f.HealthyDelay != "20ms" ||
+		r.Config.ConnectionPolicy != "reuse" || r.Config.Users != f.StageUsers || r.Config.Mode != "arrival" ||
+		r.Config.ArrivalRate != 10 || r.Config.Duration != f.SoakDuration || r.Config.RequestTimeout != "1s" ||
+		r.Config.MaxRPS < r.Config.ArrivalRate || r.Config.MaxRPS > f.MaximumRPS || r.Config.RampUp != "" ||
+		(r.Config.ThinkTime != "" && r.Config.ThinkTime != "0s") || r.Config.SeparateSessions || len(r.Config.Profiles) != 0 ||
+		len(r.Profiles) != 0 || len(r.Steps) != 1 {
+		return false
+	}
+	step := r.Steps[0]
+	if (step.Profile != "" && step.Profile != "default") || step.Name != "work" || step.Method != "GET" || step.Path != "/work" {
+		return false
+	}
+	if r.Metrics.Total <= 0 || r.Metrics.Success != r.Metrics.Total || r.Metrics.Failures != 0 || r.Metrics.Cancelled != 0 ||
+		r.ArrivalsScheduled != int64(r.Metrics.Total) || r.IterationsStarted != r.ArrivalsScheduled ||
+		r.IterationsCompleted != r.IterationsStarted || r.ArrivalsDropped != 0 ||
+		e.ServerReceived != int64(r.Metrics.Total) || e.ServerCompleted != e.ServerReceived ||
+		e.ServerSuccess != e.ServerReceived || e.ServerFailures != 0 || e.ServerCancelled != 0 || e.ServerRejected != 0 {
+		return false
+	}
+	if step.Metrics.Total != r.Metrics.Total || step.Metrics.Success != r.Metrics.Success || step.Metrics.Failures != 0 ||
+		step.Metrics.ResponseBody.CompleteObservations != int64(r.Metrics.Total) ||
+		step.Metrics.ResponseBody.IncompleteObservations != 0 || step.Metrics.ResponseBody.OversizedObservations != 0 ||
+		step.Metrics.ResponseBody.MinBytes != int64(f.HealthyResponseBytes) ||
+		step.Metrics.ResponseBody.MaxBytes != int64(f.HealthyResponseBytes) ||
+		step.Metrics.ResponseBody.TotalBytes != int64(r.Metrics.Total*f.HealthyResponseBytes) {
+		return false
+	}
+	return AssessObservedResponseSize(r, int64(f.HealthyResponseBytes)).Status == "MATCHED" &&
+		AssessObservedResponseLatency(r).Status == "MATCHED" &&
+		AssessDeclaredWorkloadShape(r, r.Calibration.Record).Status == "MATCHED"
 }
 
 func validObservationWindowBounds(r Result) bool {
@@ -747,7 +845,7 @@ func AssessDeclaredWorkloadShape(r Result, record calibration.Record) calibratio
 			Reason: "The fixed calibration uses reusable HTTP connections; the saved connection policy differs or is unknown.",
 		}
 	}
-	if step.Profile != "default" || step.Name != "work" || step.Method != "GET" || step.Path != "/work" {
+	if (step.Profile != "" && step.Profile != "default") || step.Name != "work" || step.Method != "GET" || step.Path != "/work" {
 		return calibration.Dimension{
 			Name:   "declared_workload_shape",
 			Status: "OUTSIDE_REFERENCE",

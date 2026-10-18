@@ -9,11 +9,13 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"math"
 	"net"
 	"net/http"
 	"os"
 	"os/exec"
+	"reflect"
 	"runtime"
 	"strconv"
 	"strings"
@@ -132,7 +134,13 @@ func runFixture() error {
 	if err != nil {
 		return err
 	}
-	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { current.Load().ServeHTTP(w, r) }), ReadHeaderTimeout: 2 * time.Second, IdleTimeout: 5 * time.Second, MaxHeaderBytes: 8 << 10}
+	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/__damocline_snapshot" {
+			reference.ServeReferenceControl(current.Load())(w, r)
+			return
+		}
+		current.Load().ServeHTTP(w, r)
+	}), ReadHeaderTimeout: 2 * time.Second, IdleTimeout: 5 * time.Second, MaxHeaderBytes: 8 << 10}
 	finished := make(chan error, 1)
 	go func() { finished <- server.Serve(listener) }()
 	fmt.Println("READY " + listener.Addr().String())
@@ -272,7 +280,15 @@ func runMatrix(path string, repeats int, extended bool) error {
 	if err != nil {
 		return err
 	}
+	soakBefore, err := referenceSnapshot(address)
+	if err != nil {
+		return fmt.Errorf("read controlled fixture counters before soak: %w", err)
+	}
 	result.SoakRun = engine.Run(ctx, soakValidated)
+	soakAfter, err := referenceSnapshot(address)
+	if err != nil {
+		return fmt.Errorf("read controlled fixture counters after soak: %w", err)
+	}
 	if _, err := stdin.Write([]byte("overload\n")); err != nil {
 		return err
 	}
@@ -378,8 +394,52 @@ func runMatrix(path string, repeats int, extended bool) error {
 	if err != nil {
 		return fmt.Errorf("construct preflight evidence: %w", err)
 	}
+	result.SoakRun.ReferenceEvidence = &report.ControlledReferenceEvidence{
+		Kind: "calibrator_child_process_loopback_soak_v1", FixtureFingerprint: result.Preflight.ScenarioFingerprintSHA256,
+		ServerReceived: soakAfter.Received - soakBefore.Received, ServerCompleted: soakAfter.Completed - soakBefore.Completed,
+		ServerSuccess: soakAfter.Success - soakBefore.Success, ServerFailures: soakAfter.Failures - soakBefore.Failures,
+		ServerCancelled: soakAfter.Cancelled - soakBefore.Cancelled, ServerRejected: soakAfter.Rejected - soakBefore.Rejected,
+	}
+	result.SoakRun.ReferenceEvidence.FixtureFingerprint = result.Preflight.ScenarioFingerprintSHA256
+	soakCoverage := calibration.AssessScenario(soakScenario, result.Preflight, calibration.CurrentRuntime(), time.Now().UTC())
+	soakCoverage.Dimensions = append(soakCoverage.Dimensions,
+		report.AssessObservedResponseSize(result.SoakRun, int64(result.Preflight.Fixture.HealthyResponseBytes)),
+		report.AssessObservedResponseLatency(result.SoakRun),
+	)
+	controlled := controlledReferenceEvidenceLooksMatched(result.SoakRun)
+	for i := range soakCoverage.Dimensions {
+		dimension := &soakCoverage.Dimensions[i]
+		if dimension.Name == "response_shape" || dimension.Name == "fixture_identity" {
+			if controlled {
+				dimension.Status = "MATCHED"
+				dimension.Reason = "Observed response-body dimensions and independent counters match the calibrator-owned child fixture."
+			}
+		}
+	}
+	if controlled {
+		soakCoverage.Status = "MATCHED"
+		for _, dimension := range soakCoverage.Dimensions {
+			if dimension.Status != "MATCHED" {
+				soakCoverage.Status = "INCONCLUSIVE"
+				break
+			}
+		}
+	}
+	result.SoakRun.Calibration = &report.CalibrationEvidence{Record: result.Preflight, Coverage: soakCoverage}
+	result.SoakRun.Quality = report.AssessQuality(result.SoakRun)
 	if err := report.WriteAnyJSON(path, result); err != nil {
 		return err
+	}
+	if err := validatePersistedSoakQuality(path, result.SoakRun.Quality.State); err != nil {
+		return err
+	}
+	if result.Status == "REFERENCE_SMOKE_PASSED" &&
+		(result.SoakRun.Quality == nil || result.SoakRun.Quality.State != report.QualityValid) {
+		state := "missing"
+		if result.SoakRun.Quality != nil {
+			state = result.SoakRun.Quality.State
+		}
+		return fmt.Errorf("controlled soak did not qualify measurement quality: %s", state)
 	}
 	fmt.Printf("%s: %d healthy stages plus %s soak, fixture %d/%d completed; scheduler lag %s across %d injected observations (tolerance ±%.0f ms); slow-target drops %d/%d; recovery %d/%d success; %d discrepancies. Report: %s\n",
 		result.Status, len(result.Runs), soakDuration, result.Server.Completed, result.Server.Received,
@@ -390,6 +450,54 @@ func runMatrix(path string, repeats int, extended bool) error {
 		return fmt.Errorf("reference check found %d discrepancies: %s", len(result.Checks), strings.Join(result.Checks, "; "))
 	}
 	return nil
+}
+
+func validatePersistedSoakQuality(path, expectedState string) error {
+	file, err := os.Open(path)
+	if err != nil {
+		return errors.New("written calibration report is unavailable or exceeds the read limit")
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, maxCalibrationBytes+1))
+	if err != nil || len(data) == 0 || len(data) > maxCalibrationBytes {
+		return errors.New("written calibration report is unavailable or exceeds the read limit")
+	}
+	var persisted assessment
+	if err := json.Unmarshal(data, &persisted); err != nil {
+		return errors.New("written calibration report cannot be read back")
+	}
+	if persisted.SoakRun.Quality == nil || persisted.SoakRun.Quality.State != expectedState {
+		return errors.New("written calibration report changed its soak quality state")
+	}
+	recomputed := report.AssessQuality(persisted.SoakRun)
+	if !reflect.DeepEqual(recomputed, persisted.SoakRun.Quality) {
+		return errors.New("written soak quality cannot be recomputed from persisted evidence")
+	}
+	return nil
+}
+
+func referenceSnapshot(address string) (reference.Snapshot, error) {
+	client := &http.Client{Timeout: time.Second}
+	response, err := client.Get("http://" + address + "/__damocline_snapshot")
+	if err != nil {
+		return reference.Snapshot{}, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return reference.Snapshot{}, fmt.Errorf("snapshot endpoint returned HTTP %d", response.StatusCode)
+	}
+	var snapshot reference.Snapshot
+	if err := json.NewDecoder(io.LimitReader(response.Body, 4096)).Decode(&snapshot); err != nil {
+		return reference.Snapshot{}, err
+	}
+	return snapshot, nil
+}
+
+func controlledReferenceEvidenceLooksMatched(run report.Result) bool {
+	e := run.ReferenceEvidence
+	return e != nil && e.ServerReceived == int64(run.Metrics.Total) &&
+		e.ServerCompleted == e.ServerReceived && e.ServerSuccess == e.ServerReceived &&
+		e.ServerFailures == 0 && e.ServerCancelled == 0 && e.ServerRejected == 0
 }
 
 func checkSoak(run report.Result) []string {

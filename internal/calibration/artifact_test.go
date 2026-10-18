@@ -20,6 +20,14 @@ func passedLagFixture() SchedulerLag {
 	return c
 }
 
+func TestSourceRunnerVersionHasStableVerifiableIdentity(t *testing.T) {
+	first := SourceRunnerVersion()
+	second := SourceRunnerVersion()
+	if first == "source-development" || first != second || !versionPattern.MatchString(first) {
+		t.Fatalf("runner identity is unavailable, malformed, or unstable: first=%q second=%q", first, second)
+	}
+}
+
 func passingArtifact(t *testing.T) artifact {
 	t.Helper()
 	start := time.Now().UTC().Truncate(time.Second)

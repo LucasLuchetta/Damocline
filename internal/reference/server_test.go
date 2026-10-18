@@ -1,6 +1,7 @@
 package reference
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -8,6 +9,37 @@ import (
 	"testing"
 	"time"
 )
+
+func TestControlSnapshotDoesNotEnterWorkRequestLedger(t *testing.T) {
+	h, err := New(Config{ResponseBytes: 4096, MaxConcurrent: 1, MaxRequests: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/__damocline_snapshot", ServeReferenceControl(h))
+	mux.Handle("/", h)
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	response, err := http.Get(srv.URL + "/__damocline_snapshot")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var snapshot Snapshot
+	err = json.NewDecoder(response.Body).Decode(&snapshot)
+	_ = response.Body.Close()
+	if err != nil || response.StatusCode != http.StatusOK || snapshot != (Snapshot{}) {
+		t.Fatalf("control read altered or failed to read the work ledger: status=%d snapshot=%+v err=%v", response.StatusCode, snapshot, err)
+	}
+	response, err = http.Get(srv.URL + "/work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = io.Copy(io.Discard, response.Body)
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusOK || h.Snapshot().Received != 1 || h.Snapshot().Completed != 1 {
+		t.Fatalf("work request was not independently counted: status=%d snapshot=%+v", response.StatusCode, h.Snapshot())
+	}
+}
 
 func TestBoundedQueueAndRecovery(t *testing.T) {
 	h, err := New(Config{Delay: 80 * time.Millisecond, FailureFirst: 1, MaxConcurrent: 1, MaxRequests: 5})

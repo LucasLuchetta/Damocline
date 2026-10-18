@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"os"
 	"regexp"
 	"runtime/debug"
 	"time"
@@ -82,15 +84,27 @@ var versionPattern = regexp.MustCompile(`^[A-Za-z0-9._@+-]{1,120}$`)
 // build version. It never embeds working-tree paths or local build settings.
 func SourceRunnerVersion() string {
 	info, ok := debug.ReadBuildInfo()
-	if !ok {
-		return "source-development"
-	}
-	for _, item := range info.Settings {
-		if item.Key == "vcs.revision" && regexp.MustCompile(`^[0-9a-fA-F]{40}$`).MatchString(item.Value) {
-			return "source-" + item.Value[:12]
+	if ok {
+		for _, item := range info.Settings {
+			if item.Key == "vcs.revision" && regexp.MustCompile(`^[0-9a-fA-F]{40}$`).MatchString(item.Value) {
+				return "source-" + item.Value[:12]
+			}
 		}
 	}
-	if versionPattern.MatchString(info.Main.Version) && info.Main.Version != "(devel)" {
+	// Some supported builds do not embed VCS metadata. Bind their runtime
+	// identity to the executable bytes so a same-binary calibration can still
+	// be compared without claiming a source revision.
+	if executable, err := os.Executable(); err == nil {
+		file, openErr := os.Open(executable)
+		if openErr == nil {
+			defer file.Close()
+			hash := sha256.New()
+			if _, copyErr := io.Copy(hash, file); copyErr == nil {
+				return "binary-" + hex.EncodeToString(hash.Sum(nil))[:24]
+			}
+		}
+	}
+	if ok && versionPattern.MatchString(info.Main.Version) && info.Main.Version != "(devel)" {
 		return info.Main.Version
 	}
 	return "source-development"

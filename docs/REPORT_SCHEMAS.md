@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-The engine currently emits schema v14. The `insights` reader accepts v1 through v14 and rejects unknown future versions. Historical reports are read into the current Go model without rewriting the original file; fields introduced after a report's schema version remain absent and are not evidence of a measured zero.
+The engine currently emits schema v15. The `insights` reader accepts v1 through v15 and rejects unknown future versions. Historical reports are read into the current Go model without rewriting the original file; fields introduced after a report's schema version remain absent and are not evidence of a measured zero.
 
 | Version | Fields introduced or versioned | Compatibility meaning |
 | --- | --- | --- |
@@ -19,8 +19,9 @@ The engine currently emits schema v14. The `insights` reader accepts v1 through 
 | v12 | Bounded response-body completion, interruption, size and oversize observations. | A recorded complete zero-byte response differs from a report that predates body observations. |
 | v13 | Per-step request and explicit-profile completed-journey evidence in observation windows. | Missing or inconsistent current window ledgers are invalid; older reports cannot support windowed per-step conclusions. |
 | v14 | Explicit `connection_policy` (`reuse` or `new_per_request`) applied by the engine and included in workload fingerprints. | A missing policy in an older report is unknown; only schema-v14 reports record this comparison dimension. |
+| v15 | Optional controlled-reference evidence with independent server ledger counters, bound to the calibrator fixture fingerprint. | Accepted only for the calibrator-owned loopback soak; it does not attest arbitrary endpoints or external report authenticity. |
 
-For schema-v11 and newer reports attached to calibration, workload-shape assessment recomputes the fingerprint only for the persisted single-step `GET /work` reference subset. Schema-v14 reports record whether the engine reuses connections or opens a new connection per request. The fixed calibration covers reuse only; `new_per_request` is outside its envelope. Other request shapes remain unverified because reports do not retain all request templates or values needed for safe reconstruction. A matching fingerprint is not a signature, endpoint attestation, or general workload-equivalence proof.
+For schema-v11 and newer reports attached to calibration, workload-shape assessment recomputes the fingerprint only for the persisted single-step `GET /work` reference subset. Schema-v14 reports record whether the engine reuses connections or opens a new connection per request. The fixed calibration covers reuse only; `new_per_request` is outside its envelope. Other request shapes remain unverified because reports do not retain all request templates or values needed for safe reconstruction. A matching fingerprint is not a signature, endpoint attestation, or general workload-equivalence proof. Schema-v15 may report `VALID_WITHIN_ENVELOPE` only for the calibrator's own 30-second loopback soak when calibration, same-executable identity, generator health, response observations and independent server counters reconcile. This qualifies that controlled fixture execution only.
 
 ## Reader and fixture policy
 
