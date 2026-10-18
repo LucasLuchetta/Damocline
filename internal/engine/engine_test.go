@@ -1282,17 +1282,53 @@ func TestInsufficientSamplesCannotPass(t *testing.T) {
 }
 
 func TestResponseBodyLimitIsReported(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write(make([]byte, maxResponseBytes+1))
-	}))
-	defer srv.Close()
-	v := scenario(t, srv.URL, []config.Step{{Name: "large", Path: "/"}})
-	r := Run(context.Background(), v)
-	if r.Metrics.Reasons["response_too_large"] == 0 || r.Outcome == "PASS" {
-		t.Fatalf("oversized responses must be bounded and fail visibly: %+v", r)
-	}
-	if r.Metrics.ResponseBody.OversizedObservations != int64(r.Metrics.HTTP.UnexpectedResponseSizes) || r.Metrics.ResponseBody.CompleteObservations != 0 {
-		t.Fatalf("oversized bodies must be counted without claiming their full size: %+v", r.Metrics.ResponseBody)
+	for _, tc := range []struct {
+		name string
+		body int
+	}{
+		{name: "at limit", body: maxResponseBytes},
+		{name: "over limit", body: maxResponseBytes + 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var received, written atomic.Int64
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				received.Add(1)
+				n, err := w.Write(make([]byte, tc.body))
+				if err != nil {
+					t.Errorf("write synthetic body: %v", err)
+				}
+				written.Add(int64(n))
+			}))
+			defer srv.Close()
+			v := scenario(t, srv.URL, []config.Step{{Name: "large", Path: "/"}})
+			r := Run(context.Background(), v)
+			step := r.Steps[0]
+			if received.Load() != int64(r.Metrics.Total) || r.Metrics.Total == 0 || written.Load() != int64(tc.body)*received.Load() {
+				t.Fatalf("client and independent server ledgers differ: total=%d received=%d bytes=%d body_size=%d", r.Metrics.Total, received.Load(), written.Load(), tc.body)
+			}
+			if tc.body == maxResponseBytes {
+				for label, body := range map[string]report.ResponseBodyDiagnostics{"aggregate": r.Metrics.ResponseBody, "step": step.Metrics.ResponseBody} {
+					if body.CompleteObservations != received.Load() || body.TotalBytes != written.Load() || body.MinBytes != int64(tc.body) || body.MaxBytes != int64(tc.body) || body.OversizedObservations != 0 || body.IncompleteObservations != 0 {
+						t.Errorf("%s body at the exact limit was not fully accounted: %+v", label, body)
+					}
+				}
+				if r.Metrics.HTTP.UnexpectedResponseSizes != 0 {
+					t.Errorf("response at the exact limit was marked oversized: %+v", r.Metrics.HTTP)
+				}
+				return
+			}
+			if r.Metrics.Reasons["response_too_large"] != r.Metrics.Total || r.Outcome == "PASS" {
+				t.Errorf("oversized responses must be bounded and fail visibly: %+v", r)
+			}
+			for label, body := range map[string]report.ResponseBodyDiagnostics{"aggregate": r.Metrics.ResponseBody, "step": step.Metrics.ResponseBody} {
+				if body.OversizedObservations != received.Load() || body.CompleteObservations != 0 || body.IncompleteObservations != 0 || body.TotalBytes != 0 {
+					t.Errorf("%s oversized bodies must not claim a complete or full byte count: %+v", label, body)
+				}
+			}
+			if r.Metrics.HTTP.UnexpectedResponseSizes != r.Metrics.Total {
+				t.Errorf("oversized response diagnostic differs from independent ledger: %+v", r.Metrics.HTTP)
+			}
+		})
 	}
 }
 
