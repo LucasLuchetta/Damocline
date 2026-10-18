@@ -5,6 +5,7 @@ This project follows a human-maintained changelog. No release exists yet.
 ## [Unreleased]
 
 ### Added
+- Reconcile the G0 summary with the recorded schema-v7 Docker Desktop/WSL2 acceptance repeats and merged PRs through #88, retaining the bare-metal and cross-host limitations.
 - Reconcile native-engine response-body accounting at the exact configured read limit and one byte above it with independent loopback server counters.
 - Report DNS-resolution and connection-establishment failures as versioned transport subcategories; preserve unknown semantics for reports older than schema v20.
 - Run Linux CI calibration inside a bounded container so cgroup CPU capacity is verifiable; use deterministic CPU-capacity fixtures in positive unit tests.
