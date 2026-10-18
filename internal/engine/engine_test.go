@@ -483,6 +483,66 @@ func TestHTTPDiagnosticsIdentifyInjectedLoopbackDNSFailure(t *testing.T) {
 	}
 }
 
+func TestHTTPDiagnosticsClassifyInjectedDNSLookupTimeoutAsTimeout(t *testing.T) {
+	dnsConn, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dnsDone := make(chan struct{})
+	var queries atomic.Int64
+	go func() {
+		defer close(dnsDone)
+		buffer := make([]byte, 1500)
+		for {
+			if _, _, readErr := dnsConn.ReadFrom(buffer); readErr != nil {
+				return
+			}
+			queries.Add(1)
+		}
+	}()
+	defer func() {
+		_ = dnsConn.Close()
+		select {
+		case <-dnsDone:
+		case <-time.After(time.Second):
+			t.Error("loopback DNS blackhole did not stop after close")
+		}
+	}()
+
+	resolver := &net.Resolver{
+		PreferGo:     true,
+		StrictErrors: true,
+		Dial: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, "udp", dnsConn.LocalAddr().String())
+		},
+	}
+	dialer := &net.Dialer{Resolver: resolver}
+	transport := &http.Transport{DialContext: dialer.DialContext}
+	v := scenario(t, "https://damocline-g0-timeout.invalid.", []config.Step{{Name: "dns_timeout", Method: http.MethodGet, Path: "/"}})
+	s := v.Scenario
+	s.Users = 1
+	s.MaxRPS = 100
+	s.Timeout = "250ms"
+	v, err = config.Parse(s, config.Options{Authorized: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	v.Duration = time.Second
+	r := runWithTransport(context.Background(), v, transport)
+	var dnsTrace report.HTTPTrace
+	if len(r.Steps) == 1 {
+		dnsTrace = r.Steps[0].HTTPTrace
+	}
+
+	if r.Metrics.Total == 0 || r.Metrics.HTTP.NetworkTimeouts == 0 ||
+		r.Metrics.HTTP.NetworkTimeouts+r.Metrics.Cancelled != r.Metrics.Total ||
+		r.Metrics.HTTP.DNSFailures != 0 || r.Metrics.HTTP.ConnectionFailures != 0 ||
+		r.Metrics.HTTP.TransportFailures != 0 || r.Metrics.HTTP.TLSFailures != 0 ||
+		len(r.Steps) != 1 || dnsTrace.DNSStartCount == 0 || dnsTrace.ConnectStartCount != 0 || queries.Load() == 0 {
+		t.Fatalf("injected DNS lookup timeout was not kept separate from resolver and transport failures: metrics=%+v dns_trace=%+v resolver_queries=%d", r.Metrics, dnsTrace, queries.Load())
+	}
+}
+
 func nxDomainResponse(query []byte) ([]byte, bool) {
 	if len(query) < 17 || binary.BigEndian.Uint16(query[4:6]) != 1 {
 		return nil, false
