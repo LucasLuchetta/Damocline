@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/LucasLuchetta/Damocline/internal/calibration"
 	"github.com/LucasLuchetta/Damocline/internal/generatorhealth"
 	"github.com/LucasLuchetta/Damocline/internal/reference"
 	"github.com/LucasLuchetta/Damocline/internal/report"
@@ -48,6 +49,41 @@ func TestCheckReconcilesHealthyStagesWithSeparateSoakWork(t *testing.T) {
 	server := reference.Snapshot{Received: 310, Completed: 310, Success: 310}
 	if issues := check([]report.Result{run}, server, []int{2}); len(issues) != 0 {
 		t.Fatalf("healthy stages plus the independent 30-second soak should reconcile: %v", issues)
+	}
+}
+
+func TestCheckSoakRequiresCompleteBoundedSchedulerLagEvidence(t *testing.T) {
+	const planned = 300
+	base := report.Result{
+		ArrivalsScheduled: planned, IterationsStarted: planned, IterationsCompleted: planned,
+		Metrics:  report.MetricSet{Total: planned, Success: planned},
+		Journeys: report.MetricSet{Total: planned, Success: planned}, Outcome: "PASS",
+		Generator: &generatorhealth.Summary{Samples: 100, GoCPUValid: true, ProcessSamples: 100,
+			ProcessCPUValid: true, PeakProcessRSSBytes: 1, GoCPUUtilizationRatio: 0.1,
+			MeanProcessCPUUtilizationRatio: 0.1, PeakHeapAllocBytes: 1, PeakGoroutines: 1},
+		SchedulerLagSamples: planned, SchedulerLagMethod: calibration.SchedulerDispatchLagMethod,
+		SchedulerLagP95MS: 50, SchedulerLagMaxMS: 99.999,
+	}
+	if issues := checkSoak(base); len(issues) != 0 {
+		t.Fatalf("lag at the documented p95 bound should pass: %v", issues)
+	}
+	cases := []struct {
+		name   string
+		mutate func(*report.Result)
+	}{
+		{name: "missing samples", mutate: func(r *report.Result) { r.SchedulerLagSamples-- }},
+		{name: "missing method", mutate: func(r *report.Result) { r.SchedulerLagMethod = "" }},
+		{name: "p95 above bound", mutate: func(r *report.Result) { r.SchedulerLagP95MS = 50.001 }},
+		{name: "maximum at exclusive bound", mutate: func(r *report.Result) { r.SchedulerLagMaxMS = 100 }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := base
+			tc.mutate(&got)
+			if issues := checkSoak(got); len(issues) != 1 || !strings.Contains(issues[0], "soak scheduler lag failed") {
+				t.Fatalf("invalid scheduler evidence was not rejected precisely: %v", issues)
+			}
+		})
 	}
 }
 

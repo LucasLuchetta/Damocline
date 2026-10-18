@@ -181,6 +181,36 @@ func TestControlledReferenceEvidenceRejectsAlteredFixtureFingerprint(t *testing.
 	}
 }
 
+func TestControlledReferenceSchedulerLagRequiresCompleteSamplesAndFixtureBounds(t *testing.T) {
+	base := validSyntheticQualityRun()
+	base.ArrivalsScheduled = 300
+	base.SchedulerLagSamples = 300
+	base.SchedulerLagMethod = calibration.SchedulerDispatchLagMethod
+	base.SchedulerLagP95MS = calibration.ReferenceSoakSchedulerLagP95LimitMS
+	base.SchedulerLagMaxMS = calibration.ReferenceSoakSchedulerLagMaxLimitMS - 0.001
+	if !controlledReferenceSchedulerLagValid(base) {
+		t.Fatal("complete scheduler observations on the inclusive p95 bound should pass")
+	}
+	cases := []struct {
+		name   string
+		mutate func(*Result)
+	}{
+		{name: "missing sample", mutate: func(r *Result) { r.SchedulerLagSamples-- }},
+		{name: "unknown method", mutate: func(r *Result) { r.SchedulerLagMethod = "unknown" }},
+		{name: "p95 outside", mutate: func(r *Result) { r.SchedulerLagP95MS = calibration.ReferenceSoakSchedulerLagP95LimitMS + 0.001 }},
+		{name: "maximum boundary", mutate: func(r *Result) { r.SchedulerLagMaxMS = calibration.ReferenceSoakSchedulerLagMaxLimitMS }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := base
+			tc.mutate(&got)
+			if controlledReferenceSchedulerLagValid(got) {
+				t.Fatal("unqualified scheduler lag evidence was accepted")
+			}
+		})
+	}
+}
+
 func TestDeclaredWorkloadShapeDoesNotTrustFingerprintForUnpersistedShape(t *testing.T) {
 	r := Result{SchemaVersion: 13, Config: RunConfig{WorkloadFingerprint: "sha256:" + strings.Repeat("a", 64)}}
 	runtimeInfo := calibration.CurrentRuntime()

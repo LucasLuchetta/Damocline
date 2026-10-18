@@ -6,10 +6,11 @@ import (
 )
 
 const (
-	SchedulerLagMethod    = "monotonic planned-slot to scheduler-processing time"
-	SchedulerLagRate      = 20
-	SchedulerLagDuration  = 250 * time.Millisecond
-	SchedulerLagTolerance = 50 * time.Millisecond
+	SchedulerLagMethod         = "monotonic planned-slot to scheduler-processing time"
+	SchedulerDispatchLagMethod = "monotonic due-slot dispatch lag; includes timer wake-up and callback admission"
+	SchedulerLagRate           = 20
+	SchedulerLagDuration       = 250 * time.Millisecond
+	SchedulerLagTolerance      = 50 * time.Millisecond
 )
 
 type SchedulerLag struct {

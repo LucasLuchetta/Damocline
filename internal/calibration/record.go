@@ -24,6 +24,9 @@ const minimumSupportedSchemaVersion = 1
 const (
 	HealthyLatencyMinMS = 15.0
 	HealthyLatencyMaxMS = 150.0
+	// These scheduler-lag limits apply only to the 10-arrival/s controlled soak.
+	ReferenceSoakSchedulerLagP95LimitMS = 50.0
+	ReferenceSoakSchedulerLagMaxLimitMS = 100.0
 )
 
 type Generator struct {
