@@ -145,6 +145,28 @@ func TestQualityKeepsAttachedCalibrationLimitedWhileTargetEvidenceIsUnknown(t *t
 	}
 }
 
+func TestQualityLimitsMaterialSamplerCollectionWallTime(t *testing.T) {
+	r := validSyntheticQualityRun()
+	r.SchemaVersion = 10
+	r.Generator = &generatorhealth.Summary{
+		Samples: 10, ObservedSeconds: 10, SamplingIntervalMS: 1000,
+		SampleCollectionTotalMS: 500, SampleCollectionMaxMS: 100,
+		MaxSampleGapMS: 1000, GOMAXPROCS: 1, GoCPUCapacitySeconds: 10,
+		GoCPUValid: true, ProcessSamples: 10, ProcessCPUSamples: 9,
+		ProcessCPUValid: true, PeakProcessRSSBytes: 4096,
+		PeakHeapAllocBytes: 1024, PeakGoroutines: 2,
+	}
+	q := AssessQuality(r)
+	if q.State != QualityLimited || !strings.Contains(strings.Join(q.Findings, " "), "occupied at least 5% of the observation window") {
+		t.Fatalf("material sampler collection time should limit quality: %+v", q)
+	}
+	r.Generator.SampleCollectionTotalMS = 499.9
+	q = AssessQuality(r)
+	if strings.Contains(strings.Join(q.Findings, " "), "occupied at least 5% of the observation window") {
+		t.Fatalf("collection time below the declared screen should not trigger it: %+v", q)
+	}
+}
+
 func TestControlledReferenceClaimWithoutCalibrationCannotUpgradeQuality(t *testing.T) {
 	r := validSyntheticQualityRun()
 	r.SchemaVersion = 15
