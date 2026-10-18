@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/LucasLuchetta/Damocline/internal/calibration"
+	"github.com/LucasLuchetta/Damocline/internal/config"
 )
 
 // Quality describes whether arithmetic delivery/accounting evidence can be
@@ -718,8 +719,51 @@ func latencyGuardrail(metrics MetricSet) (outside, sufficient bool) {
 // AssessDeclaredWorkloadShape recomputes the workload fingerprint comparison
 // from sanitized report metadata and the validated preflight record.
 func AssessDeclaredWorkloadShape(r Result, record calibration.Record) calibration.Dimension {
+	if r.SchemaVersion < 11 || len(r.Steps) != 1 || len(r.Profiles) != 0 ||
+		len(r.Config.Profiles) != 0 || r.Config.SeparateSessions ||
+		r.Config.ThinkTime != "" && r.Config.ThinkTime != "0s" {
+		return calibration.Dimension{
+			Name:   "declared_workload_shape",
+			Status: "UNVERIFIED",
+			Reason: "The saved report omits fields needed to recompute this workload shape, or the workload is outside the single-step reference subset.",
+		}
+	}
+	step := r.Steps[0]
+	if step.Profile != "default" || step.Name != "work" || step.Method != "GET" || step.Path != "/work" {
+		return calibration.Dimension{
+			Name:   "declared_workload_shape",
+			Status: "OUTSIDE_REFERENCE",
+			Reason: "The saved step metadata differs from the single GET /work reference workload.",
+		}
+	}
+	// The fingerprint covers fields not serialized in Run reports (headers,
+	// assertions, body templates, extracts and session details). Only accept the
+	// reference subset above, where those fields are known to be empty by the
+	// scenario gate; the persisted digest must still match the reconstructed
+	// safe subset and the preflight digest.
+	scenario := config.Scenario{
+		Name: "Saved reference workload", BaseURL: "http://127.0.0.1", Users: 10,
+		Duration: "5s", Timeout: "1s", MaxRPS: 50, P95LimitMS: 500,
+		Mode: "arrival", ArrivalRate: 2,
+		Steps: []config.Step{{Name: step.Name, Method: step.Method, Path: step.Path}},
+	}
+	validated, err := config.Parse(scenario, config.Options{Authorized: true})
+	if err != nil || validated.WorkloadFingerprint == "" {
+		return calibration.Dimension{
+			Name:   "declared_workload_shape",
+			Status: "UNVERIFIED",
+			Reason: "The saved step metadata could not be safely normalized for fingerprint verification.",
+		}
+	}
+	if r.Config.WorkloadFingerprint != validated.WorkloadFingerprint {
+		return calibration.Dimension{
+			Name:   "declared_workload_shape",
+			Status: "OUTSIDE_REFERENCE",
+			Reason: "The saved workload fingerprint does not match the reconstructable step metadata.",
+		}
+	}
 	return calibration.AssessWorkloadFingerprint(
-		r.Config.WorkloadFingerprint,
+		validated.WorkloadFingerprint,
 		r.Config.ProfileMixBasis,
 		r.Config.ProfileMixReference,
 		record,
