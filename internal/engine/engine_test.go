@@ -908,6 +908,49 @@ func TestArrivalRunDrainsAdmittedWorkAfterScheduleWindow(t *testing.T) {
 	}
 }
 
+func TestMultiStepJourneyWithThinkTimeDrainsAfterObservationWindow(t *testing.T) {
+	fixture, err := reference.New(reference.Config{Delay: 60 * time.Millisecond, MaxConcurrent: 1, MaxRequests: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(fixture)
+	defer server.Close()
+
+	s := config.Scenario{
+		Name:       "multi-step drain",
+		BaseURL:    server.URL,
+		Users:      1,
+		Duration:   "1s",
+		RampUp:     "0s",
+		ThinkTime:  "40ms",
+		Timeout:    "100ms",
+		MaxRPS:     50,
+		P95LimitMS: 1000,
+		Steps: []config.Step{
+			{Name: "first", Method: http.MethodGet, Path: "/work"},
+			{Name: "second", Method: http.MethodGet, Path: "/work"},
+			{Name: "third", Method: http.MethodGet, Path: "/work"},
+		},
+	}
+	v, err := config.Parse(s, config.Options{Authorized: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	v.Duration = 100 * time.Millisecond
+
+	run := Run(context.Background(), v)
+	ledger := fixture.Snapshot()
+	if run.IterationsStarted != 1 || run.IterationsCompleted != 1 || run.Journeys.Success != 1 ||
+		run.Metrics.Total != 3 || run.Metrics.Success != 3 || run.Metrics.Cancelled != 0 ||
+		run.ObservationSeconds != v.Duration.Seconds() || run.ElapsedSeconds <= run.ObservationSeconds {
+		t.Fatalf("multi-step work should finish during bounded drain after observation closes: %+v", run)
+	}
+	if ledger.Received != 3 || ledger.Completed != 3 || ledger.Success != 3 || ledger.Failures != 0 || ledger.Cancelled != 0 || ledger.Rejected != 0 ||
+		ledger.Received != ledger.Completed+ledger.Cancelled+ledger.Rejected {
+		t.Fatalf("multi-step drain did not reconcile with the independent server ledger: %+v", ledger)
+	}
+}
+
 func TestCancelledRunCannotPass(t *testing.T) {
 	requestStarted := make(chan struct{}, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -986,7 +1029,7 @@ func TestCancelledRequestReconcilesWithIndependentReferenceLedger(t *testing.T) 
 	}
 }
 
-func TestDrainDeadlineCancellationReconcilesWithIndependentReferenceLedger(t *testing.T) {
+func TestExternalCancellationDuringDrainReconcilesWithIndependentReferenceLedger(t *testing.T) {
 	fixture, err := reference.New(reference.Config{Delay: 1500 * time.Millisecond, MaxConcurrent: 10, MaxRequests: 10})
 	if err != nil {
 		t.Fatal(err)
