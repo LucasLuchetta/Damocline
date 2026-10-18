@@ -198,6 +198,23 @@ func TestCalibrationLedgersReconcileIndependently(t *testing.T) {
 	}
 }
 
+func TestNegativeControlsRequireExactCauseAndStatus(t *testing.T) {
+	document := syntheticCalibration()
+	if !overloadControlMatches(document) || !failureControlMatches(document) {
+		t.Fatal("complete overload and HTTP 503 controls should pass")
+	}
+	document.OverloadRun.ArrivalsDropped++
+	if overloadControlMatches(document) {
+		t.Fatal("unclassified overload drops were accepted")
+	}
+	document = syntheticCalibration()
+	document.FailureRun.Metrics.HTTP.StatusCodes[500] = document.FailureRun.Metrics.HTTP.StatusCodes[503]
+	delete(document.FailureRun.Metrics.HTTP.StatusCodes, 503)
+	if failureControlMatches(document) {
+		t.Fatal("non-503 failures were accepted as the induced HTTP failure control")
+	}
+}
+
 func TestTransportMatrixRequiresExactPassingFixtureSet(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "transport.json")
 	if err := os.WriteFile(path, syntheticTransport(), 0o600); err != nil {
@@ -404,6 +421,9 @@ func syntheticCalibration() calibrationDocument {
 	document.FailureRun.Metrics.Total = 10
 	document.FailureRun.Metrics.Success = 8
 	document.FailureRun.Metrics.Failures = 2
+	document.FailureRun.Metrics.HTTP = report.HTTPDiagnostics{
+		StatusCodes: map[int]int{200: 8, 503: 2}, Status2xx: 8, Status5xx: 2,
+	}
 	document.FailureRun.Outcome = "FAIL"
 	document.FailureServer = calibrationServer{Received: 10, Completed: 10, Success: 8, Failures: 2}
 	return document

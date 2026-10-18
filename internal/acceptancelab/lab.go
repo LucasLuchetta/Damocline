@@ -476,10 +476,11 @@ type calibrationOverloadRun struct {
 
 type calibrationFailureRun struct {
 	Metrics struct {
-		Total     int `json:"total"`
-		Success   int `json:"success"`
-		Failures  int `json:"failures"`
-		Cancelled int `json:"cancelled"`
+		Total     int                    `json:"total"`
+		Success   int                    `json:"success"`
+		Failures  int                    `json:"failures"`
+		Cancelled int                    `json:"cancelled"`
+		HTTP      report.HTTPDiagnostics `json:"http_diagnostics"`
 	} `json:"metrics"`
 	Outcome string `json:"outcome"`
 }
@@ -872,7 +873,7 @@ func aggregateServerLedgerMatches(document calibrationDocument) bool {
 
 func overloadControlMatches(document calibrationDocument) bool {
 	run, server := document.OverloadRun, document.OverloadServer
-	return run.ArrivalsScheduled == 50 && run.ArrivalsDropped > 0 && run.ArrivalsDroppedBusy > 0 &&
+	return run.ArrivalsScheduled == 50 && run.ArrivalsDropped > 0 && run.ArrivalsDropped == run.ArrivalsDroppedBusy &&
 		run.IterationsStarted+run.ArrivalsDropped == run.ArrivalsScheduled && run.Outcome != "PASS" &&
 		server.Received == run.IterationsStarted && server.Completed == int64(run.Metrics.Total) && server.Success == server.Completed &&
 		server.Failures == 0 && server.Cancelled == int64(run.Metrics.Cancelled) && server.Rejected == 0
@@ -885,7 +886,9 @@ func overloadDescription(document calibrationDocument) string {
 
 func failureControlMatches(document calibrationDocument) bool {
 	run, server := document.FailureRun, document.FailureServer
+	statusCodes := run.Metrics.HTTP.StatusCodes
 	return run.Metrics.Total == 10 && run.Metrics.Success == 8 && run.Metrics.Failures == 2 && run.Metrics.Cancelled == 0 && run.Outcome == "FAIL" &&
+		len(statusCodes) == 2 && statusCodes[200] == 8 && statusCodes[503] == 2 && run.Metrics.HTTP.Status2xx == 8 && run.Metrics.HTTP.Status5xx == 2 &&
 		server.Received == 10 && server.Completed == 10 && server.Success == 8 && server.Failures == 2 && server.Cancelled == 0 && server.Rejected == 0
 }
 
