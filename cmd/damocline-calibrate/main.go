@@ -34,29 +34,31 @@ const stageDuration = 5 * time.Second
 const soakDuration = 30 * time.Second
 
 type assessment struct {
-	SchemaVersion  int                     `json:"schema_version"`
-	Preflight      preflightRecord         `json:"preflight"`
-	Status         string                  `json:"status"`
-	At             string                  `json:"at"`
-	OS             string                  `json:"os"`
-	Arch           string                  `json:"arch"`
-	GoVersion      string                  `json:"go_version"`
-	LogicalCPUs    int                     `json:"logical_cpus"`
-	FixtureDelay   string                  `json:"fixture_delay"`
-	StageDuration  string                  `json:"stage_duration"`
-	ArrivalRates   []int                   `json:"arrival_rates"`
-	Repeats        int                     `json:"repeats"`
-	Extended       bool                    `json:"extended"`
-	Runs           []report.Result         `json:"runs"`
-	SoakRun        report.Result           `json:"soak_run"`
-	Server         reference.Snapshot      `json:"server"`
-	OverloadRun    report.Result           `json:"overload_run"`
-	OverloadServer reference.Snapshot      `json:"overload_server"`
-	FailureRun     report.Result           `json:"failure_run"`
-	FailureServer  reference.Snapshot      `json:"failure_server"`
-	SchedulerLag   schedulerLagCalibration `json:"scheduler_lag_calibration"`
-	Checks         []string                `json:"checks"`
-	Limitations    []string                `json:"limitations"`
+	SchemaVersion        int                               `json:"schema_version"`
+	Preflight            preflightRecord                   `json:"preflight"`
+	Status               string                            `json:"status"`
+	At                   string                            `json:"at"`
+	OS                   string                            `json:"os"`
+	Arch                 string                            `json:"arch"`
+	GoVersion            string                            `json:"go_version"`
+	LogicalCPUs          int                               `json:"logical_cpus"`
+	FixtureDelay         string                            `json:"fixture_delay"`
+	StageDuration        string                            `json:"stage_duration"`
+	ArrivalRates         []int                             `json:"arrival_rates"`
+	Repeats              int                               `json:"repeats"`
+	Extended             bool                              `json:"extended"`
+	Runs                 []report.Result                   `json:"runs"`
+	WorkloadRuns         []report.Result                   `json:"workload_runs"`
+	WorkloadObservations []calibration.WorkloadObservation `json:"workload_observations"`
+	SoakRun              report.Result                     `json:"soak_run"`
+	Server               reference.Snapshot                `json:"server"`
+	OverloadRun          report.Result                     `json:"overload_run"`
+	OverloadServer       reference.Snapshot                `json:"overload_server"`
+	FailureRun           report.Result                     `json:"failure_run"`
+	FailureServer        reference.Snapshot                `json:"failure_server"`
+	SchedulerLag         schedulerLagCalibration           `json:"scheduler_lag_calibration"`
+	Checks               []string                          `json:"checks"`
+	Limitations          []string                          `json:"limitations"`
 }
 
 func main() {
@@ -116,7 +118,10 @@ func main() {
 }
 
 func runFixture() error {
-	h, err := reference.New(reference.Config{Delay: 20 * time.Millisecond, ResponseBytes: calibration.ReferenceHealthyResponseBytes, MaxConcurrent: 10, MaxRequests: 10000})
+	h, err := reference.New(reference.Config{
+		Delay: 20 * time.Millisecond, ResponseBytes: calibration.ReferenceHealthyResponseBytes,
+		MaxConcurrent: 10, MaxRequests: 10000, Profiles: referenceWorkloadProfiles(),
+	})
 	if err != nil {
 		return err
 	}
@@ -273,6 +278,28 @@ func runMatrix(path string, repeats int, extended bool) error {
 		}
 		result.Runs = append(result.Runs, engine.Run(ctx, v))
 	}
+	workloadProfiles := calibration.ReferenceWorkloadProfiles()
+	result.WorkloadRuns = make([]report.Result, 0, len(workloadProfiles))
+	result.WorkloadObservations = make([]calibration.WorkloadObservation, 0, len(workloadProfiles))
+	for _, profile := range workloadProfiles {
+		v, err := calibratedWorkloadScenario("http://"+address, profile)
+		if err != nil {
+			return fmt.Errorf("construct workload profile %s: %w", profile.ID, err)
+		}
+		before, err := referenceSnapshot(address)
+		if err != nil {
+			return fmt.Errorf("read server counters before workload profile %s: %w", profile.ID, err)
+		}
+		run := engine.Run(ctx, v)
+		after, err := referenceSnapshot(address)
+		if err != nil {
+			return fmt.Errorf("read server counters after workload profile %s: %w", profile.ID, err)
+		}
+		result.WorkloadRuns = append(result.WorkloadRuns, run)
+		observation := workloadProfileObservation(profile, run, before, after)
+		result.WorkloadObservations = append(result.WorkloadObservations, observation)
+		result.Checks = append(result.Checks, checkWorkloadProfile(profile, run, observation)...)
+	}
 	soakScenario := config.Scenario{Name: "Local reference sustained 10 arrivals/s", BaseURL: "http://" + address,
 		Users: 10, Duration: soakDuration.String(), MaxRPS: 50, Mode: "arrival", ArrivalRate: 10,
 		Timeout: "1s", P95LimitMS: 500, MaxErrorRate: 0, Steps: []config.Step{{Name: "work", Method: "GET", Path: "/work"}}}
@@ -351,7 +378,11 @@ func runMatrix(path string, repeats int, extended bool) error {
 	if err := cmd.Wait(); err != nil {
 		return fmt.Errorf("reference fixture failed: %w: %s", err, stderr.String())
 	}
-	result.Checks = check(result.Runs, result.Server, rates)
+	var workloadPlanned int64
+	for _, profile := range workloadProfiles {
+		workloadPlanned += int64(profile.ArrivalRate) * 5
+	}
+	result.Checks = append(result.Checks, check(result.Runs, result.Server, rates, workloadPlanned)...)
 	result.Checks = append(result.Checks, checkSoak(result.SoakRun)...)
 	result.Checks = append(result.Checks, checkOverload(result.OverloadRun, result.OverloadServer)...)
 	result.Checks = append(result.Checks, checkFailures(result.FailureRun, result.FailureServer)...)
@@ -368,7 +399,7 @@ func runMatrix(path string, repeats int, extended bool) error {
 	observedStages := make([]preflightStage, 0, len(result.Runs))
 	for i, stage := range result.Runs {
 		observedStages = append(observedStages, preflightStage{
-			ArrivalRate: rates[i], Scheduled: stage.ArrivalsScheduled,
+			ArrivalRate: rates[i], MaxRPS: stage.Config.MaxRPS, Scheduled: stage.ArrivalsScheduled,
 			Started: stage.IterationsStarted, Completed: stage.IterationsCompleted,
 			Dropped: stage.ArrivalsDropped, Outcome: stage.Outcome,
 		})
@@ -387,9 +418,9 @@ func runMatrix(path string, repeats int, extended bool) error {
 			HealthyDelay: "20ms", StageDuration: stageDuration.String(),
 			SoakDuration: soakDuration.String(), StageUsers: 10,
 			MaximumRPS: 100, Repeats: repeats, Extended: extended,
-			HealthyRates: append([]int(nil), rates...),
+			HealthyRates: append([]int(nil), rates...), WorkloadProfiles: workloadProfiles,
 		},
-		observedStages, result.Status,
+		observedStages, result.Status, result.WorkloadObservations,
 	)
 	if err != nil {
 		return fmt.Errorf("construct preflight evidence: %w", err)
@@ -547,7 +578,104 @@ func checkOverload(run report.Result, server reference.Snapshot) []string {
 	return nil
 }
 
-func check(runs []report.Result, server reference.Snapshot, rates []int) []string {
+func referenceWorkloadProfiles() []reference.WorkloadProfile {
+	profiles := calibration.ReferenceWorkloadProfiles()
+	result := make([]reference.WorkloadProfile, 0, len(profiles))
+	for _, profile := range profiles {
+		if profile.Path == "/work" {
+			continue
+		}
+		result = append(result, reference.WorkloadProfile{
+			ID: profile.ID, Method: profile.Method, Path: profile.Path,
+			RequestBodyBytes: profile.RequestBodyBytes, ResponseBodyBytes: profile.ResponseBodyBytes,
+		})
+	}
+	return result
+}
+
+func calibratedWorkloadScenario(baseURL string, profile calibration.WorkloadProfile) (config.Validated, error) {
+	const requestBodyEnv = "DAMOCLINE_CALIBRATION_SYNTHETIC_BODY"
+	build := func() (config.Validated, error) {
+		if profile.RequestBodyBytes > 0 {
+			previous, existed := os.LookupEnv(requestBodyEnv)
+			if err := os.Setenv(requestBodyEnv, strings.Repeat("x", profile.RequestBodyBytes)); err != nil {
+				return config.Validated{}, fmt.Errorf("set synthetic request body: %w", err)
+			}
+			defer func() {
+				if existed {
+					_ = os.Setenv(requestBodyEnv, previous)
+				} else {
+					_ = os.Unsetenv(requestBodyEnv)
+				}
+			}()
+		}
+		scenario := config.Scenario{
+			Name: "Local calibrated workload profile", BaseURL: baseURL,
+			Users: profile.Users, Duration: profile.Duration, Mode: "arrival",
+			ArrivalRate: profile.ArrivalRate, MaxRPS: profile.MaxRPS, Timeout: profile.Timeout,
+			ConnectionPolicy: profile.ConnectionPolicy, P95LimitMS: 500, MaxErrorRate: 0,
+			Steps: []config.Step{{Name: profile.ID, Method: profile.Method, Path: profile.Path}},
+		}
+		if profile.RequestBodyBytes > 0 {
+			scenario.Steps[0].BodyEnv = requestBodyEnv
+		}
+		return config.Parse(scenario, config.Options{Authorized: true, AllowWrites: profile.Method == http.MethodPost})
+	}
+	return build()
+}
+
+func workloadProfileObservation(profile calibration.WorkloadProfile, run report.Result, before, after reference.Snapshot) calibration.WorkloadObservation {
+	admitted := int64(-1)
+	if run.ArrivalsAdmitted != nil {
+		admitted = *run.ArrivalsAdmitted
+	}
+	body := run.Metrics.ResponseBody
+	return calibration.WorkloadObservation{
+		ProfileID: profile.ID, Scheduled: run.ArrivalsScheduled, Admitted: admitted,
+		Started: run.IterationsStarted, Completed: run.IterationsCompleted,
+		Dropped: run.ArrivalsDropped, Outcome: run.Outcome,
+		ClientCompleteBodyObservations: body.CompleteObservations,
+		ClientResponseMinBytes:         body.MinBytes, ClientResponseMaxBytes: body.MaxBytes,
+		ClientResponseTotalBytes: body.TotalBytes,
+		ServerReceived:           after.Received - before.Received,
+		ServerCompleted:          after.Completed - before.Completed,
+		ServerRequestBodyBytes:   after.RequestBodyBytes - before.RequestBodyBytes,
+		ServerResponseBodyBytes:  after.ResponseBodyBytes - before.ResponseBodyBytes,
+	}
+}
+
+func checkWorkloadProfile(profile calibration.WorkloadProfile, run report.Result, observation calibration.WorkloadObservation) []string {
+	planned := int64(profile.ArrivalRate) * 5
+	expectedRequestBytes := int64(profile.RequestBodyBytes) * planned
+	expectedResponseBytes := int64(profile.ResponseBodyBytes) * planned
+	arrivalsMatch := run.ArrivalsScheduled == planned && run.ArrivalsAdmitted != nil &&
+		*run.ArrivalsAdmitted == planned && run.IterationsStarted == planned &&
+		run.IterationsCompleted == planned && run.ArrivalsDropped == 0 && run.SchedulerLagSamples == planned
+	requestMetricsMatch := run.Metrics.Total == int(planned) && run.Metrics.Success == int(planned) &&
+		run.Metrics.Failures == 0 && len(run.Steps) == 1 && run.Steps[0].Method == profile.Method &&
+		run.Steps[0].Path == profile.Path && run.Steps[0].Metrics.Success == int(planned) &&
+		run.Config.Mode == profile.Mode && run.Config.ArrivalRate == profile.ArrivalRate &&
+		run.Config.MaxRPS == profile.MaxRPS && run.Config.Users == profile.Users &&
+		run.Config.Duration == profile.Duration && run.Config.RequestTimeout == profile.Timeout &&
+		run.Config.ConnectionPolicy == profile.ConnectionPolicy
+	body := run.Metrics.ResponseBody
+	responseMetricsMatch := body.CompleteObservations == planned && body.IncompleteObservations == 0 &&
+		body.OversizedObservations == 0 && body.MinBytes == int64(profile.ResponseBodyBytes) &&
+		body.MaxBytes == int64(profile.ResponseBodyBytes) && body.TotalBytes == expectedResponseBytes
+	serverLedgerMatches := observation.ServerReceived == planned && observation.ServerCompleted == planned &&
+		observation.ServerRequestBodyBytes == expectedRequestBytes && observation.ServerResponseBodyBytes == expectedResponseBytes
+	if !arrivalsMatch || !requestMetricsMatch || !responseMetricsMatch || !serverLedgerMatches || run.Outcome != "PASS" {
+		return []string{fmt.Sprintf(
+			"workload profile %s did not reconcile: planned=%d arrivals=%d/%d/%d dropped=%d lag_samples=%d requests=%d/%d failures=%d client_body=%+v server=%+v outcome=%s",
+			profile.ID, planned, run.ArrivalsScheduled, run.IterationsStarted, run.IterationsCompleted,
+			run.ArrivalsDropped, run.SchedulerLagSamples, run.Metrics.Success, run.Metrics.Total,
+			run.Metrics.Failures, body, observation, run.Outcome,
+		)}
+	}
+	return nil
+}
+
+func check(runs []report.Result, server reference.Snapshot, rates []int, additionalRequests ...int64) []string {
 	if len(runs) != len(rates) {
 		return []string{"reference stage count differs from the configured matrix"}
 	}
@@ -561,6 +689,9 @@ func check(runs []report.Result, server reference.Snapshot, rates []int) []strin
 		issues = append(issues, checkStage(rates[i], planned, run)...)
 	}
 	serverExpected := expected + int64(10*(soakDuration/time.Second))
+	for _, count := range additionalRequests {
+		serverExpected += count
+	}
 	if server.Received != serverExpected || server.Completed != serverExpected || server.Success != serverExpected ||
 		server.Failures != 0 || server.Rejected != 0 || server.Cancelled != 0 || started != expected || completed != expected {
 		issues = append(issues, fmt.Sprintf("aggregate fixture/generator ledger mismatch: expected_stage_requests=%d expected_including_soak=%d started=%d completed=%d; server received=%d completed=%d success=%d failures=%d cancelled=%d rejected=%d", expected, serverExpected, started, completed, server.Received, server.Completed, server.Success, server.Failures, server.Cancelled, server.Rejected))

@@ -41,8 +41,8 @@ func AssessScenario(s config.Scenario, rec Record, local Runtime, now time.Time)
 		add("calibration", "UNVERIFIED", "A validated passing calibration record is unavailable.")
 		return c
 	}
-	addDimension := AssessDeclaredWorkloadShape(s, rec)
-	add(addDimension.Name, addDimension.Status, addDimension.Reason)
+	workloadDimension := AssessDeclaredWorkloadShape(s, rec)
+	add(workloadDimension.Name, workloadDimension.Status, workloadDimension.Reason)
 	finished, err := time.Parse(time.RFC3339Nano, rec.FinishedAt)
 	if err != nil || now.Before(finished.Add(-5*time.Minute)) || now.Sub(finished) > 24*time.Hour {
 		add("calibration_age", "OUTSIDE_REFERENCE", "Calibration is future-dated or older than the 24-hour review threshold.")
@@ -95,17 +95,6 @@ func AssessScenario(s config.Scenario, rec Record, local Runtime, now time.Time)
 	} else {
 		add("worker_budget", "MATCHED", "The configured arrival-worker budget matches the fixture.")
 	}
-	steps := s.Steps
-	singleGET := len(s.Profiles) == 0 && len(steps) == 1
-	if singleGET {
-		step := steps[0]
-		method := strings.ToUpper(step.Method)
-		if method == "" {
-			method = "GET"
-		}
-		singleGET = method == "GET" && len(step.Headers) == 0 && step.BodyEnv == "" && len(step.Extract) == 0 &&
-			len(step.ExpectedStatus) == 0 && step.MustContain == "" && s.PerVUCookieEnvPrefix == "" && s.SyntheticDataPrefixEnv == ""
-	}
 	stepCount := len(s.Steps)
 	if len(s.Profiles) > 0 {
 		stepCount = 0
@@ -115,15 +104,38 @@ func AssessScenario(s config.Scenario, rec Record, local Runtime, now time.Time)
 			}
 		}
 	}
-	if s.MaxRPS < 1 || s.MaxRPS > rec.Fixture.MaximumRPS || s.ArrivalRate < 1 || int64(s.ArrivalRate)*int64(stepCount) > int64(s.MaxRPS) {
-		add("request_rate_ceiling", "OUTSIDE_REFERENCE", "The declared request ceiling is invalid or outside the tested fixture bound.")
+	requestCeilingValid := s.MaxRPS >= 1 && s.MaxRPS <= rec.Fixture.MaximumRPS &&
+		s.ArrivalRate >= 1 && int64(s.ArrivalRate)*int64(stepCount) <= int64(s.MaxRPS)
+	requestCeilingTested := rec.SchemaVersion < 3
+	if rec.SchemaVersion >= 3 {
+		requestCeilingTested = false
+		for _, stage := range rec.HealthyStages {
+			if stage.ArrivalRate == s.ArrivalRate && stage.MaxRPS == s.MaxRPS {
+				requestCeilingTested = true
+				break
+			}
+		}
+		for _, profile := range rec.Fixture.WorkloadProfiles {
+			if profile.ArrivalRate == s.ArrivalRate && profile.MaxRPS == s.MaxRPS {
+				requestCeilingTested = true
+				break
+			}
+		}
+	}
+	if !requestCeilingValid || !requestCeilingTested {
+		add("request_rate_ceiling", "OUTSIDE_REFERENCE", "The declared request ceiling is invalid or its exact arrival-rate and max_rps combination was not tested.")
 	} else {
 		add("request_rate_ceiling", "MATCHED", "The declared request ceiling is within the fixture bound; delivered rate still requires observation.")
 	}
-	if singleGET {
-		add("request_mix", "MATCHED", "The declared request is one unauthenticated GET step.")
+	simpleRequestMix := len(s.Profiles) == 0 && len(s.Steps) == 1 &&
+		len(s.Steps[0].Headers) == 0 && len(s.Steps[0].ExpectedStatus) == 0 &&
+		s.Steps[0].MustContain == "" && len(s.Steps[0].Extract) == 0 &&
+		(s.Steps[0].BodyEnv == "" || strings.EqualFold(s.Steps[0].Method, "POST")) &&
+		s.PerVUCookieEnvPrefix == "" && s.SyntheticDataPrefixEnv == ""
+	if simpleRequestMix {
+		add("request_mix", "MATCHED", "The declared journey contains one simple request step; exact request equivalence is assessed separately.")
 	} else {
-		add("request_mix", "OUTSIDE_REFERENCE", "Multiple steps, profiles, writes, authentication, assertions or dynamic values are outside the fixture.")
+		add("request_mix", "OUTSIDE_REFERENCE", "Multiple steps, profiles, custom headers, assertions, or dynamic dependencies are outside the fixed reference.")
 	}
 	duration, durationErr := time.ParseDuration(s.Duration)
 	durationMatched := durationErr == nil && (duration == 5*time.Second || (duration == 30*time.Second && s.ArrivalRate == 10))
@@ -147,7 +159,7 @@ func AssessScenario(s config.Scenario, rec Record, local Runtime, now time.Time)
 	} else {
 		add("declared_transport", "OUTSIDE_REFERENCE", "Only unencrypted IPv4 loopback was tested.")
 	}
-	add("response_shape", "UNVERIFIED", "Scenario declarations do not prove actual response size or timing distribution.")
+	add("response_shape", "UNVERIFIED", "Calibrated response sizes are recorded for local profiles, but the scenario does not prove the target's actual response-size or timing distribution.")
 	add("fixture_identity", "UNVERIFIED", "No authenticated signal proves the configured endpoint is the measured fixture server.")
 	return c
 }
@@ -162,6 +174,9 @@ func AssessDeclaredWorkloadShape(s config.Scenario, rec Record) Dimension {
 			Status: "UNVERIFIED",
 			Reason: "The calibration record has no versioned workload-shape fingerprint.",
 		}
+	}
+	if rec.SchemaVersion >= 3 {
+		return assessMatrixWorkloadShape(s, rec)
 	}
 	if s.ProfileMixBasis != "" && s.ProfileMixBasis != "assumption" || s.ProfileMixReference != "" {
 		return Dimension{
@@ -239,6 +254,60 @@ func AssessDeclaredWorkloadShape(s config.Scenario, rec Record) Dimension {
 		s.ProfileMixReference,
 		rec,
 	)
+}
+
+func assessMatrixWorkloadShape(s config.Scenario, rec Record) Dimension {
+	dimension := Dimension{Name: "declared_workload_shape", Status: "OUTSIDE_REFERENCE"}
+	if (s.ProfileMixBasis != "" && s.ProfileMixBasis != "assumption") || s.ProfileMixReference != "" {
+		dimension.Reason = "The calibrated profiles cover one assumed request at a time and do not validate a sourced or weighted workflow mix."
+		return dimension
+	}
+	if len(s.Profiles) != 0 || len(s.Steps) != 1 || s.PerVUCookieEnvPrefix != "" || s.SyntheticDataPrefixEnv != "" {
+		dimension.Reason = "The calibrated matrix covers one request step without profiles, independent sessions, or synthetic journey data."
+		return dimension
+	}
+	step := s.Steps[0]
+	method := strings.ToUpper(step.Method)
+	if method == "" {
+		method = "GET"
+	}
+	if (method != "GET" && method != "POST") || len(step.Headers) != 0 || len(step.ExpectedStatus) != 0 ||
+		step.MustContain != "" || len(step.Extract) != 0 {
+		dimension.Reason = "The calibrated matrix covers unasserted GET and POST steps without custom headers or dynamic dependencies."
+		return dimension
+	}
+
+	connectionPolicy := s.ConnectionPolicy
+	if connectionPolicy == "" {
+		connectionPolicy = "reuse"
+	}
+	step.Method = method
+	normalized := config.Scenario{
+		Name: "Synthetic workload profile comparison", BaseURL: "http://127.0.0.1",
+		Users: 1, Duration: "5s", Mode: "arrival", ArrivalRate: 1,
+		MaxRPS: 50, Timeout: "1s", ConnectionPolicy: connectionPolicy,
+		P95LimitMS: 500, MaxErrorRate: 1, Steps: []config.Step{step},
+	}
+	validated, err := config.Parse(normalized, config.Options{Authorized: true, AllowWrites: true})
+	if err != nil || len(validated.Steps) != 1 {
+		dimension.Status = "UNVERIFIED"
+		dimension.Reason = "The declared request shape could not be safely normalized; request-body contents are never copied into calibration evidence."
+		return dimension
+	}
+	profileShape := WorkloadProfile{
+		Method: method, Path: validated.Steps[0].PathTemplate,
+		RequestBodyBytes: len(validated.Steps[0].Body), ConnectionPolicy: connectionPolicy,
+	}
+	fingerprint := WorkloadProfileFingerprint(profileShape)
+	for _, profile := range rec.Fixture.WorkloadProfiles {
+		if profile.Fingerprint == fingerprint && profile.TransportScheme == validated.Base.Scheme {
+			dimension.Status = "MATCHED"
+			dimension.Reason = "The declared method, path, request-body size, and connection policy match an exactly measured local profile; response behavior and target identity remain unverified."
+			return dimension
+		}
+	}
+	dimension.Reason = "No calibrated profile exactly matches the declared method, path, request-body size, and connection policy."
+	return dimension
 }
 
 // AssessWorkloadFingerprint is the report-side comparison used to recompute

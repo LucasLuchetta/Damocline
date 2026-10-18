@@ -15,7 +15,7 @@ import (
 
 // The preflight record is embedded in the existing calibration JSON. It
 // identifies the tested loopback fixture, never a customer target or session.
-const SchemaVersion = 2
+const SchemaVersion = 3
 const minimumSupportedSchemaVersion = 1
 
 // Healthy response latency bounds are the fixed coarse guardrail used by the
@@ -40,22 +40,63 @@ type Generator struct {
 }
 
 type Fixture struct {
-	NetworkMode          string `json:"network_mode"`
-	WorkloadModel        string `json:"workload_model"`
-	Method               string `json:"method"`
-	HealthyResponseBytes int    `json:"healthy_response_bytes"`
-	HealthyDelay         string `json:"healthy_delay"`
-	StageDuration        string `json:"stage_duration"`
-	SoakDuration         string `json:"soak_duration"`
-	StageUsers           int    `json:"stage_users"`
-	MaximumRPS           int    `json:"maximum_rps"`
-	Repeats              int    `json:"repeats"`
-	Extended             bool   `json:"extended"`
-	HealthyRates         []int  `json:"healthy_rates"`
+	NetworkMode          string            `json:"network_mode"`
+	WorkloadModel        string            `json:"workload_model"`
+	Method               string            `json:"method"`
+	HealthyResponseBytes int               `json:"healthy_response_bytes"`
+	HealthyDelay         string            `json:"healthy_delay"`
+	StageDuration        string            `json:"stage_duration"`
+	SoakDuration         string            `json:"soak_duration"`
+	StageUsers           int               `json:"stage_users"`
+	MaximumRPS           int               `json:"maximum_rps"`
+	Repeats              int               `json:"repeats"`
+	Extended             bool              `json:"extended"`
+	HealthyRates         []int             `json:"healthy_rates"`
+	WorkloadProfiles     []WorkloadProfile `json:"workload_profiles,omitempty"`
+}
+
+// WorkloadProfile is a bounded request/response shape exercised by the
+// calibrator's actual HTTP engine at an exact, recorded arrival rate.
+type WorkloadProfile struct {
+	ID                string `json:"id"`
+	Fingerprint       string `json:"fingerprint"`
+	Mode              string `json:"mode"`
+	TransportScheme   string `json:"transport_scheme"`
+	Method            string `json:"method"`
+	Path              string `json:"path"`
+	RequestBodyBytes  int    `json:"request_body_bytes"`
+	ResponseBodyBytes int    `json:"response_body_bytes"`
+	ArrivalRate       int    `json:"arrival_rate"`
+	MaxRPS            int    `json:"max_rps"`
+	Users             int    `json:"users"`
+	Duration          string `json:"duration"`
+	Timeout           string `json:"timeout"`
+	ConnectionPolicy  string `json:"connection_policy"`
+}
+
+// WorkloadObservation records client and independent server counters for one
+// calibrated workload profile. It contains no request or response content.
+type WorkloadObservation struct {
+	ProfileID                      string `json:"profile_id"`
+	Scheduled                      int64  `json:"scheduled"`
+	Admitted                       int64  `json:"admitted"`
+	Started                        int64  `json:"started"`
+	Completed                      int64  `json:"completed"`
+	Dropped                        int64  `json:"dropped"`
+	Outcome                        string `json:"outcome"`
+	ClientCompleteBodyObservations int64  `json:"client_complete_body_observations"`
+	ClientResponseMinBytes         int64  `json:"client_response_min_bytes"`
+	ClientResponseMaxBytes         int64  `json:"client_response_max_bytes"`
+	ClientResponseTotalBytes       int64  `json:"client_response_total_bytes"`
+	ServerReceived                 int64  `json:"server_received"`
+	ServerCompleted                int64  `json:"server_completed"`
+	ServerRequestBodyBytes         int64  `json:"server_request_body_bytes"`
+	ServerResponseBodyBytes        int64  `json:"server_response_body_bytes"`
 }
 
 type Stage struct {
 	ArrivalRate int    `json:"arrival_rate"`
+	MaxRPS      int    `json:"max_rps,omitempty"`
 	Scheduled   int64  `json:"scheduled"`
 	Started     int64  `json:"started"`
 	Completed   int64  `json:"completed"`
@@ -64,18 +105,55 @@ type Stage struct {
 }
 
 type Record struct {
-	SchemaVersion                   int       `json:"schema_version"`
-	Kind                            string    `json:"kind"`
-	Status                          string    `json:"status"`
-	StartedAt                       string    `json:"started_at"`
-	FinishedAt                      string    `json:"finished_at"`
-	Generator                       Generator `json:"generator"`
-	Fixture                         Fixture   `json:"fixture"`
-	ScenarioFingerprintSHA256       string    `json:"scenario_fingerprint_sha256"`
-	FixtureWorkloadFingerprint      string    `json:"fixture_workload_fingerprint,omitempty"`
-	HealthyStages                   []Stage   `json:"healthy_stages"`
-	HighestPassingTestedArrivalRate int       `json:"highest_passing_tested_arrival_rate"`
-	Interpretation                  string    `json:"interpretation"`
+	SchemaVersion                   int                   `json:"schema_version"`
+	Kind                            string                `json:"kind"`
+	Status                          string                `json:"status"`
+	StartedAt                       string                `json:"started_at"`
+	FinishedAt                      string                `json:"finished_at"`
+	Generator                       Generator             `json:"generator"`
+	Fixture                         Fixture               `json:"fixture"`
+	ScenarioFingerprintSHA256       string                `json:"scenario_fingerprint_sha256"`
+	FixtureWorkloadFingerprint      string                `json:"fixture_workload_fingerprint,omitempty"`
+	HealthyStages                   []Stage               `json:"healthy_stages"`
+	WorkloadObservations            []WorkloadObservation `json:"workload_observations,omitempty"`
+	HighestPassingTestedArrivalRate int                   `json:"highest_passing_tested_arrival_rate"`
+	Interpretation                  string                `json:"interpretation"`
+}
+
+const WorkloadMatrixArrivalRate = 10
+
+func ReferenceWorkloadProfiles() []WorkloadProfile {
+	profiles := []WorkloadProfile{
+		{ID: "get-4k-response", Mode: "arrival", TransportScheme: "http", Method: "GET", Path: "/work", ResponseBodyBytes: ReferenceHealthyResponseBytes,
+			ArrivalRate: WorkloadMatrixArrivalRate, MaxRPS: 50, Users: 10, Duration: "5s", Timeout: "1s", ConnectionPolicy: "reuse"},
+		{ID: "get-empty-response", Mode: "arrival", TransportScheme: "http", Method: "GET", Path: "/matrix/get-empty", ResponseBodyBytes: 0,
+			ArrivalRate: WorkloadMatrixArrivalRate, MaxRPS: 50, Users: 10, Duration: "5s", Timeout: "1s", ConnectionPolicy: "reuse"},
+		{ID: "get-1k-response", Mode: "arrival", TransportScheme: "http", Method: "GET", Path: "/matrix/get-1k", ResponseBodyBytes: 1 << 10,
+			ArrivalRate: WorkloadMatrixArrivalRate, MaxRPS: 50, Users: 10, Duration: "5s", Timeout: "1s", ConnectionPolicy: "reuse"},
+		{ID: "get-64k-response", Mode: "arrival", TransportScheme: "http", Method: "GET", Path: "/matrix/get-64k", ResponseBodyBytes: 64 << 10,
+			ArrivalRate: WorkloadMatrixArrivalRate, MaxRPS: 50, Users: 10, Duration: "5s", Timeout: "1s", ConnectionPolicy: "reuse"},
+		{ID: "post-4k-request", Mode: "arrival", TransportScheme: "http", Method: "POST", Path: "/matrix/post-4k", RequestBodyBytes: 4 << 10, ResponseBodyBytes: 4 << 10,
+			ArrivalRate: WorkloadMatrixArrivalRate, MaxRPS: 50, Users: 10, Duration: "5s", Timeout: "1s", ConnectionPolicy: "reuse"},
+	}
+	for index := range profiles {
+		profiles[index].Fingerprint = WorkloadProfileFingerprint(profiles[index])
+	}
+	return profiles
+}
+
+func WorkloadProfileFingerprint(profile WorkloadProfile) string {
+	shape := struct {
+		Method           string `json:"method"`
+		Path             string `json:"path"`
+		RequestBodyBytes int    `json:"request_body_bytes"`
+		ConnectionPolicy string `json:"connection_policy"`
+	}{profile.Method, profile.Path, profile.RequestBodyBytes, profile.ConnectionPolicy}
+	data, err := json.Marshal(shape)
+	if err != nil {
+		return ""
+	}
+	digest := sha256.Sum256(data)
+	return "sha256:" + hex.EncodeToString(digest[:])
 }
 
 const Interpretation = "Passing fixture stages show only observed delivery in the recorded loopback envelope, not a maximum generator rate or application capacity."
@@ -125,7 +203,7 @@ func Fingerprint(fixture Fixture) (string, error) {
 
 // NewRecord accepts only fixed, program-owned metadata. It does not
 // read target URLs, authentication headers, process environment or client files.
-func NewRecord(start, end time.Time, generator Generator, fixture Fixture, stages []Stage, status string) (Record, error) {
+func NewRecord(start, end time.Time, generator Generator, fixture Fixture, stages []Stage, status string, workloadObservations ...[]WorkloadObservation) (Record, error) {
 	fingerprint, err := Fingerprint(fixture)
 	if err != nil {
 		return Record{}, err
@@ -134,8 +212,16 @@ func NewRecord(start, end time.Time, generator Generator, fixture Fixture, stage
 	if err != nil {
 		return Record{}, fmt.Errorf("construct reference workload fingerprint: %w", err)
 	}
+	schemaVersion := SchemaVersion - 1
+	var observations []WorkloadObservation
+	if len(workloadObservations) > 0 {
+		observations = append([]WorkloadObservation(nil), workloadObservations[0]...)
+		if len(observations) > 0 {
+			schemaVersion = SchemaVersion
+		}
+	}
 	rec := Record{
-		SchemaVersion:              SchemaVersion,
+		SchemaVersion:              schemaVersion,
 		Kind:                       "separate_process_loopback_fixture",
 		Status:                     status,
 		StartedAt:                  start.UTC().Format(time.RFC3339Nano),
@@ -145,6 +231,7 @@ func NewRecord(start, end time.Time, generator Generator, fixture Fixture, stage
 		ScenarioFingerprintSHA256:  fingerprint,
 		FixtureWorkloadFingerprint: workloadFingerprint,
 		HealthyStages:              append([]Stage(nil), stages...),
+		WorkloadObservations:       observations,
 		Interpretation:             Interpretation,
 	}
 	if status == "REFERENCE_SMOKE_PASSED" {
@@ -204,13 +291,22 @@ func ValidateRecord(rec Record) error {
 		}()) {
 		return errors.New("invalid or unsupported loopback fixture parameters")
 	}
+	if rec.SchemaVersion >= 3 {
+		if err := validateWorkloadMatrix(rec); err != nil {
+			return err
+		}
+	} else if len(f.WorkloadProfiles) != 0 || len(rec.WorkloadObservations) != 0 {
+		return errors.New("legacy preflight record contains unsupported workload matrix fields")
+	}
 	expected := []int{2, 5, 10}
 	if f.Extended {
 		expected = append(expected, 15, 20, 50, 100)
 	}
 	for i, stage := range rec.HealthyStages {
 		rate := expected[i%len(expected)]
+		maxRPSMatches := rec.SchemaVersion < 3 || stage.MaxRPS == max(50, rate)
 		if f.HealthyRates[i] != rate || stage.ArrivalRate != rate ||
+			!maxRPSMatches ||
 			stage.Scheduled != int64(rate)*5 || stage.Started < 0 || stage.Started > stage.Scheduled ||
 			stage.Completed < 0 || stage.Completed > stage.Started || stage.Dropped < 0 ||
 			stage.Dropped != stage.Scheduled-stage.Started ||
@@ -250,6 +346,59 @@ func ValidateRecord(rec Record) error {
 		}
 		if rec.HighestPassingTestedArrivalRate != maximum {
 			return errors.New("incorrect highest passing tested arrival rate")
+		}
+	}
+	return nil
+}
+
+func validateWorkloadMatrix(rec Record) error {
+	expectedProfiles := ReferenceWorkloadProfiles()
+	profilesMatch := len(rec.Fixture.WorkloadProfiles) == len(expectedProfiles)
+	if profilesMatch {
+		for index, expected := range expectedProfiles {
+			if rec.Fixture.WorkloadProfiles[index] != expected {
+				profilesMatch = false
+				break
+			}
+		}
+	}
+	if !profilesMatch || len(rec.WorkloadObservations) != len(expectedProfiles) {
+		return errors.New("calibration workload profile matrix is missing, reordered, or unsupported")
+	}
+
+	for index, profile := range expectedProfiles {
+		observation := rec.WorkloadObservations[index]
+		planned := int64(profile.ArrivalRate) * 5
+		expectedRequestBytes := int64(profile.RequestBodyBytes) * planned
+		expectedResponseBytes := int64(profile.ResponseBodyBytes) * planned
+		countersAreBounded := observation.Scheduled >= 0 && observation.Admitted >= 0 &&
+			observation.Started >= 0 && observation.Completed >= 0 && observation.Dropped >= 0 &&
+			observation.ClientCompleteBodyObservations >= 0 && observation.ClientResponseMinBytes >= 0 &&
+			observation.ClientResponseMaxBytes >= observation.ClientResponseMinBytes &&
+			observation.ClientResponseTotalBytes >= 0 && observation.ServerReceived >= 0 &&
+			observation.ServerCompleted >= 0 && observation.ServerRequestBodyBytes >= 0 &&
+			observation.ServerResponseBodyBytes >= 0
+		if observation.ProfileID != profile.ID || !workloadFingerprintPattern.MatchString(profile.Fingerprint) ||
+			profile.Fingerprint != WorkloadProfileFingerprint(profile) || !countersAreBounded ||
+			observation.Scheduled != planned || observation.Scheduled != observation.Admitted+observation.Dropped ||
+			observation.Admitted != observation.Started || observation.Started < observation.Completed ||
+			observation.Completed > observation.ServerCompleted || observation.ServerCompleted > observation.ServerReceived ||
+			observation.ClientCompleteBodyObservations > observation.Completed ||
+			observation.ClientResponseTotalBytes != int64(profile.ResponseBodyBytes)*observation.ClientCompleteBodyObservations ||
+			observation.ServerRequestBodyBytes > expectedRequestBytes || observation.ServerResponseBodyBytes > expectedResponseBytes ||
+			(observation.Outcome != "PASS" && observation.Outcome != "FAIL" && observation.Outcome != "INCONCLUSIVE" && observation.Outcome != "ABORTED") {
+			return errors.New("invalid workload profile observation counters")
+		}
+		if rec.Status == "REFERENCE_SMOKE_PASSED" &&
+			(observation.Outcome != "PASS" || observation.Dropped != 0 || observation.Started != planned ||
+				observation.Completed != planned || observation.ClientCompleteBodyObservations != planned ||
+				observation.ClientResponseMinBytes != int64(profile.ResponseBodyBytes) ||
+				observation.ClientResponseMaxBytes != int64(profile.ResponseBodyBytes) ||
+				observation.ClientResponseTotalBytes != expectedResponseBytes ||
+				observation.ServerReceived != planned || observation.ServerCompleted != planned ||
+				observation.ServerRequestBodyBytes != expectedRequestBytes ||
+				observation.ServerResponseBodyBytes != expectedResponseBytes) {
+			return errors.New("passing calibration has incomplete workload profile evidence")
 		}
 	}
 	return nil

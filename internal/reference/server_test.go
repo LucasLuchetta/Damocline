@@ -1,6 +1,7 @@
 package reference
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -111,5 +112,86 @@ func TestKnownBodyAndConnectionClose(t *testing.T) {
 	s := h.Snapshot()
 	if s.Received != 2 || s.Completed != 2 || s.Success != 2 || s.PeakQueued != 0 {
 		t.Fatalf("unexpected counters: %+v", s)
+	}
+}
+
+func TestWorkloadProfilesReconcileRequestAndResponsePayloadBytes(t *testing.T) {
+	profiles := []WorkloadProfile{
+		{ID: "get-empty", Method: http.MethodGet, Path: "/matrix/get-empty", ResponseBodyBytes: 0},
+		{ID: "get-1k", Method: http.MethodGet, Path: "/matrix/get-1k", ResponseBodyBytes: 1 << 10},
+		{ID: "get-64k", Method: http.MethodGet, Path: "/matrix/get-64k", ResponseBodyBytes: 64 << 10},
+		{ID: "post-4k", Method: http.MethodPost, Path: "/matrix/post-4k", RequestBodyBytes: 4 << 10, ResponseBodyBytes: 4 << 10},
+	}
+	h, err := New(Config{Delay: time.Millisecond, MaxConcurrent: 2, MaxRequests: 10, Profiles: profiles})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(h)
+	defer srv.Close()
+
+	client := &http.Client{Timeout: time.Second}
+	var expectedResponseBytes int64
+	for _, profile := range profiles {
+		requestBody := make([]byte, profile.RequestBodyBytes)
+		request, err := http.NewRequest(profile.Method, srv.URL+profile.Path, bytes.NewReader(requestBody))
+		if err != nil {
+			t.Fatal(err)
+		}
+		response, err := client.Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, readErr := io.ReadAll(response.Body)
+		closeErr := response.Body.Close()
+		if readErr != nil || closeErr != nil || response.StatusCode != http.StatusOK || len(body) != profile.ResponseBodyBytes {
+			t.Fatalf("profile %s response: status=%d bytes=%d read=%v close=%v", profile.ID, response.StatusCode, len(body), readErr, closeErr)
+		}
+		expectedResponseBytes += int64(profile.ResponseBodyBytes)
+	}
+
+	snapshot := h.Snapshot()
+	if snapshot.Received != int64(len(profiles)) || snapshot.Completed != int64(len(profiles)) ||
+		snapshot.Success != int64(len(profiles)) || snapshot.Failures != 0 ||
+		snapshot.RequestBodyBytes != 4<<10 || snapshot.ResponseBodyBytes != expectedResponseBytes {
+		t.Fatalf("profile byte counters did not reconcile independently: %+v", snapshot)
+	}
+}
+
+func TestWorkloadProfilesRejectMismatchedRequestBodyLength(t *testing.T) {
+	h, err := New(Config{MaxConcurrent: 1, MaxRequests: 10, Profiles: []WorkloadProfile{
+		{ID: "post-4k", Method: http.MethodPost, Path: "/matrix/post-4k", RequestBodyBytes: 4 << 10, ResponseBodyBytes: 1},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(h)
+	defer srv.Close()
+
+	response, err := http.Post(srv.URL+"/matrix/post-4k", "application/octet-stream", bytes.NewReader(make([]byte, (4<<10)-1)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Fatalf("mismatched payload returned %d, want %d", response.StatusCode, http.StatusRequestEntityTooLarge)
+	}
+	snapshot := h.Snapshot()
+	if snapshot.Received != 1 || snapshot.Completed != 1 || snapshot.Failures != 1 || snapshot.Success != 0 {
+		t.Fatalf("mismatched profile request was not reconciled: %+v", snapshot)
+	}
+}
+
+func TestRejectUnboundedWorkloadProfileMatrix(t *testing.T) {
+	profiles := make([]WorkloadProfile, 17)
+	for i := range profiles {
+		profiles[i] = WorkloadProfile{ID: "get", Method: http.MethodGet, Path: "/matrix/get"}
+	}
+	if _, err := New(Config{MaxConcurrent: 1, MaxRequests: 1, Profiles: profiles}); err == nil {
+		t.Fatal("accepted too many workload profiles")
+	}
+	if _, err := New(Config{MaxConcurrent: 1, MaxRequests: 1, Profiles: []WorkloadProfile{
+		{ID: "get", Method: http.MethodGet, Path: "/matrix/get?secret=value"},
+	}}); err == nil {
+		t.Fatal("accepted a query-bearing fixture path")
 	}
 }

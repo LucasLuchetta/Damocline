@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -80,6 +81,72 @@ func TestNativeEngineReferencePayloadMatrix(t *testing.T) {
 			if out.Quality == nil || out.Quality.State != report.QualityLimited {
 				t.Fatalf("%s: passing fixture cannot imply validated arbitrary capacity: %+v",
 					tc.name, out.Quality)
+			}
+		})
+	}
+}
+
+func TestNativeEngineMatchesReferenceWorkloadProfileMatrix(t *testing.T) {
+	const requestBodyEnv = "DAMOCLINE_SYNTHETIC_PROFILE_BODY"
+	requestBody := strings.Repeat("x", 4<<10)
+	t.Setenv(requestBodyEnv, requestBody)
+	profiles := []reference.WorkloadProfile{
+		{ID: "get-empty", Method: http.MethodGet, Path: "/matrix/get-empty", ResponseBodyBytes: 0},
+		{ID: "get-1k", Method: http.MethodGet, Path: "/matrix/get-1k", ResponseBodyBytes: 1 << 10},
+		{ID: "get-64k", Method: http.MethodGet, Path: "/matrix/get-64k", ResponseBodyBytes: 64 << 10},
+		{ID: "post-4k", Method: http.MethodPost, Path: "/matrix/post-4k", RequestBodyBytes: 4 << 10, ResponseBodyBytes: 4 << 10},
+	}
+	fixture, err := reference.New(reference.Config{
+		Delay: 10 * time.Millisecond, MaxConcurrent: 10, MaxRequests: 100,
+		ResponseBytes: 4 << 10, Profiles: profiles,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(fixture)
+	defer server.Close()
+
+	var expectedRequests, expectedRequestBytes, expectedResponseBytes int64
+	for _, profile := range profiles {
+		const expected = 10
+		expectedRequests += expected
+		expectedRequestBytes += expected * int64(profile.RequestBodyBytes)
+		expectedResponseBytes += expected * int64(profile.ResponseBodyBytes)
+		t.Run(profile.ID, func(t *testing.T) {
+			step := config.Step{Name: profile.ID, Method: profile.Method, Path: profile.Path}
+			if profile.RequestBodyBytes > 0 {
+				step.BodyEnv = requestBodyEnv
+			}
+			scenario := config.Scenario{
+				Name: "bounded calibrated workload profile", BaseURL: server.URL,
+				Users: 10, Duration: "2s", Mode: "arrival", ArrivalRate: 5,
+				MaxRPS: 20, Timeout: "1s", P95LimitMS: 900,
+				MaxErrorRate: 0, MinSamplesPerStep: 1, ConnectionPolicy: "reuse",
+				Steps: []config.Step{step},
+			}
+			validated, err := config.Parse(scenario, config.Options{Authorized: true, AllowWrites: profile.Method == http.MethodPost})
+			if err != nil {
+				t.Fatal(err)
+			}
+			result := Run(context.Background(), validated)
+			if result.ArrivalsScheduled != expected || result.IterationsStarted != expected ||
+				result.IterationsCompleted != expected || result.ArrivalsDropped != 0 ||
+				result.Metrics.Total != expected || result.Metrics.Success != expected ||
+				result.Metrics.Failures != 0 || result.Outcome != "PASS" {
+				t.Fatalf("engine delivery did not match profile %s: %+v", profile.ID, result)
+			}
+			body := result.Metrics.ResponseBody
+			if body.CompleteObservations != expected || body.MinBytes != int64(profile.ResponseBodyBytes) ||
+				body.MaxBytes != int64(profile.ResponseBodyBytes) ||
+				body.TotalBytes != int64(expected*profile.ResponseBodyBytes) {
+				t.Fatalf("response-body observations differ from profile %s: %+v", profile.ID, body)
+			}
+			serverLedger := fixture.Snapshot()
+			if serverLedger.Received != expectedRequests ||
+				serverLedger.Completed != serverLedger.Received || serverLedger.Success != serverLedger.Received ||
+				serverLedger.Failures != 0 || serverLedger.RequestBodyBytes != expectedRequestBytes ||
+				serverLedger.ResponseBodyBytes != expectedResponseBytes {
+				t.Fatalf("independent server byte ledger does not match completed profiles: profile=%s snapshot=%+v", profile.ID, serverLedger)
 			}
 		})
 	}
