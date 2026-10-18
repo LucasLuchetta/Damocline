@@ -57,7 +57,8 @@ func TestArrivalCancellationReconcilesIndependentLedgers(t *testing.T) {
 	ledger := fixture.Snapshot()
 
 	if result.ArrivalsScheduled != result.IterationsStarted+result.ArrivalsDropped ||
-		result.ArrivalsDropped != result.ArrivalsDroppedBusy+result.ArrivalsDroppedLate {
+		result.ArrivalsCancelledBeforeAdmission == nil ||
+		result.ArrivalsDropped != result.ArrivalsDroppedBusy+result.ArrivalsDroppedLate+*result.ArrivalsCancelledBeforeAdmission {
 		t.Fatalf("planned arrivals did not reconcile after cancellation: %+v", result)
 	}
 	if result.SchedulerLagSamples != result.ArrivalsScheduled || result.SchedulerLagMethod == "" ||

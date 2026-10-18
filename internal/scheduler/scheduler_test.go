@@ -67,6 +67,32 @@ func TestDriveAccountsForSchedulerStall(t *testing.T) {
 	}
 }
 
+func TestDriveSeparatesExternalCancellationFromSchedulerLateness(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	firstAdmission := make(chan struct{})
+	done := make(chan Stats, 1)
+	go func() {
+		done <- Drive(ctx, time.Second, 20, func() bool {
+			select {
+			case <-firstAdmission:
+			default:
+				close(firstAdmission)
+				time.Sleep(140 * time.Millisecond)
+			}
+			return true
+		})
+	}()
+	<-firstAdmission
+	time.Sleep(80 * time.Millisecond)
+	cancel()
+	stats := <-done
+	if !stats.Consistent() || stats.Planned != 3 || stats.Admitted != 1 ||
+		stats.CancelledBeforeAdmission != 2 || stats.DroppedLate != 0 || stats.DroppedBusy != 0 {
+		t.Fatalf("external termination was conflated with scheduler lateness: %+v", stats)
+	}
+}
+
 func TestFinishSummarizesEveryPlannedLagSample(t *testing.T) {
 	var stats Stats
 	for _, lag := range []time.Duration{40, 10, 30, 20} {

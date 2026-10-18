@@ -446,6 +446,8 @@ func TestReadRunAcceptsCurrentSchemaFourteenConnectionPolicyAndWindowLedgers(t *
 	r := synthetic()
 	r.SchemaVersion = report.CurrentSchemaVersion
 	r.Config.ConnectionPolicy = "reuse"
+	zeroCancelledBeforeAdmission := int64(0)
+	r.ArrivalsCancelledBeforeAdmission = &zeroCancelledBeforeAdmission
 	r.ObservationSeconds = 30
 	r.Config.WindowDuration = "1s"
 	r.Windows = []report.WindowResult{{StartSeconds: 0, EndSeconds: 1,
@@ -561,6 +563,39 @@ func TestSupportedReportSchemaGoldensRoundTrip(t *testing.T) {
 				if got.Config.ConnectionPolicy != "reuse" {
 					t.Fatal("schema-v15 connection policy was not preserved")
 				}
+			case 16:
+				if got.ArrivalsCancelledBeforeAdmission == nil || *got.ArrivalsCancelledBeforeAdmission != 2 {
+					t.Fatal("schema-v16 cancelled-arrival counter was not preserved")
+				}
+			}
+		})
+	}
+}
+
+func TestReadRunRequiresSchema16CancellationEvidence(t *testing.T) {
+	zero := int64(0)
+	for _, tc := range []struct {
+		name         string
+		version      int
+		cancellation *int64
+	}{
+		{name: "current missing", version: 16},
+		{name: "legacy unexpected", version: 15, cancellation: &zero},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := synthetic()
+			r.SchemaVersion = tc.version
+			r.ArrivalsCancelledBeforeAdmission = tc.cancellation
+			data, err := json.Marshal(r)
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(t.TempDir(), "report.json")
+			if err := os.WriteFile(path, data, 0600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := ReadRun(path); err == nil {
+				t.Fatal("report with schema-incompatible arrival cancellation evidence was accepted")
 			}
 		})
 	}

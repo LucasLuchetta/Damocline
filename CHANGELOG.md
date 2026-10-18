@@ -5,6 +5,7 @@ This project follows a human-maintained changelog. No release exists yet.
 ## [Unreleased]
 
 ### Added
+- Emit schema-v16 arrival accounting with externally cancelled planned starts separated from scheduler-late and worker-busy drops; preserve missing-versus-zero semantics for historical reports.
 - Reconcile current-schema started iterations with completed journeys and explicitly cancelled journeys during report-quality recomputation; reject corrupted cross-ledger totals as `INVALID` while retaining incomplete but fully accounted runs as `LIMITED`.
 - Exercise a successful trusted local HTTPS request through the native engine and reconcile received and completed requests against an independent server ledger; this validates fixture behavior, not a TLS performance envelope.
 - Add schema-v15 controlled-reference evidence for the calibrator-owned soak, recompute quality from the exact fixture and independent child-server counters, and require a passing calibration command to produce `VALID_WITHIN_ENVELOPE` for that controlled run.
@@ -96,6 +97,7 @@ This project follows a human-maintained changelog. No release exists yet.
 - Removed third-party load-testing tool references from the interactive welcome banner.
 
 ### Added
+- Emit schema-v16 arrival accounting with externally cancelled planned starts separated from scheduler-late and worker-busy drops; preserve missing-versus-zero semantics for historical reports.
 - Branded sword splash screen and English numbered home menu for bare `damocline` and `start.cmd`, with safe choices for new, saved, current, help and exit.
 - Terminal-aware ANSI color support with plain-text fallback. Non-interactive commands remain unchanged.
 - Interactive, opt-in source update notifications with fast-forward Git safety checks, local automatic-update preference, and automatic restart after installing a new version.

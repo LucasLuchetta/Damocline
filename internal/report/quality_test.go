@@ -532,6 +532,8 @@ func TestQualityReconcilesCurrentIterationAndJourneyLedgers(t *testing.T) {
 			r.SchemaVersion = CurrentSchemaVersion
 			r.Config.ConnectionPolicy = "reuse"
 			r.Generator = nil
+			zeroCancelledBeforeAdmission := int64(0)
+			r.ArrivalsCancelledBeforeAdmission = &zeroCancelledBeforeAdmission
 			mutate(&r)
 			if q := AssessQuality(r); q.State != QualityInvalid {
 				t.Fatalf("inconsistent iteration and journey ledgers must be INVALID: %+v", q)
@@ -543,12 +545,58 @@ func TestQualityReconcilesCurrentIterationAndJourneyLedgers(t *testing.T) {
 	r.SchemaVersion = CurrentSchemaVersion
 	r.Config.ConnectionPolicy = "reuse"
 	r.Generator = nil
+	zeroCancelledBeforeAdmission := int64(0)
+	r.ArrivalsCancelledBeforeAdmission = &zeroCancelledBeforeAdmission
 	r.IterationsCompleted--
 	r.Journeys.Total--
 	r.Journeys.Success--
 	r.Journeys.Cancelled++
 	if q := AssessQuality(r); q.State == QualityInvalid {
 		t.Fatalf("an explicitly accounted cancelled journey must remain arithmetically valid: %+v", q)
+	}
+}
+
+func TestQualityReconcilesSchema16CancelledArrivalBreakdown(t *testing.T) {
+	r := validSyntheticQualityRun()
+	r.SchemaVersion = CurrentSchemaVersion
+	r.Config.ConnectionPolicy = "reuse"
+	r.Generator = nil
+	r.ArrivalsScheduled = 100
+	r.IterationsStarted = 90
+	r.IterationsCompleted = 90
+	r.ArrivalsDropped = 10
+	r.ArrivalsDroppedLate = 2
+	r.ArrivalsDroppedBusy = 3
+	cancelledBeforeAdmission := int64(5)
+	r.ArrivalsCancelledBeforeAdmission = &cancelledBeforeAdmission
+	r.Journeys = MetricSet{Total: 90, Success: 90}
+	if q := AssessQuality(r); q.State == QualityInvalid {
+		t.Fatalf("a conserved external-cancellation breakdown must remain arithmetically valid: %+v", q)
+	}
+
+	r.ArrivalsCancelledBeforeAdmission = nil
+	if q := AssessQuality(r); q.State != QualityInvalid {
+		t.Fatalf("schema-v16 missing cancellation evidence must be INVALID: %+v", q)
+	}
+	cancelledBeforeAdmission = 4
+	r.ArrivalsCancelledBeforeAdmission = &cancelledBeforeAdmission
+	if q := AssessQuality(r); q.State != QualityInvalid {
+		t.Fatalf("nonconservative cancellation breakdown must be INVALID: %+v", q)
+	}
+	cancelledBeforeAdmission = 0
+	r.Config.Mode = "closed"
+	r.ArrivalsDropped = 0
+	r.ArrivalsDroppedLate = 0
+	r.ArrivalsDroppedBusy = 0
+	r.ArrivalsScheduled = 0
+	r.IterationsStarted = 90
+	r.ArrivalsCancelledBeforeAdmission = &cancelledBeforeAdmission
+	if q := AssessQuality(r); q.State == QualityInvalid {
+		t.Fatalf("zero arrival cancellation evidence must be valid for a closed workload: %+v", q)
+	}
+	cancelledBeforeAdmission = 1
+	if q := AssessQuality(r); q.State != QualityInvalid {
+		t.Fatalf("arrival cancellation evidence must be invalid for a closed workload: %+v", q)
 	}
 }
 
