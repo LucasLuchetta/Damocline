@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -443,6 +445,78 @@ func TestReadRunRejectsUnknownFutureSchema(t *testing.T) {
 	}
 	if _, err := ReadRun(path); err == nil {
 		t.Fatal("report with an unknown future schema was accepted")
+	}
+}
+
+func TestSupportedReportSchemaGoldensRoundTrip(t *testing.T) {
+	for version := 1; version <= report.CurrentSchemaVersion; version++ {
+		t.Run("schema-v"+strconv.Itoa(version), func(t *testing.T) {
+			path := filepath.Join("testdata", "reports", "schema-v"+strconv.Itoa(version)+".json")
+			got, err := ReadRun(path)
+			if err != nil {
+				t.Fatalf("read supported report fixture: %v", err)
+			}
+			if got.SchemaVersion != version {
+				t.Fatalf("fixture schema changed: got %d want %d", got.SchemaVersion, version)
+			}
+			data, err := json.Marshal(got)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var roundTrip report.Result
+			if err := json.Unmarshal(data, &roundTrip); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(got, roundTrip) {
+				t.Fatalf("schema-v%d report changed across JSON round-trip:\n got: %#v\n want: %#v", version, roundTrip, got)
+			}
+			switch version {
+			case 3:
+				if got.Generator == nil || got.Generator.Samples != 3 {
+					t.Fatal("schema-v3 generator observations were not preserved")
+				}
+			case 4:
+				if got.ObservationSeconds != 1 || got.Generator == nil || got.Generator.ProcessSamples != 2 {
+					t.Fatal("schema-v4 observation or process fields were not preserved")
+				}
+			case 5:
+				if len(got.Profiles) != 1 || got.Profiles[0].Name != "browse" {
+					t.Fatal("schema-v5 profile ledger was not preserved")
+				}
+			case 6:
+				if !got.Metrics.P95IID95Approximation || got.Metrics.P95IID95UpperMS != 2 {
+					t.Fatal("schema-v6 percentile interval was not preserved")
+				}
+			case 7:
+				if len(got.Steps) != 1 || got.Steps[0].HTTPTrace.RequestAttemptCount != 1 {
+					t.Fatal("schema-v7 phase trace was not preserved")
+				}
+			case 8:
+				if got.Metrics.HTTP.StatusCodes[200] != 1 {
+					t.Fatal("schema-v8 status ledger was not preserved")
+				}
+			case 9:
+				if got.Config.ProfileMixReference != "synthetic-v1" {
+					t.Fatal("schema-v9 provenance was not preserved")
+				}
+			case 10:
+				if got.Generator == nil || got.Generator.SamplingIntervalMS != 250 {
+					t.Fatal("schema-v10 sampler cadence was not preserved")
+				}
+			case 11:
+				if got.Config.WorkloadFingerprint == "" {
+					t.Fatal("schema-v11 workload fingerprint was not preserved")
+				}
+			case 12:
+				if got.Steps[0].Metrics.ResponseBody.CompleteObservations != 1 || got.Steps[0].Metrics.ResponseBody.MinBytes != 0 {
+					t.Fatal("schema-v12 complete zero-byte body observation was not preserved")
+				}
+			case 13:
+				if len(got.Windows) != 1 || len(got.Windows[0].Steps) != 1 {
+					t.Fatal("schema-v13 named window ledger was not preserved")
+				}
+			}
+		})
 	}
 }
 

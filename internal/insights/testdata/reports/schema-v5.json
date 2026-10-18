@@ -1,0 +1,1 @@
+{"schema_version":5,"name":"Synthetic legacy fixture","target":"http://127.0.0.1","elapsed_seconds":1,"observation_seconds":1,"config":{"users":1},"metrics":{"total":0,"success":0,"failures":0},"profiles":[{"name":"browse","weight":1,"journeys":{"total":0,"success":0,"failures":0,"cancelled":0}}]}
