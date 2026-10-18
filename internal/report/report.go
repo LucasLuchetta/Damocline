@@ -131,7 +131,7 @@ func (d *HTTPDiagnostics) Record(statusCode int, reason string, assertionFailure
 	switch reason {
 	case "timeout":
 		d.NetworkTimeouts++
-	case "transport":
+	case "transport", "body_read":
 		if !tlsFailure {
 			d.TransportFailures++
 		}

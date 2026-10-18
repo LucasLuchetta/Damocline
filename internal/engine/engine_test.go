@@ -143,6 +143,7 @@ func TestTruncatedBodyReconcilesIndependentRequestLedger(t *testing.T) {
 		t.Fatalf("client and independent server request ledgers disagree: client=%+v received=%d handler_completed=%d", r.Metrics, received.Load(), handlerCompleted.Load())
 	}
 	if r.Metrics.Failures != r.Metrics.Total || r.Metrics.Reasons["body_read"] != r.Metrics.Total ||
+		r.Metrics.HTTP.TransportFailures != r.Metrics.Total || r.Metrics.HTTP.NetworkTimeouts != 0 ||
 		r.Metrics.ResponseBody.IncompleteObservations != int64(r.Metrics.Total) ||
 		step.HTTPTrace.BodyIncompleteCount != r.Metrics.Total || r.Outcome == "PASS" {
 		t.Fatalf("truncated response bodies were not classified as incomplete failures: aggregate=%+v step=%+v", r.Metrics, step)

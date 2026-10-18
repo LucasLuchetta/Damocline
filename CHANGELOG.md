@@ -89,6 +89,7 @@ This project follows a human-maintained changelog. No release exists yet.
 - Safety-oriented caveats for small sample sizes, long-tail responses, shared sessions, dropped arrivals and uncontrolled comparisons.
 
 ### Fixed
+- Classify non-timeout response-body read failures such as truncated responses as transport failures while preserving their HTTP status and incomplete-body observations as separate counters.
 - Count only successfully completed response-body reads in `body_count`; truncated and timed-out body reads are represented exclusively by `body_incomplete_count`, preserving phase-counter conservation and quality validation.
 - Check source updates before displaying the Eclipse startup splash/menu and avoid a redundant update check after selecting an interactive scenario.
 - Guided setup accepts bare domains and HTTPS origins with a trailing slash, and retries invalid addresses instead of aborting.
