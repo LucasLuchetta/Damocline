@@ -32,6 +32,8 @@ import (
 
 const stageDuration = 5 * time.Second
 const soakDuration = 30 * time.Second
+const campaignDeadline = 220 * time.Second
+const referenceFixtureLifetime = 210 * time.Second
 
 type assessment struct {
 	SchemaVersion        int                               `json:"schema_version"`
@@ -174,7 +176,7 @@ func runFixture() error {
 			case <-time.After(15 * time.Second):
 			}
 		}
-	case <-time.After(140 * time.Second):
+	case <-time.After(referenceFixtureLifetime):
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
@@ -209,7 +211,7 @@ func runMatrix(path string, repeats int, extended bool) error {
 		return errors.New("extended matrix permits at most two repeats within the hard deadline")
 	}
 	preflightStarted := time.Now().UTC()
-	ctx, cancel := context.WithTimeout(context.Background(), 160*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), campaignDeadline)
 	defer cancel()
 	exe, err := os.Executable()
 	if err != nil {
@@ -580,13 +582,16 @@ func checkOverload(run report.Result, server reference.Snapshot) []string {
 
 func referenceWorkloadProfiles() []reference.WorkloadProfile {
 	profiles := calibration.ReferenceWorkloadProfiles()
-	result := make([]reference.WorkloadProfile, 0, len(profiles))
+	result := make([]reference.WorkloadProfile, 0, len(profiles)/len(calibration.WorkloadMatrixArrivalRates()))
+	seen := make(map[string]bool)
 	for _, profile := range profiles {
-		if profile.Path == "/work" {
+		if profile.Path == "/work" || seen[profile.Path] {
 			continue
 		}
+		seen[profile.Path] = true
+		id := strings.TrimSuffix(profile.ID, fmt.Sprintf("-r%d", profile.ArrivalRate))
 		result = append(result, reference.WorkloadProfile{
-			ID: profile.ID, Method: profile.Method, Path: profile.Path,
+			ID: id, Method: profile.Method, Path: profile.Path,
 			RequestBodyBytes: profile.RequestBodyBytes, ResponseBodyBytes: profile.ResponseBodyBytes,
 		})
 	}

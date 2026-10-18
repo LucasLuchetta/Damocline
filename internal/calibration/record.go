@@ -10,12 +10,13 @@ import (
 	"os"
 	"regexp"
 	"runtime/debug"
+	"strings"
 	"time"
 )
 
 // The preflight record is embedded in the existing calibration JSON. It
 // identifies the tested loopback fixture, never a customer target or session.
-const SchemaVersion = 3
+const SchemaVersion = 4
 const minimumSupportedSchemaVersion = 1
 
 // Healthy response latency bounds are the fixed coarse guardrail used by the
@@ -122,23 +123,52 @@ type Record struct {
 
 const WorkloadMatrixArrivalRate = 10
 
+func WorkloadMatrixArrivalRates() []int { return []int{2, 5, 10} }
+
 func ReferenceWorkloadProfiles() []WorkloadProfile {
-	profiles := []WorkloadProfile{
-		{ID: "get-4k-response", Mode: "arrival", TransportScheme: "http", Method: "GET", Path: "/work", ResponseBodyBytes: ReferenceHealthyResponseBytes,
-			ArrivalRate: WorkloadMatrixArrivalRate, MaxRPS: 50, Users: 10, Duration: "5s", Timeout: "1s", ConnectionPolicy: "reuse"},
-		{ID: "get-empty-response", Mode: "arrival", TransportScheme: "http", Method: "GET", Path: "/matrix/get-empty", ResponseBodyBytes: 0,
-			ArrivalRate: WorkloadMatrixArrivalRate, MaxRPS: 50, Users: 10, Duration: "5s", Timeout: "1s", ConnectionPolicy: "reuse"},
-		{ID: "get-1k-response", Mode: "arrival", TransportScheme: "http", Method: "GET", Path: "/matrix/get-1k", ResponseBodyBytes: 1 << 10,
-			ArrivalRate: WorkloadMatrixArrivalRate, MaxRPS: 50, Users: 10, Duration: "5s", Timeout: "1s", ConnectionPolicy: "reuse"},
-		{ID: "get-64k-response", Mode: "arrival", TransportScheme: "http", Method: "GET", Path: "/matrix/get-64k", ResponseBodyBytes: 64 << 10,
-			ArrivalRate: WorkloadMatrixArrivalRate, MaxRPS: 50, Users: 10, Duration: "5s", Timeout: "1s", ConnectionPolicy: "reuse"},
-		{ID: "post-4k-request", Mode: "arrival", TransportScheme: "http", Method: "POST", Path: "/matrix/post-4k", RequestBodyBytes: 4 << 10, ResponseBodyBytes: 4 << 10,
-			ArrivalRate: WorkloadMatrixArrivalRate, MaxRPS: 50, Users: 10, Duration: "5s", Timeout: "1s", ConnectionPolicy: "reuse"},
+	shapes := referenceWorkloadShapes()
+	rates := WorkloadMatrixArrivalRates()
+	profiles := make([]WorkloadProfile, 0, len(shapes)*len(rates))
+	for _, shape := range shapes {
+		for _, rate := range rates {
+			profile := shape
+			profile.ID = fmt.Sprintf("%s-r%d", shape.ID, rate)
+			profile.ArrivalRate = rate
+			profile.Fingerprint = ""
+			profiles = append(profiles, profile)
+		}
 	}
 	for index := range profiles {
 		profiles[index].Fingerprint = WorkloadProfileFingerprint(profiles[index])
 	}
 	return profiles
+}
+
+// referenceWorkloadProfilesV3 preserves the exact schema-v3 matrix for archived
+// artifacts. It deliberately does not inherit newer profile coverage.
+func referenceWorkloadProfilesV3() []WorkloadProfile {
+	profiles := referenceWorkloadShapes()
+	for index := range profiles {
+		profiles[index].ArrivalRate = WorkloadMatrixArrivalRate
+		profiles[index].ID = strings.TrimSuffix(profiles[index].ID, "-shape")
+		profiles[index].Fingerprint = WorkloadProfileFingerprint(profiles[index])
+	}
+	return profiles
+}
+
+func referenceWorkloadShapes() []WorkloadProfile {
+	return []WorkloadProfile{
+		{ID: "get-4k-response-shape", Mode: "arrival", TransportScheme: "http", Method: "GET", Path: "/work", ResponseBodyBytes: ReferenceHealthyResponseBytes,
+			MaxRPS: 50, Users: 10, Duration: "5s", Timeout: "1s", ConnectionPolicy: "reuse"},
+		{ID: "get-empty-response-shape", Mode: "arrival", TransportScheme: "http", Method: "GET", Path: "/matrix/get-empty", ResponseBodyBytes: 0,
+			MaxRPS: 50, Users: 10, Duration: "5s", Timeout: "1s", ConnectionPolicy: "reuse"},
+		{ID: "get-1k-response-shape", Mode: "arrival", TransportScheme: "http", Method: "GET", Path: "/matrix/get-1k", ResponseBodyBytes: 1 << 10,
+			MaxRPS: 50, Users: 10, Duration: "5s", Timeout: "1s", ConnectionPolicy: "reuse"},
+		{ID: "get-64k-response-shape", Mode: "arrival", TransportScheme: "http", Method: "GET", Path: "/matrix/get-64k", ResponseBodyBytes: 64 << 10,
+			MaxRPS: 50, Users: 10, Duration: "5s", Timeout: "1s", ConnectionPolicy: "reuse"},
+		{ID: "post-4k-request-shape", Mode: "arrival", TransportScheme: "http", Method: "POST", Path: "/matrix/post-4k", RequestBodyBytes: 4 << 10, ResponseBodyBytes: 4 << 10,
+			MaxRPS: 50, Users: 10, Duration: "5s", Timeout: "1s", ConnectionPolicy: "reuse"},
+	}
 }
 
 func WorkloadProfileFingerprint(profile WorkloadProfile) string {
@@ -212,7 +242,9 @@ func NewRecord(start, end time.Time, generator Generator, fixture Fixture, stage
 	if err != nil {
 		return Record{}, fmt.Errorf("construct reference workload fingerprint: %w", err)
 	}
-	schemaVersion := SchemaVersion - 1
+	// Records without profile observations retain the schema-v2 shape. Schema
+	// v3 requires its original fixed profile matrix; v4 requires the expanded one.
+	schemaVersion := 2
 	var observations []WorkloadObservation
 	if len(workloadObservations) > 0 {
 		observations = append([]WorkloadObservation(nil), workloadObservations[0]...)
@@ -353,6 +385,9 @@ func ValidateRecord(rec Record) error {
 
 func validateWorkloadMatrix(rec Record) error {
 	expectedProfiles := ReferenceWorkloadProfiles()
+	if rec.SchemaVersion == 3 {
+		expectedProfiles = referenceWorkloadProfilesV3()
+	}
 	profilesMatch := len(rec.Fixture.WorkloadProfiles) == len(expectedProfiles)
 	if profilesMatch {
 		for index, expected := range expectedProfiles {
