@@ -22,8 +22,9 @@ const minimumSupportedSchemaVersion = 1
 // local reference fixture. They screen observed request percentiles; they are
 // not a statistical confidence interval or an application SLO.
 const (
-	HealthyLatencyMinMS = 15.0
-	HealthyLatencyMaxMS = 150.0
+	ReferenceHealthyResponseBytes = 4 << 10
+	HealthyLatencyMinMS           = 15.0
+	HealthyLatencyMaxMS           = 150.0
 	// These scheduler-lag limits apply only to the 10-arrival/s controlled soak.
 	ReferenceSoakSchedulerLagP95LimitMS = 50.0
 	ReferenceSoakSchedulerLagMaxLimitMS = 100.0
@@ -189,7 +190,7 @@ func ValidateRecord(rec Record) error {
 	f := rec.Fixture
 	if f.NetworkMode != "loopback_same_host_separate_process" ||
 		f.WorkloadModel != "open_loop_journey_arrivals" || f.Method != "GET" ||
-		f.HealthyResponseBytes != 4096 || f.HealthyDelay != "20ms" ||
+		f.HealthyResponseBytes != ReferenceHealthyResponseBytes || f.HealthyDelay != "20ms" ||
 		f.StageDuration != "5s" || f.SoakDuration != "30s" ||
 		f.StageUsers != 10 || f.MaximumRPS != 100 ||
 		f.Repeats < 1 || f.Repeats > 3 ||

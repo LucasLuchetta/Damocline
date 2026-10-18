@@ -116,7 +116,7 @@ func main() {
 }
 
 func runFixture() error {
-	h, err := reference.New(reference.Config{Delay: 20 * time.Millisecond, ResponseBytes: 4 << 10, MaxConcurrent: 10, MaxRequests: 10000})
+	h, err := reference.New(reference.Config{Delay: 20 * time.Millisecond, ResponseBytes: calibration.ReferenceHealthyResponseBytes, MaxConcurrent: 10, MaxRequests: 10000})
 	if err != nil {
 		return err
 	}
@@ -383,7 +383,7 @@ func runMatrix(path string, repeats int, extended bool) error {
 		preflightFixture{
 			NetworkMode:   "loopback_same_host_separate_process",
 			WorkloadModel: "open_loop_journey_arrivals",
-			Method:        "GET", HealthyResponseBytes: 4 << 10,
+			Method:        "GET", HealthyResponseBytes: calibration.ReferenceHealthyResponseBytes,
 			HealthyDelay: "20ms", StageDuration: stageDuration.String(),
 			SoakDuration: soakDuration.String(), StageUsers: 10,
 			MaximumRPS: 100, Repeats: repeats, Extended: extended,
@@ -576,6 +576,17 @@ func checkStage(rate int, planned int64, run report.Result) []string {
 	if run.Metrics.Total != int(planned) || run.Metrics.Success != int(planned) || run.Metrics.Failures != 0 {
 		issues = append(issues, fmt.Sprintf("stage %d request outcomes: expected total/success/failures=%d/%d/0, got %d/%d/%d", rate, planned, planned, run.Metrics.Total, run.Metrics.Success, run.Metrics.Failures))
 	}
+	if !fixtureResponseBodyMatches(run.Metrics, planned) || len(run.Steps) != 1 ||
+		run.Steps[0].Method != "GET" || run.Steps[0].Path != "/work" ||
+		run.Steps[0].Metrics.Total != int(planned) || run.Steps[0].Metrics.Success != int(planned) ||
+		run.Steps[0].Metrics.Failures != 0 || run.Steps[0].Metrics.Cancelled != 0 ||
+		!fixtureResponseBodyMatches(run.Steps[0].Metrics, planned) {
+		var stepMetrics report.MetricSet
+		if len(run.Steps) == 1 {
+			stepMetrics = run.Steps[0].Metrics
+		}
+		issues = append(issues, fmt.Sprintf("stage %d response body: expected aggregate and successful GET /work step to observe %d complete bodies of exactly %d bytes; aggregate=%+v step_total=%d step_success=%d step_failures=%d step_cancelled=%d step_body=%+v step_count=%d", rate, planned, calibration.ReferenceHealthyResponseBytes, run.Metrics.ResponseBody, stepMetrics.Total, stepMetrics.Success, stepMetrics.Failures, stepMetrics.Cancelled, stepMetrics.ResponseBody, len(run.Steps)))
+	}
 	if run.Journeys.Total != int(planned) || run.Journeys.Success != int(planned) || run.Journeys.Failures != 0 || run.Journeys.Cancelled != 0 {
 		issues = append(issues, fmt.Sprintf("stage %d journey outcomes: expected total/success/failures/cancelled=%d/%d/0/0, got %d/%d/%d/%d", rate, planned, planned, run.Journeys.Total, run.Journeys.Success, run.Journeys.Failures, run.Journeys.Cancelled))
 	}
@@ -603,6 +614,15 @@ func checkStage(rate int, planned int64, run report.Result) []string {
 		issues = append(issues, fmt.Sprintf("stage %d scheduler lag: expected p95 <= %.3fms and max < %.3fms, got p95=%.3fms max=%.3fms", rate, lagP95Limit, lagMaxLimit, run.SchedulerLagP95MS, run.SchedulerLagMaxMS))
 	}
 	return issues
+}
+
+func fixtureResponseBodyMatches(metrics report.MetricSet, expectedObservations int64) bool {
+	body := metrics.ResponseBody
+	expectedBytes := int64(calibration.ReferenceHealthyResponseBytes)
+	return expectedObservations > 0 && body.CompleteObservations == expectedObservations &&
+		body.IncompleteObservations == 0 && body.OversizedObservations == 0 &&
+		body.MinBytes == expectedBytes && body.MaxBytes == expectedBytes &&
+		body.TotalBytes == expectedObservations*expectedBytes
 }
 
 func inLatencyEnvelope(value float64) bool {
