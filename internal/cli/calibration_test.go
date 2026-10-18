@@ -75,13 +75,20 @@ func TestAttachCalibrationRecordsUnknownsWithoutPromotingQuality(t *testing.T) {
 		t.Fatalf("calibration should attach with inconclusive coverage: %+v", result.Calibration)
 	}
 	var observedSize *calibration.Dimension
+	var observedLatency *calibration.Dimension
 	for i := range result.Calibration.Coverage.Dimensions {
 		if result.Calibration.Coverage.Dimensions[i].Name == "observed_response_size" {
 			observedSize = &result.Calibration.Coverage.Dimensions[i]
 		}
+		if result.Calibration.Coverage.Dimensions[i].Name == "observed_response_latency" {
+			observedLatency = &result.Calibration.Coverage.Dimensions[i]
+		}
 	}
 	if observedSize == nil || observedSize.Status != "UNVERIFIED" {
 		t.Fatalf("missing run body sizes must be visible as UNVERIFIED: %+v", result.Calibration.Coverage.Dimensions)
+	}
+	if observedLatency == nil || observedLatency.Status != "UNVERIFIED" {
+		t.Fatalf("missing run latency samples must be visible as UNVERIFIED: %+v", result.Calibration.Coverage.Dimensions)
 	}
 	if result.Quality == nil || result.Quality.State == report.QualityValid {
 		t.Fatalf("fixed fixture does not prove target response or fixture identity: %+v", result.Quality)

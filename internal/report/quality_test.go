@@ -53,12 +53,22 @@ func TestQualityKeepsAttachedCalibrationLimitedWhileTargetEvidenceIsUnknown(t *t
 	}
 	r.SchemaVersion = 12
 	observedSize := AssessObservedResponseSize(r, int64(rec.Fixture.HealthyResponseBytes))
-	r.Calibration.Coverage.Dimensions = append(r.Calibration.Coverage.Dimensions, observedSize)
+	observedLatency := AssessObservedResponseLatency(r)
+	r.Calibration.Coverage.Dimensions = append(r.Calibration.Coverage.Dimensions, observedSize, observedLatency)
 	q = AssessQuality(r)
 	if q.State != QualityLimited || !strings.Contains(strings.Join(q.Findings, " "), "complete per-step evidence is insufficient") {
 		t.Fatalf("missing observed body sizes must remain limited: %+v", q)
 	}
-	observedIndex := len(r.Calibration.Coverage.Dimensions) - 1
+	observedIndex := -1
+	for i := range r.Calibration.Coverage.Dimensions {
+		if r.Calibration.Coverage.Dimensions[i].Name == "observed_response_size" {
+			observedIndex = i
+			break
+		}
+	}
+	if observedIndex < 0 {
+		t.Fatal("observed response-size dimension missing")
+	}
 	r.Calibration.Coverage.Dimensions[observedIndex].Status = "MATCHED"
 	if q := AssessQuality(r); q.State != QualityInvalid {
 		t.Fatalf("persisted response-size MATCHED status must be recomputed: %+v", q)
@@ -66,16 +76,34 @@ func TestQualityKeepsAttachedCalibrationLimitedWhileTargetEvidenceIsUnknown(t *t
 	body := ResponseBodyDiagnostics{CompleteObservations: 100, MinBytes: 4096, MaxBytes: 4096, TotalBytes: 409600}
 	http := HTTPDiagnostics{StatusCodes: map[int]int{200: 100}, Status2xx: 100}
 	step := StepResult{
-		Metrics:   MetricSet{Total: 100, Success: 100, HTTP: http, ResponseBody: body},
+		Metrics:   MetricSet{Total: 100, Success: 100, P50MS: 20, P95MS: 30, HTTP: http, ResponseBody: body},
 		HTTPTrace: HTTPTrace{RequestAttemptCount: 100, WriteCount: 100, RateWaitCount: 100, FirstByteCount: 100, BodyCount: 100, CompleteCount: 100},
 	}
 	r.Metrics.HTTP = http
 	r.Metrics.ResponseBody = body
 	r.Steps = []StepResult{step}
 	r.Calibration.Coverage.Dimensions[observedIndex] = AssessObservedResponseSize(r, int64(rec.Fixture.HealthyResponseBytes))
+	for i := range r.Calibration.Coverage.Dimensions {
+		if r.Calibration.Coverage.Dimensions[i].Name == "observed_response_latency" {
+			r.Calibration.Coverage.Dimensions[i] = AssessObservedResponseLatency(r)
+		}
+	}
 	q = AssessQuality(r)
 	if q.State != QualityLimited || !strings.Contains(strings.Join(q.Findings, " "), "response timing distribution and endpoint identity remain unverified") {
 		t.Fatalf("matching fixed body size cannot certify the broader response envelope: %+v", q)
+	}
+	for i := range r.Calibration.Coverage.Dimensions {
+		if r.Calibration.Coverage.Dimensions[i].Name == "observed_response_latency" {
+			r.Calibration.Coverage.Dimensions[i].Status = "OUTSIDE_REFERENCE"
+		}
+	}
+	if q := AssessQuality(r); q.State != QualityInvalid {
+		t.Fatalf("persisted response-latency status must be recomputed: %+v", q)
+	}
+	for i := range r.Calibration.Coverage.Dimensions {
+		if r.Calibration.Coverage.Dimensions[i].Name == "observed_response_latency" {
+			r.Calibration.Coverage.Dimensions[i] = AssessObservedResponseLatency(r)
+		}
 	}
 	r.Calibration.Coverage.Dimensions[observedIndex].Status = "OUTSIDE_REFERENCE"
 	if q := AssessQuality(r); q.State != QualityInvalid {
@@ -176,6 +204,21 @@ func TestObservedResponseSizeCoverageUsesEveryStepAndConservativeStates(t *testi
 	r.Steps = []StepResult{makeStep(1, 1, 4096, 4096)}
 	if got := AssessObservedResponseSize(r, 4096); got.Status != "UNVERIFIED" {
 		t.Fatalf("interrupted response reads cannot establish a complete size envelope: %+v", got)
+	}
+}
+
+func TestAssessObservedResponseLatencyRequiresSamplesAndChecksEveryStep(t *testing.T) {
+	r := Result{SchemaVersion: 12, Steps: []StepResult{{Metrics: MetricSet{Total: 99, Success: 99, P50MS: 20, P95MS: 30}}}}
+	if got := AssessObservedResponseLatency(r); got.Status != "UNVERIFIED" {
+		t.Fatalf("sub-floor latency sample must be unverified: %+v", got)
+	}
+	r.Steps[0].Metrics = MetricSet{Total: 100, Success: 100, P50MS: 20, P95MS: 30}
+	if got := AssessObservedResponseLatency(r); got.Status != "MATCHED" {
+		t.Fatalf("well-sampled descriptive percentiles inside the fixture guardrail should match: %+v", got)
+	}
+	r.Steps = append(r.Steps, StepResult{Metrics: MetricSet{Total: 100, Success: 100, P50MS: 20, P95MS: 151}})
+	if got := AssessObservedResponseLatency(r); got.Status != "OUTSIDE_REFERENCE" {
+		t.Fatalf("an out-of-guardrail step must not be hidden by another step: %+v", got)
 	}
 }
 

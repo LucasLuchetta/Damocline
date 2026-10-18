@@ -282,6 +282,7 @@ func AssessQuality(r Result) *Quality {
 	} else {
 		unverified := make(map[string]bool)
 		observedSizeDimensions := 0
+		observedLatencyDimensions := 0
 		for _, dimension := range r.Calibration.Coverage.Dimensions {
 			if dimension.Name == "" || (dimension.Status != "MATCHED" && dimension.Status != "OUTSIDE_REFERENCE" && dimension.Status != "UNVERIFIED") {
 				invalidate("Attached calibration coverage contains an invalid dimension.")
@@ -296,12 +297,21 @@ func AssessQuality(r Result) *Quality {
 					invalidate("Attached observed response-size status disagrees with run measurements.")
 				}
 			}
+			if dimension.Name == "observed_response_latency" {
+				observedLatencyDimensions++
+				if r.SchemaVersion >= 12 && dimension != AssessObservedResponseLatency(r) {
+					invalidate("Attached observed response-latency status disagrees with run measurements.")
+				}
+			}
 		}
 		if r.Calibration.Coverage.Status != "INCONCLUSIVE" || !unverified["response_shape"] || !unverified["fixture_identity"] {
 			invalidate("Attached calibration coverage omits required response-shape or fixture-identity uncertainty.")
 		} else {
 			if r.SchemaVersion >= 12 && observedSizeDimensions != 1 {
 				invalidate("Attached calibration coverage omits unique observed response-size evidence.")
+			}
+			if r.SchemaVersion >= 12 && observedLatencyDimensions != 1 {
+				invalidate("Attached calibration coverage omits unique observed response-latency evidence.")
 			}
 			if observedSizeDimensions == 1 {
 				for _, dimension := range r.Calibration.Coverage.Dimensions {
@@ -319,6 +329,23 @@ func AssessQuality(r Result) *Quality {
 				}
 			} else {
 				limit("Calibration is attached, but response shape and controlled fixture identity remain unverified.")
+			}
+			if observedLatencyDimensions == 1 {
+				for _, dimension := range r.Calibration.Coverage.Dimensions {
+					if dimension.Name != "observed_response_latency" {
+						continue
+					}
+					switch dimension.Status {
+					case "MATCHED":
+						limit("Observed request p50 and p95 fall within the local fixture guardrail; " +
+							"percentile dependence and observation-window representativeness remain unverified.")
+					case "OUTSIDE_REFERENCE":
+						limit("One or more observed request percentiles fall outside the local fixture guardrail; " +
+							"this does not identify the cause.")
+					default:
+						limit("Observed request latency cannot be compared because per-step sample coverage is insufficient.")
+					}
+				}
 			}
 		}
 	}
@@ -455,6 +482,43 @@ func AssessObservedResponseSize(r Result, expectedBytes int64) calibration.Dimen
 	}
 	dimension.Status = "MATCHED"
 	dimension.Reason = "Every named step returned complete bodies at the fixed calibration response size in this run."
+	return dimension
+}
+
+const minObservedLatencySamples = 100
+
+// AssessObservedResponseLatency compares descriptive per-step request p50/p95
+// values with the coarse guardrail used by the local reference fixture. The
+// sample floor is a screening rule, not a confidence or independence claim.
+func AssessObservedResponseLatency(r Result) calibration.Dimension {
+	dimension := calibration.Dimension{
+		Name:   "observed_response_latency",
+		Status: "UNVERIFIED",
+		Reason: "Per-step latency samples are insufficient for the local fixture guardrail comparison.",
+	}
+	if r.SchemaVersion < 12 || len(r.Steps) == 0 {
+		return dimension
+	}
+	for _, step := range r.Steps {
+		metrics := step.Metrics
+		insufficientSamples := metrics.Total < minObservedLatencySamples || metrics.Success < minObservedLatencySamples
+		p50NonFinite := math.IsNaN(metrics.P50MS) || math.IsInf(metrics.P50MS, 0)
+		p95NonFinite := math.IsNaN(metrics.P95MS) || math.IsInf(metrics.P95MS, 0)
+		percentilesOutOfOrder := metrics.P50MS < 0 || metrics.P95MS < metrics.P50MS
+		invalidPercentiles := p50NonFinite || p95NonFinite || percentilesOutOfOrder
+		if insufficientSamples || invalidPercentiles {
+			return dimension
+		}
+		p50Outside := metrics.P50MS < calibration.HealthyLatencyMinMS || metrics.P50MS > calibration.HealthyLatencyMaxMS
+		p95Outside := metrics.P95MS < calibration.HealthyLatencyMinMS || metrics.P95MS > calibration.HealthyLatencyMaxMS
+		if p50Outside || p95Outside {
+			dimension.Status = "OUTSIDE_REFERENCE"
+			dimension.Reason = "One or more observed per-step request p50/p95 values fall outside the local fixture guardrail."
+			return dimension
+		}
+	}
+	dimension.Status = "MATCHED"
+	dimension.Reason = "Every named step has at least 100 successful request observations and its observed p50/p95 fall within the local fixture guardrail."
 	return dimension
 }
 

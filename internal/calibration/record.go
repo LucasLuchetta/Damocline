@@ -15,6 +15,14 @@ import (
 // identifies the tested loopback fixture, never a customer target or session.
 const SchemaVersion = 1
 
+// Healthy response latency bounds are the fixed coarse guardrail used by the
+// local reference fixture. They screen observed request percentiles; they are
+// not a statistical confidence interval or an application SLO.
+const (
+	HealthyLatencyMinMS = 15.0
+	HealthyLatencyMaxMS = 150.0
+)
+
 type Generator struct {
 	OS            string `json:"os"`
 	Arch          string `json:"arch"`
