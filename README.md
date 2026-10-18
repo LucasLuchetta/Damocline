@@ -237,7 +237,36 @@ For safe local testing, real authenticated application testing, and Windows inst
 go run ./cmd/damocline-calibrate --check-scenario examples/weighted-profiles-readonly.json --calibration .damocline/calibration/reference.json
 ```
 
-This intentionally produces `INCONCLUSIVE` for application-capacity readiness: the reference validates only specific loopback rates and one 4 KiB GET, not your application's response sizes, TLS/network path, auth or session mix. See [reference validity and coverage](docs/REFERENCE_VALIDATION.md) for exact evidence and limitations.
+This intentionally produces `INCONCLUSIVE` for application-capacity readiness: the reference validates only exact synthetic loopback profiles and rates, not endpoint identity, your application's response distributions, TLS/network path, auth, or session mix. See [reference validity and coverage](docs/REFERENCE_VALIDATION.md) for exact evidence and limitations.
+
+## Run the repeated G0 acceptance lab
+
+The acceptance lab runs bounded, independent calibrator processes against fresh loopback reference servers, then runs the local HTTP transport fixture matrix. It checks exact profile/rate pairs, planned and completed arrivals, response sizes, independent server request and byte counters, the 30-second controlled soak, overload and HTTP-failure controls, and persisted quality recomputation. Two repeats are required; three are allowed for the baseline matrix. Each repeat has a 235-second default deadline, and every requested run is recorded.
+
+Build both local commands first:
+
+```powershell
+New-Item -ItemType Directory -Force .damocline/local-validation | Out-Null
+go build -o .damocline/local-validation/damocline-calibrate.exe ./cmd/damocline-calibrate
+go build -o .damocline/local-validation/damocline-acceptance.exe ./cmd/damocline-acceptance
+```
+
+Then run a fresh evidence directory (it must not already exist):
+
+```powershell
+.\.damocline\local-validation\damocline-acceptance.exe --calibrator .\.damocline\local-validation\damocline-calibrate.exe --out-dir .damocline\acceptance\windows-run-01 --repeats 2
+```
+
+Linux commands use the same bounded workflow:
+
+```bash
+mkdir -p .damocline/local-validation
+go build -o .damocline/local-validation/damocline-calibrate ./cmd/damocline-calibrate
+go build -o .damocline/local-validation/damocline-acceptance ./cmd/damocline-acceptance
+./.damocline/local-validation/damocline-acceptance --calibrator ./.damocline/local-validation/damocline-calibrate --out-dir .damocline/acceptance/linux-run-01 --repeats 2
+```
+
+An `--extended` run adds the exact 15/20/50/100 arrivals-per-second loopback stages and permits at most two independent repeats. The lab returns nonzero when any required criterion fails or evidence is incomplete. It preserves a state manifest after each transition, every calibration and transport JSON artifact, and bounded stdout/stderr logs (up to 1 MiB per stream per process) in the requested directory. The directory is local and gitignored; use a new name for each attempt. The final manifest reports exact gate expectations and observations, artifact hashes, generator/runtime identity, and per-profile p95 spread. That spread is descriptive only, not a confidence interval or a causal comparison. A passing result qualifies only the recorded local fixture, binary, runtime, and windows; it does not certify an external application or a universal generator ceiling.
 
 ## Principles
 
