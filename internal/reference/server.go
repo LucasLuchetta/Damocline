@@ -17,6 +17,7 @@ type Config struct {
 	FailureEvery  int64
 	FailureFirst  int64
 	ResponseBytes int
+	EmptyResponse bool
 	CloseEvery    int64
 	MaxConcurrent int
 	MaxRequests   int64
@@ -117,7 +118,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body := []byte("reference-ok")
-	if h.config.ResponseBytes > 0 {
+	if h.config.EmptyResponse {
+		body = nil
+	} else if h.config.ResponseBytes > 0 {
 		body = make([]byte, h.config.ResponseBytes)
 		copy(body, "reference-ok")
 		for i := len("reference-ok"); i < len(body); i++ {

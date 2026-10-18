@@ -5,6 +5,7 @@ This project follows a human-maintained changelog. No release exists yet.
 ## [Unreleased]
 
 ### Added
+- Exercise an explicit zero-byte response through the native engine reference matrix and reconcile its body-byte ledger with the controlled fixture for every payload-size case.
 - Recompute the calibration workload fingerprint from report-persisted step metadata for the narrow single `GET /work` reference subset, reject altered saved step fields, and keep omitted workload details unverified.
 - Add JSON golden fixtures and round-trip tests for every supported HTTP report schema v1-v13, document versioned field semantics, and verify that missing legacy body observations remain unknown rather than becoming measured zero-byte bodies.
 - Centralize the current run-report schema at v13, let the insights reader preserve v13 window ledgers, and continue rejecting unknown future report schemas.
