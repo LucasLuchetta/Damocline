@@ -9,18 +9,21 @@ import (
 
 // Stats reconciles all planned arrivals, including generator delays and VU shortage.
 type Stats struct {
-	Planned     int64
-	Admitted    int64
-	DroppedBusy int64
-	DroppedLate int64
-	LagSamples  int64
-	P50Lag      time.Duration
-	P95Lag      time.Duration
-	MaxLag      time.Duration
-	lags        []time.Duration
+	Planned                  int64
+	Admitted                 int64
+	DroppedBusy              int64
+	DroppedLate              int64
+	CancelledBeforeAdmission int64
+	LagSamples               int64
+	P50Lag                   time.Duration
+	P95Lag                   time.Duration
+	MaxLag                   time.Duration
+	lags                     []time.Duration
 }
 
-func (s Stats) Dropped() int64   { return s.DroppedBusy + s.DroppedLate }
+func (s Stats) Dropped() int64 {
+	return s.DroppedBusy + s.DroppedLate + s.CancelledBeforeAdmission
+}
 func (s Stats) Consistent() bool { return s.Planned == s.Admitted+s.Dropped() }
 
 // DueCount computes the planned arrival count from monotonic elapsed time.
@@ -87,7 +90,9 @@ func Drive(ctx context.Context, duration time.Duration, rate int, admit func() b
 			lag := now.Sub(intended)
 			stats.Planned++
 			stats.observe(lag)
-			if stopped || lag >= interval {
+			if stopped && now.Sub(start) < duration {
+				stats.CancelledBeforeAdmission++
+			} else if lag >= interval {
 				stats.DroppedLate++
 			} else if admit() {
 				stats.Admitted++

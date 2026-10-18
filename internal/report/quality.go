@@ -49,6 +49,22 @@ func AssessQuality(r Result) *Quality {
 		r.ArrivalsDropped < 0 || r.ArrivalsDroppedLate < 0 || r.ArrivalsDroppedBusy < 0 {
 		invalidate("Negative or nonconservative iteration/arrival counters.")
 	}
+	cancelledBeforeAdmission := int64(0)
+	if r.ArrivalsCancelledBeforeAdmission != nil {
+		cancelledBeforeAdmission = *r.ArrivalsCancelledBeforeAdmission
+	}
+	if cancelledBeforeAdmission < 0 {
+		invalidate("Cancelled-before-admission arrival counter is negative.")
+	}
+	if r.SchemaVersion >= 16 && r.ArrivalsCancelledBeforeAdmission == nil {
+		invalidate("Current report omits cancelled-before-admission arrival evidence.")
+	}
+	if r.SchemaVersion < 16 && r.ArrivalsCancelledBeforeAdmission != nil {
+		invalidate("Pre-v16 reports cannot carry the cancelled-before-admission counter.")
+	}
+	if r.SchemaVersion >= 16 && r.Config.Mode != "arrival" && cancelledBeforeAdmission != 0 {
+		invalidate("Cancelled-before-admission arrivals are present for a non-arrival workload.")
+	}
 	if r.SchemaVersion >= 15 &&
 		(r.IterationsCompleted != int64(r.Journeys.Total) ||
 			r.IterationsStarted < r.IterationsCompleted ||
@@ -56,8 +72,16 @@ func AssessQuality(r Result) *Quality {
 		invalidate("Started, completed and cancelled journeys do not reconcile with iteration counters.")
 	}
 	if r.Config.Mode == "arrival" {
-		if r.IterationsStarted > r.ArrivalsScheduled || r.ArrivalsDropped != r.ArrivalsScheduled-r.IterationsStarted ||
-			r.ArrivalsDroppedLate > r.ArrivalsDropped || r.ArrivalsDroppedBusy != r.ArrivalsDropped-r.ArrivalsDroppedLate {
+		breakdownInvalid := false
+		if r.SchemaVersion >= 16 {
+			breakdownInvalid = r.ArrivalsDroppedLate > r.ArrivalsDropped ||
+				r.ArrivalsDroppedBusy > r.ArrivalsDropped-r.ArrivalsDroppedLate ||
+				r.ArrivalsCancelledBeforeAdmission == nil || cancelledBeforeAdmission != r.ArrivalsDropped-r.ArrivalsDroppedLate-r.ArrivalsDroppedBusy
+		} else {
+			breakdownInvalid = r.ArrivalsDroppedLate > r.ArrivalsDropped ||
+				r.ArrivalsDroppedBusy != r.ArrivalsDropped-r.ArrivalsDroppedLate
+		}
+		if r.IterationsStarted > r.ArrivalsScheduled || r.ArrivalsDropped != r.ArrivalsScheduled-r.IterationsStarted || breakdownInvalid {
 			invalidate("Scheduled, started and dropped arrivals do not reconcile.")
 		}
 	}

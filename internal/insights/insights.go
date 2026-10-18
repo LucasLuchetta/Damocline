@@ -42,6 +42,10 @@ func ReadRun(path string) (report.Result, error) {
 	if r.SchemaVersion < 1 || r.SchemaVersion > report.CurrentSchemaVersion || r.Name == "" || r.Metrics.Total < 0 || r.Metrics.Success < 0 || r.Metrics.Failures < 0 || r.Metrics.Success+r.Metrics.Failures != r.Metrics.Total || r.Config.Users < 1 || r.ElapsedSeconds <= 0 || (r.SchemaVersion >= 4 && r.ObservationSeconds <= 0) || (r.SchemaVersion >= 11 && !validFingerprint(r.Config.WorkloadFingerprint)) || (r.SchemaVersion >= 14 && r.Config.ConnectionPolicy != "reuse" && r.Config.ConnectionPolicy != "new_per_request") {
 		return report.Result{}, errors.New("not a valid Damocline HTTP run report")
 	}
+	if (r.SchemaVersion >= 16 && (r.ArrivalsCancelledBeforeAdmission == nil || *r.ArrivalsCancelledBeforeAdmission < 0)) ||
+		(r.SchemaVersion < 16 && r.ArrivalsCancelledBeforeAdmission != nil) {
+		return report.Result{}, errors.New("report arrival-cancellation evidence does not match its schema")
+	}
 	return r, nil
 }
 
@@ -203,6 +207,9 @@ func Evaluate(r report.Result, host *hostmon.Result) Assessment {
 	}
 	if r.ArrivalsDroppedBusy > 0 {
 		a.Findings = append(a.Findings, Finding{"LIMIT", fmt.Sprintf("%d arrivals had no idle synthetic worker; server bottleneck is not established.", r.ArrivalsDroppedBusy)})
+	}
+	if r.ArrivalsCancelledBeforeAdmission != nil && *r.ArrivalsCancelledBeforeAdmission > 0 {
+		a.Findings = append(a.Findings, Finding{"CAUTION", fmt.Sprintf("%d due arrivals were not admitted because the run was externally cancelled before its schedule ended.", *r.ArrivalsCancelledBeforeAdmission)})
 	}
 	if r.SchedulerLagSamples > 0 {
 		a.Findings = append(a.Findings, Finding{"INFO", fmt.Sprintf("Generator scheduling lag over %d planned arrivals: p50 %.1f ms, p95 %.1f ms, max %.1f ms (monotonic slot-to-admission; includes timer wake-up and callback admission). This is observed dispatch delay, not a calibrated clock-accuracy bound.", r.SchedulerLagSamples, r.SchedulerLagP50MS, r.SchedulerLagP95MS, r.SchedulerLagMaxMS)})

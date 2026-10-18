@@ -659,7 +659,7 @@ func TestPlannedArrivalAccountingWithSlowLocalServer(t *testing.T) {
 	if out.ArrivalsScheduled != out.IterationsStarted+out.ArrivalsDropped {
 		t.Fatalf("planned events do not reconcile: %+v", out)
 	}
-	if out.ArrivalsDropped != out.ArrivalsDroppedBusy+out.ArrivalsDroppedLate {
+	if out.ArrivalsCancelledBeforeAdmission == nil || out.ArrivalsDropped != out.ArrivalsDroppedBusy+out.ArrivalsDroppedLate+*out.ArrivalsCancelledBeforeAdmission {
 		t.Fatalf("dropped event reasons do not reconcile: %+v", out)
 	}
 	if out.ArrivalsDropped == 0 || out.Outcome == "PASS" {

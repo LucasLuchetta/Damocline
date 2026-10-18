@@ -18,7 +18,7 @@ import (
 // CurrentSchemaVersion is the newest persisted HTTP run report schema emitted
 // by the engine. Readers must reject future versions until their semantics are
 // reviewed and supported.
-const CurrentSchemaVersion = 15
+const CurrentSchemaVersion = 16
 
 type MetricSet struct {
 	Total                 int                     `json:"total"`
@@ -328,42 +328,43 @@ type WindowMetric struct {
 	Metrics MetricSet `json:"metrics"`
 }
 type Result struct {
-	SchemaVersion         int                          `json:"schema_version"`
-	Name                  string                       `json:"name"`
-	Target                string                       `json:"target"`
-	StartedAt             string                       `json:"started_at"`
-	ElapsedSeconds        float64                      `json:"elapsed_seconds"`
-	ObservationSeconds    float64                      `json:"observation_seconds,omitempty"`
-	Config                RunConfig                    `json:"config"`
-	Metrics               MetricSet                    `json:"metrics"`
-	Journeys              MetricSet                    `json:"journeys"`
-	Steps                 []StepResult                 `json:"steps"`
-	Profiles              []ProfileResult              `json:"profiles,omitempty"`
-	Windows               []WindowResult               `json:"windows,omitempty"`
-	Outcome               string                       `json:"outcome"`
-	ErrorsRate            float64                      `json:"error_rate"`
-	Note                  string                       `json:"note"`
-	IterationsStarted     int64                        `json:"iterations_started"`
-	IterationsCompleted   int64                        `json:"iterations_completed"`
-	ArrivalsScheduled     int64                        `json:"arrivals_scheduled"`
-	ArrivalsDropped       int64                        `json:"arrivals_dropped"`
-	ArrivalsDroppedLate   int64                        `json:"arrivals_dropped_late,omitempty"`
-	ArrivalsDroppedBusy   int64                        `json:"arrivals_dropped_busy,omitempty"`
-	SchedulerLagSamples   int64                        `json:"scheduler_lag_samples,omitempty"`
-	SchedulerLagP50MS     float64                      `json:"scheduler_lag_p50_ms,omitempty"`
-	SchedulerLagP95MS     float64                      `json:"scheduler_lag_p95_ms,omitempty"`
-	SchedulerLagMaxMS     float64                      `json:"scheduler_lag_max_ms,omitempty"`
-	SchedulerLagMethod    string                       `json:"scheduler_lag_method,omitempty"`
-	AverageInFlight       float64                      `json:"average_in_flight_requests,omitempty"`
-	LittleLawEstimate     float64                      `json:"little_law_in_flight_estimate,omitempty"`
-	ObservedThinkTimeMS   float64                      `json:"observed_think_time_ms,omitempty"`
-	ThinkTimeObservations int                          `json:"think_time_observations,omitempty"`
-	Warnings              []string                     `json:"warnings,omitempty"`
-	Generator             *generatorhealth.Summary     `json:"generator,omitempty"`
-	Calibration           *CalibrationEvidence         `json:"calibration,omitempty"`
-	ReferenceEvidence     *ControlledReferenceEvidence `json:"controlled_reference_evidence,omitempty"`
-	Quality               *Quality                     `json:"data_quality,omitempty"`
-	Signals               []Signal                     `json:"diagnostic_signals,omitempty"`
+	SchemaVersion                    int                          `json:"schema_version"`
+	Name                             string                       `json:"name"`
+	Target                           string                       `json:"target"`
+	StartedAt                        string                       `json:"started_at"`
+	ElapsedSeconds                   float64                      `json:"elapsed_seconds"`
+	ObservationSeconds               float64                      `json:"observation_seconds,omitempty"`
+	Config                           RunConfig                    `json:"config"`
+	Metrics                          MetricSet                    `json:"metrics"`
+	Journeys                         MetricSet                    `json:"journeys"`
+	Steps                            []StepResult                 `json:"steps"`
+	Profiles                         []ProfileResult              `json:"profiles,omitempty"`
+	Windows                          []WindowResult               `json:"windows,omitempty"`
+	Outcome                          string                       `json:"outcome"`
+	ErrorsRate                       float64                      `json:"error_rate"`
+	Note                             string                       `json:"note"`
+	IterationsStarted                int64                        `json:"iterations_started"`
+	IterationsCompleted              int64                        `json:"iterations_completed"`
+	ArrivalsScheduled                int64                        `json:"arrivals_scheduled"`
+	ArrivalsDropped                  int64                        `json:"arrivals_dropped"`
+	ArrivalsDroppedLate              int64                        `json:"arrivals_dropped_late,omitempty"`
+	ArrivalsDroppedBusy              int64                        `json:"arrivals_dropped_busy,omitempty"`
+	ArrivalsCancelledBeforeAdmission *int64                       `json:"arrivals_cancelled_before_admission,omitempty"`
+	SchedulerLagSamples              int64                        `json:"scheduler_lag_samples,omitempty"`
+	SchedulerLagP50MS                float64                      `json:"scheduler_lag_p50_ms,omitempty"`
+	SchedulerLagP95MS                float64                      `json:"scheduler_lag_p95_ms,omitempty"`
+	SchedulerLagMaxMS                float64                      `json:"scheduler_lag_max_ms,omitempty"`
+	SchedulerLagMethod               string                       `json:"scheduler_lag_method,omitempty"`
+	AverageInFlight                  float64                      `json:"average_in_flight_requests,omitempty"`
+	LittleLawEstimate                float64                      `json:"little_law_in_flight_estimate,omitempty"`
+	ObservedThinkTimeMS              float64                      `json:"observed_think_time_ms,omitempty"`
+	ThinkTimeObservations            int                          `json:"think_time_observations,omitempty"`
+	Warnings                         []string                     `json:"warnings,omitempty"`
+	Generator                        *generatorhealth.Summary     `json:"generator,omitempty"`
+	Calibration                      *CalibrationEvidence         `json:"calibration,omitempty"`
+	ReferenceEvidence                *ControlledReferenceEvidence `json:"controlled_reference_evidence,omitempty"`
+	Quality                          *Quality                     `json:"data_quality,omitempty"`
+	Signals                          []Signal                     `json:"diagnostic_signals,omitempty"`
 }
 
 // CalibrationEvidence associates a run with sanitized local reference evidence.
