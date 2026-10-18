@@ -516,6 +516,41 @@ func TestQualityRejectsCorruptedAccounting(t *testing.T) {
 	}
 }
 
+func TestQualityReconcilesCurrentIterationAndJourneyLedgers(t *testing.T) {
+	for name, mutate := range map[string]func(*Result){
+		"completed journey mismatch": func(r *Result) {
+			r.Journeys.Total--
+			r.Journeys.Success--
+		},
+		"unaccounted interrupted journey": func(r *Result) {
+			r.IterationsCompleted--
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := validSyntheticQualityRun()
+			r.SchemaVersion = CurrentSchemaVersion
+			r.Config.ConnectionPolicy = "reuse"
+			r.Generator = nil
+			mutate(&r)
+			if q := AssessQuality(r); q.State != QualityInvalid {
+				t.Fatalf("inconsistent iteration and journey ledgers must be INVALID: %+v", q)
+			}
+		})
+	}
+
+	r := validSyntheticQualityRun()
+	r.SchemaVersion = CurrentSchemaVersion
+	r.Config.ConnectionPolicy = "reuse"
+	r.Generator = nil
+	r.IterationsCompleted--
+	r.Journeys.Total--
+	r.Journeys.Success--
+	r.Journeys.Cancelled++
+	if q := AssessQuality(r); q.State == QualityInvalid {
+		t.Fatalf("an explicitly accounted cancelled journey must remain arithmetically valid: %+v", q)
+	}
+}
+
 func TestQualitySeparatesMissingGeneratorAndSLOFailure(t *testing.T) {
 	r := validSyntheticQualityRun()
 	r.Outcome = "FAIL"

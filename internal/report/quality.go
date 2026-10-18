@@ -49,6 +49,12 @@ func AssessQuality(r Result) *Quality {
 		r.ArrivalsDropped < 0 || r.ArrivalsDroppedLate < 0 || r.ArrivalsDroppedBusy < 0 {
 		invalidate("Negative or nonconservative iteration/arrival counters.")
 	}
+	if r.SchemaVersion >= 15 &&
+		(r.IterationsCompleted != int64(r.Journeys.Total) ||
+			r.IterationsStarted < r.IterationsCompleted ||
+			r.IterationsStarted-r.IterationsCompleted != int64(r.Journeys.Cancelled)) {
+		invalidate("Started, completed and cancelled journeys do not reconcile with iteration counters.")
+	}
 	if r.Config.Mode == "arrival" {
 		if r.IterationsStarted > r.ArrivalsScheduled || r.ArrivalsDropped != r.ArrivalsScheduled-r.IterationsStarted ||
 			r.ArrivalsDroppedLate > r.ArrivalsDropped || r.ArrivalsDroppedBusy != r.ArrivalsDropped-r.ArrivalsDroppedLate {
