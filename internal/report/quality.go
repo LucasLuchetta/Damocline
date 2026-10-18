@@ -530,6 +530,9 @@ func controlledReferenceEvidenceValid(r Result) bool {
 		e.ServerSuccess != e.ServerReceived || e.ServerFailures != 0 || e.ServerCancelled != 0 || e.ServerRejected != 0 {
 		return false
 	}
+	if !controlledReferenceSchedulerLagValid(r) {
+		return false
+	}
 	if step.Metrics.Total != r.Metrics.Total || step.Metrics.Success != r.Metrics.Success || step.Metrics.Failures != 0 ||
 		step.Metrics.ResponseBody.CompleteObservations != int64(r.Metrics.Total) ||
 		step.Metrics.ResponseBody.IncompleteObservations != 0 || step.Metrics.ResponseBody.OversizedObservations != 0 ||
@@ -541,6 +544,18 @@ func controlledReferenceEvidenceValid(r Result) bool {
 	return AssessObservedResponseSize(r, int64(f.HealthyResponseBytes)).Status == "MATCHED" &&
 		AssessObservedResponseLatency(r).Status == "MATCHED" &&
 		AssessDeclaredWorkloadShape(r, r.Calibration.Record).Status == "MATCHED"
+}
+
+func controlledReferenceSchedulerLagValid(r Result) bool {
+	return r.SchedulerLagMethod == calibration.SchedulerDispatchLagMethod &&
+		r.SchedulerLagSamples == r.ArrivalsScheduled &&
+		!math.IsNaN(r.SchedulerLagP50MS) && !math.IsInf(r.SchedulerLagP50MS, 0) &&
+		!math.IsNaN(r.SchedulerLagP95MS) && !math.IsInf(r.SchedulerLagP95MS, 0) &&
+		!math.IsNaN(r.SchedulerLagMaxMS) && !math.IsInf(r.SchedulerLagMaxMS, 0) &&
+		r.SchedulerLagP50MS >= 0 && r.SchedulerLagP50MS <= r.SchedulerLagP95MS &&
+		r.SchedulerLagP95MS <= r.SchedulerLagMaxMS &&
+		r.SchedulerLagP95MS <= calibration.ReferenceSoakSchedulerLagP95LimitMS &&
+		r.SchedulerLagMaxMS < calibration.ReferenceSoakSchedulerLagMaxLimitMS
 }
 
 func validObservationWindowBounds(r Result) bool {

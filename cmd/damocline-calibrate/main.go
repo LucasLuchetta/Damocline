@@ -512,6 +512,16 @@ func checkSoak(run report.Result) []string {
 		run.Generator.PeakHeapAllocBytes > 256<<20 || run.Generator.PeakProcessRSSBytes > 512<<20 {
 		return []string{fmt.Sprintf("soak reconciliation failed: planned=%d started=%d completed_iterations=%d requests=%d/%d succeeded failures=%d dropped=%d outcome=%s generator_samples=%d process_samples=%d process_rss=%d go_cpu_valid=%t process_cpu_valid=%t go_cpu=%.3f process_cpu_mean=%.3f process_cpu_peak=%.3f heap=%d", planned, run.IterationsStarted, run.IterationsCompleted, run.Metrics.Success, run.Metrics.Total, run.Metrics.Failures, run.ArrivalsDropped, run.Outcome, generatorSamples(run), generatorProcessSamples(run), generatorRSS(run), generatorGoCPUValid(run), generatorProcessCPUValid(run), generatorGoCPU(run), generatorProcessCPU(run), generatorPeakProcessCPU(run), generatorHeap(run))}
 	}
+	if run.SchedulerLagSamples != planned || run.SchedulerLagMethod != calibration.SchedulerDispatchLagMethod ||
+		math.IsNaN(run.SchedulerLagP50MS) || math.IsInf(run.SchedulerLagP50MS, 0) ||
+		math.IsNaN(run.SchedulerLagP95MS) || math.IsInf(run.SchedulerLagP95MS, 0) ||
+		math.IsNaN(run.SchedulerLagMaxMS) || math.IsInf(run.SchedulerLagMaxMS, 0) ||
+		run.SchedulerLagP50MS < 0 || run.SchedulerLagP50MS > run.SchedulerLagP95MS ||
+		run.SchedulerLagP95MS > run.SchedulerLagMaxMS ||
+		run.SchedulerLagP95MS > calibration.ReferenceSoakSchedulerLagP95LimitMS ||
+		run.SchedulerLagMaxMS >= calibration.ReferenceSoakSchedulerLagMaxLimitMS {
+		return []string{fmt.Sprintf("soak scheduler lag failed: expected %d samples, method %s, p95 <= %.3fms and max < %.3fms; got samples=%d method=%s p95=%.3fms max=%.3fms", planned, calibration.SchedulerDispatchLagMethod, calibration.ReferenceSoakSchedulerLagP95LimitMS, calibration.ReferenceSoakSchedulerLagMaxLimitMS, run.SchedulerLagSamples, run.SchedulerLagMethod, run.SchedulerLagP95MS, run.SchedulerLagMaxMS)}
+	}
 	return nil
 }
 
