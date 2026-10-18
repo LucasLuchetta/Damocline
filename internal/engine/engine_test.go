@@ -659,7 +659,7 @@ func TestPlannedArrivalAccountingWithSlowLocalServer(t *testing.T) {
 	if out.ArrivalsScheduled != out.IterationsStarted+out.ArrivalsDropped {
 		t.Fatalf("planned events do not reconcile: %+v", out)
 	}
-	if out.ArrivalsCancelledBeforeAdmission == nil || out.ArrivalsDropped != out.ArrivalsDroppedBusy+out.ArrivalsDroppedLate+*out.ArrivalsCancelledBeforeAdmission {
+	if out.ArrivalsAdmitted == nil || *out.ArrivalsAdmitted != out.IterationsStarted || out.ArrivalsCancelledBeforeAdmission == nil || out.ArrivalsDropped != out.ArrivalsDroppedBusy+out.ArrivalsDroppedLate+*out.ArrivalsCancelledBeforeAdmission {
 		t.Fatalf("dropped event reasons do not reconcile: %+v", out)
 	}
 	if out.ArrivalsDropped == 0 || out.Outcome == "PASS" {
@@ -688,6 +688,7 @@ func TestArrivalRunDrainsAdmittedWorkAfterScheduleWindow(t *testing.T) {
 	r := Run(context.Background(), v)
 	ledger := fixture.Snapshot()
 	if r.ArrivalsScheduled != 6 || r.ArrivalsDropped != 0 || r.IterationsCompleted != r.IterationsStarted ||
+		r.ArrivalsAdmitted == nil || *r.ArrivalsAdmitted != r.IterationsStarted ||
 		r.Metrics.Cancelled != 0 || r.Outcome != "PASS" || r.ObservationSeconds != v.Duration.Seconds() ||
 		r.ElapsedSeconds <= r.ObservationSeconds {
 		t.Fatalf("admitted arrivals should drain after scheduling stops: %+v", r)
@@ -828,7 +829,7 @@ func TestRunIncludesLocalGeneratorHealth(t *testing.T) {
 	defer srv.Close()
 	v := scenario(t, srv.URL, []config.Step{{Name: "page", Path: "/"}})
 	result := Run(context.Background(), v)
-	if result.Generator == nil || result.Generator.Samples < 2 ||
+	if result.SchemaVersion != report.CurrentSchemaVersion || result.ArrivalsAdmitted == nil || *result.ArrivalsAdmitted != 0 || result.Generator == nil || result.Generator.Samples < 2 ||
 		result.Generator.PeakGoroutines < 1 || result.Generator.PeakHeapAllocBytes == 0 {
 		t.Fatalf("generator health not sampled: %+v", result.Generator)
 	}

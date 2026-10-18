@@ -532,6 +532,8 @@ func TestQualityReconcilesCurrentIterationAndJourneyLedgers(t *testing.T) {
 			r.SchemaVersion = CurrentSchemaVersion
 			r.Config.ConnectionPolicy = "reuse"
 			r.Generator = nil
+			admitted := r.IterationsStarted
+			r.ArrivalsAdmitted = &admitted
 			zeroCancelledBeforeAdmission := int64(0)
 			r.ArrivalsCancelledBeforeAdmission = &zeroCancelledBeforeAdmission
 			mutate(&r)
@@ -545,6 +547,8 @@ func TestQualityReconcilesCurrentIterationAndJourneyLedgers(t *testing.T) {
 	r.SchemaVersion = CurrentSchemaVersion
 	r.Config.ConnectionPolicy = "reuse"
 	r.Generator = nil
+	admitted := r.IterationsStarted
+	r.ArrivalsAdmitted = &admitted
 	zeroCancelledBeforeAdmission := int64(0)
 	r.ArrivalsCancelledBeforeAdmission = &zeroCancelledBeforeAdmission
 	r.IterationsCompleted--
@@ -556,7 +560,7 @@ func TestQualityReconcilesCurrentIterationAndJourneyLedgers(t *testing.T) {
 	}
 }
 
-func TestQualityReconcilesSchema16CancelledArrivalBreakdown(t *testing.T) {
+func TestQualityReconcilesSchema17ArrivalBreakdown(t *testing.T) {
 	r := validSyntheticQualityRun()
 	r.SchemaVersion = CurrentSchemaVersion
 	r.Config.ConnectionPolicy = "reuse"
@@ -564,6 +568,8 @@ func TestQualityReconcilesSchema16CancelledArrivalBreakdown(t *testing.T) {
 	r.ArrivalsScheduled = 100
 	r.IterationsStarted = 90
 	r.IterationsCompleted = 90
+	admitted := int64(90)
+	r.ArrivalsAdmitted = &admitted
 	r.ArrivalsDropped = 10
 	r.ArrivalsDroppedLate = 2
 	r.ArrivalsDroppedBusy = 3
@@ -578,10 +584,28 @@ func TestQualityReconcilesSchema16CancelledArrivalBreakdown(t *testing.T) {
 	if q := AssessQuality(r); q.State != QualityInvalid {
 		t.Fatalf("schema-v16 missing cancellation evidence must be INVALID: %+v", q)
 	}
+	r.ArrivalsCancelledBeforeAdmission = &cancelledBeforeAdmission
+	r.ArrivalsAdmitted = nil
+	if q := AssessQuality(r); q.State != QualityInvalid {
+		t.Fatalf("schema-v17 missing admission evidence must be INVALID: %+v", q)
+	}
+	negativeAdmission := int64(-1)
+	r.ArrivalsAdmitted = &negativeAdmission
+	if q := AssessQuality(r); q.State != QualityInvalid {
+		t.Fatalf("schema-v17 negative admission evidence must be INVALID: %+v", q)
+	}
+	r.ArrivalsAdmitted = &admitted
 	cancelledBeforeAdmission = 4
 	r.ArrivalsCancelledBeforeAdmission = &cancelledBeforeAdmission
 	if q := AssessQuality(r); q.State != QualityInvalid {
 		t.Fatalf("nonconservative cancellation breakdown must be INVALID: %+v", q)
+	}
+	admitted = 89
+	r.ArrivalsAdmitted = &admitted
+	cancelledBeforeAdmission = 5
+	r.ArrivalsCancelledBeforeAdmission = &cancelledBeforeAdmission
+	if q := AssessQuality(r); q.State != QualityInvalid {
+		t.Fatalf("admitted starts must reconcile with worker-started iterations: %+v", q)
 	}
 	cancelledBeforeAdmission = 0
 	r.Config.Mode = "closed"
@@ -590,6 +614,8 @@ func TestQualityReconcilesSchema16CancelledArrivalBreakdown(t *testing.T) {
 	r.ArrivalsDroppedBusy = 0
 	r.ArrivalsScheduled = 0
 	r.IterationsStarted = 90
+	admitted = 0
+	r.ArrivalsAdmitted = &admitted
 	r.ArrivalsCancelledBeforeAdmission = &cancelledBeforeAdmission
 	if q := AssessQuality(r); q.State == QualityInvalid {
 		t.Fatalf("zero arrival cancellation evidence must be valid for a closed workload: %+v", q)

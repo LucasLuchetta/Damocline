@@ -37,6 +37,9 @@ func DetectSignals(r Result) []Signal {
 	if r.ArrivalsCancelledBeforeAdmission != nil && *r.ArrivalsCancelledBeforeAdmission > 0 {
 		add("CLIENT_ARRIVALS_CANCELLED", "run_control", "Due arrivals were not admitted because the run was externally cancelled before its schedule ended.")
 	}
+	if r.SchemaVersion >= 17 && r.ArrivalsAdmitted != nil && *r.ArrivalsAdmitted != r.IterationsStarted {
+		add("CLIENT_ADMISSION_MISMATCH", "arrival_ledger", "Scheduler admissions do not reconcile with worker-started iterations.")
+	}
 	foundServerStatus := false
 	for reason, n := range r.Metrics.Reasons {
 		if n <= 0 || !strings.HasPrefix(reason, "http_") || len(reason) != 8 {

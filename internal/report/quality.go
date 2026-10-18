@@ -49,6 +49,19 @@ func AssessQuality(r Result) *Quality {
 		r.ArrivalsDropped < 0 || r.ArrivalsDroppedLate < 0 || r.ArrivalsDroppedBusy < 0 {
 		invalidate("Negative or nonconservative iteration/arrival counters.")
 	}
+	arrivalsAdmitted := int64(0)
+	if r.ArrivalsAdmitted != nil {
+		arrivalsAdmitted = *r.ArrivalsAdmitted
+	}
+	if arrivalsAdmitted < 0 {
+		invalidate("Admitted-arrival counter is negative.")
+	}
+	if r.SchemaVersion >= 17 && r.ArrivalsAdmitted == nil {
+		invalidate("Current report omits admitted-arrival evidence.")
+	}
+	if r.SchemaVersion < 17 && r.ArrivalsAdmitted != nil {
+		invalidate("Pre-v17 reports cannot carry the admitted-arrival counter.")
+	}
 	cancelledBeforeAdmission := int64(0)
 	if r.ArrivalsCancelledBeforeAdmission != nil {
 		cancelledBeforeAdmission = *r.ArrivalsCancelledBeforeAdmission
@@ -64,6 +77,9 @@ func AssessQuality(r Result) *Quality {
 	}
 	if r.SchemaVersion >= 16 && r.Config.Mode != "arrival" && cancelledBeforeAdmission != 0 {
 		invalidate("Cancelled-before-admission arrivals are present for a non-arrival workload.")
+	}
+	if r.SchemaVersion >= 17 && r.Config.Mode != "arrival" && arrivalsAdmitted != 0 {
+		invalidate("Admitted arrivals are present for a non-arrival workload.")
 	}
 	if r.SchemaVersion >= 15 &&
 		(r.IterationsCompleted != int64(r.Journeys.Total) ||
@@ -81,7 +97,14 @@ func AssessQuality(r Result) *Quality {
 			breakdownInvalid = r.ArrivalsDroppedLate > r.ArrivalsDropped ||
 				r.ArrivalsDroppedBusy != r.ArrivalsDropped-r.ArrivalsDroppedLate
 		}
-		if r.IterationsStarted > r.ArrivalsScheduled || r.ArrivalsDropped != r.ArrivalsScheduled-r.IterationsStarted || breakdownInvalid {
+		conservationInvalid := r.IterationsStarted > r.ArrivalsScheduled ||
+			r.ArrivalsDropped != r.ArrivalsScheduled-r.IterationsStarted
+		if r.SchemaVersion >= 17 {
+			conservationInvalid = r.ArrivalsAdmitted == nil || arrivalsAdmitted > r.ArrivalsScheduled ||
+				arrivalsAdmitted != r.IterationsStarted ||
+				r.ArrivalsDropped != r.ArrivalsScheduled-arrivalsAdmitted
+		}
+		if conservationInvalid || breakdownInvalid {
 			invalidate("Scheduled, started and dropped arrivals do not reconcile.")
 		}
 	}
@@ -476,7 +499,7 @@ func AssessQuality(r Result) *Quality {
 
 func controlledReferenceEvidenceValid(r Result) bool {
 	e := r.ReferenceEvidence
-	if r.SchemaVersion < 15 || e == nil || e.Kind != "calibrator_child_process_loopback_soak_v1" ||
+	if r.SchemaVersion < 17 || e == nil || e.Kind != "calibrator_child_process_loopback_soak_v1" ||
 		r.Calibration == nil || calibration.ValidateRecord(r.Calibration.Record) != nil ||
 		r.Calibration.Record.Status != "REFERENCE_SMOKE_PASSED" ||
 		e.FixtureFingerprint != r.Calibration.Record.ScenarioFingerprintSHA256 {
@@ -501,7 +524,7 @@ func controlledReferenceEvidenceValid(r Result) bool {
 		return false
 	}
 	if r.Metrics.Total <= 0 || r.Metrics.Success != r.Metrics.Total || r.Metrics.Failures != 0 || r.Metrics.Cancelled != 0 ||
-		r.ArrivalsScheduled != int64(r.Metrics.Total) || r.IterationsStarted != r.ArrivalsScheduled ||
+		r.ArrivalsScheduled != int64(r.Metrics.Total) || r.ArrivalsAdmitted == nil || *r.ArrivalsAdmitted != r.ArrivalsScheduled || r.IterationsStarted != *r.ArrivalsAdmitted ||
 		r.IterationsCompleted != r.IterationsStarted || r.ArrivalsDropped != 0 ||
 		e.ServerReceived != int64(r.Metrics.Total) || e.ServerCompleted != e.ServerReceived ||
 		e.ServerSuccess != e.ServerReceived || e.ServerFailures != 0 || e.ServerCancelled != 0 || e.ServerRejected != 0 {

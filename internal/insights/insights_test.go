@@ -60,6 +60,21 @@ func TestReportExplainsArrivalSchedulerLagDistribution(t *testing.T) {
 	}
 }
 
+func TestReportShowsSchedulerAdmissionsSeparatelyFromWorkerStarts(t *testing.T) {
+	r := synthetic()
+	r.SchemaVersion = 17
+	admitted := int64(9)
+	r.ArrivalsAdmitted = &admitted
+	cancelled := int64(0)
+	r.ArrivalsCancelledBeforeAdmission = &cancelled
+	r.IterationsStarted = 8
+	var output bytes.Buffer
+	Write(&output, r, nil, nil)
+	if !strings.Contains(output.String(), "Scheduler-admitted arrivals do not reconcile with worker-started iterations.") {
+		t.Fatalf("report did not expose the scheduler-to-worker mismatch: %s", output.String())
+	}
+}
+
 func TestReportExplainsResponseBodySizesWithoutBodyContent(t *testing.T) {
 	r := synthetic()
 	r.SchemaVersion = 12
@@ -448,6 +463,8 @@ func TestReadRunAcceptsCurrentSchemaFourteenConnectionPolicyAndWindowLedgers(t *
 	r.Config.ConnectionPolicy = "reuse"
 	zeroCancelledBeforeAdmission := int64(0)
 	r.ArrivalsCancelledBeforeAdmission = &zeroCancelledBeforeAdmission
+	zeroAdmitted := int64(0)
+	r.ArrivalsAdmitted = &zeroAdmitted
 	r.ObservationSeconds = 30
 	r.Config.WindowDuration = "1s"
 	r.Windows = []report.WindowResult{{StartSeconds: 0, EndSeconds: 1,
@@ -467,6 +484,9 @@ func TestReadRunRejectsUnknownCurrentConnectionPolicy(t *testing.T) {
 	r := synthetic()
 	r.SchemaVersion = report.CurrentSchemaVersion
 	r.Config.ConnectionPolicy = "unknown"
+	zero := int64(0)
+	r.ArrivalsCancelledBeforeAdmission = &zero
+	r.ArrivalsAdmitted = &zero
 	path := filepath.Join(t.TempDir(), "unknown-connection-policy.json")
 	if err := report.WriteJSON(path, r); err != nil {
 		t.Fatal(err)
@@ -567,6 +587,10 @@ func TestSupportedReportSchemaGoldensRoundTrip(t *testing.T) {
 				if got.ArrivalsCancelledBeforeAdmission == nil || *got.ArrivalsCancelledBeforeAdmission != 2 {
 					t.Fatal("schema-v16 cancelled-arrival counter was not preserved")
 				}
+			case 17:
+				if got.ArrivalsAdmitted == nil || *got.ArrivalsAdmitted != 0 {
+					t.Fatal("schema-v17 admitted-arrival counter was not preserved")
+				}
 			}
 		})
 	}
@@ -596,6 +620,37 @@ func TestReadRunRequiresSchema16CancellationEvidence(t *testing.T) {
 			}
 			if _, err := ReadRun(path); err == nil {
 				t.Fatal("report with schema-incompatible arrival cancellation evidence was accepted")
+			}
+		})
+	}
+}
+
+func TestReadRunRequiresSchema17AdmissionEvidence(t *testing.T) {
+	zero := int64(0)
+	for _, tc := range []struct {
+		name     string
+		version  int
+		admitted *int64
+	}{
+		{name: "current missing", version: 17},
+		{name: "legacy unexpected", version: 16, admitted: &zero},
+		{name: "current negative", version: 17, admitted: func() *int64 { n := int64(-1); return &n }()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := synthetic()
+			r.SchemaVersion = tc.version
+			r.ArrivalsCancelledBeforeAdmission = &zero
+			r.ArrivalsAdmitted = tc.admitted
+			data, err := json.Marshal(r)
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(t.TempDir(), "report.json")
+			if err := os.WriteFile(path, data, 0600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := ReadRun(path); err == nil {
+				t.Fatal("report with schema-incompatible admitted-arrival evidence was accepted")
 			}
 		})
 	}
