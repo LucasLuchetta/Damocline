@@ -32,6 +32,15 @@ func TestSeededWeightedExampleDryRunShowsTimingPolicy(t *testing.T) {
 	}
 }
 
+func TestCampaignDryRunShowsBoundedWallTime(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	path := filepath.Join("..", "..", "examples", "seeded-weighted-readonly.json")
+	code := Run([]string{"campaign", "--config", path, "--warmup", "0s", "--observation", "10s", "--recovery", "10s", "--repeats", "2", "--dry-run"}, &stdout, &stderr)
+	if code != 0 || !strings.Contains(stdout.String(), "wall-time cap 2m40s") || !strings.Contains(stdout.String(), "Trial 1 observation: 10s at 10 VUs") || !strings.Contains(stdout.String(), "Trial 2 recovery: 10s at 10 VUs") || !strings.Contains(stdout.String(), "DRY RUN: no traffic generated") {
+		t.Fatalf("campaign preview did not show its effective cap: code=%d out=%s err=%s", code, stdout.String(), stderr.String())
+	}
+}
+
 func TestForcedInterruptionProcessHelper(t *testing.T) {
 	if os.Getenv("DAMOCLINE_FORCED_INTERRUPTION_HELPER") != "1" {
 		return

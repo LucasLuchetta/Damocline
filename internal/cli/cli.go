@@ -284,8 +284,13 @@ func campaignCmd(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "configuration error: %v\n", err)
 		return 2
 	}
-	fmt.Fprintf(stdout, "Campaign: %s | %s://%s | warm-up %s | observation %s | spike %d VUs for %s | recovery %s | repeats %d\n", validated.Scenario.Name, validated.Base.Scheme, validated.Base.Host, options.Warmup, options.Observation, options.SpikeUsers, options.SpikeDuration, options.Recovery, options.Repeats)
+	fmt.Fprintf(stdout, "Campaign: %s | %s://%s | warm-up %s | observation %s | spike %d VUs for %s | recovery %s | repeats %d | wall-time cap %s\n", validated.Scenario.Name, validated.Base.Scheme, validated.Base.Host, options.Warmup, options.Observation, options.SpikeUsers, options.SpikeDuration, options.Recovery, options.Repeats, campaign.PlannedBudget(options))
 	if *dry {
+		for trial := 1; trial <= options.Repeats; trial++ {
+			for _, phase := range campaign.PlannedPhases(options, validated.Scenario.Users) {
+				fmt.Fprintf(stdout, "  Trial %d %s: %s at %d VUs\n", trial, phase.Name, phase.Duration, phase.Users)
+			}
+		}
 		fmt.Fprintln(stdout, "DRY RUN: no traffic generated. Warm-up is excluded from the conclusion; observation and recovery must pass in every trial.")
 		return 0
 	}
@@ -298,8 +303,17 @@ func campaignCmd(args []string, stdout, stderr io.Writer) int {
 	}
 	for _, trial := range result.Trials {
 		fmt.Fprintf(stdout, "Trial %d: %s\n", trial.Number, trial.Outcome)
+		if trial.AbortReason != "" {
+			fmt.Fprintf(stdout, "  Abort reason: %s\n", trial.AbortReason)
+		}
 		for _, phase := range trial.Phases {
-			fmt.Fprintf(stdout, "  %s: %s | p95 %.0fms | errors %.2f%% | requests %d\n", phase.Name, phase.Run.Outcome, phase.Run.Metrics.P95MS, phase.Run.ErrorsRate*100, phase.Run.Metrics.Total)
+			fmt.Fprintf(stdout, "  %s: %s (%s) | p95 %.0fms | errors %.2f%% | requests %d\n", phase.Name, phase.Run.Outcome, phase.EvidenceState, phase.Run.Metrics.P95MS, phase.Run.ErrorsRate*100, phase.Run.Metrics.Total)
+			if phase.Stability != "" {
+				fmt.Fprintf(stdout, "    observation drift screen: %s\n", phase.Stability)
+			}
+			if phase.EvidenceState == "INVALID_DELIVERY" || phase.EvidenceState == "INSUFFICIENT_EVIDENCE" {
+				fmt.Fprintf(stdout, "    %s\n", phase.Reason)
+			}
 		}
 	}
 	if variability := result.ObservationVariability; variability != nil {

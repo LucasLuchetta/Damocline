@@ -1,6 +1,7 @@
 package capacityplan
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -18,8 +19,8 @@ func TestEvaluateRequiresExactSustainedEvidence(t *testing.T) {
 	}
 	passing.BaseUsers = 150
 	result, err = evaluateWithDeclaredTestQuality(passing, goal)
-	if err != nil || result.State != "GOAL_MET_UNDER_TESTED_CONDITIONS" {
-		t.Fatalf("unexpected: %+v %v", result, err)
+	if err != nil || result.State != "INSUFFICIENT_EVIDENCE" || !containsFinding(result.Findings, "Legacy campaign reports lack") {
+		t.Fatalf("legacy campaign gained a positive demand conclusion: %+v %v", result, err)
 	}
 	passing.BaseUsers = 200
 	result, err = evaluateWithDeclaredTestQuality(passing, goal)
@@ -74,8 +75,8 @@ func TestEvaluateRequiresValidDataQualityForEveryRequiredPhase(t *testing.T) {
 	evidence.Trials[0].Phases[2].Run.Quality = &report.Quality{State: report.QualityValid}
 	evidence.Trials[0].Phases[1].Run.Quality = &report.Quality{State: report.QualityValid}
 	result, err = evaluateWithDeclaredTestQuality(evidence, goal)
-	if err != nil || result.State != "GOAL_MET_UNDER_TESTED_CONDITIONS" {
-		t.Fatalf("unqualified warm-up must not block qualified required phases: %+v %v", result, err)
+	if err != nil || result.State != "INSUFFICIENT_EVIDENCE" || !containsFinding(result.Findings, "Legacy campaign reports lack") {
+		t.Fatalf("legacy campaign must remain insufficient after warm-up is excluded: %+v %v", result, err)
 	}
 }
 
@@ -147,6 +148,78 @@ func TestEvaluateRejectsIncompletePassingCampaign(t *testing.T) {
 	result, err := Evaluate(campaign.Result{SchemaVersion: 1, Scenario: "synthetic", Outcome: "PASS", BaseUsers: 20, Repeats: 2}, capacitygoal.Goal{PeakUsers: 20})
 	if err != nil || result.State != "INSUFFICIENT_EVIDENCE" {
 		t.Fatalf("unexpected: %+v %v", result, err)
+	}
+}
+
+func TestSchemaTwoRequiresExactStageSequenceAndClassification(t *testing.T) {
+	makeEvidence := func() campaign.Result {
+		evidence := campaign.Result{
+			SchemaVersion: 2, Scenario: "synthetic", Target: "http://127.0.0.1", Outcome: "PASS",
+			BaseUsers: 10, Repeats: 2, Warmup: "0s", Observation: "10s", SpikeDuration: "0s", Recovery: "10s", Budget: "2m20s",
+			Trials: passingTrials(), ObservationVariability: validVariability(),
+		}
+		for trialIndex := range evidence.Trials {
+			for phaseIndex := range evidence.Trials[trialIndex].Phases {
+				phase := &evidence.Trials[trialIndex].Phases[phaseIndex]
+				phase.Run.Config.Users = 10
+				phase.Run.Config.Duration = "10s"
+				phase.Run.Config.WindowDuration = "2.5s"
+				phase.Run.Target = evidence.Target
+				phase.EvidenceState = "PASS_OBSERVED"
+				phase.Run.Metrics.Total, phase.Run.Metrics.Success = 1200, 1200
+				phase.Run.Steps[0].Metrics.Total, phase.Run.Steps[0].Metrics.Success = 1200, 1200
+				phase.Run.Windows = nil
+				for windowIndex := 0; windowIndex < 4; windowIndex++ {
+					metrics := validStatisticalRun().Metrics
+					phase.Run.Windows = append(phase.Run.Windows, report.WindowResult{StartSeconds: float64(windowIndex) * 2.5, EndSeconds: float64(windowIndex+1) * 2.5, Metrics: metrics, Steps: []report.WindowMetric{{Name: "step", Metrics: metrics}}})
+				}
+				if phase.Name == "observation" {
+					phase.Stability = "NO_LARGE_DRIFT_DETECTED"
+				}
+			}
+		}
+		return evidence
+	}
+	if err := validateEvidence(makeEvidence()); err != nil {
+		t.Fatalf("valid staged evidence rejected: %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "campaign.json")
+	if err := report.WriteAnyJSON(path, makeEvidence()); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := ReadCampaign(path)
+	if err != nil || validateEvidence(restored) != nil {
+		t.Fatalf("schema-v2 report did not round-trip: %v", err)
+	}
+	positive, err := evaluateWithDeclaredTestQuality(makeEvidence(), capacitygoal.Goal{PeakUsers: 10})
+	if err != nil || positive.State != "GOAL_MET_UNDER_TESTED_CONDITIONS" {
+		t.Fatalf("complete schema-v2 fixture was not usable: %+v %v", positive, err)
+	}
+	for _, tc := range []struct {
+		name   string
+		mutate func(*campaign.Result)
+	}{
+		{"duplicate phase", func(r *campaign.Result) { r.Trials[0].Phases[1].Name = "observation" }},
+		{"wrong load", func(r *campaign.Result) { r.Trials[0].Phases[0].Run.Config.Users = 11 }},
+		{"wrong duration", func(r *campaign.Result) { r.Trials[0].Phases[0].Run.Config.Duration = "9s" }},
+		{"wrong target", func(r *campaign.Result) { r.Trials[0].Phases[0].Run.Target = "http://127.0.0.2" }},
+		{"false classification", func(r *campaign.Result) { r.Trials[0].Phases[0].EvidenceState = "FAIL_OBSERVED" }},
+		{"false stability", func(r *campaign.Result) { r.Trials[0].Phases[0].Run.Windows[3].Metrics.P95MS = 40 }},
+		{"missing drain budget", func(r *campaign.Result) { r.Budget = "10s" }},
+		{"wrong trial number", func(r *campaign.Result) { r.Trials[1].Number = 1 }},
+		{"aborted warmup", func(r *campaign.Result) {
+			r.Warmup = "10s"
+			r.Trials[0].Phases = append([]campaign.Phase{{Name: "warmup", EvidenceState: "INSUFFICIENT_EVIDENCE", Run: report.Result{Outcome: "ABORTED", Config: report.RunConfig{Users: 10, Duration: "10s"}, Target: r.Target}}}, r.Trials[0].Phases...)
+			r.Trials[1].Phases = append([]campaign.Phase{{Name: "warmup", EvidenceState: "INSUFFICIENT_EVIDENCE", Run: report.Result{Outcome: "ABORTED", Config: report.RunConfig{Users: 10, Duration: "10s"}, Target: r.Target}}}, r.Trials[1].Phases...)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			evidence := makeEvidence()
+			tc.mutate(&evidence)
+			if err := validateEvidence(evidence); err == nil {
+				t.Fatal("malformed campaign accepted")
+			}
+		})
 	}
 }
 

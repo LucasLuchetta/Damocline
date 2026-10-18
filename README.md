@@ -139,11 +139,11 @@ damocline plan --campaign reports/campaign.json --peak-users 200 --growth-percen
 ```
 
 The command calculates the demand to validate and reports
-**GOAL_MET_UNDER_TESTED_CONDITIONS** only when a complete, passing, schema-v1
+**GOAL_MET_UNDER_TESTED_CONDITIONS** only when a complete, passing, supported-schema
 repeated campaign exercised that exact base VU level and every required phase
 has `VALID_WITHIN_ENVELOPE` data quality, adequate conditional p95/error
 bounds for aggregates, steps and every SLO window, continuous window coverage,
-and variability for every independent trial. Missing or insufficient evidence
+and variability for every independent trial. Schema-v2 campaigns additionally retain phase classification and a coarse observation-window drift screen, then require the exact saved schedule to reconcile. Missing or insufficient evidence
 returns `INSUFFICIENT_EVIDENCE`; 50 error-free requests cannot substantiate a
 1% error budget at 95% under the stated binomial assumptions. Ordinary external run reports remain `LIMITED` while workload-specific generator equivalence and controlled endpoint identity are unavailable. The local calibrator can qualify only its own fixed loopback soak; that does not certify application capacity. Existing statistical bounds assume independent, stationary
 observations; that assumption is not established, so the result is not a

@@ -5,6 +5,7 @@ This project follows a human-maintained changelog. No release exists yet.
 ## [Unreleased]
 
 ### Added
+- Record schema-v2 campaign stage classifications and an observation-window drift screen; reserve bounded phase drains in the default wall-time cap and validate the exact saved phase schedule offline.
 - Add seeded discrete between-step timing with bounded repeated samples, profile overrides, report provenance and reproducible workload fingerprints.
 - Add bounded seeded between-step timing ranges for scenarios and weighted profiles, record policy and seed in schema-v21 reports and workload fingerprints, and keep fixed-pause scenarios compatible.
 - Audit merged measurement/workload/campaign capabilities against the remaining acceptance gates and group the next work into integrated delivery blocks.

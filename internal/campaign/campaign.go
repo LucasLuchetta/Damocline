@@ -12,6 +12,8 @@ import (
 	"github.com/LucasLuchetta/Damocline/internal/report"
 )
 
+const CurrentSchemaVersion = 2
+
 type Options struct {
 	Warmup        time.Duration
 	Observation   time.Duration
@@ -22,15 +24,43 @@ type Options struct {
 	Budget        time.Duration
 }
 
+// PlannedPhase is one bounded stage in each campaign trial.
+type PlannedPhase struct {
+	Name     string
+	Duration time.Duration
+	Users    int
+	Required bool
+}
+
+// PlannedPhases returns the exact stage order used by every trial.
+func PlannedPhases(options Options, baseUsers int) []PlannedPhase {
+	phases := make([]PlannedPhase, 0, 4)
+	if options.Warmup > 0 {
+		phases = append(phases, PlannedPhase{Name: "warmup", Duration: options.Warmup, Users: baseUsers})
+	}
+	phases = append(phases, PlannedPhase{Name: "observation", Duration: options.Observation, Users: baseUsers, Required: true})
+	if options.SpikeDuration > 0 {
+		phases = append(phases, PlannedPhase{Name: "spike", Duration: options.SpikeDuration, Users: options.SpikeUsers, Required: true})
+	}
+	if options.Recovery > 0 {
+		phases = append(phases, PlannedPhase{Name: "recovery", Duration: options.Recovery, Users: baseUsers, Required: true})
+	}
+	return phases
+}
+
 type Phase struct {
-	Name string        `json:"name"`
-	Run  report.Result `json:"run"`
+	Name          string        `json:"name"`
+	EvidenceState string        `json:"evidence_state,omitempty"`
+	Reason        string        `json:"reason,omitempty"`
+	Stability     string        `json:"stability,omitempty"`
+	Run           report.Result `json:"run"`
 }
 
 type Trial struct {
-	Number  int     `json:"number"`
-	Phases  []Phase `json:"phases"`
-	Outcome string  `json:"outcome"`
+	Number      int     `json:"number"`
+	Phases      []Phase `json:"phases"`
+	Outcome     string  `json:"outcome"`
+	AbortReason string  `json:"abort_reason,omitempty"`
 }
 
 type Result struct {
@@ -44,6 +74,7 @@ type Result struct {
 	SpikeUsers             int          `json:"spike_users,omitempty"`
 	SpikeDuration          string       `json:"spike_duration,omitempty"`
 	Recovery               string       `json:"recovery"`
+	Budget                 string       `json:"budget,omitempty"`
 	Repeats                int          `json:"repeats"`
 	Trials                 []Trial      `json:"trials"`
 	ObservationVariability *Variability `json:"observation_variability,omitempty"`
@@ -88,7 +119,22 @@ func Validate(options Options) error {
 	if minimum > 15*time.Minute {
 		return fmt.Errorf("configured phases exceed the 15m campaign safety budget")
 	}
+	if options.Budget == 0 && defaultBudget(options) > 15*time.Minute {
+		return fmt.Errorf("configured phases and bounded drain allowance exceed the 15m campaign safety budget")
+	}
 	return nil
+}
+
+func defaultBudget(options Options) time.Duration {
+	return time.Duration(options.Repeats) * (options.Warmup + options.Observation + options.SpikeDuration + options.Recovery + time.Duration(len(PlannedPhases(options, 0)))*30*time.Second)
+}
+
+// PlannedBudget returns the explicit wall-time cap or the bounded default.
+func PlannedBudget(options Options) time.Duration {
+	if options.Budget > 0 {
+		return options.Budget
+	}
+	return defaultBudget(options)
 }
 
 func Run(ctx context.Context, base config.Validated, options Options) (Result, error) {
@@ -110,13 +156,12 @@ func WithRunner(ctx context.Context, base config.Validated, options Options, run
 			return Result{}, err
 		}
 	}
-	if options.Budget == 0 {
-		options.Budget = time.Duration(options.Repeats) * (options.Warmup + options.Observation + options.SpikeDuration + options.Recovery)
-	}
+	options.Budget = PlannedBudget(options)
+	parent := ctx
 	ctx, cancel := context.WithTimeout(ctx, options.Budget)
 	defer cancel()
 	result := Result{
-		SchemaVersion: 1,
+		SchemaVersion: CurrentSchemaVersion,
 		Scenario:      base.Scenario.Name,
 		BaseUsers:     base.Scenario.Users,
 		Target:        base.Base.Scheme + "://" + base.Base.Host,
@@ -126,6 +171,7 @@ func WithRunner(ctx context.Context, base config.Validated, options Options, run
 		SpikeUsers:    options.SpikeUsers,
 		SpikeDuration: options.SpikeDuration.String(),
 		Recovery:      options.Recovery.String(),
+		Budget:        options.Budget.String(),
 		Repeats:       options.Repeats,
 		Trials:        []Trial{},
 		Outcome:       "INCONCLUSIVE",
@@ -136,38 +182,51 @@ func WithRunner(ctx context.Context, base config.Validated, options Options, run
 	}
 	for number := 1; number <= options.Repeats; number++ {
 		trial := Trial{Number: number, Phases: []Phase{}, Outcome: "PASS"}
-		for _, phase := range []struct {
-			name     string
-			duration time.Duration
-			required bool
-			users    int
-		}{
-			{name: "warmup", duration: options.Warmup, users: base.Scenario.Users},
-			{name: "observation", duration: options.Observation, required: true, users: base.Scenario.Users},
-			{name: "spike", duration: options.SpikeDuration, required: true, users: options.SpikeUsers},
-			{name: "recovery", duration: options.Recovery, required: true, users: base.Scenario.Users},
-		} {
-			if phase.duration == 0 {
-				continue
-			}
+		for _, phase := range PlannedPhases(options, base.Scenario.Users) {
 			if ctx.Err() != nil {
 				trial.Outcome = "ABORTED"
+				trial.AbortReason = abortReason(ctx.Err(), parent.Err())
 				break
 			}
 			v := base
-			v.Duration = phase.duration
-			v.Scenario.Duration = phase.duration.String()
-			v.Scenario.Users = phase.users
-			if len(spikeCookies) > 0 && phase.users == options.SpikeUsers {
+			v.Duration = phase.Duration
+			v.Scenario.Duration = phase.Duration.String()
+			v.Scenario.Users = phase.Users
+			if phase.Name != "warmup" && v.Window == 0 && phase.Duration >= 4*time.Second {
+				v.Window = min(30*time.Second, phase.Duration/4)
+				v.Scenario.WindowDuration = v.Window.String()
+			}
+			if len(spikeCookies) > 0 && phase.Users == options.SpikeUsers {
 				v.Cookies = spikeCookies
 			}
 			run := runner(ctx, v)
-			trial.Phases = append(trial.Phases, Phase{Name: phase.name, Run: run})
-			if run.Outcome == "ABORTED" || run.Outcome == "INCONCLUSIVE" {
-				trial.Outcome = run.Outcome
+			state, reason := ClassifyEvidence(run)
+			stability := ""
+			if phase.Name == "observation" {
+				stability = AssessStability(run)
+			}
+			trial.Phases = append(trial.Phases, Phase{Name: phase.Name, EvidenceState: state, Reason: reason, Stability: stability, Run: run})
+			if ctx.Err() != nil {
+				trial.Outcome = "ABORTED"
+				trial.AbortReason = abortReason(ctx.Err(), parent.Err())
 				break
 			}
-			if phase.required && run.Outcome != "PASS" {
+			if state == "INVALID_DELIVERY" {
+				trial.Outcome = "INCONCLUSIVE"
+				break
+			}
+			if phase.Name == "observation" && state == "PASS_OBSERVED" && stability != "NO_LARGE_DRIFT_DETECTED" {
+				trial.Outcome = "INCONCLUSIVE"
+				break
+			}
+			if run.Outcome == "ABORTED" || run.Outcome == "INCONCLUSIVE" {
+				trial.Outcome = run.Outcome
+				if run.Outcome == "ABORTED" {
+					trial.AbortReason = "The native phase run was aborted."
+				}
+				break
+			}
+			if phase.Required && run.Outcome != "PASS" {
 				trial.Outcome = "FAIL"
 				break
 			}
@@ -181,6 +240,59 @@ func WithRunner(ctx context.Context, base config.Validated, options Options, run
 	result.Outcome = "PASS"
 	result.ObservationVariability = summarizeObservationVariability(result.Trials)
 	return result, nil
+}
+
+func abortReason(err, parentErr error) string {
+	if parentErr == nil && err == context.DeadlineExceeded {
+		return "The campaign wall-time budget expired."
+	}
+	return "The campaign was interrupted by its caller."
+}
+
+// AssessStability screens complete observation windows for a large first-to-last
+// latency increase or throughput decrease. Passing this heuristic does not
+// establish statistical stationarity or independent observations.
+func AssessStability(run report.Result) string {
+	if len(run.Windows) < 3 || run.ObservationSeconds <= 0 || math.IsNaN(run.ObservationSeconds) || math.IsInf(run.ObservationSeconds, 0) {
+		return "INSUFFICIENT_WINDOWS"
+	}
+	expectedStart := 0.0
+	for _, window := range run.Windows {
+		if math.IsNaN(window.StartSeconds) || math.IsInf(window.StartSeconds, 0) || math.IsNaN(window.EndSeconds) || math.IsInf(window.EndSeconds, 0) || math.Abs(window.StartSeconds-expectedStart) > 0.001 || window.EndSeconds <= window.StartSeconds || window.EndSeconds > run.ObservationSeconds+0.001 || window.Metrics.Total < 20 || window.Metrics.Success <= 0 || window.Metrics.Success > window.Metrics.Total || window.Metrics.Failures != window.Metrics.Total-window.Metrics.Success || math.IsNaN(window.Metrics.P95MS) || math.IsInf(window.Metrics.P95MS, 0) || window.Metrics.P95MS < 0 {
+			return "INSUFFICIENT_WINDOWS"
+		}
+		expectedStart = window.EndSeconds
+	}
+	if math.Abs(expectedStart-run.ObservationSeconds) > 0.001 {
+		return "INSUFFICIENT_WINDOWS"
+	}
+	first := run.Windows[0]
+	last := run.Windows[len(run.Windows)-1]
+	firstRate := float64(first.Metrics.Total) / (first.EndSeconds - first.StartSeconds)
+	lastRate := float64(last.Metrics.Total) / (last.EndSeconds - last.StartSeconds)
+	if last.Metrics.P95MS > first.Metrics.P95MS*1.2 && last.Metrics.P95MS-first.Metrics.P95MS > 5 || lastRate < firstRate*0.8 {
+		return "NON_STATIONARY"
+	}
+	return "NO_LARGE_DRIFT_DETECTED"
+}
+
+// ClassifyEvidence separates observed SLO results from invalid delivery and
+// incomplete phase evidence. It does not certify sustainable capacity.
+func ClassifyEvidence(run report.Result) (string, string) {
+	if run.Quality != nil && run.Quality.State == report.QualityInvalid {
+		return "INVALID_DELIVERY", "Report accounting or generator evidence is invalid."
+	}
+	if run.ArrivalsDropped > 0 || run.ArrivalsCancelledBeforeAdmission != nil && *run.ArrivalsCancelledBeforeAdmission > 0 {
+		return "INVALID_DELIVERY", "Planned arrivals were dropped or cancelled before admission."
+	}
+	switch run.Outcome {
+	case "PASS":
+		return "PASS_OBSERVED", "Configured objectives passed in the observed phase."
+	case "FAIL":
+		return "FAIL_OBSERVED", "A configured objective failed in the observed phase."
+	default:
+		return "INSUFFICIENT_EVIDENCE", "The phase did not complete with a decisive observed outcome."
+	}
 }
 
 func summarizeObservationVariability(trials []Trial) *Variability {
