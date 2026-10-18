@@ -30,12 +30,34 @@ func TestAssessmentMatchesOnlyDeclaredFixtureDimensionsAndKeepsUnknowns(t *testi
 			t.Fatalf("%s was not matched: %+v", name, c.Dimensions)
 		}
 	}
+	if statuses["connection_policy"] != "MATCHED" {
+		t.Fatalf("reusable connection policy should match the fixed reference: %+v", c.Dimensions)
+	}
 	if statuses["response_shape"] != "UNVERIFIED" || statuses["fixture_identity"] != "UNVERIFIED" {
 		t.Fatalf("response and identity uncertainty must be explicit: %+v", c.Dimensions)
 	}
 	if statuses["declared_workload_shape"] != "OUTSIDE_REFERENCE" {
 		t.Fatalf("different request path must not be treated as equivalent: %+v", c.Dimensions)
 	}
+}
+
+func TestConnectionPolicyOutsideReferenceIsExplicit(t *testing.T) {
+	a := passingArtifact(t)
+	local := CurrentRuntime()
+	a.Preflight.Generator.RunnerVersion = local.RunnerVersion
+	now := time.Now().UTC()
+	a.Preflight.StartedAt = now.Add(-2 * time.Minute).Format(time.RFC3339Nano)
+	a.Preflight.FinishedAt = now.Add(-time.Minute).Format(time.RFC3339Nano)
+	scenario := config.Scenario{BaseURL: "http://127.0.0.1", Mode: "arrival", ArrivalRate: 10, Users: 10,
+		MaxRPS: 100, Duration: "5s", Timeout: "1s", ConnectionPolicy: "new_per_request",
+		Steps: []config.Step{{Name: "work", Method: "GET", Path: "/work"}}}
+	coverage := AssessScenario(scenario, a.Preflight, local, now)
+	for _, dimension := range coverage.Dimensions {
+		if dimension.Name == "connection_policy" && dimension.Status == "OUTSIDE_REFERENCE" {
+			return
+		}
+	}
+	t.Fatalf("new-per-request policy must be outside a reuse-only calibration: %+v", coverage.Dimensions)
 }
 
 func TestDeclaredWorkloadShapeRequiresExactFingerprintAndVersionedRecord(t *testing.T) {

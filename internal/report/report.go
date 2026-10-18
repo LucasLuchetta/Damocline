@@ -18,7 +18,7 @@ import (
 // CurrentSchemaVersion is the newest persisted HTTP run report schema emitted
 // by the engine. Readers must reject future versions until their semantics are
 // reviewed and supported.
-const CurrentSchemaVersion = 13
+const CurrentSchemaVersion = 14
 
 type MetricSet struct {
 	Total                 int                     `json:"total"`
@@ -275,6 +275,7 @@ type RunConfig struct {
 	RampUp              string          `json:"ramp_up,omitempty"`
 	ThinkTime           string          `json:"think_time,omitempty"`
 	RequestTimeout      string          `json:"request_timeout"`
+	ConnectionPolicy    string          `json:"connection_policy,omitempty"`
 	MaxRPS              int             `json:"max_rps"`
 	P95LimitMS          float64         `json:"p95_limit_ms"`
 	MaxErrorRate        float64         `json:"max_error_rate"`

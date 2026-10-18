@@ -209,6 +209,17 @@ func compareScenarioToReference(s config.Scenario, a assessment, calibrationErr 
 	} else {
 		r.add("request_mix", coverageMatched, "The declared journey has the same simple GET-only request shape.")
 	}
+	connectionPolicy := s.ConnectionPolicy
+	if connectionPolicy == "" {
+		connectionPolicy = "reuse"
+	}
+	if calibrationErr != nil {
+		r.add("connection_policy", coverageUnknown, "The calibration record could not establish its connection policy.")
+	} else if connectionPolicy != "reuse" {
+		r.add("connection_policy", coverageOutside, "The reference calibration covers reusable HTTP connections only.")
+	} else {
+		r.add("connection_policy", coverageMatched, "The configured policy matches reusable HTTP connections; live reuse still requires transport observation.")
+	}
 	workloadShape := calibration.AssessDeclaredWorkloadShape(s, a.Preflight)
 	r.add(workloadShape.Name, workloadShape.Status, workloadShape.Reason)
 

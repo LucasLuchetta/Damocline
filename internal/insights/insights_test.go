@@ -179,10 +179,34 @@ func TestComparisonRequiresMatchingWorkloadFingerprint(t *testing.T) {
 
 func TestComparisonOnlyMatchesDeclaredWorkload(t *testing.T) {
 	prev, current := synthetic(), synthetic()
+	prev.SchemaVersion, current.SchemaVersion = report.CurrentSchemaVersion, report.CurrentSchemaVersion
+	prev.Config.ConnectionPolicy, current.Config.ConnectionPolicy = "reuse", "reuse"
 	var out strings.Builder
 	writeComparison(&out, prev, current)
 	if !strings.Contains(out.String(), "MATCHED_DECLARED_WORKLOAD") || !strings.Contains(out.String(), "do not embed loopback preflight/calibration evidence") || strings.Contains(out.String(), "MATCHED_DECLARED_CONDITIONS") {
 		t.Fatalf("matching declared workload was overstated as controlled evidence: %s", out.String())
+	}
+}
+
+func TestComparisonRejectsDifferentConnectionPolicy(t *testing.T) {
+	prev, current := synthetic(), synthetic()
+	prev.SchemaVersion, current.SchemaVersion = report.CurrentSchemaVersion, report.CurrentSchemaVersion
+	prev.Config.ConnectionPolicy, current.Config.ConnectionPolicy = "reuse", "new_per_request"
+	var out strings.Builder
+	writeComparison(&out, prev, current)
+	if !strings.Contains(out.String(), "Comparison eligibility: NOT_COMPARABLE") {
+		t.Fatalf("different connection policies must block comparison: %s", out.String())
+	}
+}
+
+func TestComparisonRejectsLegacyReportsWithUnknownConnectionPolicy(t *testing.T) {
+	prev, current := synthetic(), synthetic()
+	prev.SchemaVersion, current.SchemaVersion = 13, report.CurrentSchemaVersion
+	current.Config.ConnectionPolicy = "reuse"
+	var out strings.Builder
+	writeComparison(&out, prev, current)
+	if !strings.Contains(out.String(), "NOT_COMPARABLE") || !strings.Contains(out.String(), "Older report schemas do not record connection policy") {
+		t.Fatalf("legacy connection-policy absence must block comparison explicitly: %s", out.String())
 	}
 }
 
@@ -418,21 +442,35 @@ func TestReadRunAcceptsSchemaTwelveResponseBodyMeasurements(t *testing.T) {
 	}
 }
 
-func TestReadRunAcceptsCurrentSchemaThirteenWindowLedgers(t *testing.T) {
+func TestReadRunAcceptsCurrentSchemaFourteenConnectionPolicyAndWindowLedgers(t *testing.T) {
 	r := synthetic()
 	r.SchemaVersion = report.CurrentSchemaVersion
+	r.Config.ConnectionPolicy = "reuse"
 	r.ObservationSeconds = 30
 	r.Config.WindowDuration = "1s"
 	r.Windows = []report.WindowResult{{StartSeconds: 0, EndSeconds: 1,
 		Steps: []report.WindowMetric{{Name: r.Steps[0].Name, Metrics: r.Steps[0].Metrics}},
 	}}
-	path := filepath.Join(t.TempDir(), "schema-v13-windows.json")
+	path := filepath.Join(t.TempDir(), "schema-v14-windows.json")
 	if err := report.WriteJSON(path, r); err != nil {
 		t.Fatal(err)
 	}
 	got, err := ReadRun(path)
 	if err != nil || got.SchemaVersion != report.CurrentSchemaVersion || len(got.Windows) != 1 || len(got.Windows[0].Steps) != 1 {
 		t.Fatalf("current-schema window report not readable: %+v err=%v", got, err)
+	}
+}
+
+func TestReadRunRejectsUnknownCurrentConnectionPolicy(t *testing.T) {
+	r := synthetic()
+	r.SchemaVersion = report.CurrentSchemaVersion
+	r.Config.ConnectionPolicy = "unknown"
+	path := filepath.Join(t.TempDir(), "unknown-connection-policy.json")
+	if err := report.WriteJSON(path, r); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadRun(path); err == nil {
+		t.Fatal("current report with unknown connection policy was accepted")
 	}
 }
 
@@ -514,6 +552,10 @@ func TestSupportedReportSchemaGoldensRoundTrip(t *testing.T) {
 			case 13:
 				if len(got.Windows) != 1 || len(got.Windows[0].Steps) != 1 {
 					t.Fatal("schema-v13 named window ledger was not preserved")
+				}
+			case 14:
+				if got.Config.ConnectionPolicy != "reuse" {
+					t.Fatal("schema-v14 connection policy was not preserved")
 				}
 			}
 		})

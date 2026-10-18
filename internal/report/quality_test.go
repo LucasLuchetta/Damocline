@@ -61,9 +61,19 @@ func TestQualityKeepsAttachedCalibrationLimitedWhileTargetEvidenceIsUnknown(t *t
 		t.Fatalf("attached fixed-fixture calibration cannot upgrade unknown target evidence: %+v", q)
 	}
 	r.SchemaVersion = 12
+	if got := AssessDeclaredWorkloadShape(r, rec); got.Status != "UNVERIFIED" {
+		t.Fatalf("legacy report cannot prove connection policy: %+v", got)
+	}
+	r.SchemaVersion = 14
+	r.Config.ConnectionPolicy = "reuse"
 	if got := AssessDeclaredWorkloadShape(r, rec); got.Status != "MATCHED" {
 		t.Fatalf("reconstructed reference step should match: %+v", got)
 	}
+	r.Config.ConnectionPolicy = "new_per_request"
+	if got := AssessDeclaredWorkloadShape(r, rec); got.Status != "OUTSIDE_REFERENCE" {
+		t.Fatalf("new connection policy must be outside the reuse-only fixture: %+v", got)
+	}
+	r.Config.ConnectionPolicy = "reuse"
 	r.Steps[0].Path = "/changed"
 	if got := AssessDeclaredWorkloadShape(r, rec); got.Status != "OUTSIDE_REFERENCE" {
 		t.Fatalf("changed saved path must fail closed: %+v", got)

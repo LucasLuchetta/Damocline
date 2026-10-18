@@ -69,6 +69,15 @@ func AssessScenario(s config.Scenario, rec Record, local Runtime, now time.Time)
 	} else {
 		add("workload_model", "OUTSIDE_REFERENCE", "The fixture tested independent journey arrivals only.")
 	}
+	connectionPolicy := s.ConnectionPolicy
+	if connectionPolicy == "" {
+		connectionPolicy = "reuse"
+	}
+	if connectionPolicy == "reuse" {
+		add("connection_policy", "MATCHED", "The reference uses reusable HTTP connections; this is a declared policy, not endpoint evidence.")
+	} else {
+		add("connection_policy", "OUTSIDE_REFERENCE", "The reference calibration covers reusable HTTP connections only.")
+	}
 	rateMatched := false
 	for _, rate := range rec.Fixture.HealthyRates {
 		if rate == s.ArrivalRate {

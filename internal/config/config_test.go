@@ -51,6 +51,39 @@ func TestValid(t *testing.T) {
 	if v.Steps[0].Method != "GET" {
 		t.Fatalf("method = %s", v.Steps[0].Method)
 	}
+	if v.Scenario.ConnectionPolicy != "reuse" {
+		t.Fatalf("default connection policy = %q", v.Scenario.ConnectionPolicy)
+	}
+}
+
+func TestConnectionPolicyIsBoundedAndFingerprintable(t *testing.T) {
+	base, err := Parse(good(), Options{Authorized: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fresh := good()
+	fresh.ConnectionPolicy = "new_per_request"
+	newConnections, err := Parse(fresh, Options{Authorized: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if base.WorkloadFingerprint == newConnections.WorkloadFingerprint {
+		t.Fatal("connection policy change did not change workload fingerprint")
+	}
+	explicitReuse := good()
+	explicitReuse.ConnectionPolicy = "reuse"
+	reuseValidated, err := Parse(explicitReuse, Options{Authorized: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if base.WorkloadFingerprint != reuseValidated.WorkloadFingerprint {
+		t.Fatal("explicit and default reuse policies must retain the same reference fingerprint")
+	}
+	invalid := good()
+	invalid.ConnectionPolicy = "unbounded"
+	if _, err := Parse(invalid, Options{Authorized: true}); err == nil {
+		t.Fatal("unsupported connection policy was accepted")
+	}
 }
 func TestHeadersUseEnv(t *testing.T) {
 	t.Setenv("TEST_DAMOCLINE_COOKIE", "session=fake")

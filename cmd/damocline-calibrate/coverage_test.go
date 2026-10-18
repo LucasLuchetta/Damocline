@@ -69,10 +69,21 @@ func TestOfflineReferenceShapeNeverBecomesCapacityApproval(t *testing.T) {
 	findDimension(t, got, "arrival_rate", coverageMatched)
 	findDimension(t, got, "actor_budget", coverageMatched)
 	findDimension(t, got, "declared_workload_shape", coverageMatched)
+	findDimension(t, got, "connection_policy", coverageMatched)
 	findDimension(t, got, "response_body_size", coverageUnknown)
 	findDimension(t, got, "connections_and_server_identity", coverageUnknown)
 	findDimension(t, got, "generator_host_identity", coverageUnknown)
 	findDimension(t, got, "generator_workload_headroom", coverageUnknown)
+}
+
+func TestOfflineConnectionPolicyOutsideReferenceIsExplicit(t *testing.T) {
+	scenario := referenceShapedScenario()
+	scenario.ConnectionPolicy = "new_per_request"
+	got := compareScenarioToReference(scenario, validCoverageCalibration(t, true), nil)
+	if got.Status != "INCONCLUSIVE" || got.Shape == "DECLARED_SHAPE_RESEMBLES_REFERENCE" {
+		t.Fatalf("untested connection policy cannot resemble the reference envelope: %+v", got)
+	}
+	findDimension(t, got, "connection_policy", coverageOutside)
 }
 
 func TestUnobservedRateMustNotInterpolateOrBorrowExtendedEnvelope(t *testing.T) {
