@@ -123,6 +123,54 @@ func TestCheckStageRejectsNonFiniteLatency(t *testing.T) {
 	}
 }
 
+func TestCheckStageRequiresKnownMeasurementQuality(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		quality *report.Quality
+		want    string
+	}{
+		{name: "missing"},
+		{name: "invalid", quality: &report.Quality{State: report.QualityInvalid}, want: "INVALID"},
+		{name: "unknown", quality: &report.Quality{State: "FUTURE_STATE"}, want: "FUTURE_STATE"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			run := passingStageFixture()
+			run.Quality = tc.quality
+			issues := strings.Join(checkStage(2, 10, run), "\n")
+			if !strings.Contains(issues, "stage 2 measurement quality:") || (tc.want != "" && !strings.Contains(issues, tc.want)) {
+				t.Fatalf("missing, invalid, or unknown quality must fail calibration with a diagnostic, got %q", issues)
+			}
+		})
+	}
+}
+
+func TestCheckWorkloadProfileRequiresKnownMeasurementQuality(t *testing.T) {
+	profile := calibration.ReferenceWorkloadProfiles()[0]
+	for _, tc := range []struct {
+		name    string
+		quality *report.Quality
+		want    string
+	}{
+		{name: "missing"},
+		{name: "invalid", quality: &report.Quality{State: report.QualityInvalid}, want: "INVALID"},
+		{name: "unknown", quality: &report.Quality{State: "FUTURE_STATE"}, want: "FUTURE_STATE"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			run, observation := passingWorkloadProfileFixture(profile)
+			run.Quality = tc.quality
+			issues := checkWorkloadProfile(profile, run, observation)
+			if len(issues) != 1 || !strings.Contains(issues[0], "measurement quality:") || (tc.want != "" && !strings.Contains(issues[0], tc.want)) {
+				t.Fatalf("missing, invalid, or unknown profile quality must fail calibration with a diagnostic: %v", issues)
+			}
+		})
+	}
+	run, observation := passingWorkloadProfileFixture(profile)
+	run.Quality = &report.Quality{State: report.QualityLimited}
+	if issues := checkWorkloadProfile(profile, run, observation); len(issues) != 0 {
+		t.Fatalf("a known LIMITED profile state should remain eligible for the independent fixture gates: %v", issues)
+	}
+}
+
 func TestCheckStageUsesSustainedProcessCPUAndReportsIntervalPeak(t *testing.T) {
 	base := passingStageFixture()
 	base.Generator.PeakProcessCPUUtilizationRatio = 1.3
@@ -190,4 +238,36 @@ func passingStageFixture() report.Result {
 		Steps: []report.StepResult{{Method: "GET", Path: "/work", Metrics: metrics}},
 		Generator: &generatorhealth.Summary{Samples: 2, GoCPUValid: true, ProcessSamples: 2,
 			ProcessCPUValid: true, PeakProcessRSSBytes: 1}}
+}
+
+func passingWorkloadProfileFixture(profile calibration.WorkloadProfile) (report.Result, calibration.WorkloadObservation) {
+	planned := int64(profile.ArrivalRate) * 5
+	responseBytes := int64(profile.ResponseBodyBytes)
+	body := report.ResponseBodyDiagnostics{
+		CompleteObservations: planned, MinBytes: responseBytes, MaxBytes: responseBytes,
+		TotalBytes: planned * responseBytes,
+	}
+	metrics := report.MetricSet{Total: int(planned), Success: int(planned), ResponseBody: body}
+	stepMetrics := metrics
+	admitted := planned
+	run := report.Result{
+		ArrivalsScheduled: planned, ArrivalsAdmitted: &admitted, IterationsStarted: planned,
+		IterationsCompleted: planned, SchedulerLagSamples: planned, Metrics: metrics,
+		Journeys: metrics, Outcome: "PASS", Steps: []report.StepResult{{Method: profile.Method, Path: profile.Path, Metrics: stepMetrics}},
+		Config: report.RunConfig{
+			Mode: profile.Mode, ArrivalRate: profile.ArrivalRate, MaxRPS: profile.MaxRPS,
+			Users: profile.Users, Duration: profile.Duration, RequestTimeout: profile.Timeout,
+			ConnectionPolicy: profile.ConnectionPolicy,
+		},
+	}
+	observation := calibration.WorkloadObservation{
+		Scheduled: planned, Admitted: planned, Started: planned, Completed: planned,
+		Outcome: "PASS", ClientCompleteBodyObservations: planned,
+		ClientResponseMinBytes: responseBytes, ClientResponseMaxBytes: responseBytes,
+		ClientResponseTotalBytes: planned * responseBytes,
+		ServerReceived:           planned, ServerCompleted: planned,
+		ServerRequestBodyBytes:  planned * int64(profile.RequestBodyBytes),
+		ServerResponseBodyBytes: planned * responseBytes,
+	}
+	return run, observation
 }
