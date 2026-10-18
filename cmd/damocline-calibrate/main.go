@@ -664,15 +664,23 @@ func checkWorkloadProfile(profile calibration.WorkloadProfile, run report.Result
 		body.MaxBytes == int64(profile.ResponseBodyBytes) && body.TotalBytes == expectedResponseBytes
 	serverLedgerMatches := observation.ServerReceived == planned && observation.ServerCompleted == planned &&
 		observation.ServerRequestBodyBytes == expectedRequestBytes && observation.ServerResponseBodyBytes == expectedResponseBytes
+	var issues []string
+	if !hasRecognizedMeasurementQuality(run.Quality) {
+		state := "missing"
+		if run.Quality != nil {
+			state = run.Quality.State
+		}
+		issues = append(issues, fmt.Sprintf("workload profile %s measurement quality: expected VALID_WITHIN_ENVELOPE or LIMITED, got %s", profile.ID, state))
+	}
 	if !arrivalsMatch || !requestMetricsMatch || !responseMetricsMatch || !serverLedgerMatches || run.Outcome != "PASS" {
-		return []string{fmt.Sprintf(
+		issues = append(issues, fmt.Sprintf(
 			"workload profile %s did not reconcile: planned=%d arrivals=%d/%d/%d dropped=%d lag_samples=%d requests=%d/%d failures=%d client_body=%+v server=%+v outcome=%s",
 			profile.ID, planned, run.ArrivalsScheduled, run.IterationsStarted, run.IterationsCompleted,
 			run.ArrivalsDropped, run.SchedulerLagSamples, run.Metrics.Success, run.Metrics.Total,
 			run.Metrics.Failures, body, observation, run.Outcome,
-		)}
+		))
 	}
-	return nil
+	return issues
 }
 
 func check(runs []report.Result, server reference.Snapshot, rates []int, additionalRequests ...int64) []string {
@@ -724,7 +732,7 @@ func checkStage(rate int, planned int64, run report.Result) []string {
 	if run.Outcome != "PASS" {
 		issues = append(issues, fmt.Sprintf("stage %d outcome: expected PASS, got %s", rate, run.Outcome))
 	}
-	if run.Quality == nil || (run.Quality.State != report.QualityValid && run.Quality.State != report.QualityLimited) {
+	if !hasRecognizedMeasurementQuality(run.Quality) {
 		state := "missing"
 		if run.Quality != nil {
 			state = run.Quality.State
@@ -745,6 +753,10 @@ func checkStage(rate int, planned int64, run report.Result) []string {
 		issues = append(issues, fmt.Sprintf("stage %d scheduler lag: expected p95 <= %.3fms and max < %.3fms, got p95=%.3fms max=%.3fms", rate, lagP95Limit, lagMaxLimit, run.SchedulerLagP95MS, run.SchedulerLagMaxMS))
 	}
 	return issues
+}
+
+func hasRecognizedMeasurementQuality(quality *report.Quality) bool {
+	return quality != nil && (quality.State == report.QualityValid || quality.State == report.QualityLimited)
 }
 
 func fixtureResponseBodyMatches(metrics report.MetricSet, expectedObservations int64) bool {
