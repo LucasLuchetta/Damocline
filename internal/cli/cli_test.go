@@ -2,9 +2,109 @@ package cli
 
 import (
 	"bytes"
+	"encoding/base64"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/LucasLuchetta/Damocline/internal/config"
+	"github.com/LucasLuchetta/Damocline/internal/reference"
 )
+
+func TestForcedInterruptionProcessHelper(t *testing.T) {
+	if os.Getenv("DAMOCLINE_FORCED_INTERRUPTION_HELPER") != "1" {
+		return
+	}
+	argsJSON, err := base64.RawURLEncoding.DecodeString(os.Getenv("DAMOCLINE_FORCED_INTERRUPTION_ARGS"))
+	if err != nil {
+		os.Exit(2)
+	}
+	var args []string
+	if err := json.Unmarshal(argsJSON, &args); err != nil {
+		os.Exit(2)
+	}
+	os.Exit(Run(args, os.Stdout, os.Stderr))
+}
+
+func TestForcedProcessInterruptionLeavesNoRunReportAndReconcilesServerLedger(t *testing.T) {
+	fixture, err := reference.New(reference.Config{Delay: 2 * time.Second, MaxConcurrent: 1, MaxRequests: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	requestStarted := make(chan struct{}, 1)
+	requestFinished := make(chan struct{}, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestStarted <- struct{}{}
+		defer func() { requestFinished <- struct{}{} }()
+		fixture.ServeHTTP(w, r)
+	}))
+	defer server.Close()
+
+	configPath := filepath.Join(t.TempDir(), "scenario.json")
+	reportPath := filepath.Join(t.TempDir(), "run.json")
+	scenario := config.Scenario{
+		Name: "forced interruption fixture", BaseURL: server.URL, Users: 1,
+		Duration: "10s", RampUp: "0s", Timeout: "8s", MaxRPS: 100,
+		P95LimitMS: 1000, Steps: []config.Step{{Name: "work", Method: "GET", Path: "/work"}},
+	}
+	configJSON, err := json.Marshal(scenario)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, configJSON, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	argsJSON, err := json.Marshal([]string{"run", "--config", configPath, "--authorized", "--out", reportPath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	encodedArgs := base64.RawURLEncoding.EncodeToString(argsJSON)
+	command := exec.Command(os.Args[0], "-test.run=^TestForcedInterruptionProcessHelper$")
+	command.Env = append(os.Environ(),
+		"DAMOCLINE_FORCED_INTERRUPTION_HELPER=1",
+		"DAMOCLINE_FORCED_INTERRUPTION_ARGS="+encodedArgs,
+	)
+	var stdout, stderr bytes.Buffer
+	command.Stdout = &stdout
+	command.Stderr = &stderr
+	if err := command.Start(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-requestStarted:
+	case <-time.After(5 * time.Second):
+		_ = command.Process.Kill()
+		_ = command.Wait()
+		t.Fatalf("child generator did not send a request: stdout=%s stderr=%s", stdout.String(), stderr.String())
+	}
+	if err := command.Process.Kill(); err != nil {
+		_ = command.Wait()
+		t.Fatalf("failed to force-stop child generator: %v", err)
+	}
+	if err := command.Wait(); err == nil {
+		t.Fatal("forcibly interrupted generator exited successfully")
+	}
+	select {
+	case <-requestFinished:
+	case <-time.After(5 * time.Second):
+		t.Fatal("reference handler did not finish after the child process was killed")
+	}
+	ledger := fixture.Snapshot()
+	if ledger.Received != 1 || ledger.Completed != 0 || ledger.Success != 0 || ledger.Failures != 0 ||
+		ledger.Cancelled != 1 || ledger.Rejected != 0 ||
+		ledger.Received != ledger.Completed+ledger.Cancelled+ledger.Rejected {
+		t.Fatalf("forced interruption did not reconcile with the independent reference ledger: %+v", ledger)
+	}
+	if _, err := os.Stat(reportPath); !os.IsNotExist(err) {
+		t.Fatalf("forced interruption must not leave a final run report, stat error=%v", err)
+	}
+}
 
 func TestHelp(t *testing.T) {
 	var out, errOut bytes.Buffer
