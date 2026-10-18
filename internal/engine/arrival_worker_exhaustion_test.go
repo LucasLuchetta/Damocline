@@ -38,7 +38,7 @@ func TestArrivalWorkerExhaustionReconcilesIndependentLedger(t *testing.T) {
 		t.Fatalf("worker exhaustion was not classified as busy drops: %+v", result)
 	}
 	if result.ArrivalsScheduled != result.IterationsStarted+result.ArrivalsDropped ||
-		result.ArrivalsCancelledBeforeAdmission == nil ||
+		result.ArrivalsAdmitted == nil || *result.ArrivalsAdmitted != result.IterationsStarted || result.ArrivalsCancelledBeforeAdmission == nil ||
 		result.ArrivalsDropped != result.ArrivalsDroppedBusy+result.ArrivalsDroppedLate+*result.ArrivalsCancelledBeforeAdmission {
 		t.Fatalf("arrival counters do not reconcile: %+v", result)
 	}

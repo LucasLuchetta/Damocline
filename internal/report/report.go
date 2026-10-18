@@ -18,7 +18,7 @@ import (
 // CurrentSchemaVersion is the newest persisted HTTP run report schema emitted
 // by the engine. Readers must reject future versions until their semantics are
 // reviewed and supported.
-const CurrentSchemaVersion = 16
+const CurrentSchemaVersion = 17
 
 type MetricSet struct {
 	Total                 int                     `json:"total"`
@@ -346,6 +346,7 @@ type Result struct {
 	IterationsStarted                int64                        `json:"iterations_started"`
 	IterationsCompleted              int64                        `json:"iterations_completed"`
 	ArrivalsScheduled                int64                        `json:"arrivals_scheduled"`
+	ArrivalsAdmitted                 *int64                       `json:"arrivals_admitted,omitempty"`
 	ArrivalsDropped                  int64                        `json:"arrivals_dropped"`
 	ArrivalsDroppedLate              int64                        `json:"arrivals_dropped_late,omitempty"`
 	ArrivalsDroppedBusy              int64                        `json:"arrivals_dropped_busy,omitempty"`

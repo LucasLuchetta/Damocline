@@ -54,6 +54,22 @@ func TestSignalsClassifyClientAndHTTPObservationsWithoutCausality(t *testing.T) 
 	}
 }
 
+func TestSignalsExposeSchedulerAdmissionMismatch(t *testing.T) {
+	r := validSyntheticQualityRun()
+	r.SchemaVersion = 17
+	admitted := int64(99)
+	cancelled := int64(0)
+	r.ArrivalsAdmitted = &admitted
+	r.ArrivalsCancelledBeforeAdmission = &cancelled
+	signals := DetectSignals(r)
+	for _, signal := range signals {
+		if signal.Code == "CLIENT_ADMISSION_MISMATCH" && signal.Origin == "arrival_ledger" {
+			return
+		}
+	}
+	t.Fatalf("scheduler admission/worker start mismatch was not exposed: %+v", signals)
+}
+
 func TestSignalsDoNotInferUnknownInfrastructure(t *testing.T) {
 	r := validSyntheticQualityRun()
 	r.Config.MaxRPS = 100

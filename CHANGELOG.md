@@ -5,6 +5,7 @@ This project follows a human-maintained changelog. No release exists yet.
 ## [Unreleased]
 
 ### Added
+- Emit schema-v17 scheduler-admission counts and reject current reports where planned arrivals, admissions, worker-started iterations and drop categories do not reconcile.
 - Emit schema-v16 arrival accounting with externally cancelled planned starts separated from scheduler-late and worker-busy drops; preserve missing-versus-zero semantics for historical reports.
 - Reconcile current-schema started iterations with completed journeys and explicitly cancelled journeys during report-quality recomputation; reject corrupted cross-ledger totals as `INVALID` while retaining incomplete but fully accounted runs as `LIMITED`.
 - Exercise a successful trusted local HTTPS request through the native engine and reconcile received and completed requests against an independent server ledger; this validates fixture behavior, not a TLS performance envelope.

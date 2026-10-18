@@ -46,6 +46,10 @@ func ReadRun(path string) (report.Result, error) {
 		(r.SchemaVersion < 16 && r.ArrivalsCancelledBeforeAdmission != nil) {
 		return report.Result{}, errors.New("report arrival-cancellation evidence does not match its schema")
 	}
+	if (r.SchemaVersion >= 17 && (r.ArrivalsAdmitted == nil || *r.ArrivalsAdmitted < 0)) ||
+		(r.SchemaVersion < 17 && r.ArrivalsAdmitted != nil) {
+		return report.Result{}, errors.New("report admitted-arrival evidence does not match its schema")
+	}
 	return r, nil
 }
 
@@ -207,6 +211,13 @@ func Evaluate(r report.Result, host *hostmon.Result) Assessment {
 	}
 	if r.ArrivalsDroppedBusy > 0 {
 		a.Findings = append(a.Findings, Finding{"LIMIT", fmt.Sprintf("%d arrivals had no idle synthetic worker; server bottleneck is not established.", r.ArrivalsDroppedBusy)})
+	}
+	if r.SchemaVersion >= 17 && r.ArrivalsAdmitted != nil {
+		if *r.ArrivalsAdmitted != r.IterationsStarted {
+			a.Findings = append(a.Findings, Finding{"INVALID", "Scheduler-admitted arrivals do not reconcile with worker-started iterations."})
+		} else {
+			a.Findings = append(a.Findings, Finding{"INFO", fmt.Sprintf("Scheduler admitted %d arrivals; worker-started iterations reconcile exactly.", *r.ArrivalsAdmitted)})
+		}
 	}
 	if r.ArrivalsCancelledBeforeAdmission != nil && *r.ArrivalsCancelledBeforeAdmission > 0 {
 		a.Findings = append(a.Findings, Finding{"CAUTION", fmt.Sprintf("%d due arrivals were not admitted because the run was externally cancelled before its schedule ended.", *r.ArrivalsCancelledBeforeAdmission)})
