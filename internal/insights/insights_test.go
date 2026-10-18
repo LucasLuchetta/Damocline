@@ -637,7 +637,7 @@ func TestSupportedReportSchemaGoldensRoundTrip(t *testing.T) {
 					t.Fatal("schema-v17 admitted-arrival counter was not preserved")
 				}
 			case 21:
-				if got.Config.WorkloadSeed != 42 || got.Config.ThinkTimeRange == nil || got.Config.ThinkTimeRange.Max != "30ms" {
+				if got.Config.WorkloadSeed != 42 || got.Config.ThinkTimeRange == nil || got.Config.ThinkTimeRange.Max != "30ms" || len(got.Config.Profiles[1].ThinkTimeSamples) != 3 {
 					t.Fatal("schema-v21 timing provenance was not preserved")
 				}
 			}
@@ -658,6 +658,9 @@ func TestReadRunRejectsInvalidThinkTimeProvenance(t *testing.T) {
 		{name: "reversed range", mutate: func(r *report.Result) { r.Config.ThinkTimeRange.Min = "40ms" }},
 		{name: "fixed conflict", mutate: func(r *report.Result) { r.Config.ThinkTime = "5ms" }},
 		{name: "profile fixed conflict", mutate: func(r *report.Result) { r.Config.Profiles[0].ThinkTime = "5ms" }},
+		{name: "samples and fixed conflict", mutate: func(r *report.Result) { r.Config.Profiles[1].ThinkTime = "5ms" }},
+		{name: "sample count", mutate: func(r *report.Result) { r.Config.Profiles[1].ThinkTimeSamples = []string{"5ms"} }},
+		{name: "sample duration", mutate: func(r *report.Result) { r.Config.Profiles[1].ThinkTimeSamples = []string{"5ms", "31s"} }},
 		{name: "legacy field", mutate: func(r *report.Result) { r.SchemaVersion = 20 }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

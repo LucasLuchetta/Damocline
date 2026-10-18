@@ -294,7 +294,7 @@ func runWithTransport(parent context.Context, v config.Validated, transport *htt
 				break
 			}
 			pause := profile.ThinkTime
-			if profile.ThinkTimeMax > 0 {
+			if profile.ThinkTimeMax > 0 || len(profile.ThinkTimeSamples) > 0 {
 				timingActor := actor
 				if v.Scenario.Mode == "arrival" {
 					timingActor = -1
@@ -429,6 +429,12 @@ func runWithTransport(parent context.Context, v config.Validated, transport *htt
 				entry.ThinkTime = ""
 				entry.ThinkTimeRange = &report.ThinkTimeRange{Min: profile.ThinkTimeMin.String(), Max: profile.ThinkTimeMax.String()}
 			}
+			if len(profile.ThinkTimeSamples) > 0 {
+				entry.ThinkTime = ""
+				for _, sample := range profile.ThinkTimeSamples {
+					entry.ThinkTimeSamples = append(entry.ThinkTimeSamples, sample.String())
+				}
+			}
 			profileConfig = append(profileConfig, entry)
 		}
 	}
@@ -453,6 +459,7 @@ func runWithTransport(parent context.Context, v config.Validated, transport *htt
 	if v.Scenario.ThinkTimeRange != nil {
 		result.Config.ThinkTimeRange = &report.ThinkTimeRange{Min: v.Scenario.ThinkTimeRange.Min, Max: v.Scenario.ThinkTimeRange.Max}
 	}
+	result.Config.ThinkTimeSamples = append([]string(nil), v.Scenario.ThinkTimeSamples...)
 	if agg.Total == 0 || agg.Success == 0 || errorsRate > v.Scenario.MaxErrorRate || agg.P95MS > v.Scenario.P95LimitMS || result.ArrivalsDropped > 0 {
 		result.Outcome = "FAIL"
 	}
@@ -569,11 +576,6 @@ func drainDuration(v config.Validated) time.Duration {
 }
 
 func sampledThinkTime(seed uint64, actor int, journeyOrdinal uint64, stepIndex int, profile config.PreparedProfile) time.Duration {
-	minimum := uint64(profile.ThinkTimeMin)
-	span := uint64(profile.ThinkTimeMax - profile.ThinkTimeMin)
-	if span == 0 {
-		return profile.ThinkTimeMin
-	}
 	key := seed ^ (uint64(actor+1) * 0x9e3779b97f4a7c15)
 	key ^= journeyOrdinal * 0xbf58476d1ce4e5b9
 	key ^= uint64(stepIndex+1) * 0x94d049bb133111eb
@@ -581,6 +583,11 @@ func sampledThinkTime(seed uint64, actor int, journeyOrdinal uint64, stepIndex i
 	key = (key ^ (key >> 30)) * 0xbf58476d1ce4e5b9
 	key = (key ^ (key >> 27)) * 0x94d049bb133111eb
 	key ^= key >> 31
+	if len(profile.ThinkTimeSamples) > 0 {
+		return profile.ThinkTimeSamples[key%uint64(len(profile.ThinkTimeSamples))]
+	}
+	minimum := uint64(profile.ThinkTimeMin)
+	span := uint64(profile.ThinkTimeMax - profile.ThinkTimeMin)
 	return time.Duration(minimum + key%(span+1))
 }
 

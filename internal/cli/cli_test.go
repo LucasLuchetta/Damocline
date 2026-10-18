@@ -25,7 +25,7 @@ func TestSeededWeightedExampleDryRunShowsTimingPolicy(t *testing.T) {
 		t.Fatalf("dry run failed: code=%d stderr=%s", code, stderr.String())
 	}
 	output := stdout.String()
-	for _, expected := range []string{"Profile dashboard", "Profile search", "Profile review", "uniform think time=200ms..800ms (seed=42)", "uniform think time=100ms..500ms (seed=42)", "think time=400ms", "DRY RUN: no requests were sent"} {
+	for _, expected := range []string{"Profile dashboard", "Profile search", "Profile review", "uniform think time=200ms..800ms (seed=42)", "sampled think time=[100ms 100ms 250ms 500ms] (seed=42)", "think time=400ms", "DRY RUN: no requests were sent"} {
 		if !strings.Contains(output, expected) {
 			t.Fatalf("dry run omitted %q: %s", expected, output)
 		}

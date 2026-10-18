@@ -131,6 +131,63 @@ func TestProfileThinkTimeRangeOverrides(t *testing.T) {
 	}
 }
 
+func TestThinkTimeSamplesValidationAndFingerprint(t *testing.T) {
+	s := good()
+	s.Steps = []Step{{Name: "first", Path: "/first"}, {Name: "second", Path: "/second"}}
+	s.ThinkTimeSamples = []string{"0ms", "10ms", "10ms"}
+	v, err := Parse(s, Options{Authorized: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.Scenario.WorkloadSeed != 1 || len(v.Profiles[0].ThinkTimeSamples) != 3 || v.Profiles[0].ThinkTime != 10*time.Millisecond {
+		t.Fatalf("sampled policy not prepared: %+v", v.Profiles[0])
+	}
+	s.ThinkTimeSamples[0] = "5ms"
+	changed, err := Parse(s, Options{Authorized: true})
+	if err != nil || changed.WorkloadFingerprint == v.WorkloadFingerprint {
+		t.Fatalf("sample change must alter fingerprint: %v", err)
+	}
+	s.WorkloadSeed = 42
+	seeded, err := Parse(s, Options{Authorized: true})
+	if err != nil || seeded.WorkloadFingerprint == changed.WorkloadFingerprint {
+		t.Fatalf("seed change must alter fingerprint: %v", err)
+	}
+	for _, values := range [][]string{{}, {"1ms"}, {"-1ms", "1ms"}, {"1ms", "31s"}, {"bad", "1ms"}, make([]string, 33)} {
+		invalid := s
+		invalid.ThinkTimeSamples = values
+		if _, err := Parse(invalid, Options{Authorized: true}); err == nil {
+			t.Fatalf("invalid samples accepted: %v", values)
+		}
+	}
+	conflict := s
+	conflict.ThinkTimeRange = &ThinkTimeRange{Min: "1ms", Max: "2ms"}
+	if _, err := Parse(conflict, Options{Authorized: true}); err == nil {
+		t.Fatal("sample and uniform policies accepted together")
+	}
+	oneStep := s
+	oneStep.Steps = oneStep.Steps[:1]
+	if _, err := Parse(oneStep, Options{Authorized: true}); err == nil {
+		t.Fatal("sample policy without an interval accepted")
+	}
+}
+
+func TestProfileSamplesOverrideFixedPause(t *testing.T) {
+	s := good()
+	s.Steps = nil
+	s.ThinkTime = "20ms"
+	s.Profiles = []Profile{
+		{Name: "sampled", Weight: 1, ThinkTimeSamples: []string{"0ms", "5ms"}, Steps: []Step{{Name: "first", Path: "/first"}, {Name: "second", Path: "/second"}}},
+		{Name: "fixed", Weight: 1, Steps: []Step{{Name: "fixed-first", Path: "/fixed-first"}, {Name: "fixed-second", Path: "/fixed-second"}}},
+	}
+	v, err := Parse(s, Options{Authorized: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.Profiles[0].ThinkTime != 5*time.Millisecond || len(v.Profiles[0].ThinkTimeSamples) != 2 {
+		t.Fatalf("sample override kept global fixed pause: %+v", v.Profiles[0])
+	}
+}
+
 func TestConnectionPolicyIsBoundedAndFingerprintable(t *testing.T) {
 	base, err := Parse(good(), Options{Authorized: true})
 	if err != nil {

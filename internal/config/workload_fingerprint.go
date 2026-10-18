@@ -10,11 +10,12 @@ import (
 )
 
 type fingerprintProfile struct {
-	Name           string            `json:"name"`
-	Weight         int               `json:"weight"`
-	ThinkTime      string            `json:"think_time,omitempty"`
-	ThinkTimeRange *ThinkTimeRange   `json:"think_time_range,omitempty"`
-	Steps          []fingerprintStep `json:"steps"`
+	Name             string            `json:"name"`
+	Weight           int               `json:"weight"`
+	ThinkTime        string            `json:"think_time,omitempty"`
+	ThinkTimeRange   *ThinkTimeRange   `json:"think_time_range,omitempty"`
+	ThinkTimeSamples []string          `json:"think_time_samples,omitempty"`
+	Steps            []fingerprintStep `json:"steps"`
 }
 
 type fingerprintStep struct {
@@ -58,13 +59,19 @@ func WorkloadFingerprint(v Validated) string {
 	if v.SyntheticDataPrefix != "" {
 		input.SyntheticPrefix = v.Scenario.SyntheticDataPrefixEnv
 	}
-	if hasProfileRange(v.Profiles) {
+	if hasVariableThinkTime(v.Profiles) {
 		input.WorkloadSeed = v.Scenario.WorkloadSeed
 	}
 	for _, profile := range v.Profiles {
 		p := fingerprintProfile{Name: profile.Name, Weight: profile.Weight, ThinkTime: profile.ThinkTime.String(), Steps: make([]fingerprintStep, 0, len(profile.Steps))}
 		if profile.ThinkTimeMax > 0 {
 			p.ThinkTimeRange = &ThinkTimeRange{Min: profile.ThinkTimeMin.String(), Max: profile.ThinkTimeMax.String()}
+		}
+		if len(profile.ThinkTimeSamples) > 0 {
+			p.ThinkTime = ""
+			for _, sample := range profile.ThinkTimeSamples {
+				p.ThinkTimeSamples = append(p.ThinkTimeSamples, sample.String())
+			}
 		}
 		for _, step := range profile.Steps {
 			statuses := append([]int(nil), step.Step.ExpectedStatus...)

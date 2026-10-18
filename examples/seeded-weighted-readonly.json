@@ -24,7 +24,7 @@
     {
       "name": "search",
       "weight": 30,
-      "think_time_range": {"min": "100ms", "max": "500ms"},
+      "think_time_samples": ["100ms", "100ms", "250ms", "500ms"],
       "steps": [
         {"name": "search-page", "method": "GET", "path": "/search", "expected_status": [200]},
         {"name": "search-results", "method": "GET", "path": "/search/results", "expected_status": [200]}

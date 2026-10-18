@@ -291,6 +291,7 @@ type RunConfig struct {
 	RampUp              string          `json:"ramp_up,omitempty"`
 	ThinkTime           string          `json:"think_time,omitempty"`
 	ThinkTimeRange      *ThinkTimeRange `json:"think_time_range,omitempty"`
+	ThinkTimeSamples    []string        `json:"think_time_samples,omitempty"`
 	WorkloadSeed        uint64          `json:"workload_seed,omitempty"`
 	RequestTimeout      string          `json:"request_timeout"`
 	ConnectionPolicy    string          `json:"connection_policy,omitempty"`
@@ -307,10 +308,11 @@ type RunConfig struct {
 
 // ProfileConfig records the intended workflow mix used for a run.
 type ProfileConfig struct {
-	Name           string          `json:"name"`
-	Weight         int             `json:"weight"`
-	ThinkTime      string          `json:"think_time"`
-	ThinkTimeRange *ThinkTimeRange `json:"think_time_range,omitempty"`
+	Name             string          `json:"name"`
+	Weight           int             `json:"weight"`
+	ThinkTime        string          `json:"think_time"`
+	ThinkTimeRange   *ThinkTimeRange `json:"think_time_range,omitempty"`
+	ThinkTimeSamples []string        `json:"think_time_samples,omitempty"`
 }
 
 type ThinkTimeRange struct {

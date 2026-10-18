@@ -34,6 +34,26 @@ func TestSampledThinkTimeIsBoundedAndRepeatable(t *testing.T) {
 	}
 }
 
+func TestDiscreteThinkTimeSamplesAreRepeatableAndWeighted(t *testing.T) {
+	profile := config.PreparedProfile{ThinkTimeSamples: []time.Duration{0, 0, 0, 20 * time.Millisecond}}
+	count := 0
+	for i := 0; i < 1000; i++ {
+		got := sampledThinkTime(42, 3, uint64(i+1), 0, profile)
+		if got != 0 && got != 20*time.Millisecond {
+			t.Fatalf("sample outside declared set: %s", got)
+		}
+		if got != sampledThinkTime(42, 3, uint64(i+1), 0, profile) {
+			t.Fatal("same seeded coordinate changed")
+		}
+		if got == 20*time.Millisecond {
+			count++
+		}
+	}
+	if count < 180 || count > 320 {
+		t.Fatalf("repeated entries did not produce an approximately 3:1 selection: %d", count)
+	}
+}
+
 func TestUniformThinkTimeRunsThroughTwoStepJourney(t *testing.T) {
 	var received atomic.Int64
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -83,7 +103,7 @@ func TestThreeProfilesShareRateBudgetWithTimingOverrides(t *testing.T) {
 		ThinkTimeRange: &config.ThinkTimeRange{Min: "5ms", Max: "15ms"},
 		Profiles: []config.Profile{
 			{Name: "browse", Weight: 1, Steps: []config.Step{{Name: "browse-list", Path: "/browse"}, {Name: "browse-detail", Path: "/browse/detail"}}},
-			{Name: "search", Weight: 1, ThinkTimeRange: &config.ThinkTimeRange{Min: "10ms", Max: "20ms"}, Steps: []config.Step{{Name: "search-form", Path: "/search"}, {Name: "search-results", Path: "/search/results"}}},
+			{Name: "search", Weight: 1, ThinkTimeSamples: []string{"10ms", "10ms", "20ms"}, Steps: []config.Step{{Name: "search-form", Path: "/search"}, {Name: "search-results", Path: "/search/results"}}},
 			{Name: "review", Weight: 1, ThinkTime: "10ms", Steps: []config.Step{{Name: "review-list", Path: "/review"}, {Name: "review-detail", Path: "/review/detail"}}},
 		},
 	}
@@ -106,7 +126,7 @@ func TestThreeProfilesShareRateBudgetWithTimingOverrides(t *testing.T) {
 			t.Fatalf("profile %q not exercised by its assigned actor: %+v", profile.Name, profile)
 		}
 	}
-	if result.Config.Profiles[0].ThinkTimeRange == nil || result.Config.Profiles[1].ThinkTimeRange == nil || result.Config.Profiles[2].ThinkTimeRange != nil || result.Config.Profiles[2].ThinkTime != "10ms" {
+	if result.Config.Profiles[0].ThinkTimeRange == nil || len(result.Config.Profiles[1].ThinkTimeSamples) != 3 || result.Config.Profiles[1].ThinkTime != "" || result.Config.Profiles[2].ThinkTimeRange != nil || result.Config.Profiles[2].ThinkTime != "10ms" {
 		t.Fatalf("profile timing overrides not persisted: %+v", result.Config.Profiles)
 	}
 	if result.Quality == nil || result.Quality.State == report.QualityInvalid {

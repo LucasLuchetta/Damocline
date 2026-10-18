@@ -14,7 +14,7 @@
     "think_time_range": {"min": "10ms", "max": "30ms"},
     "profiles": [
       {"name": "browse", "weight": 2, "think_time": "", "think_time_range": {"min": "10ms", "max": "30ms"}},
-      {"name": "review", "weight": 1, "think_time": "20ms"}
+      {"name": "review", "weight": 1, "think_time": "", "think_time_samples": ["10ms", "10ms", "20ms"]}
     ]
   },
   "metrics": {

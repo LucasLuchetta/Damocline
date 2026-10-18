@@ -10,6 +10,7 @@ import (
 	"io"
 	"math"
 	"os"
+	"reflect"
 	"strings"
 	"time"
 
@@ -61,25 +62,58 @@ func ReadRun(path string) (report.Result, error) {
 
 func validThinkTimeProvenance(r report.Result) bool {
 	if r.SchemaVersion < 21 {
-		return r.Config.ThinkTimeRange == nil && r.Config.WorkloadSeed == 0
+		if r.Config.ThinkTimeRange != nil || r.Config.ThinkTimeSamples != nil || r.Config.WorkloadSeed != 0 {
+			return false
+		}
+		for _, profile := range r.Config.Profiles {
+			if profile.ThinkTimeRange != nil || profile.ThinkTimeSamples != nil {
+				return false
+			}
+		}
+		return true
 	}
-	usesRange := false
+	usesVariable := false
+	if r.Config.ThinkTimeSamples != nil {
+		if r.Config.ThinkTime != "" || r.Config.ThinkTimeRange != nil || !validThinkSamples(r.Config.ThinkTimeSamples) {
+			return false
+		}
+		usesVariable = true
+	}
 	if r.Config.ThinkTimeRange != nil {
 		if r.Config.ThinkTime != "" || !validThinkRange(r.Config.ThinkTimeRange) {
 			return false
 		}
-		usesRange = true
+		usesVariable = true
 	}
 	for _, profile := range r.Config.Profiles {
+		if profile.ThinkTimeSamples != nil {
+			if profile.ThinkTime != "" || profile.ThinkTimeRange != nil || !validThinkSamples(profile.ThinkTimeSamples) {
+				return false
+			}
+			usesVariable = true
+		}
 		if profile.ThinkTimeRange == nil {
 			continue
 		}
 		if profile.ThinkTime != "" || !validThinkRange(profile.ThinkTimeRange) {
 			return false
 		}
-		usesRange = true
+		usesVariable = true
 	}
-	return usesRange == (r.Config.WorkloadSeed != 0)
+	return usesVariable == (r.Config.WorkloadSeed != 0)
+}
+
+func validThinkSamples(values []string) bool {
+	if len(values) < 2 || len(values) > 32 {
+		return false
+	}
+	for _, value := range values {
+		d, err := time.ParseDuration(value)
+		if err != nil || d < 0 || d > 30*time.Second {
+			return false
+		}
+	}
+	return true
 }
 
 func validThinkRange(value *report.ThinkTimeRange) bool {
@@ -434,7 +468,7 @@ func sameProfiles(a, b []report.ProfileConfig) bool {
 		return false
 	}
 	for i := range a {
-		if a[i] != b[i] {
+		if !reflect.DeepEqual(a[i], b[i]) {
 			return false
 		}
 	}
