@@ -636,6 +636,44 @@ func TestSupportedReportSchemaGoldensRoundTrip(t *testing.T) {
 				if got.ArrivalsAdmitted == nil || *got.ArrivalsAdmitted != 0 {
 					t.Fatal("schema-v17 admitted-arrival counter was not preserved")
 				}
+			case 21:
+				if got.Config.WorkloadSeed != 42 || got.Config.ThinkTimeRange == nil || got.Config.ThinkTimeRange.Max != "30ms" || len(got.Config.Profiles[1].ThinkTimeSamples) != 3 {
+					t.Fatal("schema-v21 timing provenance was not preserved")
+				}
+			}
+		})
+	}
+}
+
+func TestReadRunRejectsInvalidThinkTimeProvenance(t *testing.T) {
+	base, err := ReadRun(filepath.Join("testdata", "reports", "schema-v21.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name   string
+		mutate func(*report.Result)
+	}{
+		{name: "missing seed", mutate: func(r *report.Result) { r.Config.WorkloadSeed = 0 }},
+		{name: "reversed range", mutate: func(r *report.Result) { r.Config.ThinkTimeRange.Min = "40ms" }},
+		{name: "fixed conflict", mutate: func(r *report.Result) { r.Config.ThinkTime = "5ms" }},
+		{name: "profile fixed conflict", mutate: func(r *report.Result) { r.Config.Profiles[0].ThinkTime = "5ms" }},
+		{name: "samples and fixed conflict", mutate: func(r *report.Result) { r.Config.Profiles[1].ThinkTime = "5ms" }},
+		{name: "sample count", mutate: func(r *report.Result) { r.Config.Profiles[1].ThinkTimeSamples = []string{"5ms"} }},
+		{name: "sample duration", mutate: func(r *report.Result) { r.Config.Profiles[1].ThinkTimeSamples = []string{"5ms", "31s"} }},
+		{name: "legacy field", mutate: func(r *report.Result) { r.SchemaVersion = 20 }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := base
+			r.Config.ThinkTimeRange = &report.ThinkTimeRange{Min: base.Config.ThinkTimeRange.Min, Max: base.Config.ThinkTimeRange.Max}
+			r.Config.Profiles = append([]report.ProfileConfig(nil), base.Config.Profiles...)
+			tc.mutate(&r)
+			path := filepath.Join(t.TempDir(), "report.json")
+			if err := report.WriteJSON(path, r); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := ReadRun(path); err == nil {
+				t.Fatal("invalid timing provenance was accepted")
 			}
 		})
 	}

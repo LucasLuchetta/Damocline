@@ -112,7 +112,9 @@ See the [G0 acceptance matrix](G0_STATUS.md) for the implementation, test, valid
 - [ ] **G1-03:** Define whether weights apply to **journey starts, time spent, HTTP requests or VUs**; support precisely one declared unit per mix. **Verify:** differing journey lengths do not silently change the intended ratios.
 - [ ] **G1-04:** Support selectable closed-loop actors, independently scheduled journey arrivals and (later in G1) partly-open **session** arrivals. **Verify:** slowing the target changes closed-loop throughput but not the intended open schedule.
 - [ ] **G1-05:** Add deterministic/seeding support for scenario selection, think-time distributions and reproducible actor assignment. **Verify:** same seed recreates workload decisions under a controlled schedule.
+- **G1-05 partial implementation:** a recorded seed now determines bounded between-step pause choices by closed-loop actor/journey or arrival callback ordinal, and the seed enters schema-v21 report configuration and workload fingerprints. Weighted profile selection remains deterministic; full workload replay under perturbed scheduling and seeded data choices remain unvalidated.
 - [ ] **G1-06:** Add configurable *bounded* think-time distributions (fixed, uniform, empirically sampled), preserving a deterministic test mode. **Verify:** generated times conform to specified units/ranges/distribution.
+- **G1-06 partial implementation:** fixed, inclusive uniform, and seeded discrete sample pauses are validated within 0–30 seconds, with profile overrides and a three-workflow loopback fixture. Repeated sample entries express relative frequency; deterministic selection and a coarse synthetic frequency check are tested. Statistical goodness-of-fit against representative traces and workload representativeness remain open.
 - [ ] **G1-07:** Support varied payload sizes, request parameters and synthetic data fixtures without embedding production identifiers. **Verify:** all generated combinations are bounded and sanitized.
 - [ ] **G1-08:** Support session start/end, arrival-rate distribution and dependent actions within a partly-open session; do not call concurrent active sessions "independent people" without calibrated activity assumptions. **Verify:** controlled arrivals and think-time distribution against known traces.
 - [ ] **G1-09:** Add per-workflow budget allocation and a shared global limit so concurrent flows cannot bypass `max_rps` / VU safety controls. **Verify:** combined traffic never exceeds explicitly permitted bounds.
@@ -334,20 +336,16 @@ Acceptance thresholds must be justified by the **specific fixture, hardware clas
 
 **Primary success criterion:** the owner can ask **"Will this deployment handle my defined peak demand and desired reserve?"** and receive one of: **supported under tested conditions**, **observed SLO breach**, or **insufficient evidence**. If improvement is needed, the product distinguishes **investigate**, **optimize software/data**, and **evaluate larger infrastructure** based on *controlled evidence*, rather than prescribing a bigger VPS from an HTTP PASS/FAIL alone.
 
-## 13. Suggested next PRs, in dependency order
+## 13. Integrated delivery blocks, in dependency order
 
-These are remaining acceptance milestones, **not a claim that each listed item lacks any code**. PR #27 provides partial slices of several milestones as noted in B2; the outstanding verification and integration criteria still apply. Work on the smallest vertical slice that produces verifiable user value.
+Use the current implementation and acceptance evidence in [the technical audit](TECHNICAL_AUDIT.md) before scoping a PR. A block should deliver a coherent capability through configuration, execution, measurement, reporting, failure handling, local fixtures, and documentation. Several related roadmap IDs can close together when their full acceptance evidence exists; partial implementation must remain labeled partial. PR size alone is not a target.
 
-1. **Next 1 — G1-01 to G1-03 + G1-09:** multi-workflow schema, weighted journeys and global rate/actor budget. Keep existing single-workflow JSON working; add a three-workflow controlled fixture.
-2. **Next 2 — G1-05 to G1-07 + G1-11:** repeatable timing/data variability and actor isolation. Add safe fixture assertions before enabling independent write-heavy profiles.
-3. **Next 3 — G2-01/G2-02/G2-07 + G3-01:** campaign phases and bounded time-window metrics. Correct windowing before adding longer stages.
-4. **Next 4 — G2-03 to G2-06 + G2-10/G2-15/G2-16:** sustained/soak/recovery campaign and per-window SLO decisions with safe aborts.
-5. **Next 5 — G3-02 to G3-08:** workflow-level statistical validity, adequate tail samples, repeat variance and evidence-quality assessment.
-6. **Next 6 — G3-11 to G3-19 + G6-01 to G6-09:** coherent executive/technical output and a complete, user-tested CLI path.
-7. **Next 7 — G4-01 to G4-04 + G4-12:** optional infrastructure adapters (Docker and PostgreSQL first), with strict read-only access and no forced dependency.
-8. **Next 8 — G5-01 to G5-14:** science-grounded business goals, queueing/USL checks only when data qualifies, and controlled cost/performance alternatives.
+1. **Representative workload (G1-01–G1-18):** finish reproducible timing/data choices, actor isolation, realistic three-workflow mix checks, business assertions, and safe synthetic-data lifecycle. Reuse the existing weighted profiles, shared rate cap, response extraction, and seeded timing. Keep legacy scenarios working.
+2. **Sustained campaign (G2-01–G2-17 + G3-01/G3-02):** add declared stabilization, bounded soak and abort rules, full journey/window SLOs, generator-limited decisions, and controlled stable/drifting/saturated fixtures to the existing campaign and window engine.
+3. **Evidence-grade demand answer (G3-03–G3-19 + G5-01/G5-02/G5-08/G5-09):** assess trial-level dependence and sample adequacy, retain distinct measurement/workload/decision confidence, and provide one traceable offline campaign summary that answers an exact demand goal without extrapolating human capacity.
+4. **Optional diagnosis and controlled alternatives (G4-01–G4-13 + remaining G5):** align read-only target telemetry to tested windows, preserve an HTTP-only unknown-cause path, and compare software/resource/cost interventions only under matched, repeated workloads.
 
-Other G0 tasks proceed as correctness prerequisites whenever a new workload envelope or measurement class is introduced. CI/security/compatibility tasks in Q run **throughout** all eight steps, not as a final afterthought.
+G0 correctness and calibration gates apply whenever a workload envelope changes. Q safety, compatibility, and CI gates apply to every block. The CLI path (G6) must be updated with each user-visible capability, then validated end to end as a release gate.
 
 ---
 

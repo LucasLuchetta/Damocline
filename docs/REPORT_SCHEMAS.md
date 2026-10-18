@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-The engine currently emits schema v20. The `insights` reader accepts v1 through v20 and rejects unknown future versions. Historical reports are read into the current Go model without rewriting the original file; fields introduced after a report's schema version remain absent and are not evidence of a measured zero.
+The engine currently emits schema v21. The `insights` reader accepts v1 through v21 and rejects unknown future versions. Historical reports are read into the current Go model without rewriting the original file; fields introduced after a report's schema version remain absent and are not evidence of a measured zero.
 
 | Version | Fields introduced or versioned | Compatibility meaning |
 | --- | --- | --- |
@@ -25,6 +25,7 @@ The engine currently emits schema v20. The `insights` reader accepts v1 through 
 | v18 | Effective generator CPU capacity and source/known metadata. | Unknown entitlement is distinct from unlimited capacity and prevents positive quality. |
 | v19 | Logical CPU count independently from GOMAXPROCS and effective CPU quota. | Missing or impossible logical CPU evidence is not inferred from other CPU fields. |
 | v20 | Versioned HTTP failure classification with DNS-resolution and connection-establishment failure counters, retained as subcategories of transport failures. | The explicit classification version distinguishes measured zero counts from reports that predate the evidence. TLS and network timeouts remain separate categories; TCP resets after connection are not mislabeled as connection-establishment failures. |
+| v21 | Optional bounded `think_time_range` or discrete `think_time_samples` and `workload_seed` in run configuration, with per-profile overrides. | A variable policy requires a nonzero seed. Older reports have no variable-timing provenance; fixed-pause behavior remains readable. |
 
 For schema-v11 and newer reports attached to calibration, workload-shape assessment recomputes the fingerprint only for the persisted single-step `GET /work` reference subset. Schema-v14 reports record whether the engine reuses connections or opens a new connection per request. The fixed calibration covers reuse only; `new_per_request` is outside its envelope. Other request shapes remain unverified because reports do not retain all request templates or values needed for safe reconstruction. A matching fingerprint is not a signature, endpoint attestation, or general workload-equivalence proof. Schema-v15 and newer reports may report `VALID_WITHIN_ENVELOPE` only for the calibrator's own 30-second loopback soak when calibration, same-executable identity, generator health, response observations and independent server counters reconcile. This qualifies that controlled fixture execution only.
 

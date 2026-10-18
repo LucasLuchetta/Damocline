@@ -17,6 +17,21 @@ import (
 	"github.com/LucasLuchetta/Damocline/internal/reference"
 )
 
+func TestSeededWeightedExampleDryRunShowsTimingPolicy(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	path := filepath.Join("..", "..", "examples", "seeded-weighted-readonly.json")
+	code := Run([]string{"run", "--config", path, "--dry-run"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("dry run failed: code=%d stderr=%s", code, stderr.String())
+	}
+	output := stdout.String()
+	for _, expected := range []string{"Profile dashboard", "Profile search", "Profile review", "uniform think time=200ms..800ms (seed=42)", "sampled think time=[100ms 100ms 250ms 500ms] (seed=42)", "think time=400ms", "DRY RUN: no requests were sent"} {
+		if !strings.Contains(output, expected) {
+			t.Fatalf("dry run omitted %q: %s", expected, output)
+		}
+	}
+}
+
 func TestForcedInterruptionProcessHelper(t *testing.T) {
 	if os.Getenv("DAMOCLINE_FORCED_INTERRUPTION_HELPER") != "1" {
 		return
