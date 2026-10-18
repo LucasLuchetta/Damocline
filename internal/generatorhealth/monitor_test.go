@@ -59,6 +59,42 @@ func TestAccumulatorProcessHealthPeaks(t *testing.T) {
 	}
 }
 
+func TestAccumulatorNormalizesCPUByEffectiveQuota(t *testing.T) {
+	start := time.Unix(0, 0)
+	var a accumulator
+	for i := 0; i < 3; i++ {
+		a.add(reading{
+			at: start.Add(time.Duration(i) * time.Second), maxProcs: 12,
+			cpuCapacity: 4, cpuCapacitySource: "cgroup_v2_cpu_quota", cpuCapacityKnown: true,
+			cpuAvailable: true, cpuTotal: float64(10 + i*4), cpuIdle: 8,
+			processCPUSeconds: float64(i), processRSSBytes: 100, processAvailable: true,
+		})
+	}
+	summary := a.finish()
+	if !summary.CPUCapacityKnown || summary.CPUCapacityCores != 4 || summary.CPUCapacitySource != "cgroup_v2_cpu_quota" ||
+		!summary.GoCPUValid || math.Abs(summary.GoCPUUtilizationRatio-1) > 1e-9 ||
+		!summary.ProcessCPUValid || math.Abs(summary.MeanProcessCPUUtilizationRatio-0.25) > 1e-9 {
+		t.Fatalf("CPU observations were not normalized to the cgroup quota: %+v", summary)
+	}
+}
+
+func TestAccumulatorInvalidatesChangingCPUCapacity(t *testing.T) {
+	start := time.Unix(0, 0)
+	var a accumulator
+	for i, capacity := range []float64{4, 2} {
+		a.add(reading{
+			at: start.Add(time.Duration(i) * time.Second), maxProcs: 12,
+			cpuCapacity: capacity, cpuCapacitySource: "cgroup_v2_cpu_quota", cpuCapacityKnown: true,
+			cpuAvailable: true, cpuTotal: float64(10 + i*2), cpuIdle: 8,
+			processCPUSeconds: float64(i), processRSSBytes: 100, processAvailable: true,
+		})
+	}
+	summary := a.finish()
+	if summary.CPUCapacityKnown || summary.CPUCapacitySource != "changed_during_window" || summary.GoCPUValid || summary.ProcessCPUValid {
+		t.Fatalf("changing CPU entitlement must not produce a stable capacity summary: %+v", summary)
+	}
+}
+
 func TestAccumulatorSeparatesProcessCPUPeakFromWindowMean(t *testing.T) {
 	start := time.Unix(0, 0)
 	var a accumulator

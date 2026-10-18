@@ -1,26 +1,33 @@
 package main
 
 import (
-	"runtime"
 	"time"
+
+	"github.com/LucasLuchetta/Damocline/internal/calibration"
 )
 
 // Explicit provenance checks support G0-08. They do not claim host identity:
 // two machines can have identical runtime versions and CPU layouts.
 type localRuntime struct {
-	OS            string
-	Arch          string
-	GoVersion     string
-	LogicalCPUs   int
-	GOMAXPROCS    int
-	RunnerVersion string
+	OS                string
+	Arch              string
+	GoVersion         string
+	LogicalCPUs       int
+	GOMAXPROCS        int
+	CPUCapacityCores  float64
+	CPUCapacitySource string
+	CPUCapacityKnown  bool
+	RunnerVersion     string
 }
 
 func currentRuntime() localRuntime {
+	runtime := calibration.CurrentRuntime()
 	return localRuntime{
-		OS: runtime.GOOS, Arch: runtime.GOARCH,
-		GoVersion: runtime.Version(), LogicalCPUs: runtime.NumCPU(),
-		GOMAXPROCS: runtime.GOMAXPROCS(0), RunnerVersion: sourceRunnerVersion(),
+		OS: runtime.OS, Arch: runtime.Arch,
+		GoVersion: runtime.GoVersion, LogicalCPUs: runtime.LogicalCPUs,
+		GOMAXPROCS: runtime.GOMAXPROCS, CPUCapacityCores: runtime.CPUCapacityCores,
+		CPUCapacitySource: runtime.CPUCapacitySource, CPUCapacityKnown: runtime.CPUCapacityKnown,
+		RunnerVersion: runtime.RunnerVersion,
 	}
 }
 
@@ -51,9 +58,14 @@ func (r *coverageAssessment) checkProvenance(a assessment, err error, now time.T
 	g := a.Preflight.Generator
 	if g.OS != local.OS || g.Arch != local.Arch || g.GoVersion != local.GoVersion ||
 		g.LogicalCPUs != local.LogicalCPUs || g.GOMAXPROCS != local.GOMAXPROCS ||
+		(a.Preflight.SchemaVersion >= 7 && (g.CPUCapacityCores != local.CPUCapacityCores || g.CPUCapacitySource != local.CPUCapacitySource || g.CPUCapacityKnown != local.CPUCapacityKnown)) ||
 		(g.RunnerVersion != "source-development" && local.RunnerVersion != "source-development" && g.RunnerVersion != local.RunnerVersion) {
-		r.add("runtime_compatibility", coverageOutside, "Generator OS, architecture, Go version, CPU layout or known runner revision differs from the calibration record.")
+		r.add("runtime_compatibility", coverageOutside, "Generator OS, architecture, Go version, CPU entitlement or known runner revision differs from the calibration record.")
 		r.Shape = "NOT_ESTABLISHED"
+	} else if a.Preflight.SchemaVersion < 7 {
+		r.add("runtime_compatibility", coverageUnknown, "Legacy calibration does not record effective CPU capacity or cgroup quota evidence.")
+	} else if !g.CPUCapacityKnown || !local.CPUCapacityKnown {
+		r.add("runtime_compatibility", coverageUnknown, "Effective CPU capacity could not be verified from cgroup and runtime evidence.")
 	} else if g.RunnerVersion == "source-development" || local.RunnerVersion == "source-development" {
 		r.add("runtime_compatibility", coverageUnknown, "Runtime attributes match but the exact runner source revision cannot be attested.")
 	} else {

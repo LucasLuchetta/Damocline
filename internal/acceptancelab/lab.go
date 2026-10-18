@@ -13,7 +13,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -24,7 +23,7 @@ import (
 )
 
 const (
-	SchemaVersion       = 2
+	SchemaVersion       = 3
 	calibratedProfiles  = 30
 	MinRepeats          = 2
 	MaxRepeats          = 3
@@ -77,13 +76,17 @@ type Manifest struct {
 }
 
 type Environment struct {
-	OS               string `json:"os"`
-	Architecture     string `json:"architecture"`
-	GoVersion        string `json:"go_version"`
-	LogicalCPUs      int    `json:"logical_cpus"`
-	GOMAXPROCS       int    `json:"gomaxprocs"`
-	CalibratorSHA256 string `json:"calibrator_sha256"`
-	CalibratorBytes  int64  `json:"calibrator_bytes"`
+	OS                string  `json:"os"`
+	Architecture      string  `json:"architecture"`
+	GoVersion         string  `json:"go_version"`
+	RunnerVersion     string  `json:"runner_version"`
+	LogicalCPUs       int     `json:"logical_cpus"`
+	GOMAXPROCS        int     `json:"gomaxprocs"`
+	CPUCapacityCores  float64 `json:"cpu_capacity_cores"`
+	CPUCapacitySource string  `json:"cpu_capacity_source"`
+	CPUCapacityKnown  bool    `json:"cpu_capacity_known"`
+	CalibratorSHA256  string  `json:"calibrator_sha256"`
+	CalibratorBytes   int64   `json:"calibrator_bytes"`
 }
 
 type Configuration struct {
@@ -119,6 +122,8 @@ type Attempt struct {
 	ArtifactBytes        int64        `json:"artifact_bytes,omitempty"`
 	PreflightFingerprint string       `json:"preflight_fingerprint,omitempty"`
 	RunnerVersion        string       `json:"runner_version,omitempty"`
+	GeneratorFingerprint string       `json:"generator_fingerprint,omitempty"`
+	RuntimeFingerprint   string       `json:"runtime_fingerprint,omitempty"`
 	SoakQuality          string       `json:"soak_quality,omitempty"`
 	ProfileP95MS         []ProfileP95 `json:"profile_p95_ms,omitempty"`
 	Gates                []Gate       `json:"gates"`
@@ -184,13 +189,17 @@ func Run(ctx context.Context, options Options) (Manifest, error) {
 		options.qualityAssessor = report.AssessQuality
 	}
 	started := time.Now().UTC()
+	runtimeInfo := calibration.CurrentRuntime()
 	manifest := Manifest{
 		SchemaVersion: SchemaVersion,
 		Status:        "RUNNING",
 		StartedAt:     started.Format(time.RFC3339Nano),
 		Environment: Environment{
-			OS: runtime.GOOS, Architecture: runtime.GOARCH, GoVersion: runtime.Version(),
-			LogicalCPUs: runtime.NumCPU(), GOMAXPROCS: runtime.GOMAXPROCS(0),
+			OS: runtimeInfo.OS, Architecture: runtimeInfo.Arch, GoVersion: runtimeInfo.GoVersion,
+			RunnerVersion: runtimeInfo.RunnerVersion,
+			LogicalCPUs:   runtimeInfo.LogicalCPUs, GOMAXPROCS: runtimeInfo.GOMAXPROCS,
+			CPUCapacityCores: runtimeInfo.CPUCapacityCores, CPUCapacitySource: runtimeInfo.CPUCapacitySource,
+			CPUCapacityKnown: runtimeInfo.CPUCapacityKnown,
 			CalibratorSHA256: calibratorHash, CalibratorBytes: calibratorInfo.Size(),
 		},
 		Configuration: Configuration{
@@ -251,6 +260,7 @@ func Run(ctx context.Context, options Options) (Manifest, error) {
 		manifest.Rules = append(manifest.Rules, Gate{Name: "run_completion", Status: "INCONCLUSIVE", Expected: "all requested independent runs and transport cases finish", Observed: "execution context ended before all runs completed"})
 	}
 	manifest.Rules = append(manifest.Rules, assessAttemptCompletion(manifest.Attempts, options.Repeats)...)
+	manifest.Rules = append(manifest.Rules, assessManifestRuntime(manifest.Environment, manifest.Attempts))
 	if manifest.Transport != nil {
 		manifest.Rules = append(manifest.Rules, transportGates(*manifest.Transport)...)
 	}
@@ -403,17 +413,10 @@ type calibrationDocument struct {
 	Status        string   `json:"status"`
 	Checks        []string `json:"checks"`
 	Preflight     struct {
-		SchemaVersion       int    `json:"schema_version"`
-		ScenarioFingerprint string `json:"scenario_fingerprint_sha256"`
-		Generator           struct {
-			OS            string `json:"os"`
-			Arch          string `json:"arch"`
-			LogicalCPUs   int    `json:"logical_cpus"`
-			GOMAXPROCS    int    `json:"gomaxprocs"`
-			GoVersion     string `json:"go_version"`
-			RunnerVersion string `json:"runner_version"`
-		} `json:"generator"`
-		Fixture struct {
+		SchemaVersion       int                   `json:"schema_version"`
+		ScenarioFingerprint string                `json:"scenario_fingerprint_sha256"`
+		Generator           calibration.Generator `json:"generator"`
+		Fixture             struct {
 			HealthyRates     []int               `json:"healthy_rates"`
 			Extended         bool                `json:"extended"`
 			WorkloadProfiles []calibratedProfile `json:"workload_profiles"`
@@ -536,12 +539,14 @@ func assessCalibrationArtifact(path string, attempt *Attempt, extended bool, qua
 	}
 	attempt.PreflightFingerprint = document.Preflight.ScenarioFingerprint
 	attempt.RunnerVersion = document.Preflight.Generator.RunnerVersion
+	attempt.GeneratorFingerprint = generatorFingerprint(document.Preflight.Generator)
+	attempt.RuntimeFingerprint = generatorRuntimeFingerprint(document.Preflight.Generator)
 	if document.SoakRun.Quality != nil {
 		attempt.SoakQuality = document.SoakRun.Quality.State
 	}
 	recomputedQuality := qualityAssessor(document.SoakRun)
 	gates := []Gate{
-		gate("calibration_schema", document.SchemaVersion == 1 && document.Preflight.SchemaVersion == 6, "calibration report v1 with preflight schema v6", fmt.Sprintf("report=%d preflight=%d", document.SchemaVersion, document.Preflight.SchemaVersion)),
+		gate("calibration_schema", document.SchemaVersion == 1 && document.Preflight.SchemaVersion == 7, "calibration report v1 with preflight schema v7", fmt.Sprintf("report=%d preflight=%d", document.SchemaVersion, document.Preflight.SchemaVersion)),
 		gate("requested_run_matrix", document.Preflight.Fixture.Extended == extended, fmt.Sprintf("extended=%t", extended), fmt.Sprintf("extended=%t", document.Preflight.Fixture.Extended)),
 		gate("calibration_status", document.Status == "REFERENCE_SMOKE_PASSED", "REFERENCE_SMOKE_PASSED", document.Status),
 		gate("calibration_checklist", len(document.Checks) == 0, "zero failed checks", fmt.Sprintf("%d failed checks", len(document.Checks))),
@@ -734,11 +739,60 @@ func assessRepeatEquivalence(attempts []Attempt) []Gate {
 		return []Gate{{Name: "repeat_equivalence", Status: "INCONCLUSIVE", Expected: "at least two independent process runs", Observed: fmt.Sprintf("%d completed attempts", len(attempts))}}
 	}
 	fingerprint, runner := attempts[0].PreflightFingerprint, attempts[0].RunnerVersion
-	matched := fingerprint != "" && runner != ""
+	generator := attempts[0].GeneratorFingerprint
+	matched := fingerprint != "" && runner != "" && generator != ""
 	for _, attempt := range attempts[1:] {
-		matched = matched && attempt.PreflightFingerprint == fingerprint && attempt.RunnerVersion == runner
+		matched = matched && attempt.PreflightFingerprint == fingerprint && attempt.RunnerVersion == runner && attempt.GeneratorFingerprint == generator
 	}
-	return []Gate{{Name: "repeat_equivalence", Status: status(matched), Expected: "all runs use the same fixture fingerprint and exact generator identity", Observed: fmt.Sprintf("runs=%d fingerprint_match=%t runner_identity_match=%t", len(attempts), fingerprint != "" && allSameFingerprint(attempts), runner != "" && allSameRunner(attempts))}}
+	return []Gate{{Name: "repeat_equivalence", Status: status(matched), Expected: "all runs use the same fixture fingerprint and exact generator CPU/runtime tuple", Observed: fmt.Sprintf("runs=%d fingerprint_match=%t runner_identity_match=%t generator_cpu_runtime_match=%t", len(attempts), fingerprint != "" && allSameFingerprint(attempts), runner != "" && allSameRunner(attempts), generator != "" && allSameGenerator(attempts))}}
+}
+
+func generatorFingerprint(generator calibration.Generator) string {
+	data, err := json.Marshal(generator)
+	if err != nil {
+		return ""
+	}
+	hash := sha256.Sum256(data)
+	return hex.EncodeToString(hash[:])
+}
+
+func generatorRuntimeFingerprint(generator calibration.Generator) string {
+	generator.RunnerVersion = ""
+	return generatorFingerprint(generator)
+}
+
+func assessManifestRuntime(environment Environment, attempts []Attempt) Gate {
+	generator := calibration.Generator{
+		OS: environment.OS, Arch: environment.Architecture, GoVersion: environment.GoVersion,
+		LogicalCPUs: environment.LogicalCPUs, GOMAXPROCS: environment.GOMAXPROCS,
+		CPUCapacityCores: environment.CPUCapacityCores, CPUCapacitySource: environment.CPUCapacitySource,
+		CPUCapacityKnown: environment.CPUCapacityKnown, RunnerVersion: environment.RunnerVersion,
+	}
+	want := generatorRuntimeFingerprint(generator)
+	if len(attempts) == 0 || attempts[0].RuntimeFingerprint == "" {
+		return Gate{Name: "manifest_generator_runtime", Status: "INCONCLUSIVE", Expected: "acceptance runner and every calibrator record the same verified CPU entitlement and runtime tuple", Observed: "no calibration attempt recorded complete generator runtime evidence"}
+	}
+	matched := environment.CPUCapacityKnown && want != ""
+	for _, attempt := range attempts {
+		matched = matched && attempt.RuntimeFingerprint == want
+	}
+	return Gate{
+		Name: "manifest_generator_runtime", Status: status(matched),
+		Expected: "acceptance runner and every calibrator record the same verified CPU entitlement and runtime tuple",
+		Observed: fmt.Sprintf("attempts=%d cpu_capacity_known=%t runtime_match=%t", len(attempts), environment.CPUCapacityKnown, matched),
+	}
+}
+
+func allSameGenerator(attempts []Attempt) bool {
+	if len(attempts) == 0 || attempts[0].GeneratorFingerprint == "" {
+		return false
+	}
+	for _, attempt := range attempts[1:] {
+		if attempt.GeneratorFingerprint != attempts[0].GeneratorFingerprint {
+			return false
+		}
+	}
+	return true
 }
 
 func assessAttemptCompletion(attempts []Attempt, expected int) []Gate {

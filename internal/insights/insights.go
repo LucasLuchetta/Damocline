@@ -181,7 +181,14 @@ func Evaluate(r report.Result, host *hostmon.Result) Assessment {
 			a.Findings = append(a.Findings, Finding{"INFO", fmt.Sprintf("Generator sampler: %.0f ms interval, maximum sample gap %.1f ms, total collection wall time %.2f ms (largest sample %.2f ms).", g.SamplingIntervalMS, g.MaxSampleGapMS, g.SampleCollectionTotalMS, g.SampleCollectionMaxMS)})
 		}
 		if g.GoCPUValid {
-			a.Findings = append(a.Findings, Finding{"INFO", fmt.Sprintf("Observed Go runtime CPU activity: %.0f%% of the sampled GOMAXPROCS capacity; this is not full process or server CPU utilization.", 100*g.GoCPUUtilizationRatio)})
+			capacityBasis := "sampled GOMAXPROCS capacity"
+			if r.SchemaVersion >= 18 {
+				capacityBasis = "detected CPU capacity"
+				if !g.CPUCapacityKnown {
+					capacityBasis = "unverified CPU capacity"
+				}
+			}
+			a.Findings = append(a.Findings, Finding{"INFO", fmt.Sprintf("Observed Go runtime CPU activity: %.0f%% of %s; this is not full process or server CPU utilization.", 100*g.GoCPUUtilizationRatio, capacityBasis)})
 			if g.Samples >= 3 && g.GoCPUUtilizationRatio >= 0.90 {
 				a.Findings = append(a.Findings, Finding{"CAUTION", "The load generator showed high Go runtime CPU activity. Validate generator headroom before making a server-capacity claim."})
 			}
@@ -191,7 +198,14 @@ func Evaluate(r report.Result, host *hostmon.Result) Assessment {
 		if g.ProcessSamples > 0 {
 			a.Findings = append(a.Findings, Finding{"INFO", fmt.Sprintf("Load-generator OS process: peak sampled resident memory %.1f MiB across %d samples.", float64(g.PeakProcessRSSBytes)/(1024*1024), g.ProcessSamples)})
 			if g.ProcessCPUValid {
-				a.Findings = append(a.Findings, Finding{"INFO", fmt.Sprintf("Peak sampled generator process CPU activity: %.1f%% of GOMAXPROCS capacity; this is not host or server CPU utilization.", 100*g.PeakProcessCPUUtilizationRatio)})
+				capacityBasis := "GOMAXPROCS capacity"
+				if r.SchemaVersion >= 18 {
+					capacityBasis = "detected CPU capacity"
+					if !g.CPUCapacityKnown {
+						capacityBasis = "unverified CPU capacity"
+					}
+				}
+				a.Findings = append(a.Findings, Finding{"INFO", fmt.Sprintf("Peak sampled generator process CPU activity: %.1f%% of %s; this is not host or server CPU utilization.", 100*g.PeakProcessCPUUtilizationRatio, capacityBasis)})
 				if g.ProcessCPUSamples >= 2 && g.PeakProcessCPUUtilizationRatio >= 0.90 {
 					a.Findings = append(a.Findings, Finding{"CAUTION", "The load generator showed a high sampled process CPU window. Validate generator headroom before making a server-capacity claim."})
 				}

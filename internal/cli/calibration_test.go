@@ -17,7 +17,9 @@ func writePassingCalibration(t *testing.T, mutate func(*[]int64)) string {
 	t.Helper()
 	now := time.Now().UTC().Truncate(time.Second)
 	rt := calibration.CurrentRuntime()
-	gen := calibration.Generator{OS: rt.OS, Arch: rt.Arch, LogicalCPUs: rt.LogicalCPUs, GOMAXPROCS: rt.GOMAXPROCS, GoVersion: rt.GoVersion, RunnerVersion: rt.RunnerVersion}
+	gen := calibration.Generator{OS: rt.OS, Arch: rt.Arch, LogicalCPUs: rt.LogicalCPUs, GOMAXPROCS: rt.GOMAXPROCS,
+		CPUCapacityCores: rt.CPUCapacityCores, CPUCapacitySource: rt.CPUCapacitySource, CPUCapacityKnown: rt.CPUCapacityKnown,
+		GoVersion: rt.GoVersion, RunnerVersion: rt.RunnerVersion}
 	fixture := calibration.Fixture{NetworkMode: "loopback_same_host_separate_process", WorkloadModel: "open_loop_journey_arrivals", Method: "GET", HealthyResponseBytes: 4096,
 		HealthyDelay: "20ms", StageDuration: "5s", SoakDuration: "30s", StageUsers: 10, MaximumRPS: 100, Repeats: 1, HealthyRates: []int{2, 5, 10}}
 	stages := []calibration.Stage{{ArrivalRate: 2, Scheduled: 10, Started: 10, Completed: 10, Outcome: "PASS"}, {ArrivalRate: 5, Scheduled: 25, Started: 25, Completed: 25, Outcome: "PASS"}, {ArrivalRate: 10, Scheduled: 50, Started: 50, Completed: 50, Outcome: "PASS"}}

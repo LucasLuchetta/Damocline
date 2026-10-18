@@ -13,7 +13,8 @@ import (
 func testPreflightInputs(extended bool, repeats int) (preflightGenerator, preflightFixture, []preflightStage) {
 	g := preflightGenerator{
 		OS: "linux", Arch: "amd64", LogicalCPUs: 4,
-		GOMAXPROCS: 2, GoVersion: "go1.24.2", RunnerVersion: "source-0123456789ab",
+		GOMAXPROCS: 2, CPUCapacityCores: 2, CPUCapacitySource: "runtime_gomaxprocs", CPUCapacityKnown: true,
+		GoVersion: "go1.24.2", RunnerVersion: "source-0123456789ab",
 	}
 	f := preflightFixture{
 		NetworkMode:   "loopback_same_host_separate_process",
