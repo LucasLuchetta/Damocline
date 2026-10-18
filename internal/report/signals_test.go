@@ -70,6 +70,35 @@ func TestSignalsExposeSchedulerAdmissionMismatch(t *testing.T) {
 	t.Fatalf("scheduler admission/worker start mismatch was not exposed: %+v", signals)
 }
 
+// Closed-loop iterations are started directly by their assigned actors, not
+// admitted through the independent arrival scheduler. They intentionally
+// persist zero arrivals_admitted, even when iterations_started is nonzero.
+func TestClosedLoopDoesNotEmitArrivalAdmissionMismatch(t *testing.T) {
+	r := validSyntheticQualityRun()
+	r.SchemaVersion = 17
+	r.Config.Mode = "closed"
+	r.IterationsStarted = 51
+	zero := int64(0)
+	r.ArrivalsAdmitted = &zero
+	r.ArrivalsCancelledBeforeAdmission = &zero
+	for _, signal := range DetectSignals(r) {
+		if signal.Code == "CLIENT_ADMISSION_MISMATCH" {
+			t.Fatalf("false arrival-ledger alarm for closed actors: %+v", signal)
+		}
+	}
+	// The same counter mismatch is meaningful for independent arrivals.
+	r.Config.Mode = "arrival"
+	found := false
+	for _, signal := range DetectSignals(r) {
+		if signal.Code == "CLIENT_ADMISSION_MISMATCH" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("actual arrival-scheduler mismatch was not reported")
+	}
+}
+
 func TestSignalsDoNotInferUnknownInfrastructure(t *testing.T) {
 	r := validSyntheticQualityRun()
 	r.Config.MaxRPS = 100

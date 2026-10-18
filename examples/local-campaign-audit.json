@@ -1,0 +1,22 @@
+{
+  "name": "Local read-only campaign with sufficient window samples",
+  "base_url": "http://127.0.0.1:18080",
+  "mode": "closed",
+  "users": 8,
+  "duration": "10s",
+  "ramp_up": "0s",
+  "think_time": "300ms",
+  "request_timeout": "5s",
+  "max_rps": 60,
+  "p95_limit_ms": 1500,
+  "max_error_rate": 0.01,
+  "min_samples_per_step": 10,
+  "steps": [
+    {
+      "name": "home",
+      "method": "GET",
+      "path": "/",
+      "expected_status": [200]
+    }
+  ]
+}

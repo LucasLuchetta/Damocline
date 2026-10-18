@@ -72,6 +72,34 @@ To preview a new bounded campaign without generating traffic:
 .\.damocline\damocline-audit.exe campaign --config examples/local-smoke.json --warmup 0s --observation 10s --recovery 10s --repeats 2 --dry-run
 ```
 
+The original `examples/local-smoke.json` is intentionally tiny (2 VUs,
+5 max RPS). At that rate, a 2.5-second campaign window cannot reach the
+required 20 samples: `INSUFFICIENT_WINDOWS` and an early
+`INCONCLUSIVE` result are **expected**, even for 51/51 successful HTTP
+requests. The smoke scenario remains useful for proving the transport path.
+
+For a local-only campaign capable of filling observation windows, use the
+separate `examples/local-campaign-audit.json` scenario. It uses 8 synthetic
+actors with 300ms pauses, 60 max RPS, GET-only traffic to loopback. Its actual
+request count is host-dependent and **not guaranteed**; inspect the windows
+if an observation is inconclusive. In two PowerShell sessions:
+
+```powershell
+# Session A: disposable localhost reference; stop with Ctrl+C.
+py -m http.server 18080 --bind 127.0.0.1
+
+# Session B: run from the repository root. No manually named .exe needed.
+New-Item -ItemType Directory -Force .damocline/reports | Out-Null
+go run ./cmd/damocline campaign --config examples/local-campaign-audit.json --warmup 0s --observation 10s --recovery 10s --repeats 2 --authorized --out .damocline/reports/campaign.json
+go run ./cmd/damocline audit --campaign .damocline/reports/campaign.json --out .damocline/reports/audit.json
+```
+
+The report's `PASS_OBSERVED` and the audit's `OBSERVED_PASS_ONLY`
+describe synthetic localhost observations, **not** verified application
+capacity. `LIMITED` remains the expected measurement-quality level for
+ordinary runs. If the server has limited capacity or a Windows security tool
+interferes, the audit may still be inconclusive.
+
 The local scenario example is a **preview**, not a validated sustained test.
 For an actual campaign, use a disposable or staging application that you own,
 confirm the read-only routes, set up realistic independent identities, observe
