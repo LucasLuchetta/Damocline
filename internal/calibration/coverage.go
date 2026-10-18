@@ -73,10 +73,10 @@ func AssessScenario(s config.Scenario, rec Record, local Runtime, now time.Time)
 	if connectionPolicy == "" {
 		connectionPolicy = "reuse"
 	}
-	if connectionPolicy == "reuse" {
-		add("connection_policy", "MATCHED", "The reference uses reusable HTTP connections; this is a declared policy, not endpoint evidence.")
+	if exactProfileControlsMatch(rec.Fixture.WorkloadProfiles, s, connectionPolicy) || exactReferenceSoakControlsMatch(s, connectionPolicy) {
+		add("connection_policy", "MATCHED", "The declared connection policy and exact control tuple match a measured profile; live connection behavior remains fixture-scoped.")
 	} else {
-		add("connection_policy", "OUTSIDE_REFERENCE", "The reference calibration covers reusable HTTP connections only.")
+		add("connection_policy", "OUTSIDE_REFERENCE", "No measured profile matches the declared connection policy and exact control tuple.")
 	}
 	rateMatched := false
 	for _, rate := range rec.Fixture.HealthyRates {
@@ -138,11 +138,14 @@ func AssessScenario(s config.Scenario, rec Record, local Runtime, now time.Time)
 		add("request_mix", "OUTSIDE_REFERENCE", "Multiple steps, profiles, custom headers, assertions, or dynamic dependencies are outside the fixed reference.")
 	}
 	duration, durationErr := time.ParseDuration(s.Duration)
-	durationMatched := durationErr == nil && (duration == 5*time.Second || (duration == 30*time.Second && s.ArrivalRate == 10))
+	durationMatched := durationErr == nil && (duration == 30*time.Second && s.ArrivalRate == 10)
+	if exactProfileControlsMatch(rec.Fixture.WorkloadProfiles, s, connectionPolicy) {
+		durationMatched = true
+	}
 	if durationMatched {
 		add("duration", "MATCHED", "The configured duration matches a measured stage or soak.")
 	} else {
-		add("duration", "OUTSIDE_REFERENCE", "Only five-second stages and a 30-second soak at ten arrivals/s were measured.")
+		add("duration", "OUTSIDE_REFERENCE", "The requested duration is not part of an exact measured profile or the controlled 30-second soak.")
 	}
 	timeout := s.Timeout
 	if timeout == "" {
@@ -294,8 +297,8 @@ func assessMatrixWorkloadShape(s config.Scenario, rec Record) Dimension {
 	step.Method = method
 	normalized := config.Scenario{
 		Name: "Synthetic workload profile comparison", BaseURL: "http://127.0.0.1",
-		Users: 1, Duration: "5s", Mode: "arrival", ArrivalRate: 1,
-		MaxRPS: 50, Timeout: "1s", ConnectionPolicy: connectionPolicy,
+		Users: s.Users, Duration: s.Duration, Mode: "arrival", ArrivalRate: s.ArrivalRate,
+		MaxRPS: s.MaxRPS, Timeout: s.Timeout, ConnectionPolicy: connectionPolicy,
 		P95LimitMS: 500, MaxErrorRate: 1, Steps: []config.Step{step},
 	}
 	validated, err := config.Parse(normalized, config.Options{Authorized: true, AllowWrites: true})
@@ -318,6 +321,22 @@ func assessMatrixWorkloadShape(s config.Scenario, rec Record) Dimension {
 	}
 	dimension.Reason = "No calibrated profile exactly matches the declared method, path, request-body size, and connection policy."
 	return dimension
+}
+
+func exactProfileControlsMatch(profiles []WorkloadProfile, s config.Scenario, connectionPolicy string) bool {
+	for _, profile := range profiles {
+		if profile.ArrivalRate == s.ArrivalRate && profile.MaxRPS == s.MaxRPS && profile.Users == s.Users &&
+			profile.Duration == s.Duration && profile.Timeout == s.Timeout && profile.ConnectionPolicy == connectionPolicy {
+			return true
+		}
+	}
+	return false
+}
+
+func exactReferenceSoakControlsMatch(s config.Scenario, connectionPolicy string) bool {
+	return connectionPolicy == "reuse" && s.Mode == "arrival" && s.ArrivalRate == 10 && s.Users == 10 &&
+		s.MaxRPS == 50 && s.Duration == "30s" && s.Timeout == "1s" &&
+		(s.RampUp == "" || s.RampUp == "0s") && (s.ThinkTime == "" || s.ThinkTime == "0s")
 }
 
 // AssessWorkloadFingerprint is the report-side comparison used to recompute

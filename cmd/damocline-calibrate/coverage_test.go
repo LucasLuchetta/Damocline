@@ -113,6 +113,11 @@ func TestEveryCalibratedShapeMatchesOnlyItsExactRatePairs(t *testing.T) {
 	for _, profile := range profiles {
 		scenario := referenceShapedScenario()
 		scenario.ArrivalRate = profile.ArrivalRate
+		scenario.MaxRPS = profile.MaxRPS
+		scenario.Users = profile.Users
+		scenario.Duration = profile.Duration
+		scenario.Timeout = profile.Timeout
+		scenario.ConnectionPolicy = profile.ConnectionPolicy
 		scenario.Steps = []config.Step{{Name: "matrix", Method: profile.Method, Path: profile.Path}}
 		if profile.RequestBodyBytes > 0 {
 			const bodyEnv = "DAMOCLINE_TEST_MATRIX_BODY"
@@ -122,7 +127,10 @@ func TestEveryCalibratedShapeMatchesOnlyItsExactRatePairs(t *testing.T) {
 		got := compareScenarioToReference(scenario, cal, nil)
 		findDimension(t, got, "arrival_rate", coverageMatched)
 		findDimension(t, got, "declared_workload_shape", coverageMatched)
+		findDimension(t, got, "request_mix", coverageMatched)
 		findDimension(t, got, "rate_ceiling", coverageMatched)
+		findDimension(t, got, "connection_policy", coverageMatched)
+		findDimension(t, got, "observation_duration", coverageMatched)
 	}
 
 	unsupported := referenceShapedScenario()
@@ -130,6 +138,21 @@ func TestEveryCalibratedShapeMatchesOnlyItsExactRatePairs(t *testing.T) {
 	got := compareScenarioToReference(unsupported, cal, nil)
 	findDimension(t, got, "arrival_rate", coverageOutside)
 	findDimension(t, got, "declared_workload_shape", coverageMatched)
+}
+
+func TestConnectionCoverageRequiresExactProfileControlTuple(t *testing.T) {
+	cal := validCoverageCalibration(t, false)
+	scenario := referenceShapedScenario()
+	scenario.ConnectionPolicy = "new_per_request"
+	scenario.Duration = "5s"
+	got := compareScenarioToReference(scenario, cal, nil)
+	findDimension(t, got, "connection_policy", coverageOutside)
+	findDimension(t, got, "observation_duration", coverageOutside)
+	scenario.Duration = "2s"
+	scenario.ArrivalRate = 7
+	got = compareScenarioToReference(scenario, cal, nil)
+	findDimension(t, got, "arrival_rate", coverageOutside)
+	findDimension(t, got, "connection_policy", coverageOutside)
 }
 
 func TestCoverageLabelsUnsupportedDimensionsIndependently(t *testing.T) {

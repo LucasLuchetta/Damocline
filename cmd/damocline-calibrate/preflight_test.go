@@ -44,7 +44,8 @@ func passingWorkloadObservations() []preflightWorkloadObservation {
 	profiles := preflightWorkloadProfilesForTest()
 	observations := make([]preflightWorkloadObservation, 0, len(profiles))
 	for _, profile := range profiles {
-		planned := int64(profile.ArrivalRate * 5)
+		duration, _ := time.ParseDuration(profile.Duration)
+		planned := int64(profile.ArrivalRate) * int64(duration/time.Second)
 		requestBytes := int64(profile.RequestBodyBytes) * planned
 		responseBytes := int64(profile.ResponseBodyBytes) * planned
 		observations = append(observations, preflightWorkloadObservation{

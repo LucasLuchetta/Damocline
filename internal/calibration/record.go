@@ -16,7 +16,7 @@ import (
 
 // The preflight record is embedded in the existing calibration JSON. It
 // identifies the tested loopback fixture, never a customer target or session.
-const SchemaVersion = 4
+const SchemaVersion = 5
 const minimumSupportedSchemaVersion = 1
 
 // Healthy response latency bounds are the fixed coarse guardrail used by the
@@ -126,21 +126,8 @@ const WorkloadMatrixArrivalRate = 10
 func WorkloadMatrixArrivalRates() []int { return []int{2, 5, 10} }
 
 func ReferenceWorkloadProfiles() []WorkloadProfile {
-	shapes := referenceWorkloadShapes()
-	rates := WorkloadMatrixArrivalRates()
-	profiles := make([]WorkloadProfile, 0, len(shapes)*len(rates))
-	for _, shape := range shapes {
-		for _, rate := range rates {
-			profile := shape
-			profile.ID = fmt.Sprintf("%s-r%d", shape.ID, rate)
-			profile.ArrivalRate = rate
-			profile.Fingerprint = ""
-			profiles = append(profiles, profile)
-		}
-	}
-	for index := range profiles {
-		profiles[index].Fingerprint = WorkloadProfileFingerprint(profiles[index])
-	}
+	profiles := workloadProfilesForPolicy(referenceWorkloadShapes(), "reuse", "5s", "")
+	profiles = append(profiles, workloadProfilesForPolicy(referenceWorkloadShapes(), "new_per_request", "2s", "-new-connection")...)
 	return profiles
 }
 
@@ -152,6 +139,29 @@ func referenceWorkloadProfilesV3() []WorkloadProfile {
 		profiles[index].ArrivalRate = WorkloadMatrixArrivalRate
 		profiles[index].ID = strings.TrimSuffix(profiles[index].ID, "-shape")
 		profiles[index].Fingerprint = WorkloadProfileFingerprint(profiles[index])
+	}
+	return profiles
+}
+
+// referenceWorkloadProfilesV4 preserves the exact schema-v4 reusable-connection
+// matrix for archived artifacts.
+func referenceWorkloadProfilesV4() []WorkloadProfile {
+	return workloadProfilesForPolicy(referenceWorkloadShapes(), "reuse", "5s", "")
+}
+
+func workloadProfilesForPolicy(shapes []WorkloadProfile, connectionPolicy, duration, idSuffix string) []WorkloadProfile {
+	rates := WorkloadMatrixArrivalRates()
+	profiles := make([]WorkloadProfile, 0, len(shapes)*len(rates))
+	for _, shape := range shapes {
+		for _, rate := range rates {
+			profile := shape
+			profile.ID = fmt.Sprintf("%s%s-r%d", shape.ID, idSuffix, rate)
+			profile.ArrivalRate = rate
+			profile.ConnectionPolicy = connectionPolicy
+			profile.Duration = duration
+			profile.Fingerprint = WorkloadProfileFingerprint(profile)
+			profiles = append(profiles, profile)
+		}
 	}
 	return profiles
 }
@@ -387,6 +397,8 @@ func validateWorkloadMatrix(rec Record) error {
 	expectedProfiles := ReferenceWorkloadProfiles()
 	if rec.SchemaVersion == 3 {
 		expectedProfiles = referenceWorkloadProfilesV3()
+	} else if rec.SchemaVersion == 4 {
+		expectedProfiles = referenceWorkloadProfilesV4()
 	}
 	profilesMatch := len(rec.Fixture.WorkloadProfiles) == len(expectedProfiles)
 	if profilesMatch {
@@ -403,7 +415,11 @@ func validateWorkloadMatrix(rec Record) error {
 
 	for index, profile := range expectedProfiles {
 		observation := rec.WorkloadObservations[index]
-		planned := int64(profile.ArrivalRate) * 5
+		duration, err := time.ParseDuration(profile.Duration)
+		if err != nil || duration%time.Second != 0 {
+			return errors.New("invalid workload profile duration")
+		}
+		planned := int64(profile.ArrivalRate) * int64(duration/time.Second)
 		expectedRequestBytes := int64(profile.RequestBodyBytes) * planned
 		expectedResponseBytes := int64(profile.ResponseBodyBytes) * planned
 		countersAreBounded := observation.Scheduled >= 0 && observation.Admitted >= 0 &&

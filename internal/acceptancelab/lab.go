@@ -24,6 +24,7 @@ import (
 
 const (
 	SchemaVersion       = 1
+	calibratedProfiles  = 30
 	MinRepeats          = 2
 	MaxRepeats          = 3
 	MaxExtendedRepeats  = 2
@@ -538,11 +539,11 @@ func assessCalibrationArtifact(path string, attempt *Attempt, extended bool, qua
 	}
 	recomputedQuality := qualityAssessor(document.SoakRun)
 	gates := []Gate{
-		gate("calibration_schema", document.SchemaVersion == 1 && document.Preflight.SchemaVersion == 4, "calibration report v1 with preflight schema v4", fmt.Sprintf("report=%d preflight=%d", document.SchemaVersion, document.Preflight.SchemaVersion)),
+		gate("calibration_schema", document.SchemaVersion == 1 && document.Preflight.SchemaVersion == 5, "calibration report v1 with preflight schema v5", fmt.Sprintf("report=%d preflight=%d", document.SchemaVersion, document.Preflight.SchemaVersion)),
 		gate("requested_run_matrix", document.Preflight.Fixture.Extended == extended, fmt.Sprintf("extended=%t", extended), fmt.Sprintf("extended=%t", document.Preflight.Fixture.Extended)),
 		gate("calibration_status", document.Status == "REFERENCE_SMOKE_PASSED", "REFERENCE_SMOKE_PASSED", document.Status),
 		gate("calibration_checklist", len(document.Checks) == 0, "zero failed checks", fmt.Sprintf("%d failed checks", len(document.Checks))),
-		gate("exact_profile_matrix", validProfileMatrix(document.Preflight.Fixture.WorkloadProfiles), "15 unique HTTP loopback shape/rate pairs at exact rates 2, 5, and 10 arrivals/s", fmt.Sprintf("%d profiles", len(document.Preflight.Fixture.WorkloadProfiles))),
+		gate("exact_profile_matrix", validProfileMatrix(document.Preflight.Fixture.WorkloadProfiles), "30 unique HTTP loopback shape/connection/rate pairs at exact rates 2, 5, and 10 arrivals/s", fmt.Sprintf("%d profiles", len(document.Preflight.Fixture.WorkloadProfiles))),
 		gate("native_engine_profile_reports", workloadRunsMatch(document.Preflight.Fixture.WorkloadProfiles, document.WorkloadRuns), "every profile report reconciles configured arrival controls, client outcomes, response size, and HTTP status counters", fmt.Sprintf("%d reports for %d profiles", len(document.WorkloadRuns), len(document.Preflight.Fixture.WorkloadProfiles))),
 		gate("independent_profile_ledgers", profileLedgersMatch(document.Preflight.Fixture.WorkloadProfiles, document.WorkloadObservations), "every planned client arrival, complete body, and independent server request/byte counter reconciles", fmt.Sprintf("%d observations for %d profiles", len(document.WorkloadObservations), len(document.Preflight.Fixture.WorkloadProfiles))),
 		gate("healthy_stage_delivery", healthyStagesMatch(document.Preflight.Fixture.HealthyRates, document.Runs, extended), "all required exact-rate stages deliver every planned request with zero drops", fmt.Sprintf("%d rates, %d stages", len(document.Preflight.Fixture.HealthyRates), len(document.Runs))),
@@ -565,11 +566,12 @@ func assessCalibrationArtifact(path string, attempt *Attempt, extended bool, qua
 }
 
 func validProfileMatrix(profiles []calibratedProfile) bool {
-	if len(profiles) != 15 {
+	if len(profiles) != calibratedProfiles {
 		return false
 	}
 	seen := make(map[string]bool, len(profiles))
 	shapeRates := make(map[string]bool, len(profiles))
+	profileDurations := map[string]string{"reuse": "5s", "new_per_request": "2s"}
 	shapes := map[string]bool{
 		"GET|/work|0|4096":               true,
 		"GET|/matrix/get-empty|0|0":      true,
@@ -579,27 +581,29 @@ func validProfileMatrix(profiles []calibratedProfile) bool {
 	}
 	rates := map[int]bool{2: true, 5: true, 10: true}
 	for _, profile := range profiles {
-		if profile.ID == "" || seen[profile.ID] || !rates[profile.ArrivalRate] || profile.Mode != "arrival" || profile.TransportScheme != "http" || profile.MaxRPS != 50 || profile.Users != 10 || profile.Duration != calibratorStageTime.String() || profile.Timeout != "1s" || profile.ConnectionPolicy != "reuse" {
+		if profile.ID == "" || seen[profile.ID] || !rates[profile.ArrivalRate] || profile.Mode != "arrival" || profile.TransportScheme != "http" || profile.MaxRPS != 50 || profile.Users != 10 || profile.Duration != profileDurations[profile.ConnectionPolicy] || profile.Timeout != "1s" {
 			return false
 		}
 		shape := fmt.Sprintf("%s|%s|%d|%d", profile.Method, profile.Path, profile.RequestBodyBytes, profile.ResponseBodyBytes)
 		if !shapes[shape] {
 			return false
 		}
-		key := fmt.Sprintf("%s|%d", shape, profile.ArrivalRate)
+		key := fmt.Sprintf("%s|%s|%d", shape, profile.ConnectionPolicy, profile.ArrivalRate)
 		if shapeRates[key] {
 			return false
 		}
 		seen[profile.ID] = true
 		shapeRates[key] = true
 	}
-	if len(shapeRates) != 15 {
+	if len(shapeRates) != calibratedProfiles {
 		return false
 	}
 	for shape := range shapes {
-		for rate := range rates {
-			if !shapeRates[fmt.Sprintf("%s|%d", shape, rate)] {
-				return false
+		for policy := range profileDurations {
+			for rate := range rates {
+				if !shapeRates[fmt.Sprintf("%s|%s|%d", shape, policy, rate)] {
+					return false
+				}
 			}
 		}
 	}
@@ -607,7 +611,7 @@ func validProfileMatrix(profiles []calibratedProfile) bool {
 }
 
 func profileLedgersMatch(profiles []calibratedProfile, observations []workloadObservation) bool {
-	if len(profiles) != 15 || len(observations) != len(profiles) {
+	if len(profiles) != calibratedProfiles || len(observations) != len(profiles) {
 		return false
 	}
 	byID := make(map[string]workloadObservation, len(observations))
@@ -619,7 +623,10 @@ func profileLedgersMatch(profiles []calibratedProfile, observations []workloadOb
 	}
 	for _, profile := range profiles {
 		observation, ok := byID[profile.ID]
-		planned := int64(profile.ArrivalRate) * int64(calibratorStageTime/time.Second)
+		planned := plannedProfileArrivals(profile)
+		if planned < 0 {
+			return false
+		}
 		if !ok || observation.Scheduled != planned || observation.Admitted != planned || observation.Started != planned || observation.Completed != planned || observation.Dropped != 0 || observation.Outcome != "PASS" ||
 			observation.ClientCompleteBodyObservations != planned || observation.ClientResponseMinBytes != int64(profile.ResponseBodyBytes) || observation.ClientResponseMaxBytes != int64(profile.ResponseBodyBytes) || observation.ClientResponseTotalBytes != planned*int64(profile.ResponseBodyBytes) ||
 			observation.ServerReceived != planned || observation.ServerCompleted != planned || observation.ServerRequestBodyBytes != planned*int64(profile.RequestBodyBytes) || observation.ServerResponseBodyBytes != planned*int64(profile.ResponseBodyBytes) {
@@ -630,12 +637,15 @@ func profileLedgersMatch(profiles []calibratedProfile, observations []workloadOb
 }
 
 func workloadRunsMatch(profiles []calibratedProfile, runs []report.Result) bool {
-	if len(profiles) != 15 || len(runs) != len(profiles) {
+	if len(profiles) != calibratedProfiles || len(runs) != len(profiles) {
 		return false
 	}
 	for index, profile := range profiles {
 		run := runs[index]
-		planned := int64(profile.ArrivalRate) * int64(calibratorStageTime/time.Second)
+		planned := plannedProfileArrivals(profile)
+		if planned < 0 {
+			return false
+		}
 		body := run.Metrics.ResponseBody
 		if run.ArrivalsScheduled != planned || run.ArrivalsAdmitted == nil || *run.ArrivalsAdmitted != planned || run.ArrivalsDropped != 0 || run.IterationsStarted != planned || run.IterationsCompleted != planned || run.Outcome != "PASS" ||
 			run.Metrics.Total != int(planned) || run.Metrics.Success != int(planned) || run.Metrics.Failures != 0 || run.Metrics.Cancelled != 0 ||
@@ -647,6 +657,14 @@ func workloadRunsMatch(profiles []calibratedProfile, runs []report.Result) bool 
 		}
 	}
 	return true
+}
+
+func plannedProfileArrivals(profile calibratedProfile) int64 {
+	duration, err := time.ParseDuration(profile.Duration)
+	if err != nil || duration <= 0 || duration%time.Second != 0 {
+		return -1
+	}
+	return int64(profile.ArrivalRate) * int64(duration/time.Second)
 }
 
 func healthyStagesMatch(rates []int, runs []calibrationRun, extended bool) bool {
@@ -859,7 +877,10 @@ func aggregateServerLedgerMatches(document calibrationDocument) bool {
 		expectedResponseBytes += planned * 4096
 	}
 	for _, profile := range document.Preflight.Fixture.WorkloadProfiles {
-		planned := int64(profile.ArrivalRate) * int64(calibratorStageTime/time.Second)
+		planned := plannedProfileArrivals(profile)
+		if planned < 0 {
+			return false
+		}
 		expectedRequests += planned
 		expectedRequestBytes += planned * int64(profile.RequestBodyBytes)
 		expectedResponseBytes += planned * int64(profile.ResponseBodyBytes)

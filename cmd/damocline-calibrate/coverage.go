@@ -193,21 +193,22 @@ func compareScenarioToReference(s config.Scenario, a assessment, calibrationErr 
 		r.add("rate_ceiling", coverageMatched, "The declared rate cap is within the fixture's safety ceiling; this does not establish delivered RPS.")
 	}
 
-	singleGET := len(s.Profiles) == 0 && len(s.Steps) == 1
-	if singleGET {
+	singleReferenceStep := len(s.Profiles) == 0 && len(s.Steps) == 1
+	if singleReferenceStep {
 		step := s.Steps[0]
 		method := strings.ToUpper(step.Method)
 		if method == "" {
 			method = "GET"
 		}
-		singleGET = method == "GET" && len(step.Headers) == 0 && step.BodyEnv == "" &&
+		bodyIsCompatible := (method == "GET" && step.BodyEnv == "") || (method == "POST" && step.BodyEnv != "")
+		singleReferenceStep = (method == "GET" || method == "POST") && bodyIsCompatible && len(step.Headers) == 0 &&
 			len(step.Extract) == 0 && s.PerVUCookieEnvPrefix == "" &&
 			s.SyntheticDataPrefixEnv == ""
 	}
-	if !singleGET {
-		r.add("request_mix", coverageOutside, "The reference tested one unauthenticated GET step per journey; multiple profiles, writes, custom headers or dynamic steps are not covered.")
+	if !singleReferenceStep {
+		r.add("request_mix", coverageOutside, "The reference tested one unasserted GET or synthetic POST step per journey; multiple profiles, custom headers or dynamic steps are not covered.")
 	} else {
-		r.add("request_mix", coverageMatched, "The declared journey has the same simple GET-only request shape.")
+		r.add("request_mix", coverageMatched, "The declared journey has one unasserted GET or POST step; exact request-body size is assessed separately.")
 	}
 	connectionPolicy := s.ConnectionPolicy
 	if connectionPolicy == "" {
@@ -215,10 +216,10 @@ func compareScenarioToReference(s config.Scenario, a assessment, calibrationErr 
 	}
 	if calibrationErr != nil {
 		r.add("connection_policy", coverageUnknown, "The calibration record could not establish its connection policy.")
-	} else if connectionPolicy != "reuse" {
-		r.add("connection_policy", coverageOutside, "The reference calibration covers reusable HTTP connections only.")
+	} else if !exactProfileControlsMatch(a.Preflight.Fixture.WorkloadProfiles, s, connectionPolicy) {
+		r.add("connection_policy", coverageOutside, "No measured profile matches the declared connection policy and exact control tuple.")
 	} else {
-		r.add("connection_policy", coverageMatched, "The configured policy matches reusable HTTP connections; live reuse still requires transport observation.")
+		r.add("connection_policy", coverageMatched, "The declared connection policy matches an exact measured profile; live connection behavior remains fixture-scoped.")
 	}
 	workloadShape := calibration.AssessDeclaredWorkloadShape(s, a.Preflight)
 	r.add(workloadShape.Name, workloadShape.Status, workloadShape.Reason)
@@ -226,8 +227,8 @@ func compareScenarioToReference(s config.Scenario, a assessment, calibrationErr 
 	duration, durErr := time.ParseDuration(s.Duration)
 	if durErr != nil || duration <= 0 || duration > 30*time.Second {
 		r.add("observation_duration", coverageOutside, "The requested duration is invalid or longer than any reference observation.")
-	} else if mode != "arrival" || (duration > 5*time.Second && (s.ArrivalRate != 10 || duration > 30*time.Second)) {
-		r.add("observation_duration", coverageOutside, "Only five-second stages and a 30-second stage at exactly ten arrivals/s were observed.")
+	} else if mode != "arrival" || (!exactProfileControlsMatch(a.Preflight.Fixture.WorkloadProfiles, s, connectionPolicy) && !(duration == 30*time.Second && s.ArrivalRate == 10)) {
+		r.add("observation_duration", coverageOutside, "The duration is not part of an exact measured profile or the controlled 30-second soak.")
 	} else {
 		r.add("observation_duration", coverageMatched, "The duration fits a recorded local fixture stage; this is not proof of steady-state behavior.")
 	}
@@ -272,6 +273,16 @@ func compareScenarioToReference(s config.Scenario, a assessment, calibrationErr 
 		r.Shape = "NOT_ESTABLISHED"
 	}
 	return r
+}
+
+func exactProfileControlsMatch(profiles []calibration.WorkloadProfile, s config.Scenario, connectionPolicy string) bool {
+	for _, profile := range profiles {
+		if profile.ArrivalRate == s.ArrivalRate && profile.MaxRPS == s.MaxRPS && profile.Users == s.Users &&
+			profile.Duration == s.Duration && profile.Timeout == s.Timeout && profile.ConnectionPolicy == connectionPolicy {
+			return true
+		}
+	}
+	return false
 }
 
 // runOfflineCoverage is invoked before the fixture runner and never spawns a

@@ -30,7 +30,7 @@ func TestRunPersistsPassingRepeatedEvidence(t *testing.T) {
 	if result.Transport == nil || result.Transport.Status != "PASSED" {
 		t.Fatalf("transport fixture did not pass: %+v", result.Transport)
 	}
-	if len(result.P95Spread) != 15 {
+	if len(result.P95Spread) != 30 {
 		t.Fatalf("expected one descriptive spread per exact workload pair, got %d", len(result.P95Spread))
 	}
 	for _, spread := range result.P95Spread {
@@ -330,7 +330,7 @@ func syntheticCalibration() calibrationDocument {
 	var document calibrationDocument
 	document.SchemaVersion = 1
 	document.Status = "REFERENCE_SMOKE_PASSED"
-	document.Preflight.SchemaVersion = 4
+	document.Preflight.SchemaVersion = 5
 	document.Preflight.ScenarioFingerprint = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	document.Preflight.Generator.OS = "windows"
 	document.Preflight.Generator.Arch = "amd64"
@@ -344,37 +344,47 @@ func syntheticCalibration() calibrationDocument {
 		{ID: "get-64k-response-shape", Method: "GET", Path: "/matrix/get-64k", ResponseBodyBytes: 65536},
 		{ID: "post-4k-request-shape", Method: "POST", Path: "/matrix/post-4k", RequestBodyBytes: 4096, ResponseBodyBytes: 4096},
 	}
-	for _, shape := range shapes {
-		for _, rate := range []int{2, 5, 10} {
-			profile := shape
-			profile.ID = fmt.Sprintf("%s-r%d", shape.ID, rate)
-			profile.Mode = "arrival"
-			profile.TransportScheme = "http"
-			profile.ArrivalRate = rate
-			profile.MaxRPS = 50
-			profile.Users = 10
-			profile.Duration = "5s"
-			profile.Timeout = "1s"
-			profile.ConnectionPolicy = "reuse"
-			document.Preflight.Fixture.WorkloadProfiles = append(document.Preflight.Fixture.WorkloadProfiles, profile)
-			planned := int64(rate * 5)
-			document.WorkloadObservations = append(document.WorkloadObservations, workloadObservation{
-				ProfileID: profile.ID, Scheduled: planned, Admitted: planned, Started: planned, Completed: planned,
-				Outcome: "PASS", ClientCompleteBodyObservations: planned,
-				ClientResponseMinBytes: int64(profile.ResponseBodyBytes), ClientResponseMaxBytes: int64(profile.ResponseBodyBytes), ClientResponseTotalBytes: planned * int64(profile.ResponseBodyBytes),
-				ServerReceived: planned, ServerCompleted: planned, ServerRequestBodyBytes: planned * int64(profile.RequestBodyBytes), ServerResponseBodyBytes: planned * int64(profile.ResponseBodyBytes),
-			})
-			metric := report.MetricSet{
-				Total: int(planned), Success: int(planned), P95MS: 21,
-				HTTP:         report.HTTPDiagnostics{StatusCodes: map[int]int{200: int(planned)}, Status2xx: int(planned)},
-				ResponseBody: report.ResponseBodyDiagnostics{CompleteObservations: planned, MinBytes: int64(profile.ResponseBodyBytes), MaxBytes: int64(profile.ResponseBodyBytes), TotalBytes: planned * int64(profile.ResponseBodyBytes)},
+	for _, connectionPolicy := range []string{"reuse", "new_per_request"} {
+		profileDuration := "5s"
+		seconds := 5
+		idSuffix := ""
+		if connectionPolicy == "new_per_request" {
+			profileDuration = "2s"
+			seconds = 2
+			idSuffix = "-new-connection"
+		}
+		for _, shape := range shapes {
+			for _, rate := range []int{2, 5, 10} {
+				profile := shape
+				profile.ID = fmt.Sprintf("%s%s-r%d", shape.ID, idSuffix, rate)
+				profile.Mode = "arrival"
+				profile.TransportScheme = "http"
+				profile.ArrivalRate = rate
+				profile.MaxRPS = 50
+				profile.Users = 10
+				profile.Duration = profileDuration
+				profile.Timeout = "1s"
+				profile.ConnectionPolicy = connectionPolicy
+				document.Preflight.Fixture.WorkloadProfiles = append(document.Preflight.Fixture.WorkloadProfiles, profile)
+				planned := int64(rate * seconds)
+				document.WorkloadObservations = append(document.WorkloadObservations, workloadObservation{
+					ProfileID: profile.ID, Scheduled: planned, Admitted: planned, Started: planned, Completed: planned,
+					Outcome: "PASS", ClientCompleteBodyObservations: planned,
+					ClientResponseMinBytes: int64(profile.ResponseBodyBytes), ClientResponseMaxBytes: int64(profile.ResponseBodyBytes), ClientResponseTotalBytes: planned * int64(profile.ResponseBodyBytes),
+					ServerReceived: planned, ServerCompleted: planned, ServerRequestBodyBytes: planned * int64(profile.RequestBodyBytes), ServerResponseBodyBytes: planned * int64(profile.ResponseBodyBytes),
+				})
+				metric := report.MetricSet{
+					Total: int(planned), Success: int(planned), P95MS: 21,
+					HTTP:         report.HTTPDiagnostics{StatusCodes: map[int]int{200: int(planned)}, Status2xx: int(planned)},
+					ResponseBody: report.ResponseBodyDiagnostics{CompleteObservations: planned, MinBytes: int64(profile.ResponseBodyBytes), MaxBytes: int64(profile.ResponseBodyBytes), TotalBytes: planned * int64(profile.ResponseBodyBytes)},
+				}
+				document.WorkloadRuns = append(document.WorkloadRuns, report.Result{
+					ArrivalsScheduled: planned, ArrivalsAdmitted: intPointer64(planned), IterationsStarted: planned, IterationsCompleted: planned, Outcome: "PASS",
+					Metrics: metric,
+					Config:  report.RunConfig{Users: profile.Users, Duration: profile.Duration, RequestTimeout: profile.Timeout, ConnectionPolicy: profile.ConnectionPolicy, MaxRPS: profile.MaxRPS, Mode: profile.Mode, ArrivalRate: profile.ArrivalRate},
+					Steps:   []report.StepResult{{Method: profile.Method, Path: profile.Path, Metrics: metric}},
+				})
 			}
-			document.WorkloadRuns = append(document.WorkloadRuns, report.Result{
-				ArrivalsScheduled: planned, ArrivalsAdmitted: intPointer64(planned), IterationsStarted: planned, IterationsCompleted: planned, Outcome: "PASS",
-				Metrics: metric,
-				Config:  report.RunConfig{Users: profile.Users, Duration: profile.Duration, RequestTimeout: profile.Timeout, ConnectionPolicy: profile.ConnectionPolicy, MaxRPS: profile.MaxRPS, Mode: profile.Mode, ArrivalRate: profile.ArrivalRate},
-				Steps:   []report.StepResult{{Method: profile.Method, Path: profile.Path, Metrics: metric}},
-			})
 		}
 	}
 	for _, rate := range document.Preflight.Fixture.HealthyRates {
