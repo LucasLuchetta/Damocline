@@ -88,6 +88,9 @@ func AssessQuality(r Result) *Quality {
 			(!g.ProcessCPUValid && g.ProcessCPUSamples > 0) {
 			invalidate("Generator sampling fields contradict their sample coverage.")
 		}
+		if g.ProcessCPUValid && g.PeakProcessCPUUtilizationRatio >= 0.9 {
+			limit("Generator process CPU reached at least 90% of recorded GOMAXPROCS capacity; generator headroom is not established.")
+		}
 		if g.SamplingIntervalMS <= 0 || g.Samples < 2 {
 			limit("Generator sampling interval or sample coverage is unavailable.")
 		} else if g.MaxSampleGapMS > 2*g.SamplingIntervalMS {

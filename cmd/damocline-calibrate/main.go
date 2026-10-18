@@ -463,6 +463,13 @@ func checkStage(rate int, planned int64, run report.Result) []string {
 	if run.Outcome != "PASS" {
 		issues = append(issues, fmt.Sprintf("stage %d outcome: expected PASS, got %s", rate, run.Outcome))
 	}
+	if run.Quality == nil || run.Quality.State == report.QualityInvalid {
+		state := "missing"
+		if run.Quality != nil {
+			state = run.Quality.State
+		}
+		issues = append(issues, fmt.Sprintf("stage %d measurement quality: expected a non-INVALID run quality state, got %s", rate, state))
+	}
 	if !inLatencyEnvelope(run.Metrics.P50MS) || !inLatencyEnvelope(run.Metrics.P95MS) ||
 		!inLatencyEnvelope(run.Journeys.P50MS) || !inLatencyEnvelope(run.Journeys.P95MS) {
 		issues = append(issues, fmt.Sprintf("stage %d latency envelope: expected request/journey p50 and p95 in [15,150]ms, got request=%.3f/%.3fms journey=%.3f/%.3fms", rate, run.Metrics.P50MS, run.Metrics.P95MS, run.Journeys.P50MS, run.Journeys.P95MS))
