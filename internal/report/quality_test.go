@@ -16,8 +16,12 @@ func validSyntheticQualityRun() Result {
 	testRuntime := qualityTestRuntime()
 	return Result{
 		ElapsedSeconds: 10, ObservationSeconds: 10,
-		Config:  RunConfig{Users: 10, MaxRPS: 100, Mode: "arrival", ArrivalRate: 10},
-		Metrics: MetricSet{Total: 100, Success: 100}, Journeys: MetricSet{Total: 100, Success: 100},
+		Config: RunConfig{Users: 10, MaxRPS: 100, Mode: "arrival", ArrivalRate: 10},
+		Metrics: MetricSet{
+			Total: 100, Success: 100,
+			HTTP: HTTPDiagnostics{FailureClassificationVersion: 1},
+		},
+		Journeys:          MetricSet{Total: 100, Success: 100},
 		IterationsStarted: 100, IterationsCompleted: 100, ArrivalsScheduled: 100,
 		Generator: &generatorhealth.Summary{Samples: 10, GoCPUValid: true, ProcessSamples: 10, ProcessCPUValid: true,
 			LogicalCPUs: testRuntime.LogicalCPUs, GOMAXPROCS: testRuntime.GOMAXPROCS,
@@ -797,6 +801,40 @@ func TestQualityRejectsInconsistentHTTPDiagnostics(t *testing.T) {
 		if q := AssessQuality(r); q.State != QualityInvalid {
 			t.Errorf("%s: expected INVALID, got %+v", name, q)
 		}
+	}
+}
+
+func TestSchema20RequiresVersionedFailureClassificationEvidence(t *testing.T) {
+	base := validSyntheticQualityRun()
+	base.SchemaVersion = CurrentSchemaVersion
+	base.Config.ConnectionPolicy = "reuse"
+	base.Generator = nil
+	admitted := base.IterationsStarted
+	base.ArrivalsAdmitted = &admitted
+	zeroCancelledBeforeAdmission := int64(0)
+	base.ArrivalsCancelledBeforeAdmission = &zeroCancelledBeforeAdmission
+	if quality := AssessQuality(base); quality.State == QualityInvalid {
+		t.Fatalf("valid schema-20 zero-failure evidence should remain arithmetically valid: %+v", quality)
+	}
+
+	missingVersion := base
+	missingVersion.Metrics.HTTP.FailureClassificationVersion = 0
+	if quality := AssessQuality(missingVersion); quality.State != QualityInvalid {
+		t.Fatalf("schema-20 report without an explicit classification version must be INVALID: %+v", quality)
+	}
+
+	inconsistentCounters := base
+	inconsistentCounters.Metrics.HTTP.DNSFailures = 1
+	inconsistentCounters.Metrics.HTTP.TransportFailures = 1
+	if quality := AssessQuality(inconsistentCounters); quality.State != QualityInvalid {
+		t.Fatalf("DNS counter without matching classified failure evidence must be INVALID: %+v", quality)
+	}
+
+	legacy := base
+	legacy.SchemaVersion = 19
+	legacy.Metrics.HTTP.FailureClassificationVersion = 0
+	if quality := AssessQuality(legacy); quality.State == QualityInvalid {
+		t.Fatalf("schema-19 report without v20-only classification fields must remain readable: %+v", quality)
 	}
 }
 

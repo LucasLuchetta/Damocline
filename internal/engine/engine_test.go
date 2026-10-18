@@ -342,6 +342,7 @@ func TestHTTPDiagnosticsIdentifyLoopbackConnectionRefusal(t *testing.T) {
 	r := Run(context.Background(), v)
 	if r.Metrics.Total == 0 || r.Metrics.Failures != r.Metrics.Total ||
 		r.Metrics.HTTP.TransportFailures != r.Metrics.Total ||
+		r.Metrics.HTTP.ConnectionFailures != r.Metrics.Total || r.Metrics.HTTP.DNSFailures != 0 ||
 		r.Metrics.HTTP.NetworkTimeouts != 0 || r.Metrics.HTTP.TLSFailures != 0 ||
 		r.Metrics.HTTP.Status2xx != 0 || len(r.Steps) != 1 ||
 		r.Steps[0].HTTPTrace.ConnectStartCount == 0 {
@@ -470,6 +471,7 @@ func TestHTTPDiagnosticsIdentifyInjectedLoopbackDNSFailure(t *testing.T) {
 
 	if r.Metrics.Total == 0 || r.Metrics.Failures != r.Metrics.Total ||
 		r.Metrics.HTTP.TransportFailures != r.Metrics.Total ||
+		r.Metrics.HTTP.DNSFailures != r.Metrics.Total || r.Metrics.HTTP.ConnectionFailures != 0 ||
 		r.Metrics.HTTP.NetworkTimeouts != 0 || r.Metrics.HTTP.TLSFailures != 0 ||
 		r.Metrics.HTTP.Status2xx != 0 || len(r.Steps) != 1 ||
 		dnsTrace.DNSStartCount == 0 || dnsTrace.DNSCount == 0 ||

@@ -470,6 +470,7 @@ func TestReadRunAcceptsCurrentSchemaFourteenConnectionPolicyAndWindowLedgers(t *
 	r.Windows = []report.WindowResult{{StartSeconds: 0, EndSeconds: 1,
 		Steps: []report.WindowMetric{{Name: r.Steps[0].Name, Metrics: r.Steps[0].Metrics}},
 	}}
+	markSchema20FailureClassification(&r)
 	path := filepath.Join(t.TempDir(), "schema-v14-windows.json")
 	if err := report.WriteJSON(path, r); err != nil {
 		t.Fatal(err)
@@ -505,6 +506,50 @@ func TestReadRunRejectsUnknownFutureSchema(t *testing.T) {
 	}
 	if _, err := ReadRun(path); err == nil {
 		t.Fatal("report with an unknown future schema was accepted")
+	}
+}
+
+func TestReadRunRequiresSchema20FailureClassificationMarker(t *testing.T) {
+	r := synthetic()
+	r.SchemaVersion = 20
+	r.Config.ConnectionPolicy = "reuse"
+	r.ObservationSeconds = 30
+	r.ArrivalsAdmitted = int64Pointer(0)
+	r.ArrivalsCancelledBeforeAdmission = int64Pointer(0)
+	markSchema20FailureClassification(&r)
+	path := filepath.Join(t.TempDir(), "schema-v20.json")
+	if err := report.WriteJSON(path, r); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadRun(path); err != nil {
+		t.Fatalf("valid schema-20 failure-classification marker was rejected: %v", err)
+	}
+
+	r.Metrics.HTTP.FailureClassificationVersion = 0
+	path = filepath.Join(t.TempDir(), "schema-v20-missing-classification.json")
+	if err := report.WriteJSON(path, r); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadRun(path); err == nil {
+		t.Fatal("schema-20 report without failure-classification evidence was accepted")
+	}
+}
+
+func int64Pointer(value int64) *int64 { return &value }
+
+func markSchema20FailureClassification(r *report.Result) {
+	mark := func(metrics *report.MetricSet) {
+		metrics.HTTP.FailureClassificationVersion = 1
+	}
+	mark(&r.Metrics)
+	for i := range r.Steps {
+		mark(&r.Steps[i].Metrics)
+	}
+	for i := range r.Windows {
+		mark(&r.Windows[i].Metrics)
+		for j := range r.Windows[i].Steps {
+			mark(&r.Windows[i].Steps[j].Metrics)
+		}
 	}
 }
 

@@ -40,6 +40,9 @@ func AssessQuality(r Result) *Quality {
 		q.Findings = append(q.Findings, reason)
 	}
 	limit := func(reason string) { q.Findings = append(q.Findings, reason) }
+	if r.SchemaVersion >= 20 && !validFailureClassificationEvidence(r) {
+		invalidate("HTTP failure-classification evidence is missing or inconsistent for schema 20.")
+	}
 	if r.Metrics.Total < 0 || r.Metrics.Success < 0 || r.Metrics.Failures < 0 ||
 		r.Metrics.Cancelled < 0 || r.Metrics.Success > r.Metrics.Total || r.Metrics.Failures != r.Metrics.Total-r.Metrics.Success {
 		invalidate("Request aggregate accounting is inconsistent.")
@@ -515,6 +518,39 @@ func AssessQuality(r Result) *Quality {
 	return q
 }
 
+func validFailureClassificationEvidence(r Result) bool {
+	validMetrics := func(metrics MetricSet) bool {
+		return metrics.HTTP.FailureClassificationVersion == 1 &&
+			metrics.HTTP.DNSFailures == metrics.Reasons["dns_failure"] &&
+			metrics.HTTP.ConnectionFailures == metrics.Reasons["connection_failure"]
+	}
+	if !validMetrics(r.Metrics) {
+		return false
+	}
+	for _, step := range r.Steps {
+		if !validMetrics(step.Metrics) {
+			return false
+		}
+	}
+	for _, window := range r.Windows {
+		if !validMetrics(window.Metrics) {
+			return false
+		}
+		for _, step := range window.Steps {
+			if !validMetrics(step.Metrics) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// HasValidFailureClassification reports whether a schema-v20 run contains
+// versioned and internally consistent DNS and connection failure counters.
+func HasValidFailureClassification(r Result) bool {
+	return r.SchemaVersion < 20 || validFailureClassificationEvidence(r)
+}
+
 func controlledReferenceEvidenceValid(r Result) bool {
 	e := r.ReferenceEvidence
 	if r.SchemaVersion < 17 || e == nil || e.Kind != "calibrator_child_process_loopback_soak_v1" ||
@@ -736,6 +772,8 @@ func validHTTPDiagnostics(d HTTPDiagnostics, completed, cancelled int) bool {
 	limit := completed + cancelled
 	if d.Status1xx < 0 || d.Status2xx < 0 || d.Status3xx < 0 || d.Status4xx < 0 || d.Status5xx < 0 ||
 		d.RedirectResponses < 0 || d.RateLimitedResponses < 0 || d.AssertionFailures < 0 || d.NetworkTimeouts < 0 ||
+		d.FailureClassificationVersion < 0 || d.FailureClassificationVersion > 1 ||
+		d.DNSFailures < 0 || d.ConnectionFailures < 0 ||
 		d.TLSFailures < 0 || d.TransportFailures < 0 || d.UnexpectedResponseSizes < 0 {
 		return false
 	}
@@ -764,7 +802,9 @@ func validHTTPDiagnostics(d HTTPDiagnostics, completed, cancelled int) bool {
 	}
 	return redirects == d.RedirectResponses && rateLimited == d.RateLimitedResponses && total <= limit &&
 		d.RedirectResponses <= limit && d.RateLimitedResponses <= limit && d.AssertionFailures <= limit &&
-		d.NetworkTimeouts <= limit && d.TLSFailures <= limit && d.TransportFailures <= limit && d.UnexpectedResponseSizes <= limit
+		d.NetworkTimeouts <= limit && d.DNSFailures <= d.TransportFailures &&
+		d.ConnectionFailures <= d.TransportFailures && d.TLSFailures <= limit &&
+		d.TransportFailures <= limit && d.UnexpectedResponseSizes <= limit
 }
 
 func addHTTPDiagnostics(dst *HTTPDiagnostics, src HTTPDiagnostics) bool {
@@ -775,8 +815,8 @@ func addHTTPDiagnostics(dst *HTTPDiagnostics, src HTTPDiagnostics) bool {
 		}
 		return *a + b, true
 	}
-	left := []*int{&dst.Status1xx, &dst.Status2xx, &dst.Status3xx, &dst.Status4xx, &dst.Status5xx, &dst.RedirectResponses, &dst.RateLimitedResponses, &dst.AssertionFailures, &dst.NetworkTimeouts, &dst.TLSFailures, &dst.TransportFailures, &dst.UnexpectedResponseSizes}
-	right := []int{src.Status1xx, src.Status2xx, src.Status3xx, src.Status4xx, src.Status5xx, src.RedirectResponses, src.RateLimitedResponses, src.AssertionFailures, src.NetworkTimeouts, src.TLSFailures, src.TransportFailures, src.UnexpectedResponseSizes}
+	left := []*int{&dst.Status1xx, &dst.Status2xx, &dst.Status3xx, &dst.Status4xx, &dst.Status5xx, &dst.RedirectResponses, &dst.RateLimitedResponses, &dst.AssertionFailures, &dst.NetworkTimeouts, &dst.DNSFailures, &dst.ConnectionFailures, &dst.TLSFailures, &dst.TransportFailures, &dst.UnexpectedResponseSizes}
+	right := []int{src.Status1xx, src.Status2xx, src.Status3xx, src.Status4xx, src.Status5xx, src.RedirectResponses, src.RateLimitedResponses, src.AssertionFailures, src.NetworkTimeouts, src.DNSFailures, src.ConnectionFailures, src.TLSFailures, src.TransportFailures, src.UnexpectedResponseSizes}
 	for i := range left {
 		value, ok := add(left[i], right[i])
 		if !ok {
@@ -799,7 +839,7 @@ func addHTTPDiagnostics(dst *HTTPDiagnostics, src HTTPDiagnostics) bool {
 }
 
 func equalHTTPDiagnostics(a, b HTTPDiagnostics) bool {
-	if a.Status1xx != b.Status1xx || a.Status2xx != b.Status2xx || a.Status3xx != b.Status3xx || a.Status4xx != b.Status4xx || a.Status5xx != b.Status5xx || a.RedirectResponses != b.RedirectResponses || a.RateLimitedResponses != b.RateLimitedResponses || a.AssertionFailures != b.AssertionFailures || a.NetworkTimeouts != b.NetworkTimeouts || a.TLSFailures != b.TLSFailures || a.TransportFailures != b.TransportFailures || a.UnexpectedResponseSizes != b.UnexpectedResponseSizes || len(a.StatusCodes) != len(b.StatusCodes) {
+	if a.Status1xx != b.Status1xx || a.Status2xx != b.Status2xx || a.Status3xx != b.Status3xx || a.Status4xx != b.Status4xx || a.Status5xx != b.Status5xx || a.RedirectResponses != b.RedirectResponses || a.RateLimitedResponses != b.RateLimitedResponses || a.AssertionFailures != b.AssertionFailures || a.NetworkTimeouts != b.NetworkTimeouts || a.DNSFailures != b.DNSFailures || a.ConnectionFailures != b.ConnectionFailures || a.TLSFailures != b.TLSFailures || a.TransportFailures != b.TransportFailures || a.UnexpectedResponseSizes != b.UnexpectedResponseSizes || len(a.StatusCodes) != len(b.StatusCodes) {
 		return false
 	}
 	for code, count := range a.StatusCodes {

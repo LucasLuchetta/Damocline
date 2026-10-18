@@ -17,9 +17,9 @@ import (
 
 // CurrentSchemaVersion is the newest persisted HTTP run report schema emitted
 // by the engine. Readers must reject future versions until their semantics are
-// reviewed and supported. Version 19 records the runtime's logical CPU count
-// independently from GOMAXPROCS and effective CPU quota.
-const CurrentSchemaVersion = 19
+// reviewed and supported. Version 20 adds DNS and connection failure details
+// to HTTP diagnostics.
+const CurrentSchemaVersion = 20
 
 type MetricSet struct {
 	Total                 int                     `json:"total"`
@@ -83,22 +83,26 @@ func (m *MetricSet) RecordResponseBody(state ResponseBodyState, size int64) {
 // HTTPDiagnostics counts observed HTTP responses and classified client-side
 // outcomes. A zero status count is unknown/no response, not an HTTP status.
 type HTTPDiagnostics struct {
-	StatusCodes             map[int]int `json:"status_codes,omitempty"`
-	Status1xx               int         `json:"status_1xx"`
-	Status2xx               int         `json:"status_2xx"`
-	Status3xx               int         `json:"status_3xx"`
-	Status4xx               int         `json:"status_4xx"`
-	Status5xx               int         `json:"status_5xx"`
-	RedirectResponses       int         `json:"redirect_responses"`
-	RateLimitedResponses    int         `json:"rate_limited_responses"`
-	AssertionFailures       int         `json:"assertion_failures"`
-	NetworkTimeouts         int         `json:"network_timeouts"`
-	TLSFailures             int         `json:"tls_failures"`
-	TransportFailures       int         `json:"transport_failures"`
-	UnexpectedResponseSizes int         `json:"unexpected_response_sizes"`
+	FailureClassificationVersion int         `json:"failure_classification_version,omitempty"`
+	StatusCodes                  map[int]int `json:"status_codes,omitempty"`
+	Status1xx                    int         `json:"status_1xx"`
+	Status2xx                    int         `json:"status_2xx"`
+	Status3xx                    int         `json:"status_3xx"`
+	Status4xx                    int         `json:"status_4xx"`
+	Status5xx                    int         `json:"status_5xx"`
+	RedirectResponses            int         `json:"redirect_responses"`
+	RateLimitedResponses         int         `json:"rate_limited_responses"`
+	AssertionFailures            int         `json:"assertion_failures"`
+	NetworkTimeouts              int         `json:"network_timeouts"`
+	DNSFailures                  int         `json:"dns_failures"`
+	ConnectionFailures           int         `json:"connection_failures"`
+	TLSFailures                  int         `json:"tls_failures"`
+	TransportFailures            int         `json:"transport_failures"`
+	UnexpectedResponseSizes      int         `json:"unexpected_response_sizes"`
 }
 
 func (d *HTTPDiagnostics) Record(statusCode int, reason string, assertionFailure, tlsFailure bool) {
+	d.FailureClassificationVersion = 1
 	if statusCode >= 100 && statusCode <= 599 {
 		if d.StatusCodes == nil {
 			d.StatusCodes = make(map[int]int)
@@ -132,6 +136,12 @@ func (d *HTTPDiagnostics) Record(statusCode int, reason string, assertionFailure
 	switch reason {
 	case "timeout":
 		d.NetworkTimeouts++
+	case "dns_failure":
+		d.DNSFailures++
+		d.TransportFailures++
+	case "connection_failure":
+		d.ConnectionFailures++
+		d.TransportFailures++
 	case "transport", "body_read":
 		if !tlsFailure {
 			d.TransportFailures++
@@ -196,7 +206,12 @@ func (t *HTTPTrace) Record(o HTTPTrace) {
 	t.CompleteMS += o.CompleteMS
 }
 
-func NewMetricSet() *MetricSet { return &MetricSet{Reasons: make(map[string]int)} }
+func NewMetricSet() *MetricSet {
+	return &MetricSet{
+		Reasons: make(map[string]int),
+		HTTP:    HTTPDiagnostics{FailureClassificationVersion: 1},
+	}
+}
 func (m *MetricSet) Record(latency time.Duration, success, cancelled bool, reason string) {
 	if cancelled {
 		m.Cancelled++
