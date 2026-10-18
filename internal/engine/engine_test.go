@@ -1011,6 +1011,49 @@ func TestMultiStepJourneyWithThinkTimeDrainsAfterObservationWindow(t *testing.T)
 	}
 }
 
+func TestNaturalDrainDeadlineCancelsStepWaitingForRateToken(t *testing.T) {
+	fixture, err := reference.New(reference.Config{Delay: 10 * time.Millisecond, MaxConcurrent: 1, MaxRequests: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(fixture)
+	defer server.Close()
+
+	s := config.Scenario{
+		Name:       "natural drain deadline",
+		BaseURL:    server.URL,
+		Users:      1,
+		Duration:   "1s",
+		RampUp:     "0s",
+		Timeout:    "100ms",
+		MaxRPS:     1,
+		P95LimitMS: 1000,
+		Steps: []config.Step{
+			{Name: "first", Method: http.MethodGet, Path: "/work"},
+			{Name: "second", Method: http.MethodGet, Path: "/work"},
+		},
+	}
+	v, err := config.Parse(s, config.Options{Authorized: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	v.Duration = 1500 * time.Millisecond
+
+	run := Run(context.Background(), v)
+	ledger := fixture.Snapshot()
+	if len(run.Steps) != 2 || run.IterationsStarted != 1 || run.IterationsCompleted != 0 ||
+		run.Journeys.Cancelled != 1 || run.Metrics.Success != 1 || run.Metrics.Cancelled != 1 ||
+		run.Steps[0].HTTPTrace.RequestAttemptCount != 1 || run.Steps[1].HTTPTrace.RequestAttemptCount != 0 ||
+		run.Steps[1].HTTPTrace.RateWaitCancelledCount != 1 || run.Outcome == "PASS" ||
+		run.Quality == nil || run.Quality.State != report.QualityLimited {
+		t.Fatalf("natural drain expiry must count the undelivered step and limit quality: %+v", run)
+	}
+	if ledger.Received != 1 || ledger.Completed != 1 || ledger.Success != 1 || ledger.Failures != 0 || ledger.Cancelled != 0 || ledger.Rejected != 0 ||
+		ledger.Received != ledger.Completed+ledger.Cancelled+ledger.Rejected {
+		t.Fatalf("the rate-token-cancelled step must not appear as server work: %+v", ledger)
+	}
+}
+
 func TestCancelledRunCannotPass(t *testing.T) {
 	requestStarted := make(chan struct{}, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
