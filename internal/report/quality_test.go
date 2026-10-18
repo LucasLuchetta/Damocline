@@ -49,6 +49,10 @@ func TestQualityKeepsAttachedCalibrationLimitedWhileTargetEvidenceIsUnknown(t *t
 		t.Fatal(err)
 	}
 	r.Config.WorkloadFingerprint = referenceWorkloadFingerprint
+	r.Steps = []StepResult{{Profile: "default", Name: "work", Method: "GET", Path: "/work", Metrics: MetricSet{Total: 100, Success: 100}, HTTPTrace: HTTPTrace{RateWaitCount: 100}}}
+	r.ArrivalsScheduled = 100
+	r.SchedulerLagSamples = 100
+	r.SchedulerLagMethod = "monotonic_slot_to_admission"
 	r.Calibration = &CalibrationEvidence{Record: rec, Coverage: calibration.Coverage{Status: "INCONCLUSIVE", Dimensions: []calibration.Dimension{
 		{Name: "response_shape", Status: "UNVERIFIED", Reason: "unknown"}, {Name: "fixture_identity", Status: "UNVERIFIED", Reason: "unknown"},
 	}}}
@@ -57,6 +61,14 @@ func TestQualityKeepsAttachedCalibrationLimitedWhileTargetEvidenceIsUnknown(t *t
 		t.Fatalf("attached fixed-fixture calibration cannot upgrade unknown target evidence: %+v", q)
 	}
 	r.SchemaVersion = 12
+	if got := AssessDeclaredWorkloadShape(r, rec); got.Status != "MATCHED" {
+		t.Fatalf("reconstructed reference step should match: %+v", got)
+	}
+	r.Steps[0].Path = "/changed"
+	if got := AssessDeclaredWorkloadShape(r, rec); got.Status != "OUTSIDE_REFERENCE" {
+		t.Fatalf("changed saved path must fail closed: %+v", got)
+	}
+	r.Steps[0].Path = "/work"
 	observedSize := AssessObservedResponseSize(r, int64(rec.Fixture.HealthyResponseBytes))
 	observedLatency := AssessObservedResponseLatency(r)
 	workloadShape := AssessDeclaredWorkloadShape(r, rec)
@@ -81,13 +93,14 @@ func TestQualityKeepsAttachedCalibrationLimitedWhileTargetEvidenceIsUnknown(t *t
 	}
 	body := ResponseBodyDiagnostics{CompleteObservations: 100, MinBytes: 4096, MaxBytes: 4096, TotalBytes: 409600}
 	http := HTTPDiagnostics{StatusCodes: map[int]int{200: 100}, Status2xx: 100}
-	step := StepResult{
+	step := StepResult{Profile: "default", Name: "work", Method: "GET", Path: "/work",
 		Metrics:   MetricSet{Total: 100, Success: 100, P50MS: 20, P95MS: 30, HTTP: http, ResponseBody: body},
-		HTTPTrace: HTTPTrace{RequestAttemptCount: 100, WriteCount: 100, RateWaitCount: 100, FirstByteCount: 100, BodyCount: 100, CompleteCount: 100},
+		HTTPTrace: HTTPTrace{RequestAttemptCount: 100, WriteCount: 100, RateWaitCount: 100, FirstByteCount: 100, FirstByteMS: 2000, BodyCount: 100, CompleteCount: 100},
 	}
 	r.Metrics.HTTP = http
 	r.Metrics.ResponseBody = body
 	r.Steps = []StepResult{step}
+	r.Metrics.Total, r.Metrics.Success, r.Metrics.Failures = 100, 100, 0
 	r.Calibration.Coverage.Dimensions[observedIndex] = AssessObservedResponseSize(r, int64(rec.Fixture.HealthyResponseBytes))
 	for i := range r.Calibration.Coverage.Dimensions {
 		if r.Calibration.Coverage.Dimensions[i].Name == "observed_response_latency" {
@@ -118,6 +131,20 @@ func TestQualityKeepsAttachedCalibrationLimitedWhileTargetEvidenceIsUnknown(t *t
 	r.Calibration.Coverage.Dimensions = []calibration.Dimension{{Name: "arrival_rate", Status: "MATCHED", Reason: "matched"}}
 	if q := AssessQuality(r); q.State != QualityInvalid {
 		t.Fatalf("missing mandatory unknowns should invalidate calibration coverage: %+v", q)
+	}
+}
+
+func TestDeclaredWorkloadShapeDoesNotTrustFingerprintForUnpersistedShape(t *testing.T) {
+	r := Result{SchemaVersion: 13, Config: RunConfig{WorkloadFingerprint: "sha256:" + strings.Repeat("a", 64)}}
+	runtimeInfo := calibration.CurrentRuntime()
+	rec, err := calibration.NewRecord(time.Now().Add(-time.Minute), time.Now(), calibration.Generator{OS: runtimeInfo.OS, Arch: runtimeInfo.Arch, LogicalCPUs: runtimeInfo.LogicalCPUs, GOMAXPROCS: runtimeInfo.GOMAXPROCS, GoVersion: runtimeInfo.GoVersion, RunnerVersion: runtimeInfo.RunnerVersion},
+		calibration.Fixture{NetworkMode: "loopback_same_host_separate_process", WorkloadModel: "open_loop_journey_arrivals", Method: "GET", HealthyResponseBytes: 4096, HealthyDelay: "20ms", StageDuration: "5s", SoakDuration: "30s", StageUsers: 10, MaximumRPS: 100, Repeats: 1, HealthyRates: []int{2, 5, 10}},
+		[]calibration.Stage{{ArrivalRate: 2, Scheduled: 10, Started: 10, Completed: 10, Outcome: "PASS"}, {ArrivalRate: 5, Scheduled: 25, Started: 25, Completed: 25, Outcome: "PASS"}, {ArrivalRate: 10, Scheduled: 50, Started: 50, Completed: 50, Outcome: "PASS"}}, "REFERENCE_SMOKE_PASSED")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := AssessDeclaredWorkloadShape(r, rec); got.Status != "UNVERIFIED" {
+		t.Fatalf("missing persisted steps cannot be inferred from a digest: %+v", got)
 	}
 }
 

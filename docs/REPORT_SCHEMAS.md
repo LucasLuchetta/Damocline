@@ -19,6 +19,8 @@ The engine currently emits schema v13. The `insights` reader accepts v1 through 
 | v12 | Bounded response-body completion, interruption, size and oversize observations. | A recorded complete zero-byte response differs from a report that predates body observations. |
 | v13 | Per-step request and explicit-profile completed-journey evidence in observation windows. | Missing or inconsistent current window ledgers are invalid; older reports cannot support windowed per-step conclusions. |
 
+For schema-v11 and newer reports attached to calibration, workload-shape assessment recomputes the fingerprint only for the persisted single-step `GET /work` reference subset. Other shapes remain unverified because reports do not retain all request templates or values needed for safe reconstruction. A matching fingerprint is not a signature, endpoint attestation, or general workload-equivalence proof.
+
 ## Reader and fixture policy
 
 Golden JSON fixtures in `internal/insights/testdata/reports/` cover every currently supported version. Tests verify reader acceptance, JSON round-trip stability, and preservation of a version-specific field at each schema milestone. Separate tests verify that unknown future versions are rejected and that schema-v11 absence of body fields is not reinterpreted as an observed zero-byte body.
