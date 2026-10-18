@@ -57,6 +57,11 @@ func TestMatrixWorkloadShapeMatchesExactPOSTBodySizeWithoutRecordingBody(t *test
 	if got := AssessDeclaredWorkloadShape(scenario, a.Preflight); got.Status != "OUTSIDE_REFERENCE" {
 		t.Fatalf("different POST body size must be outside matrix: %+v", got)
 	}
+	t.Setenv("DAMOCLINE_TEST_BODY", strings.Repeat("x", 4<<10))
+	scenario.BaseURL = "https://127.0.0.1"
+	if got := AssessDeclaredWorkloadShape(scenario, a.Preflight); got.Status != "OUTSIDE_REFERENCE" {
+		t.Fatalf("HTTPS declaration must not match an HTTP-only profile: %+v", got)
+	}
 	if strings.Contains(matched.Reason, "DAMOCLINE_TEST_BODY") || strings.Contains(matched.Reason, strings.Repeat("x", 32)) {
 		t.Fatal("workload assessment leaked request body input")
 	}

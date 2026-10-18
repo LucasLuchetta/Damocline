@@ -281,6 +281,16 @@ func assessMatrixWorkloadShape(s config.Scenario, rec Record) Dimension {
 	if connectionPolicy == "" {
 		connectionPolicy = "reuse"
 	}
+	transportScheme := "http"
+	if s.BaseURL != "" {
+		declaredURL, err := url.Parse(s.BaseURL)
+		if err != nil || declaredURL.Scheme == "" {
+			dimension.Status = "UNVERIFIED"
+			dimension.Reason = "The declared transport scheme could not be safely read for profile comparison."
+			return dimension
+		}
+		transportScheme = declaredURL.Scheme
+	}
 	step.Method = method
 	normalized := config.Scenario{
 		Name: "Synthetic workload profile comparison", BaseURL: "http://127.0.0.1",
@@ -300,7 +310,7 @@ func assessMatrixWorkloadShape(s config.Scenario, rec Record) Dimension {
 	}
 	fingerprint := WorkloadProfileFingerprint(profileShape)
 	for _, profile := range rec.Fixture.WorkloadProfiles {
-		if profile.Fingerprint == fingerprint && profile.TransportScheme == validated.Base.Scheme {
+		if profile.Fingerprint == fingerprint && profile.TransportScheme == transportScheme {
 			dimension.Status = "MATCHED"
 			dimension.Reason = "The declared method, path, request-body size, and connection policy match an exactly measured local profile; response behavior and target identity remain unverified."
 			return dimension
