@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -270,6 +271,38 @@ func TestHTTPDiagnosticsIdentifyTLSHandshakeFailure(t *testing.T) {
 	}
 	if r.Quality == nil || r.Quality.State == report.QualityInvalid {
 		t.Fatalf("classified TLS failure should remain arithmetically valid: %+v", r.Quality)
+	}
+}
+
+func TestNativeEngineReconcilesTrustedLocalTLSRequests(t *testing.T) {
+	var received, completed atomic.Int64
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		received.Add(1)
+		defer completed.Add(1)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(bytes.Repeat([]byte("x"), 4096))
+	}))
+	server.EnableHTTP2 = false
+	server.StartTLS()
+	defer server.Close()
+
+	previousTransport := http.DefaultTransport
+	tlsTransport := server.Client().Transport.(*http.Transport).Clone()
+	tlsTransport.Proxy = nil
+	http.DefaultTransport = tlsTransport
+	defer func() { http.DefaultTransport = previousTransport }()
+
+	v := scenario(t, server.URL, []config.Step{{Name: "work", Method: http.MethodGet, Path: "/work"}})
+	v.Duration = 300 * time.Millisecond
+	r := Run(context.Background(), v)
+	if r.Outcome != "PASS" || r.Metrics.Total < 1 || r.Metrics.Success != r.Metrics.Total ||
+		r.Metrics.HTTP.TLSFailures != 0 || r.Steps[0].HTTPTrace.TLSCount < 1 {
+		t.Fatalf("native engine did not complete trusted TLS requests: outcome=%s metrics=%+v trace=%+v", r.Outcome, r.Metrics, r.Steps[0].HTTPTrace)
+	}
+	body := r.Steps[0].Metrics.ResponseBody
+	if body.CompleteObservations != int64(r.Metrics.Total) || body.MinBytes != 4096 || body.MaxBytes != 4096 ||
+		received.Load() != int64(r.Metrics.Total) || completed.Load() != received.Load() {
+		t.Fatalf("TLS body or independent server ledger did not reconcile: client=%+v server_received=%d server_completed=%d", body, received.Load(), completed.Load())
 	}
 }
 
