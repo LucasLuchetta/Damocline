@@ -107,6 +107,31 @@ func TestUnobservedRateMustNotInterpolateOrBorrowExtendedEnvelope(t *testing.T) 
 	}
 }
 
+func TestEveryCalibratedShapeMatchesOnlyItsExactRatePairs(t *testing.T) {
+	cal := validCoverageCalibration(t, false)
+	profiles := calibration.ReferenceWorkloadProfiles()
+	for _, profile := range profiles {
+		scenario := referenceShapedScenario()
+		scenario.ArrivalRate = profile.ArrivalRate
+		scenario.Steps = []config.Step{{Name: "matrix", Method: profile.Method, Path: profile.Path}}
+		if profile.RequestBodyBytes > 0 {
+			const bodyEnv = "DAMOCLINE_TEST_MATRIX_BODY"
+			t.Setenv(bodyEnv, strings.Repeat("x", profile.RequestBodyBytes))
+			scenario.Steps[0].BodyEnv = bodyEnv
+		}
+		got := compareScenarioToReference(scenario, cal, nil)
+		findDimension(t, got, "arrival_rate", coverageMatched)
+		findDimension(t, got, "declared_workload_shape", coverageMatched)
+		findDimension(t, got, "rate_ceiling", coverageMatched)
+	}
+
+	unsupported := referenceShapedScenario()
+	unsupported.ArrivalRate = 7
+	got := compareScenarioToReference(unsupported, cal, nil)
+	findDimension(t, got, "arrival_rate", coverageOutside)
+	findDimension(t, got, "declared_workload_shape", coverageMatched)
+}
+
 func TestCoverageLabelsUnsupportedDimensionsIndependently(t *testing.T) {
 	cal := validCoverageCalibration(t, true)
 	sc := referenceShapedScenario()

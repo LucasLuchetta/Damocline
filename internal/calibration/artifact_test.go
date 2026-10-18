@@ -2,6 +2,7 @@ package calibration
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -72,7 +73,7 @@ func passingWorkloadObservations() []WorkloadObservation {
 	return observations
 }
 
-func TestSchemaThreeRejectsAlteredOrMissingWorkloadEvidence(t *testing.T) {
+func TestSchemaFourRejectsAlteredOrMissingWorkloadEvidence(t *testing.T) {
 	tests := []struct {
 		name   string
 		mutate func(*Record)
@@ -92,10 +93,68 @@ func TestSchemaThreeRejectsAlteredOrMissingWorkloadEvidence(t *testing.T) {
 			artifact := passingArtifact(t)
 			test.mutate(&artifact.Preflight)
 			if err := ValidateRecord(artifact.Preflight); err == nil {
-				t.Fatal("altered schema-v3 workload evidence was accepted")
+				t.Fatal("altered schema-v4 workload evidence was accepted")
 			}
 		})
 	}
+}
+
+func TestReferenceMatrixCoversOnlyExactShapeAndRatePairs(t *testing.T) {
+	profiles := ReferenceWorkloadProfiles()
+	if len(profiles) != 15 {
+		t.Fatalf("got %d workload profiles, want 15 exact shape/rate pairs", len(profiles))
+	}
+	seen := make(map[string]bool, len(profiles))
+	for _, profile := range profiles {
+		key := fmt.Sprintf("%s|%d", profile.Path, profile.ArrivalRate)
+		if seen[key] {
+			t.Fatalf("duplicate exact workload pair %s", key)
+		}
+		seen[key] = true
+		if profile.ArrivalRate != 2 && profile.ArrivalRate != 5 && profile.ArrivalRate != 10 {
+			t.Fatalf("unexpected interpolated or untested rate: %+v", profile)
+		}
+	}
+	for _, shape := range referenceWorkloadShapes() {
+		for _, rate := range WorkloadMatrixArrivalRates() {
+			if !seen[fmt.Sprintf("%s|%d", shape.Path, rate)] {
+				t.Fatalf("missing exact pair path=%s rate=%d", shape.Path, rate)
+			}
+		}
+	}
+}
+
+func TestSchemaThreeArtifactsRemainReadableWithOriginalMatrix(t *testing.T) {
+	a := passingArtifact(t)
+	a.Preflight.SchemaVersion = 3
+	a.Preflight.Fixture.WorkloadProfiles = referenceWorkloadProfilesV3()
+	a.Preflight.WorkloadObservations = passingObservationsForProfiles(referenceWorkloadProfilesV3())
+	fingerprint, err := Fingerprint(a.Preflight.Fixture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.Preflight.ScenarioFingerprintSHA256 = fingerprint
+	if err := ValidateRecord(a.Preflight); err != nil {
+		t.Fatalf("schema-v3 artifact no longer validates: %v", err)
+	}
+}
+
+func passingObservationsForProfiles(profiles []WorkloadProfile) []WorkloadObservation {
+	observations := make([]WorkloadObservation, 0, len(profiles))
+	for _, profile := range profiles {
+		planned := int64(profile.ArrivalRate * 5)
+		requestBytes := int64(profile.RequestBodyBytes) * planned
+		responseBytes := int64(profile.ResponseBodyBytes) * planned
+		observations = append(observations, WorkloadObservation{
+			ProfileID: profile.ID, Scheduled: planned, Admitted: planned, Started: planned,
+			Completed: planned, Outcome: "PASS", ClientCompleteBodyObservations: planned,
+			ClientResponseMinBytes: int64(profile.ResponseBodyBytes),
+			ClientResponseMaxBytes: int64(profile.ResponseBodyBytes), ClientResponseTotalBytes: responseBytes,
+			ServerReceived: planned, ServerCompleted: planned,
+			ServerRequestBodyBytes: requestBytes, ServerResponseBodyBytes: responseBytes,
+		})
+	}
+	return observations
 }
 
 func TestLoadRecordRequiresValidArtifactAndReconciledStageLedgers(t *testing.T) {

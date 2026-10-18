@@ -5,6 +5,7 @@ This project follows a human-maintained changelog. No release exists yet.
 ## [Unreleased]
 
 ### Added
+- Expand calibration schema v4 into 15 native-engine request-shape/rate pairs (five exact shapes at 2, 5, and 10 arrivals/s), reconciled per run with independent loopback server counters; preserve schema-v3 artifacts and their narrower coverage.
 - Require loopback calibration stages to contain a recognized `VALID_WITHIN_ENVELOPE` or `LIMITED` state; missing, unknown, or `INVALID` measurement quality fails calibration.
 - Limit recomputed measurement quality when generator-health snapshot collection occupies at least 5% of the observation window; document this as a wall-time guardrail rather than CPU-overhead calibration.
 - Add native-engine loopback tests for resolver-injected DNS NXDOMAIN, connection refusal, and TCP reset; keep DNS queries and accepted TCP sockets distinct from HTTP request receipt.
