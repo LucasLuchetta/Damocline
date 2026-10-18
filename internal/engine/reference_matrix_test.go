@@ -2,11 +2,9 @@ package engine
 
 import (
 	"context"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -159,13 +157,8 @@ func TestConnectionPolicyMatchesIndependentServerConnectionEvents(t *testing.T) 
 			if err != nil {
 				t.Fatal(err)
 			}
-			var accepted atomic.Int64
 			server := httptest.NewUnstartedServer(fixture)
-			server.Config.ConnState = func(_ net.Conn, state http.ConnState) {
-				if state == http.StateNew {
-					accepted.Add(1)
-				}
-			}
+			server.Config.ConnContext = fixture.ConnContext
 			server.Start()
 			defer server.Close()
 			scenario := config.Scenario{
@@ -184,8 +177,8 @@ func TestConnectionPolicyMatchesIndependentServerConnectionEvents(t *testing.T) 
 			if result.Metrics.Success != 10 || result.ArrivalsDropped != 0 || serverLedger.Received != 10 || serverLedger.Completed != 10 {
 				t.Fatalf("request ledgers did not reconcile: result=%+v server=%+v", result, serverLedger)
 			}
-			connections := accepted.Load()
-			if policy == "reuse" && connections >= 10 {
+			connections := serverLedger.ProfileTCPConnections["/work"]
+			if policy == "reuse" && (connections < 1 || connections >= 10) {
 				t.Fatalf("reusable policy opened %d connections for 10 requests", connections)
 			}
 			if policy == "new_per_request" && connections != 10 {

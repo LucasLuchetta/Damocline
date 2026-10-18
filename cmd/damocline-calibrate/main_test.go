@@ -262,12 +262,14 @@ func passingWorkloadProfileFixture(profile calibration.WorkloadProfile) (report.
 			ConnectionPolicy: profile.ConnectionPolicy,
 		},
 	}
+	tcpConnections, _ := calibration.ExpectedReferenceTCPConnections(profile, planned)
 	observation := calibration.WorkloadObservation{
 		Scheduled: planned, Admitted: planned, Started: planned, Completed: planned,
 		Outcome: "PASS", ClientCompleteBodyObservations: planned,
 		ClientResponseMinBytes: responseBytes, ClientResponseMaxBytes: responseBytes,
 		ClientResponseTotalBytes: planned * responseBytes,
 		ServerReceived:           planned, ServerCompleted: planned,
+		ServerTCPConnections:    tcpConnections,
 		ServerRequestBodyBytes:  planned * int64(profile.RequestBodyBytes),
 		ServerResponseBodyBytes: planned * responseBytes,
 	}

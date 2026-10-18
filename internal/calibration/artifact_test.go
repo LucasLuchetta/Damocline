@@ -62,19 +62,21 @@ func passingWorkloadObservations() []WorkloadObservation {
 		planned := int64(profile.ArrivalRate) * int64(duration/time.Second)
 		requestBytes := int64(profile.RequestBodyBytes) * planned
 		responseBytes := int64(profile.ResponseBodyBytes) * planned
+		tcpConnections, _ := ExpectedReferenceTCPConnections(profile, planned)
 		observations = append(observations, WorkloadObservation{
 			ProfileID: profile.ID, Scheduled: planned, Admitted: planned, Started: planned,
 			Completed: planned, Outcome: "PASS", ClientCompleteBodyObservations: planned,
 			ClientResponseMinBytes: int64(profile.ResponseBodyBytes),
 			ClientResponseMaxBytes: int64(profile.ResponseBodyBytes), ClientResponseTotalBytes: responseBytes,
 			ServerReceived: planned, ServerCompleted: planned,
+			ServerTCPConnections:   tcpConnections,
 			ServerRequestBodyBytes: requestBytes, ServerResponseBodyBytes: responseBytes,
 		})
 	}
 	return observations
 }
 
-func TestSchemaFiveRejectsAlteredOrMissingWorkloadEvidence(t *testing.T) {
+func TestSchemaSixRejectsAlteredOrMissingWorkloadEvidence(t *testing.T) {
 	tests := []struct {
 		name   string
 		mutate func(*Record)
@@ -94,7 +96,7 @@ func TestSchemaFiveRejectsAlteredOrMissingWorkloadEvidence(t *testing.T) {
 			artifact := passingArtifact(t)
 			test.mutate(&artifact.Preflight)
 			if err := ValidateRecord(artifact.Preflight); err == nil {
-				t.Fatal("altered schema-v5 workload evidence was accepted")
+				t.Fatal("altered schema-v6 workload evidence was accepted")
 			}
 		})
 	}
@@ -128,6 +130,29 @@ func TestReferenceMatrixCoversOnlyExactShapeAndRatePairs(t *testing.T) {
 	}
 }
 
+func TestExpectedReferenceTCPConnectionsRejectsUnsupportedBounds(t *testing.T) {
+	tests := []struct {
+		name     string
+		profile  WorkloadProfile
+		planned  int64
+		want     int64
+		wantOkay bool
+	}{
+		{name: "reuse exact fixture", profile: WorkloadProfile{ConnectionPolicy: "reuse"}, planned: 10, want: 1, wantOkay: true},
+		{name: "new connection for every arrival", profile: WorkloadProfile{ConnectionPolicy: "new_per_request"}, planned: 10, want: 10, wantOkay: true},
+		{name: "unknown policy", profile: WorkloadProfile{ConnectionPolicy: "unknown"}, planned: 10},
+		{name: "no planned arrivals", profile: WorkloadProfile{ConnectionPolicy: "reuse"}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, okay := ExpectedReferenceTCPConnections(test.profile, test.planned)
+			if got != test.want || okay != test.wantOkay {
+				t.Fatalf("ExpectedReferenceTCPConnections() = (%d, %t), want (%d, %t)", got, okay, test.want, test.wantOkay)
+			}
+		})
+	}
+}
+
 func TestSchemaFourArtifactsRemainReadableWithOriginalMatrix(t *testing.T) {
 	a := passingArtifact(t)
 	a.Preflight.SchemaVersion = 4
@@ -143,7 +168,53 @@ func TestSchemaFourArtifactsRemainReadableWithOriginalMatrix(t *testing.T) {
 	}
 }
 
-func TestSchemaFiveRejectsAlteredConnectionPolicyTuple(t *testing.T) {
+func TestSchemaFiveArtifactsRemainReadableWithoutTCPConnectionEvidence(t *testing.T) {
+	a := passingArtifact(t)
+	a.Preflight.SchemaVersion = 5
+	a.Preflight.Fixture.WorkloadProfiles = referenceWorkloadProfilesV5()
+	a.Preflight.WorkloadObservations = passingObservationsForProfiles(referenceWorkloadProfilesV5())
+	for index := range a.Preflight.WorkloadObservations {
+		a.Preflight.WorkloadObservations[index].ServerTCPConnections = 0
+	}
+	fingerprint, err := Fingerprint(a.Preflight.Fixture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.Preflight.ScenarioFingerprintSHA256 = fingerprint
+	if err := ValidateRecord(a.Preflight); err != nil {
+		t.Fatalf("schema-v5 artifact without new connection evidence no longer validates: %v", err)
+	}
+	data, err := json.Marshal(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ValidateArtifactBytes(data, true); err != nil {
+		t.Fatalf("schema-v5 calibration JSON without TCP connection fields no longer loads: %v", err)
+	}
+}
+
+func TestSchemaSixRequiresExactTCPConnectionEvidence(t *testing.T) {
+	tests := []struct {
+		name   string
+		index  int
+		mutate func(*WorkloadObservation)
+	}{
+		{name: "missing reusable connection count", index: 0, mutate: func(observation *WorkloadObservation) { observation.ServerTCPConnections = 0 }},
+		{name: "too many reusable connections", index: 0, mutate: func(observation *WorkloadObservation) { observation.ServerTCPConnections = 2 }},
+		{name: "missing new-per-request connection", index: 15, mutate: func(observation *WorkloadObservation) { observation.ServerTCPConnections-- }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			a := passingArtifact(t)
+			test.mutate(&a.Preflight.WorkloadObservations[test.index])
+			if err := ValidateRecord(a.Preflight); err == nil {
+				t.Fatal("schema-v6 calibration accepted incorrect per-profile TCP connection evidence")
+			}
+		})
+	}
+}
+
+func TestSchemaSixRejectsAlteredConnectionPolicyTuple(t *testing.T) {
 	a := passingArtifact(t)
 	a.Preflight.Fixture.WorkloadProfiles[15].Duration = "5s"
 	fingerprint, err := Fingerprint(a.Preflight.Fixture)
@@ -152,7 +223,7 @@ func TestSchemaFiveRejectsAlteredConnectionPolicyTuple(t *testing.T) {
 	}
 	a.Preflight.ScenarioFingerprintSHA256 = fingerprint
 	if err := ValidateRecord(a.Preflight); err == nil {
-		t.Fatal("schema-v5 matrix accepted an altered new-per-request duration")
+		t.Fatal("schema-v6 matrix accepted an altered new-per-request duration")
 	}
 }
 
@@ -178,12 +249,14 @@ func passingObservationsForProfiles(profiles []WorkloadProfile) []WorkloadObserv
 		planned := int64(profile.ArrivalRate) * int64(duration/time.Second)
 		requestBytes := int64(profile.RequestBodyBytes) * planned
 		responseBytes := int64(profile.ResponseBodyBytes) * planned
+		tcpConnections, _ := ExpectedReferenceTCPConnections(profile, planned)
 		observations = append(observations, WorkloadObservation{
 			ProfileID: profile.ID, Scheduled: planned, Admitted: planned, Started: planned,
 			Completed: planned, Outcome: "PASS", ClientCompleteBodyObservations: planned,
 			ClientResponseMinBytes: int64(profile.ResponseBodyBytes),
 			ClientResponseMaxBytes: int64(profile.ResponseBodyBytes), ClientResponseTotalBytes: responseBytes,
 			ServerReceived: planned, ServerCompleted: planned,
+			ServerTCPConnections:   tcpConnections,
 			ServerRequestBodyBytes: requestBytes, ServerResponseBodyBytes: responseBytes,
 		})
 	}

@@ -18,12 +18,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/LucasLuchetta/Damocline/internal/calibration"
 	"github.com/LucasLuchetta/Damocline/internal/protocolcheck"
 	"github.com/LucasLuchetta/Damocline/internal/report"
 )
 
 const (
-	SchemaVersion       = 1
+	SchemaVersion       = 2
 	calibratedProfiles  = 30
 	MinRepeats          = 2
 	MaxRepeats          = 3
@@ -516,6 +517,7 @@ type workloadObservation struct {
 	ClientResponseTotalBytes       int64  `json:"client_response_total_bytes"`
 	ServerReceived                 int64  `json:"server_received"`
 	ServerCompleted                int64  `json:"server_completed"`
+	ServerTCPConnections           int64  `json:"server_tcp_connections"`
 	ServerRequestBodyBytes         int64  `json:"server_request_body_bytes"`
 	ServerResponseBodyBytes        int64  `json:"server_response_body_bytes"`
 }
@@ -539,13 +541,13 @@ func assessCalibrationArtifact(path string, attempt *Attempt, extended bool, qua
 	}
 	recomputedQuality := qualityAssessor(document.SoakRun)
 	gates := []Gate{
-		gate("calibration_schema", document.SchemaVersion == 1 && document.Preflight.SchemaVersion == 5, "calibration report v1 with preflight schema v5", fmt.Sprintf("report=%d preflight=%d", document.SchemaVersion, document.Preflight.SchemaVersion)),
+		gate("calibration_schema", document.SchemaVersion == 1 && document.Preflight.SchemaVersion == 6, "calibration report v1 with preflight schema v6", fmt.Sprintf("report=%d preflight=%d", document.SchemaVersion, document.Preflight.SchemaVersion)),
 		gate("requested_run_matrix", document.Preflight.Fixture.Extended == extended, fmt.Sprintf("extended=%t", extended), fmt.Sprintf("extended=%t", document.Preflight.Fixture.Extended)),
 		gate("calibration_status", document.Status == "REFERENCE_SMOKE_PASSED", "REFERENCE_SMOKE_PASSED", document.Status),
 		gate("calibration_checklist", len(document.Checks) == 0, "zero failed checks", fmt.Sprintf("%d failed checks", len(document.Checks))),
 		gate("exact_profile_matrix", validProfileMatrix(document.Preflight.Fixture.WorkloadProfiles), "30 unique HTTP loopback shape/connection/rate pairs at exact rates 2, 5, and 10 arrivals/s", fmt.Sprintf("%d profiles", len(document.Preflight.Fixture.WorkloadProfiles))),
 		gate("native_engine_profile_reports", workloadRunsMatch(document.Preflight.Fixture.WorkloadProfiles, document.WorkloadRuns), "every profile report reconciles configured arrival controls, client outcomes, response size, and HTTP status counters", fmt.Sprintf("%d reports for %d profiles", len(document.WorkloadRuns), len(document.Preflight.Fixture.WorkloadProfiles))),
-		gate("independent_profile_ledgers", profileLedgersMatch(document.Preflight.Fixture.WorkloadProfiles, document.WorkloadObservations), "every planned client arrival, complete body, and independent server request/byte counter reconciles", fmt.Sprintf("%d observations for %d profiles", len(document.WorkloadObservations), len(document.Preflight.Fixture.WorkloadProfiles))),
+		gate("independent_profile_ledgers", profileLedgersMatch(document.Preflight.Fixture.WorkloadProfiles, document.WorkloadObservations), "every planned arrival, complete body, independent request/byte ledger, and accepted TCP connection count reconciles per profile", fmt.Sprintf("%d observations for %d profiles", len(document.WorkloadObservations), len(document.Preflight.Fixture.WorkloadProfiles))),
 		gate("healthy_stage_delivery", healthyStagesMatch(document.Preflight.Fixture.HealthyRates, document.Runs, extended), "all required exact-rate stages deliver every planned request with zero drops", fmt.Sprintf("%d rates, %d stages", len(document.Preflight.Fixture.HealthyRates), len(document.Runs))),
 		gate("aggregate_healthy_server_ledger", aggregateServerLedgerMatches(document), "aggregate reference receipt, completion, success, and body-byte counters reconcile with healthy stages, profile matrix, and soak", serverDescription(document.Server)),
 		gate("persisted_quality_recomputes", document.SoakRun.Quality != nil && reflect.DeepEqual(recomputedQuality, document.SoakRun.Quality), "persisted soak quality exactly matches quality recalculated from the stored report", "persisted="+qualityState(document.SoakRun.Quality)+" recomputed="+qualityState(recomputedQuality)),
@@ -627,7 +629,8 @@ func profileLedgersMatch(profiles []calibratedProfile, observations []workloadOb
 		if planned < 0 {
 			return false
 		}
-		if !ok || observation.Scheduled != planned || observation.Admitted != planned || observation.Started != planned || observation.Completed != planned || observation.Dropped != 0 || observation.Outcome != "PASS" ||
+		expectedConnections, supported := calibration.ExpectedReferenceTCPConnections(calibration.WorkloadProfile{ConnectionPolicy: profile.ConnectionPolicy}, planned)
+		if !ok || !supported || observation.ServerTCPConnections != expectedConnections || observation.Scheduled != planned || observation.Admitted != planned || observation.Started != planned || observation.Completed != planned || observation.Dropped != 0 || observation.Outcome != "PASS" ||
 			observation.ClientCompleteBodyObservations != planned || observation.ClientResponseMinBytes != int64(profile.ResponseBodyBytes) || observation.ClientResponseMaxBytes != int64(profile.ResponseBodyBytes) || observation.ClientResponseTotalBytes != planned*int64(profile.ResponseBodyBytes) ||
 			observation.ServerReceived != planned || observation.ServerCompleted != planned || observation.ServerRequestBodyBytes != planned*int64(profile.RequestBodyBytes) || observation.ServerResponseBodyBytes != planned*int64(profile.ResponseBodyBytes) {
 			return false

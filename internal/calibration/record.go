@@ -16,7 +16,7 @@ import (
 
 // The preflight record is embedded in the existing calibration JSON. It
 // identifies the tested loopback fixture, never a customer target or session.
-const SchemaVersion = 5
+const SchemaVersion = 6
 const minimumSupportedSchemaVersion = 1
 
 // Healthy response latency bounds are the fixed coarse guardrail used by the
@@ -91,6 +91,7 @@ type WorkloadObservation struct {
 	ClientResponseTotalBytes       int64  `json:"client_response_total_bytes"`
 	ServerReceived                 int64  `json:"server_received"`
 	ServerCompleted                int64  `json:"server_completed"`
+	ServerTCPConnections           int64  `json:"server_tcp_connections,omitempty"`
 	ServerRequestBodyBytes         int64  `json:"server_request_body_bytes"`
 	ServerResponseBodyBytes        int64  `json:"server_response_body_bytes"`
 }
@@ -126,9 +127,32 @@ const WorkloadMatrixArrivalRate = 10
 func WorkloadMatrixArrivalRates() []int { return []int{2, 5, 10} }
 
 func ReferenceWorkloadProfiles() []WorkloadProfile {
+	return referenceWorkloadProfilesV5()
+}
+
+func referenceWorkloadProfilesV5() []WorkloadProfile {
 	profiles := workloadProfilesForPolicy(referenceWorkloadShapes(), "reuse", "5s", "")
 	profiles = append(profiles, workloadProfilesForPolicy(referenceWorkloadShapes(), "new_per_request", "2s", "-new-connection")...)
 	return profiles
+}
+
+// ExpectedReferenceTCPConnections returns the exact per-profile TCP connection
+// count defined by the controlled reference fixture. Reusable profiles execute
+// serially at the measured rates against its 20 ms response delay, so one
+// connection is expected; new-per-request profiles require one connection per
+// planned request. This expectation does not generalize to other workloads.
+func ExpectedReferenceTCPConnections(profile WorkloadProfile, planned int64) (int64, bool) {
+	if planned < 1 {
+		return 0, false
+	}
+	switch profile.ConnectionPolicy {
+	case "reuse":
+		return 1, true
+	case "new_per_request":
+		return planned, true
+	default:
+		return 0, false
+	}
 }
 
 // referenceWorkloadProfilesV3 preserves the exact schema-v3 matrix for archived
@@ -399,6 +423,8 @@ func validateWorkloadMatrix(rec Record) error {
 		expectedProfiles = referenceWorkloadProfilesV3()
 	} else if rec.SchemaVersion == 4 {
 		expectedProfiles = referenceWorkloadProfilesV4()
+	} else if rec.SchemaVersion == 5 {
+		expectedProfiles = referenceWorkloadProfilesV5()
 	}
 	profilesMatch := len(rec.Fixture.WorkloadProfiles) == len(expectedProfiles)
 	if profilesMatch {
@@ -427,7 +453,8 @@ func validateWorkloadMatrix(rec Record) error {
 			observation.ClientCompleteBodyObservations >= 0 && observation.ClientResponseMinBytes >= 0 &&
 			observation.ClientResponseMaxBytes >= observation.ClientResponseMinBytes &&
 			observation.ClientResponseTotalBytes >= 0 && observation.ServerReceived >= 0 &&
-			observation.ServerCompleted >= 0 && observation.ServerRequestBodyBytes >= 0 &&
+			observation.ServerCompleted >= 0 && observation.ServerTCPConnections >= 0 &&
+			observation.ServerTCPConnections <= observation.ServerReceived && observation.ServerRequestBodyBytes >= 0 &&
 			observation.ServerResponseBodyBytes >= 0
 		if observation.ProfileID != profile.ID || !workloadFingerprintPattern.MatchString(profile.Fingerprint) ||
 			profile.Fingerprint != WorkloadProfileFingerprint(profile) || !countersAreBounded ||
@@ -450,6 +477,12 @@ func validateWorkloadMatrix(rec Record) error {
 				observation.ServerRequestBodyBytes != expectedRequestBytes ||
 				observation.ServerResponseBodyBytes != expectedResponseBytes) {
 			return errors.New("passing calibration has incomplete workload profile evidence")
+		}
+		if rec.SchemaVersion >= 6 && rec.Status == "REFERENCE_SMOKE_PASSED" {
+			expectedConnections, supported := ExpectedReferenceTCPConnections(profile, planned)
+			if !supported || observation.ServerTCPConnections != expectedConnections {
+				return errors.New("passing calibration has inconsistent profile TCP connection counts")
+			}
 		}
 	}
 	return nil

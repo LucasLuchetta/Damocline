@@ -3,11 +3,14 @@
 package reference
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -38,34 +41,40 @@ type WorkloadProfile struct {
 }
 
 type Snapshot struct {
-	Received          int64
-	Completed         int64
-	Success           int64
-	Failures          int64
-	Cancelled         int64
-	Rejected          int64
-	PeakConcurrent    int64
-	PeakQueued        int64
-	RequestBodyBytes  int64
-	ResponseBodyBytes int64
+	Received              int64
+	Completed             int64
+	Success               int64
+	Failures              int64
+	Cancelled             int64
+	Rejected              int64
+	PeakConcurrent        int64
+	PeakQueued            int64
+	RequestBodyBytes      int64
+	ResponseBodyBytes     int64
+	ProfileTCPConnections map[string]int64 `json:"profile_tcp_connections,omitempty"`
 }
 
+type acceptedConnectionContextKey struct{}
+
 type Handler struct {
-	config            Config
-	slots             chan struct{}
-	received          atomic.Int64
-	completed         atomic.Int64
-	success           atomic.Int64
-	failures          atomic.Int64
-	cancelled         atomic.Int64
-	rejected          atomic.Int64
-	active            atomic.Int64
-	queued            atomic.Int64
-	peakActive        atomic.Int64
-	peakQueued        atomic.Int64
-	requestBodyBytes  atomic.Int64
-	responseBodyBytes atomic.Int64
-	profiles          map[string]WorkloadProfile
+	config                 Config
+	slots                  chan struct{}
+	received               atomic.Int64
+	completed              atomic.Int64
+	success                atomic.Int64
+	failures               atomic.Int64
+	cancelled              atomic.Int64
+	rejected               atomic.Int64
+	active                 atomic.Int64
+	queued                 atomic.Int64
+	peakActive             atomic.Int64
+	peakQueued             atomic.Int64
+	requestBodyBytes       atomic.Int64
+	responseBodyBytes      atomic.Int64
+	nextConnectionID       atomic.Int64
+	connectionsMu          sync.Mutex
+	tcpConnectionIDsByPath map[string]map[int64]struct{}
+	profiles               map[string]WorkloadProfile
 }
 
 func New(config Config) (*Handler, error) {
@@ -95,7 +104,17 @@ func New(config Config) (*Handler, error) {
 		profilePaths[profile.Path] = true
 		profiles[profile.Path] = profile
 	}
-	return &Handler{config: config, slots: make(chan struct{}, config.MaxConcurrent), profiles: profiles}, nil
+	return &Handler{
+		config: config, slots: make(chan struct{}, config.MaxConcurrent), profiles: profiles,
+		tcpConnectionIDsByPath: make(map[string]map[int64]struct{}),
+	}, nil
+}
+
+// ConnContext assigns a server-side identity to each accepted TCP connection.
+// Configure it as http.Server.ConnContext to count distinct connections that
+// carry requests for each synthetic fixture path.
+func (h *Handler) ConnContext(ctx context.Context, _ net.Conn) context.Context {
+	return context.WithValue(ctx, acceptedConnectionContextKey{}, h.nextConnectionID.Add(1))
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -106,6 +125,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	h.recordTCPConnection(r)
 	index := h.received.Add(1)
 	if profiled {
 		body, readErr := io.ReadAll(io.LimitReader(r.Body, int64(profile.RequestBodyBytes)+1))
@@ -208,12 +228,34 @@ func ServeReferenceControl(h *Handler) http.HandlerFunc {
 }
 
 func (h *Handler) Snapshot() Snapshot {
+	h.connectionsMu.Lock()
+	profileConnections := make(map[string]int64, len(h.tcpConnectionIDsByPath))
+	for path, connectionIDs := range h.tcpConnectionIDsByPath {
+		profileConnections[path] = int64(len(connectionIDs))
+	}
+	h.connectionsMu.Unlock()
 	return Snapshot{
 		Received: h.received.Load(), Completed: h.completed.Load(), Success: h.success.Load(),
 		Failures: h.failures.Load(), Cancelled: h.cancelled.Load(), Rejected: h.rejected.Load(),
 		PeakConcurrent: h.peakActive.Load(), PeakQueued: h.peakQueued.Load(),
 		RequestBodyBytes: h.requestBodyBytes.Load(), ResponseBodyBytes: h.responseBodyBytes.Load(),
+		ProfileTCPConnections: profileConnections,
 	}
+}
+
+func (h *Handler) recordTCPConnection(r *http.Request) {
+	connectionID, ok := r.Context().Value(acceptedConnectionContextKey{}).(int64)
+	if !ok {
+		return
+	}
+	h.connectionsMu.Lock()
+	defer h.connectionsMu.Unlock()
+	connections := h.tcpConnectionIDsByPath[r.URL.Path]
+	if connections == nil {
+		connections = make(map[int64]struct{})
+		h.tcpConnectionIDsByPath[r.URL.Path] = connections
+	}
+	connections[connectionID] = struct{}{}
 }
 
 func peak(maximum *atomic.Int64, value int64) {

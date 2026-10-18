@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/LucasLuchetta/Damocline/internal/calibration"
 	"github.com/LucasLuchetta/Damocline/internal/report"
 )
 
@@ -57,7 +58,7 @@ func TestRunPersistsPassingRepeatedEvidence(t *testing.T) {
 	if err := json.Unmarshal(data, &persisted); err != nil {
 		t.Fatalf("final manifest is not readable JSON: %v", err)
 	}
-	if persisted.Status != result.Status || len(persisted.Attempts) != 2 {
+	if persisted.SchemaVersion != SchemaVersion || persisted.Status != result.Status || len(persisted.Attempts) != 2 {
 		t.Fatalf("persisted manifest differs from result: %+v", persisted)
 	}
 }
@@ -196,6 +197,11 @@ func TestCalibrationLedgersReconcileIndependently(t *testing.T) {
 	if aggregateServerLedgerMatches(document) {
 		t.Fatal("independent aggregate body-byte discrepancy was accepted")
 	}
+	document = syntheticCalibration()
+	document.WorkloadObservations[0].ServerTCPConnections++
+	if profileLedgersMatch(document.Preflight.Fixture.WorkloadProfiles, document.WorkloadObservations) {
+		t.Fatal("independent profile TCP connection discrepancy was accepted")
+	}
 }
 
 func TestNegativeControlsRequireExactCauseAndStatus(t *testing.T) {
@@ -330,7 +336,7 @@ func syntheticCalibration() calibrationDocument {
 	var document calibrationDocument
 	document.SchemaVersion = 1
 	document.Status = "REFERENCE_SMOKE_PASSED"
-	document.Preflight.SchemaVersion = 5
+	document.Preflight.SchemaVersion = 6
 	document.Preflight.ScenarioFingerprint = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	document.Preflight.Generator.OS = "windows"
 	document.Preflight.Generator.Arch = "amd64"
@@ -367,11 +373,13 @@ func syntheticCalibration() calibrationDocument {
 				profile.ConnectionPolicy = connectionPolicy
 				document.Preflight.Fixture.WorkloadProfiles = append(document.Preflight.Fixture.WorkloadProfiles, profile)
 				planned := int64(rate * seconds)
+				tcpConnections, _ := calibration.ExpectedReferenceTCPConnections(calibration.WorkloadProfile{ConnectionPolicy: profile.ConnectionPolicy}, planned)
 				document.WorkloadObservations = append(document.WorkloadObservations, workloadObservation{
 					ProfileID: profile.ID, Scheduled: planned, Admitted: planned, Started: planned, Completed: planned,
 					Outcome: "PASS", ClientCompleteBodyObservations: planned,
 					ClientResponseMinBytes: int64(profile.ResponseBodyBytes), ClientResponseMaxBytes: int64(profile.ResponseBodyBytes), ClientResponseTotalBytes: planned * int64(profile.ResponseBodyBytes),
-					ServerReceived: planned, ServerCompleted: planned, ServerRequestBodyBytes: planned * int64(profile.RequestBodyBytes), ServerResponseBodyBytes: planned * int64(profile.ResponseBodyBytes),
+					ServerReceived: planned, ServerCompleted: planned, ServerTCPConnections: tcpConnections,
+					ServerRequestBodyBytes: planned * int64(profile.RequestBodyBytes), ServerResponseBodyBytes: planned * int64(profile.ResponseBodyBytes),
 				})
 				metric := report.MetricSet{
 					Total: int(planned), Success: int(planned), P95MS: 21,

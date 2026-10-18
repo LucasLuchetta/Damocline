@@ -5,6 +5,8 @@ This project follows a human-maintained changelog. No release exists yet.
 ## [Unreleased]
 
 ### Added
+- Advance preflight calibration to schema v6 with independent per-profile counts of distinct accepted TCP connections; require one connection for the serialized reusable fixture and one per request for `new_per_request`, while preserving schema-v1 through v5 readers.
+- Advance the repeated acceptance manifest to schema v2 and require every exact request-shape, connection-policy, and arrival-rate profile to reconcile independent TCP connection counts alongside requests and bytes.
 - Expand the calibration reference matrix to schema v5 with exact five-shape coverage for both reusable and new-per-request HTTP connections at 2, 5, and 10 arrivals/s; preserve archived v3 and v4 validation and require exact control-tuple matching in offline coverage.
 - Reconcile aggregate calibrator server counts from each profile's recorded duration so mixed five-second and two-second workload windows cannot be miscounted.
 - Fix the first schema-v5 runtime discrepancy: the aggregate ledger had treated all 30 profiles as five seconds, overstating expected server requests by 255.

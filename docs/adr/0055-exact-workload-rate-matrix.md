@@ -16,4 +16,4 @@ The calibrator deadline increases from 160 to 220 seconds to bound the expanded 
 
 ## Consequences
 
-Preflight schema v4 compared exact low-rate combinations across the five declared request shapes using reusable connections. Schema v5 adds the same combinations for `new_per_request`, with two-second profile windows. This does not validate intermediate rates, response distributions, TLS, other body sizes, multi-step journeys, per-profile TCP connection counts, hardware classes, or remote endpoint identity. The deadline is an execution limit, not a throughput or capacity recommendation.
+Preflight schema v4 compared exact low-rate combinations across the five declared request shapes using reusable connections. Schema v5 adds the same combinations for `new_per_request`, with two-second profile windows. Schema v6 adds independent per-profile TCP connection counts for the exact connection-policy tuple. This does not validate intermediate rates, response distributions, TLS, other body sizes, multi-step journeys, hardware classes, or remote endpoint identity. The deadline is an execution limit, not a throughput or capacity recommendation.
