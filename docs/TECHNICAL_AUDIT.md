@@ -1,6 +1,6 @@
 # Technical audit: integrated capacity milestones
 
-This audit uses `origin/master` at `56654c9` (merged PR #89) as its baseline. It distinguishes implemented behavior from the validation required for a capacity claim. The local baseline passed `go test ./...` and `go vet ./...` on Windows; `go build ./cmd/damocline` exited successfully, although Go reported a denied write to its module stat cache outside this workspace.
+This audit uses `origin/master` at `56654c9` (merged PR #89) as its baseline. It distinguishes implemented behavior from the validation required for a capacity claim. The local baseline passed `go test ./...`, `go vet ./...`, and `go build ./cmd/damocline` on Windows.
 
 ## What the recent merges delivered
 
