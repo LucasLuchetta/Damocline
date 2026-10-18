@@ -2,7 +2,10 @@ package engine
 
 import (
 	"context"
+	"net"
+	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -77,6 +80,52 @@ func TestNativeEngineReferencePayloadMatrix(t *testing.T) {
 			if out.Quality == nil || out.Quality.State != report.QualityLimited {
 				t.Fatalf("%s: passing fixture cannot imply validated arbitrary capacity: %+v",
 					tc.name, out.Quality)
+			}
+		})
+	}
+}
+
+func TestConnectionPolicyMatchesIndependentServerConnectionEvents(t *testing.T) {
+	for _, policy := range []string{"reuse", "new_per_request"} {
+		t.Run(policy, func(t *testing.T) {
+			fixture, err := reference.New(reference.Config{Delay: 5 * time.Millisecond, ResponseBytes: 1, MaxConcurrent: 10, MaxRequests: 100})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var accepted atomic.Int64
+			server := httptest.NewUnstartedServer(fixture)
+			server.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+				if state == http.StateNew {
+					accepted.Add(1)
+				}
+			}
+			server.Start()
+			defer server.Close()
+			scenario := config.Scenario{
+				Name: "bounded local connection-policy fixture", BaseURL: server.URL,
+				Users: 10, Duration: "2s", Mode: "arrival", ArrivalRate: 5,
+				MaxRPS: 20, Timeout: "1s", P95LimitMS: 900,
+				ConnectionPolicy: policy,
+				Steps:            []config.Step{{Name: "work", Method: "GET", Path: "/work"}},
+			}
+			validated, err := config.Parse(scenario, config.Options{Authorized: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			result := Run(context.Background(), validated)
+			serverLedger := fixture.Snapshot()
+			if result.Metrics.Success != 10 || result.ArrivalsDropped != 0 || serverLedger.Received != 10 || serverLedger.Completed != 10 {
+				t.Fatalf("request ledgers did not reconcile: result=%+v server=%+v", result, serverLedger)
+			}
+			connections := accepted.Load()
+			if policy == "reuse" && connections >= 10 {
+				t.Fatalf("reusable policy opened %d connections for 10 requests", connections)
+			}
+			if policy == "new_per_request" && connections != 10 {
+				t.Fatalf("new-per-request policy opened %d connections for 10 requests", connections)
+			}
+			if result.Config.ConnectionPolicy != policy {
+				t.Fatalf("report omitted connection policy: %+v", result.Config)
 			}
 		})
 	}

@@ -119,6 +119,9 @@ func AssessQuality(r Result) *Quality {
 	if r.Config.Users < 1 || r.Config.MaxRPS < 1 || r.Config.P95LimitMS < 0 || math.IsNaN(r.Config.P95LimitMS) || math.IsInf(r.Config.P95LimitMS, 0) || r.Config.MaxErrorRate < 0 || r.Config.MaxErrorRate > 1 || math.IsNaN(r.Config.MaxErrorRate) || math.IsInf(r.Config.MaxErrorRate, 0) {
 		invalidate("Required bounded actor/rate configuration is absent.")
 	}
+	if r.SchemaVersion >= 14 && r.Config.ConnectionPolicy != "reuse" && r.Config.ConnectionPolicy != "new_per_request" {
+		invalidate("Current report connection policy is absent or unsupported.")
+	}
 	if math.IsNaN(r.ErrorsRate) || math.IsInf(r.ErrorsRate, 0) || r.ErrorsRate < 0 || r.ErrorsRate > 1 ||
 		math.IsNaN(r.SchedulerLagP50MS) || math.IsInf(r.SchedulerLagP50MS, 0) ||
 		math.IsNaN(r.SchedulerLagP95MS) || math.IsInf(r.SchedulerLagP95MS, 0) ||
@@ -729,6 +732,21 @@ func AssessDeclaredWorkloadShape(r Result, record calibration.Record) calibratio
 		}
 	}
 	step := r.Steps[0]
+	if r.SchemaVersion < 14 {
+		return calibration.Dimension{
+			Name:   "declared_workload_shape",
+			Status: "UNVERIFIED",
+			Reason: "The saved report schema predates connection-policy recording, so transport reuse cannot be established.",
+		}
+	}
+	connectionPolicy := r.Config.ConnectionPolicy
+	if connectionPolicy != "reuse" {
+		return calibration.Dimension{
+			Name:   "declared_workload_shape",
+			Status: "OUTSIDE_REFERENCE",
+			Reason: "The fixed calibration uses reusable HTTP connections; the saved connection policy differs or is unknown.",
+		}
+	}
 	if step.Profile != "default" || step.Name != "work" || step.Method != "GET" || step.Path != "/work" {
 		return calibration.Dimension{
 			Name:   "declared_workload_shape",
@@ -745,7 +763,8 @@ func AssessDeclaredWorkloadShape(r Result, record calibration.Record) calibratio
 		Name: "Saved reference workload", BaseURL: "http://127.0.0.1", Users: 10,
 		Duration: "5s", Timeout: "1s", MaxRPS: 50, P95LimitMS: 500,
 		Mode: "arrival", ArrivalRate: 2,
-		Steps: []config.Step{{Name: step.Name, Method: step.Method, Path: step.Path}},
+		ConnectionPolicy: connectionPolicy,
+		Steps:            []config.Step{{Name: step.Name, Method: step.Method, Path: step.Path}},
 	}
 	validated, err := config.Parse(scenario, config.Options{Authorized: true})
 	if err != nil || validated.WorkloadFingerprint == "" {
