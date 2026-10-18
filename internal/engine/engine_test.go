@@ -40,7 +40,7 @@ func TestSuccess(t *testing.T) {
 	if result.Metrics.Success < 1 || result.Metrics.Failures != 0 || result.Outcome != "PASS" {
 		t.Fatalf("unexpected report: %+v", result)
 	}
-	if result.SchemaVersion != 14 || result.Config.WorkloadFingerprint == "" || result.ObservationSeconds != v.Duration.Seconds() || result.Generator == nil || result.Generator.ProcessSamples < 2 || result.Generator.SamplingIntervalMS != 250 || result.Generator.MaxSampleGapMS <= 0 || result.Generator.SampleCollectionTotalMS < result.Generator.SampleCollectionMaxMS {
+	if result.SchemaVersion != report.CurrentSchemaVersion || result.Config.WorkloadFingerprint == "" || result.ObservationSeconds != v.Duration.Seconds() || result.Generator == nil || result.Generator.ProcessSamples < 2 || result.Generator.SamplingIntervalMS != 250 || result.Generator.MaxSampleGapMS <= 0 || result.Generator.SampleCollectionTotalMS < result.Generator.SampleCollectionMaxMS {
 		t.Fatalf("report must include workload fingerprint, observation window and generator process observations: %+v", result)
 	}
 }
@@ -829,8 +829,8 @@ func TestResponseBodySizesMatchIndependentLoopbackLedger(t *testing.T) {
 	mu.Lock()
 	ledger := struct{ requests, total, minimum, maximum int64 }{requests, total, minimum, maximum}
 	mu.Unlock()
-	if ledger.requests < 3 || r.SchemaVersion != 14 || len(r.Steps) != 1 {
-		t.Fatalf("expected bounded schema-v14 run with independent loopback requests: ledger=%+v report=%+v", ledger, r)
+	if ledger.requests < 3 || r.SchemaVersion != report.CurrentSchemaVersion || len(r.Steps) != 1 {
+		t.Fatalf("expected bounded current-schema run with independent loopback requests: ledger=%+v report=%+v", ledger, r)
 	}
 	for label, observed := range map[string]report.ResponseBodyDiagnostics{
 		"aggregate": r.Metrics.ResponseBody,

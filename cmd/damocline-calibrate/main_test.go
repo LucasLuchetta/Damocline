@@ -2,6 +2,7 @@ package main
 
 import (
 	"math"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -9,6 +10,29 @@ import (
 	"github.com/LucasLuchetta/Damocline/internal/reference"
 	"github.com/LucasLuchetta/Damocline/internal/report"
 )
+
+func TestPersistedSoakQualityIsRecomputed(t *testing.T) {
+	soak := report.Result{SchemaVersion: report.CurrentSchemaVersion}
+	soak.Quality = report.AssessQuality(soak)
+	path := filepath.Join(t.TempDir(), "calibration.json")
+	if err := report.WriteAnyJSON(path, assessment{SoakRun: soak}); err != nil {
+		t.Fatal(err)
+	}
+	if err := validatePersistedSoakQuality(path, soak.Quality.State); err != nil {
+		t.Fatalf("matching persisted quality did not recompute: %v", err)
+	}
+}
+
+func TestPersistedPositiveQualityWithoutEvidenceIsRejected(t *testing.T) {
+	soak := report.Result{SchemaVersion: report.CurrentSchemaVersion, Quality: &report.Quality{State: report.QualityValid}}
+	path := filepath.Join(t.TempDir(), "calibration.json")
+	if err := report.WriteAnyJSON(path, assessment{SoakRun: soak}); err != nil {
+		t.Fatal(err)
+	}
+	if err := validatePersistedSoakQuality(path, report.QualityValid); err == nil {
+		t.Fatal("stale positive quality claim was accepted without recomputable evidence")
+	}
+}
 
 func TestCheckReconcilesHealthyStagesWithSeparateSoakWork(t *testing.T) {
 	metrics := report.MetricSet{Total: 10, Success: 10, P50MS: 20, P95MS: 25}

@@ -5,6 +5,10 @@ This project follows a human-maintained changelog. No release exists yet.
 ## [Unreleased]
 
 ### Added
+- Add schema-v15 controlled-reference evidence for the calibrator-owned soak, recompute quality from the exact fixture and independent child-server counters, and require a passing calibration command to produce `VALID_WITHIN_ENVELOPE` for that controlled run.
+- Identify calibration runners by exact executable SHA-256 when Go build metadata does not include a source revision.
+- Add a schema-v15 report golden and negative quality tests for unattached or altered controlled evidence.
+
 - Add bounded `connection_policy` choices (`reuse` and `new_per_request`), apply the choice to the HTTP transport, include non-default policy in workload fingerprints and schema-v14 reports, and keep the uncalibrated new-connection policy outside preflight coverage.
 - Exercise an explicit zero-byte response through the native engine reference matrix and reconcile its body-byte ledger with the controlled fixture for every payload-size case.
 - Recompute the calibration workload fingerprint from report-persisted step metadata for the narrow single `GET /work` reference subset, reject altered saved step fields, and keep omitted workload details unverified.

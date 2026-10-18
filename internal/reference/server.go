@@ -3,6 +3,7 @@
 package reference
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"sync/atomic"
@@ -134,6 +135,19 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	h.success.Add(1)
 	h.completed.Add(1)
+}
+
+// ServeReferenceControl exposes counters only when explicitly mounted by the
+// calibrator child process. Control requests are not part of the work ledger.
+func ServeReferenceControl(h *Handler) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/__damocline_snapshot" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(h.Snapshot())
+	}
 }
 
 func (h *Handler) Snapshot() Snapshot {

@@ -144,6 +144,42 @@ func TestQualityKeepsAttachedCalibrationLimitedWhileTargetEvidenceIsUnknown(t *t
 	}
 }
 
+func TestControlledReferenceClaimWithoutCalibrationCannotUpgradeQuality(t *testing.T) {
+	r := validSyntheticQualityRun()
+	r.SchemaVersion = 15
+	r.Target = "http://127.0.0.1"
+	r.Config.ConnectionPolicy = "reuse"
+	r.ReferenceEvidence = &ControlledReferenceEvidence{
+		Kind:               "calibrator_child_process_loopback_soak_v1",
+		FixtureFingerprint: strings.Repeat("a", 64),
+		ServerReceived:     100, ServerCompleted: 100, ServerSuccess: 100,
+	}
+	q := AssessQuality(r)
+	if q.State == QualityValid {
+		t.Fatalf("unattached controlled evidence must not produce a positive state: %+v", q)
+	}
+}
+
+func TestControlledReferenceEvidenceRejectsAlteredFixtureFingerprint(t *testing.T) {
+	now := time.Now().UTC()
+	local := calibration.CurrentRuntime()
+	rec, err := calibration.NewRecord(now.Add(-time.Minute), now,
+		calibration.Generator{OS: local.OS, Arch: local.Arch, LogicalCPUs: local.LogicalCPUs, GOMAXPROCS: local.GOMAXPROCS, GoVersion: local.GoVersion, RunnerVersion: local.RunnerVersion},
+		calibration.Fixture{NetworkMode: "loopback_same_host_separate_process", WorkloadModel: "open_loop_journey_arrivals", Method: "GET", HealthyResponseBytes: 4096, HealthyDelay: "20ms", StageDuration: "5s", SoakDuration: "30s", StageUsers: 10, MaximumRPS: 100, Repeats: 1, HealthyRates: []int{2, 5, 10}},
+		[]calibration.Stage{{ArrivalRate: 2, Scheduled: 10, Started: 10, Completed: 10, Outcome: "PASS"}, {ArrivalRate: 5, Scheduled: 25, Started: 25, Completed: 25, Outcome: "PASS"}, {ArrivalRate: 10, Scheduled: 50, Started: 50, Completed: 50, Outcome: "PASS"}}, "REFERENCE_SMOKE_PASSED")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := validSyntheticQualityRun()
+	r.SchemaVersion = 15
+	r.Target = "http://127.0.0.1"
+	r.Calibration = &CalibrationEvidence{Record: rec}
+	r.ReferenceEvidence = &ControlledReferenceEvidence{Kind: "calibrator_child_process_loopback_soak_v1", FixtureFingerprint: strings.Repeat("a", 64)}
+	if controlledReferenceEvidenceValid(r) {
+		t.Fatal("altered controlled-fixture fingerprint was accepted")
+	}
+}
+
 func TestDeclaredWorkloadShapeDoesNotTrustFingerprintForUnpersistedShape(t *testing.T) {
 	r := Result{SchemaVersion: 13, Config: RunConfig{WorkloadFingerprint: "sha256:" + strings.Repeat("a", 64)}}
 	runtimeInfo := calibration.CurrentRuntime()
