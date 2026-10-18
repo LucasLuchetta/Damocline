@@ -283,6 +283,7 @@ func AssessQuality(r Result) *Quality {
 		unverified := make(map[string]bool)
 		observedSizeDimensions := 0
 		observedLatencyDimensions := 0
+		workloadShapeDimensions := 0
 		for _, dimension := range r.Calibration.Coverage.Dimensions {
 			if dimension.Name == "" || (dimension.Status != "MATCHED" && dimension.Status != "OUTSIDE_REFERENCE" && dimension.Status != "UNVERIFIED") {
 				invalidate("Attached calibration coverage contains an invalid dimension.")
@@ -303,6 +304,12 @@ func AssessQuality(r Result) *Quality {
 					invalidate("Attached observed response-latency status disagrees with run measurements.")
 				}
 			}
+			if dimension.Name == "declared_workload_shape" {
+				workloadShapeDimensions++
+				if r.SchemaVersion >= 12 && dimension != AssessDeclaredWorkloadShape(r, r.Calibration.Record) {
+					invalidate("Attached workload-shape status disagrees with run measurements.")
+				}
+			}
 		}
 		if r.Calibration.Coverage.Status != "INCONCLUSIVE" || !unverified["response_shape"] || !unverified["fixture_identity"] {
 			invalidate("Attached calibration coverage omits required response-shape or fixture-identity uncertainty.")
@@ -312,6 +319,9 @@ func AssessQuality(r Result) *Quality {
 			}
 			if r.SchemaVersion >= 12 && observedLatencyDimensions != 1 {
 				invalidate("Attached calibration coverage omits unique observed response-latency evidence.")
+			}
+			if r.SchemaVersion >= 12 && workloadShapeDimensions != 1 {
+				invalidate("Attached calibration coverage omits unique declared workload-shape evidence.")
 			}
 			if observedSizeDimensions == 1 {
 				for _, dimension := range r.Calibration.Coverage.Dimensions {
@@ -344,6 +354,21 @@ func AssessQuality(r Result) *Quality {
 							"this does not identify the cause.")
 					default:
 						limit("Observed request latency cannot be compared because per-step sample coverage is insufficient.")
+					}
+				}
+			}
+			if workloadShapeDimensions == 1 {
+				for _, dimension := range r.Calibration.Coverage.Dimensions {
+					if dimension.Name != "declared_workload_shape" {
+						continue
+					}
+					switch dimension.Status {
+					case "MATCHED":
+						limit("The declared request/session shape matches the fixed calibration; runtime headroom, endpoint identity, and application behavior are separate evidence gates.")
+					case "OUTSIDE_REFERENCE":
+						limit("The declared request/session shape is outside the fixed calibration workload.")
+					default:
+						limit("Declared workload-shape equivalence is unverified because a comparable fingerprint is unavailable.")
 					}
 				}
 			}
@@ -520,6 +545,17 @@ func AssessObservedResponseLatency(r Result) calibration.Dimension {
 	dimension.Status = "MATCHED"
 	dimension.Reason = "Every named step has at least 100 successful request observations and its observed p50/p95 fall within the local fixture guardrail."
 	return dimension
+}
+
+// AssessDeclaredWorkloadShape recomputes the workload fingerprint comparison
+// from sanitized report metadata and the validated preflight record.
+func AssessDeclaredWorkloadShape(r Result, record calibration.Record) calibration.Dimension {
+	return calibration.AssessWorkloadFingerprint(
+		r.Config.WorkloadFingerprint,
+		r.Config.ProfileMixBasis,
+		r.Config.ProfileMixReference,
+		record,
+	)
 }
 
 func responseStatusCount(d HTTPDiagnostics) int64 {

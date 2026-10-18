@@ -13,7 +13,8 @@ import (
 
 // The preflight record is embedded in the existing calibration JSON. It
 // identifies the tested loopback fixture, never a customer target or session.
-const SchemaVersion = 1
+const SchemaVersion = 2
+const minimumSupportedSchemaVersion = 1
 
 // Healthy response latency bounds are the fixed coarse guardrail used by the
 // local reference fixture. They screen observed request percentiles; they are
@@ -65,6 +66,7 @@ type Record struct {
 	Generator                       Generator `json:"generator"`
 	Fixture                         Fixture   `json:"fixture"`
 	ScenarioFingerprintSHA256       string    `json:"scenario_fingerprint_sha256"`
+	FixtureWorkloadFingerprint      string    `json:"fixture_workload_fingerprint,omitempty"`
 	HealthyStages                   []Stage   `json:"healthy_stages"`
 	HighestPassingTestedArrivalRate int       `json:"highest_passing_tested_arrival_rate"`
 	Interpretation                  string    `json:"interpretation"`
@@ -73,6 +75,7 @@ type Record struct {
 const Interpretation = "Passing fixture stages show only observed delivery in the recorded loopback envelope, not a maximum generator rate or application capacity."
 
 var fingerprintPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
+var workloadFingerprintPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 var versionPattern = regexp.MustCompile(`^[A-Za-z0-9._@+-]{1,120}$`)
 
 // SourceRunnerVersion records either the VCS source revision or the module
@@ -109,17 +112,22 @@ func NewRecord(start, end time.Time, generator Generator, fixture Fixture, stage
 	if err != nil {
 		return Record{}, err
 	}
+	workloadFingerprint, err := ReferenceWorkloadFingerprint()
+	if err != nil {
+		return Record{}, fmt.Errorf("construct reference workload fingerprint: %w", err)
+	}
 	rec := Record{
-		SchemaVersion:             SchemaVersion,
-		Kind:                      "separate_process_loopback_fixture",
-		Status:                    status,
-		StartedAt:                 start.UTC().Format(time.RFC3339Nano),
-		FinishedAt:                end.UTC().Format(time.RFC3339Nano),
-		Generator:                 generator,
-		Fixture:                   fixture,
-		ScenarioFingerprintSHA256: fingerprint,
-		HealthyStages:             append([]Stage(nil), stages...),
-		Interpretation:            Interpretation,
+		SchemaVersion:              SchemaVersion,
+		Kind:                       "separate_process_loopback_fixture",
+		Status:                     status,
+		StartedAt:                  start.UTC().Format(time.RFC3339Nano),
+		FinishedAt:                 end.UTC().Format(time.RFC3339Nano),
+		Generator:                  generator,
+		Fixture:                    fixture,
+		ScenarioFingerprintSHA256:  fingerprint,
+		FixtureWorkloadFingerprint: workloadFingerprint,
+		HealthyStages:              append([]Stage(nil), stages...),
+		Interpretation:             Interpretation,
 	}
 	if status == "REFERENCE_SMOKE_PASSED" {
 		for _, s := range stages {
@@ -140,7 +148,7 @@ func NewRecord(start, end time.Time, generator Generator, fixture Fixture, stage
 // ValidateRecord is also the schema/compatibility check for locally
 // archived metadata. Future incompatible versions must be rejected, not guessed.
 func ValidateRecord(rec Record) error {
-	if rec.SchemaVersion != SchemaVersion {
+	if rec.SchemaVersion < minimumSupportedSchemaVersion || rec.SchemaVersion > SchemaVersion {
 		return fmt.Errorf("unsupported preflight schema version %d", rec.SchemaVersion)
 	}
 	if rec.Kind != "separate_process_loopback_fixture" ||
@@ -199,6 +207,15 @@ func ValidateRecord(rec Record) error {
 	}
 	if rec.Interpretation != Interpretation {
 		return errors.New("preflight evidence limitations are missing")
+	}
+	if rec.SchemaVersion >= 2 {
+		if !workloadFingerprintPattern.MatchString(rec.FixtureWorkloadFingerprint) {
+			return errors.New("preflight fixture workload fingerprint is invalid")
+		}
+		workloadFingerprint, err := ReferenceWorkloadFingerprint()
+		if err != nil || workloadFingerprint != rec.FixtureWorkloadFingerprint {
+			return errors.New("preflight fixture workload fingerprint mismatch")
+		}
 	}
 	if rec.Status == "CHECKS_FAILED" && rec.HighestPassingTestedArrivalRate != 0 {
 		return errors.New("failed preflight cannot report a fully passing tested envelope")

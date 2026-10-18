@@ -41,6 +41,8 @@ func AssessScenario(s config.Scenario, rec Record, local Runtime, now time.Time)
 		add("calibration", "UNVERIFIED", "A validated passing calibration record is unavailable.")
 		return c
 	}
+	addDimension := AssessDeclaredWorkloadShape(s, rec)
+	add(addDimension.Name, addDimension.Status, addDimension.Reason)
 	finished, err := time.Parse(time.RFC3339Nano, rec.FinishedAt)
 	if err != nil || now.Before(finished.Add(-5*time.Minute)) || now.Sub(finished) > 24*time.Hour {
 		add("calibration_age", "OUTSIDE_REFERENCE", "Calibration is future-dated or older than the 24-hour review threshold.")
@@ -139,6 +141,124 @@ func AssessScenario(s config.Scenario, rec Record, local Runtime, now time.Time)
 	add("response_shape", "UNVERIFIED", "Scenario declarations do not prove actual response size or timing distribution.")
 	add("fixture_identity", "UNVERIFIED", "No authenticated signal proves the configured endpoint is the measured fixture server.")
 	return c
+}
+
+// AssessDeclaredWorkloadShape compares the sanitized declared request/session
+// shape with the exact workload exercised by healthy preflight stages. It does
+// not establish endpoint identity or application behavior.
+func AssessDeclaredWorkloadShape(s config.Scenario, rec Record) Dimension {
+	if err := ValidateRecord(rec); err != nil || rec.SchemaVersion < 2 {
+		return Dimension{
+			Name:   "declared_workload_shape",
+			Status: "UNVERIFIED",
+			Reason: "The calibration record has no versioned workload-shape fingerprint.",
+		}
+	}
+	if s.ProfileMixBasis != "" && s.ProfileMixBasis != "assumption" || s.ProfileMixReference != "" {
+		return Dimension{
+			Name:   "declared_workload_shape",
+			Status: "OUTSIDE_REFERENCE",
+			Reason: "The fixed reference has one assumed journey and does not validate an externally sourced or weighted workflow mix.",
+		}
+	}
+	if len(s.Profiles) != 0 || len(s.Steps) != 1 ||
+		s.PerVUCookieEnvPrefix != "" || s.SyntheticDataPrefixEnv != "" {
+		return Dimension{
+			Name:   "declared_workload_shape",
+			Status: "OUTSIDE_REFERENCE",
+			Reason: "The fixed reference covers one unauthenticated GET journey without profiles or synthetic session data.",
+		}
+	}
+	step := s.Steps[0]
+	method := strings.ToUpper(step.Method)
+	if method == "" {
+		method = "GET"
+	}
+	if method != "GET" || len(step.Headers) != 0 || len(step.ExpectedStatus) != 0 ||
+		step.MustContain != "" || step.BodyEnv != "" || len(step.Extract) != 0 {
+		return Dimension{
+			Name:   "declared_workload_shape",
+			Status: "OUTSIDE_REFERENCE",
+			Reason: "The fixed reference covers one unauthenticated GET journey without assertions, request bodies, or dynamic dependencies.",
+		}
+	}
+	// Normalize only campaign controls that do not participate in the workload
+	// fingerprint. The declarative workload fields above remain untouched.
+	// An explicit think time is part of the profile fingerprint and is retained.
+	normalized := s
+	if normalized.Name == "" {
+		normalized.Name = "Synthetic workload comparison"
+	}
+	if normalized.BaseURL == "" {
+		normalized.BaseURL = "http://127.0.0.1"
+	}
+	if normalized.Users == 0 {
+		normalized.Users = 10
+	}
+	if normalized.Duration == "" {
+		normalized.Duration = "5s"
+	}
+	if normalized.Timeout == "" {
+		normalized.Timeout = "1s"
+	}
+	if normalized.MaxRPS == 0 {
+		normalized.MaxRPS = 50
+	}
+	if normalized.Mode == "" {
+		normalized.Mode = "arrival"
+	}
+	if normalized.ArrivalRate == 0 {
+		normalized.ArrivalRate = 2
+	}
+	if normalized.P95LimitMS == 0 {
+		normalized.P95LimitMS = 500
+	}
+	if normalized.MinSamplesPerStep == 0 {
+		normalized.MinSamplesPerStep = 1
+	}
+	validated, err := config.Parse(normalized, config.Options{Authorized: true})
+	if err != nil || validated.WorkloadFingerprint == "" {
+		return Dimension{
+			Name:   "declared_workload_shape",
+			Status: "UNVERIFIED",
+			Reason: "The declared workload shape could not be safely normalized for comparison.",
+		}
+	}
+	return AssessWorkloadFingerprint(
+		validated.WorkloadFingerprint,
+		s.ProfileMixBasis,
+		s.ProfileMixReference,
+		rec,
+	)
+}
+
+// AssessWorkloadFingerprint is the report-side comparison used to recompute
+// declared workload equivalence without retaining scenario content.
+func AssessWorkloadFingerprint(fingerprint, mixBasis, mixReference string, rec Record) Dimension {
+	dimension := Dimension{
+		Name:   "declared_workload_shape",
+		Status: "UNVERIFIED",
+		Reason: "Run or calibration workload-shape fingerprint is unavailable.",
+	}
+	if ValidateRecord(rec) != nil || rec.SchemaVersion < 2 || !workloadFingerprintPattern.MatchString(rec.FixtureWorkloadFingerprint) {
+		return dimension
+	}
+	if !workloadFingerprintPattern.MatchString(fingerprint) {
+		return dimension
+	}
+	if (mixBasis != "" && mixBasis != "assumption") || mixReference != "" {
+		dimension.Status = "OUTSIDE_REFERENCE"
+		dimension.Reason = "The fixed reference has one assumed journey and does not validate an externally sourced or weighted workflow mix."
+		return dimension
+	}
+	if fingerprint != rec.FixtureWorkloadFingerprint {
+		dimension.Status = "OUTSIDE_REFERENCE"
+		dimension.Reason = "The declared request, journey, session, or synthetic-data shape differs from the workload exercised by preflight."
+		return dimension
+	}
+	dimension.Status = "MATCHED"
+	dimension.Reason = "The declared request and session shape matches the fixed preflight workload; endpoint identity and application behavior remain unverified."
+	return dimension
 }
 
 func CurrentRuntime() Runtime {
