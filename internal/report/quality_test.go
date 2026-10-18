@@ -121,6 +121,64 @@ func TestQualityKeepsAttachedCalibrationLimitedWhileTargetEvidenceIsUnknown(t *t
 	}
 }
 
+func TestSchemaThirteenRequiresReconciledNamedWindowLedgers(t *testing.T) {
+	http := HTTPDiagnostics{StatusCodes: map[int]int{200: 1}, Status2xx: 1}
+	body := ResponseBodyDiagnostics{CompleteObservations: 1, MinBytes: 1, MaxBytes: 1, TotalBytes: 1}
+	metrics := MetricSet{Total: 1, Success: 1, P50MS: 10, P95MS: 10, P99MS: 10, HTTP: http, ResponseBody: body}
+	r := validSyntheticQualityRun()
+	r.SchemaVersion = 13
+	r.Config.Mode = "closed"
+	r.Generator = nil
+	r.Metrics = metrics
+	trace := HTTPTrace{RateWaitCount: 1, RequestAttemptCount: 1, CompleteCount: 1, FirstByteCount: 1, BodyCount: 1}
+	r.Steps = []StepResult{{Name: "read", Metrics: metrics, HTTPTrace: trace}}
+	r.Windows = []WindowResult{{StartSeconds: 0, EndSeconds: 1, Metrics: metrics,
+		Steps: []WindowMetric{{Name: "read", Metrics: metrics}}}}
+	if q := AssessQuality(r); q.State == QualityInvalid {
+		t.Fatalf("consistent named window ledgers were rejected: %+v", q)
+	}
+	r.Windows[0].Steps = nil
+	if q := AssessQuality(r); q.State != QualityInvalid {
+		t.Fatalf("missing per-step window ledger was trusted: %+v", q)
+	}
+	r.Windows[0].Steps = []WindowMetric{{Name: "read", Metrics: metrics}}
+	r.Windows[0].Steps[0].Metrics.P95MS = math.NaN()
+	if q := AssessQuality(r); q.State != QualityInvalid {
+		t.Fatalf("non-finite window latency was trusted: %+v", q)
+	}
+}
+
+func TestSchemaThirteenAllowsOnlyFinalWindowToEndAtObservationHorizon(t *testing.T) {
+	r := validSyntheticQualityRun()
+	r.SchemaVersion = 13
+	r.ObservationSeconds = 1.3
+	r.ElapsedSeconds = 1.3
+	r.Config.WindowDuration = "1s"
+	r.Windows = []WindowResult{{StartSeconds: 0, EndSeconds: 1}, {StartSeconds: 1, EndSeconds: 1.3}}
+	if !validObservationWindowBounds(r) {
+		t.Fatal("final observation window should end at the exact observation horizon")
+	}
+	r.Windows[1].EndSeconds = 2
+	if validObservationWindowBounds(r) {
+		t.Fatal("final observation window extending beyond the observation horizon was accepted")
+	}
+}
+
+func TestSchemaThirteenRejectsProfileWindowTotalsAboveRunLedger(t *testing.T) {
+	r := Result{
+		Config:   RunConfig{Profiles: []ProfileConfig{{Name: "browse"}}},
+		Profiles: []ProfileResult{{Name: "browse", Journeys: MetricSet{Total: 2}}},
+		Windows:  []WindowResult{{Profiles: []WindowMetric{{Name: "browse", Metrics: MetricSet{Total: 3}}}}},
+	}
+	if validWindowProfileTotals(r) {
+		t.Fatal("profile journey windows cannot exceed the saved run-level profile ledger")
+	}
+	r.Windows[0].Profiles[0].Metrics.Total = 2
+	if !validWindowProfileTotals(r) {
+		t.Fatal("reconciled profile journey windows were rejected")
+	}
+}
+
 func TestQualityNoLocalCapacityCertificateEvenForPerfectDelivery(t *testing.T) {
 	r := validSyntheticQualityRun()
 	q := AssessQuality(r)

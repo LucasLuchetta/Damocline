@@ -308,9 +308,18 @@ type ProfileResult struct {
 	ThinkTimeObservations int       `json:"think_time_observations,omitempty"`
 }
 type WindowResult struct {
-	StartSeconds float64   `json:"start_seconds"`
-	EndSeconds   float64   `json:"end_seconds"`
-	Metrics      MetricSet `json:"metrics"`
+	StartSeconds float64        `json:"start_seconds"`
+	EndSeconds   float64        `json:"end_seconds"`
+	Metrics      MetricSet      `json:"metrics"`
+	Steps        []WindowMetric `json:"steps,omitempty"`
+	Profiles     []WindowMetric `json:"profiles,omitempty"`
+}
+
+// WindowMetric retains an independent named-step or workflow ledger inside
+// one observation window. Names are already part of the sanitized run config.
+type WindowMetric struct {
+	Name    string    `json:"name"`
+	Metrics MetricSet `json:"metrics"`
 }
 type Result struct {
 	SchemaVersion         int                      `json:"schema_version"`

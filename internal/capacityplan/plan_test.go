@@ -28,6 +28,15 @@ func TestEvaluateRequiresExactSustainedEvidence(t *testing.T) {
 	}
 }
 
+func TestEvaluateRequiresPerStepEvidenceForEveryObservationWindow(t *testing.T) {
+	evidence := campaign.Result{SchemaVersion: 1, Scenario: "synthetic", Outcome: "PASS", BaseUsers: 10, Repeats: 2, Trials: passingTrials(), ObservationVariability: validVariability()}
+	evidence.Trials[0].Phases[0].Run.Windows[0].Steps = nil
+	result, err := evaluateWithDeclaredTestQuality(evidence, capacitygoal.Goal{PeakUsers: 10})
+	if err != nil || result.State != "INSUFFICIENT_EVIDENCE" || !containsFinding(result.Findings, "per-step SLO-window evidence") {
+		t.Fatalf("aggregate windows cannot hide missing per-step evidence: %+v %v", result, err)
+	}
+}
+
 func TestEvaluateRequiresValidDataQualityForEveryRequiredPhase(t *testing.T) {
 	goal := capacitygoal.Goal{PeakUsers: 10}
 	evidence := campaign.Result{SchemaVersion: 1, Scenario: "synthetic", Outcome: "PASS", BaseUsers: 10, Repeats: 2, Trials: passingTrials(), ObservationVariability: validVariability()}
@@ -141,6 +150,20 @@ func TestEvaluateRejectsIncompletePassingCampaign(t *testing.T) {
 	}
 }
 
+func TestWeightedProfilesRequirePerWindowJourneyEvidence(t *testing.T) {
+	evidence := campaign.Result{SchemaVersion: 1, Scenario: "synthetic", Outcome: "PASS", BaseUsers: 10, Repeats: 2, Trials: passingTrials(), ObservationVariability: validVariability()}
+	for trialIndex := range evidence.Trials {
+		for phaseIndex := range evidence.Trials[trialIndex].Phases {
+			run := &evidence.Trials[trialIndex].Phases[phaseIndex].Run
+			run.Config.Profiles = []report.ProfileConfig{{Name: "minority"}}
+		}
+	}
+	result, err := evaluateWithDeclaredTestQuality(evidence, capacitygoal.Goal{PeakUsers: 10})
+	if err != nil || result.State != "INSUFFICIENT_EVIDENCE" || !containsFinding(result.Findings, "per-profile journey-window evidence") {
+		t.Fatalf("missing weighted-profile window evidence must block positive demand: %+v %v", result, err)
+	}
+}
+
 func passingTrials() []campaign.Trial {
 	passed := validStatisticalRun()
 	return []campaign.Trial{
@@ -158,8 +181,10 @@ func validStatisticalRun() report.Result {
 		Outcome: "PASS", ObservationSeconds: 10,
 		Config:  report.RunConfig{P95LimitMS: 100, MaxErrorRate: 0.01, MinSamplesPerStep: 1, WindowDuration: "10s"},
 		Metrics: metrics, Steps: []report.StepResult{{Name: "step", Metrics: metrics}},
-		Windows: []report.WindowResult{{StartSeconds: 0, EndSeconds: 10, Metrics: metrics}},
-		Quality: &report.Quality{State: report.QualityValid},
+		Windows: []report.WindowResult{{StartSeconds: 0, EndSeconds: 10, Metrics: metrics,
+			Steps: []report.WindowMetric{{Name: "step", Metrics: metrics}}}},
+		SchemaVersion: 13,
+		Quality:       &report.Quality{State: report.QualityValid},
 	}
 }
 

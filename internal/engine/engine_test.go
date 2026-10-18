@@ -40,7 +40,7 @@ func TestSuccess(t *testing.T) {
 	if result.Metrics.Success < 1 || result.Metrics.Failures != 0 || result.Outcome != "PASS" {
 		t.Fatalf("unexpected report: %+v", result)
 	}
-	if result.SchemaVersion != 12 || result.Config.WorkloadFingerprint == "" || result.ObservationSeconds != v.Duration.Seconds() || result.Generator == nil || result.Generator.ProcessSamples < 2 || result.Generator.SamplingIntervalMS != 250 || result.Generator.MaxSampleGapMS <= 0 || result.Generator.SampleCollectionTotalMS < result.Generator.SampleCollectionMaxMS {
+	if result.SchemaVersion != 13 || result.Config.WorkloadFingerprint == "" || result.ObservationSeconds != v.Duration.Seconds() || result.Generator == nil || result.Generator.ProcessSamples < 2 || result.Generator.SamplingIntervalMS != 250 || result.Generator.MaxSampleGapMS <= 0 || result.Generator.SampleCollectionTotalMS < result.Generator.SampleCollectionMaxMS {
 		t.Fatalf("report must include workload fingerprint, observation window and generator process observations: %+v", result)
 	}
 }
@@ -409,8 +409,11 @@ func TestObservationWindowsExposeLateSLOBreach(t *testing.T) {
 	v.Window = 100 * time.Millisecond
 	v.Scenario.P95LimitMS = 20
 	r := Run(context.Background(), v)
-	if len(r.Windows) < 2 || r.Outcome != "FAIL" {
+	if len(r.Windows) < 2 || r.Outcome != "FAIL" || len(r.Windows[0].Steps) != 1 || len(r.Windows[1].Steps) != 1 {
 		t.Fatalf("late window degradation was not visible: %+v", r)
+	}
+	if r.Windows[0].Steps[0].Name != "page" || r.Windows[1].Steps[0].Metrics.Total == 0 {
+		t.Fatalf("per-step window evidence was not retained: %+v", r.Windows)
 	}
 	found := false
 	for _, warning := range r.Warnings {
@@ -420,6 +423,51 @@ func TestObservationWindowsExposeLateSLOBreach(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("window breach warning missing: %+v", r.Warnings)
+	}
+}
+
+func TestSlowMinorityProfileCannotHideInsideWindowAggregate(t *testing.T) {
+	started := time.Now()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/slow" {
+			time.Sleep(150 * time.Millisecond)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	s := config.Scenario{
+		Name: "weighted local window fixture", BaseURL: srv.URL, Users: 10,
+		Duration: "3s", Mode: "arrival", ArrivalRate: 100, MaxRPS: 100,
+		P95LimitMS: 75, MaxErrorRate: 0, MinSamplesPerStep: 1, WindowDuration: "1s",
+		Profiles: []config.Profile{
+			{Name: "rare_slow", Weight: 1, Steps: []config.Step{{Name: "rare_step", Path: "/slow"}}},
+			{Name: "common_fast", Weight: 99, Steps: []config.Step{{Name: "common_step", Path: "/fast"}}},
+		},
+	}
+	v, err := config.Parse(s, config.Options{Authorized: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := Run(context.Background(), v)
+	if r.Metrics.P95MS >= s.P95LimitMS {
+		t.Fatalf("fixture did not make the aggregate look healthy: aggregate p95 %.1f ms", r.Metrics.P95MS)
+	}
+	if r.Outcome == "PASS" {
+		t.Fatalf("slow minority journey must prevent an aggregate-only pass: %+v", r)
+	}
+	foundSlowWindow := false
+	for _, window := range r.Windows {
+		for _, profile := range window.Profiles {
+			if profile.Name == "rare_slow" && profile.Metrics.Total > 0 && profile.Metrics.P95MS > s.P95LimitMS {
+				foundSlowWindow = true
+			}
+		}
+	}
+	if !foundSlowWindow {
+		t.Fatalf("per-profile journey window evidence did not retain the slow workflow: %+v", r.Windows)
+	}
+	if time.Since(started) > 5*time.Second {
+		t.Fatal("bounded window fixture exceeded its five-second test ceiling")
 	}
 }
 
@@ -781,8 +829,8 @@ func TestResponseBodySizesMatchIndependentLoopbackLedger(t *testing.T) {
 	mu.Lock()
 	ledger := struct{ requests, total, minimum, maximum int64 }{requests, total, minimum, maximum}
 	mu.Unlock()
-	if ledger.requests < 3 || r.SchemaVersion != 12 || len(r.Steps) != 1 {
-		t.Fatalf("expected bounded schema-v12 run with independent loopback requests: ledger=%+v report=%+v", ledger, r)
+	if ledger.requests < 3 || r.SchemaVersion != 13 || len(r.Steps) != 1 {
+		t.Fatalf("expected bounded schema-v13 run with independent loopback requests: ledger=%+v report=%+v", ledger, r)
 	}
 	for label, observed := range map[string]report.ResponseBodyDiagnostics{
 		"aggregate": r.Metrics.ResponseBody,
