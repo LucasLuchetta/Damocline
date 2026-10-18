@@ -249,16 +249,27 @@ func abortReason(err, parentErr error) string {
 	return "The campaign was interrupted by its caller."
 }
 
-// AssessStability screens complete observation windows for a large first-to-last
-// latency increase or throughput decrease. Passing this heuristic does not
-// establish statistical stationarity or independent observations.
+// AssessStability screens every complete observation window, including
+// named HTTP steps and complete business journeys, for large latency spikes
+// or throughput loss relative to the first window. Its deliberately coarse
+// threshold is not a test of statistical stationarity.
 func AssessStability(run report.Result) string {
 	if len(run.Windows) < 3 || run.ObservationSeconds <= 0 || math.IsNaN(run.ObservationSeconds) || math.IsInf(run.ObservationSeconds, 0) {
 		return "INSUFFICIENT_WINDOWS"
 	}
 	expectedStart := 0.0
+	first := run.Windows[0]
 	for _, window := range run.Windows {
-		if math.IsNaN(window.StartSeconds) || math.IsInf(window.StartSeconds, 0) || math.IsNaN(window.EndSeconds) || math.IsInf(window.EndSeconds, 0) || math.Abs(window.StartSeconds-expectedStart) > 0.001 || window.EndSeconds <= window.StartSeconds || window.EndSeconds > run.ObservationSeconds+0.001 || window.Metrics.Total < 20 || window.Metrics.Success <= 0 || window.Metrics.Success > window.Metrics.Total || window.Metrics.Failures != window.Metrics.Total-window.Metrics.Success || math.IsNaN(window.Metrics.P95MS) || math.IsInf(window.Metrics.P95MS, 0) || window.Metrics.P95MS < 0 {
+		if math.IsNaN(window.StartSeconds) || math.IsInf(window.StartSeconds, 0) || math.IsNaN(window.EndSeconds) || math.IsInf(window.EndSeconds, 0) ||
+			math.Abs(window.StartSeconds-expectedStart) > 0.001 || window.EndSeconds <= window.StartSeconds ||
+			window.EndSeconds > run.ObservationSeconds+0.001 || !stableScreenMetric(window.Metrics) {
+			return "INSUFFICIENT_WINDOWS"
+		}
+		if len(window.Steps) != len(first.Steps) || len(window.Profiles) != len(first.Profiles) {
+			return "INSUFFICIENT_WINDOWS"
+		}
+		if !stableNamedWindows(first.Steps, window.Steps, first.EndSeconds-first.StartSeconds, window.EndSeconds-window.StartSeconds) ||
+			!stableNamedWindows(first.Profiles, window.Profiles, first.EndSeconds-first.StartSeconds, window.EndSeconds-window.StartSeconds) {
 			return "INSUFFICIENT_WINDOWS"
 		}
 		expectedStart = window.EndSeconds
@@ -266,14 +277,64 @@ func AssessStability(run report.Result) string {
 	if math.Abs(expectedStart-run.ObservationSeconds) > 0.001 {
 		return "INSUFFICIENT_WINDOWS"
 	}
-	first := run.Windows[0]
-	last := run.Windows[len(run.Windows)-1]
-	firstRate := float64(first.Metrics.Total) / (first.EndSeconds - first.StartSeconds)
-	lastRate := float64(last.Metrics.Total) / (last.EndSeconds - last.StartSeconds)
-	if last.Metrics.P95MS > first.Metrics.P95MS*1.2 && last.Metrics.P95MS-first.Metrics.P95MS > 5 || lastRate < firstRate*0.8 {
-		return "NON_STATIONARY"
+	firstDuration := first.EndSeconds - first.StartSeconds
+	for _, window := range run.Windows[1:] {
+		duration := window.EndSeconds - window.StartSeconds
+		if largeWindowDrift(first.Metrics, window.Metrics, firstDuration, duration) {
+			return "NON_STATIONARY"
+		}
+		for _, pair := range []struct{ baseline, observed []report.WindowMetric }{
+			{first.Steps, window.Steps},
+			{first.Profiles, window.Profiles},
+		} {
+			byName := make(map[string]report.MetricSet, len(pair.baseline))
+			for _, entry := range pair.baseline {
+				byName[entry.Name] = entry.Metrics
+			}
+			for _, entry := range pair.observed {
+				if largeWindowDrift(byName[entry.Name], entry.Metrics, firstDuration, duration) {
+					return "NON_STATIONARY"
+				}
+			}
+		}
 	}
 	return "NO_LARGE_DRIFT_DETECTED"
+}
+
+func stableScreenMetric(m report.MetricSet) bool {
+	return m.Total >= 20 && m.Success > 0 && m.Success <= m.Total &&
+		m.Failures == m.Total-m.Success && m.Cancelled == 0 &&
+		!math.IsNaN(m.P95MS) && !math.IsInf(m.P95MS, 0) && m.P95MS >= 0
+}
+
+// stableNamedWindows requires name uniqueness and at least 20 completed
+// requests/journeys per named series in every compared window. Low-sample
+// minority workflows must not silently disappear into an aggregate PASS.
+func stableNamedWindows(base, observed []report.WindowMetric, baseDuration, duration float64) bool {
+	if baseDuration <= 0 || duration <= 0 || len(base) != len(observed) {
+		return false
+	}
+	names := make(map[string]bool, len(base))
+	for _, item := range base {
+		if item.Name == "" || names[item.Name] || !stableScreenMetric(item.Metrics) {
+			return false
+		}
+		names[item.Name] = true
+	}
+	seen := make(map[string]bool, len(observed))
+	for _, item := range observed {
+		if !names[item.Name] || seen[item.Name] || !stableScreenMetric(item.Metrics) {
+			return false
+		}
+		seen[item.Name] = true
+	}
+	return true
+}
+
+func largeWindowDrift(first, observed report.MetricSet, firstDuration, duration float64) bool {
+	firstRate := float64(first.Total) / firstDuration
+	currentRate := float64(observed.Total) / duration
+	return (observed.P95MS > first.P95MS*1.2 && observed.P95MS-first.P95MS > 5) || currentRate < firstRate*0.8
 }
 
 // ClassifyEvidence separates observed SLO results from invalid delivery and

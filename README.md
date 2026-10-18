@@ -279,6 +279,8 @@ An `--extended` run adds the exact 15/20/50/100 arrivals-per-second loopback sta
 
 ## Documentation
 
+- [Offline campaign evidence audit (G0/G2/G3)](docs/CAMPAIGN_AUDIT.md) — replay saved campaign stages, measurement quality and per-workflow drift without generating traffic.
+
 - [Architecture](docs/ARCHITECTURE.md)
 - [Roadmap](docs/ROADMAP.md)
 - [Measurement model](docs/METRICS.md)

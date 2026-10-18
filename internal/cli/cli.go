@@ -68,6 +68,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return goalCmd(args[1:], stdout, stderr)
 	case "plan":
 		return planCmd(args[1:], stdout, stderr)
+	case "audit":
+		return auditCmd(args[1:], stdout, stderr)
 	case "run":
 		return run(args[1:], stdout, stderr)
 	case "explore":
@@ -99,6 +101,7 @@ Usage:
 	  damocline dashboard --file run.json [--addr 127.0.0.1:8787]
   damocline goal --file capacity.json --peak-users 20 [--growth-percent 25] [--reserve-percent 20]
 	  damocline plan --campaign campaign.json --peak-users 20 [--growth-percent 25] [--reserve-percent 20]
+  damocline audit --campaign campaign.json [--out audit.json]
   damocline run --config scenario.json --authorized [--calibration reports/reference.json] [--out reports/run.json]
   damocline run --config scenario.json --dry-run
   damocline explore --config scenario.json --min-users 2 --max-users 20 --stage-duration 20s --repeats 2 --authorized
