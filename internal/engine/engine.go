@@ -262,7 +262,7 @@ func runWithTransport(parent context.Context, v config.Validated, transport *htt
 		clients[i] = &http.Client{Transport: tr, Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	}
 	var syntheticSequence atomic.Int64
-	iteration := func(client *http.Client, profile config.PreparedProfile, actor int) {
+	iteration := func(client *http.Client, profile config.PreparedProfile, actor int, journeyOrdinal uint64) {
 		startedIterations.Add(1)
 		journeyStart := time.Now()
 		journeyOk := true
@@ -293,9 +293,17 @@ func runWithTransport(parent context.Context, v config.Validated, transport *htt
 				fullyCompleted = false
 				break
 			}
-			if stepIndex < len(profile.Steps)-1 && profile.ThinkTime > 0 {
+			pause := profile.ThinkTime
+			if profile.ThinkTimeMax > 0 {
+				timingActor := actor
+				if v.Scenario.Mode == "arrival" {
+					timingActor = -1
+				}
+				pause = sampledThinkTime(v.Scenario.WorkloadSeed, timingActor, journeyOrdinal, stepIndex, profile)
+			}
+			if stepIndex < len(profile.Steps)-1 && pause > 0 {
 				thinkStarted := time.Now()
-				continued := sleep(ctx, profile.ThinkTime)
+				continued := sleep(ctx, pause)
 				coll.addThinkTime(profile.Name, time.Since(thinkStarted))
 				if !continued {
 					fullyCompleted = false
@@ -318,7 +326,11 @@ func runWithTransport(parent context.Context, v config.Validated, transport *htt
 	selector := newProfileSelector(v.Profiles)
 	assignedVUs := make([]int, len(v.Profiles))
 	if v.Scenario.Mode == "arrival" {
-		arrivals := make(chan int) // unbuffered: busy workers cannot hide dropped arrivals
+		type selectedArrival struct {
+			profile int
+			ordinal uint64
+		}
+		arrivals := make(chan selectedArrival) // unbuffered: busy workers cannot hide dropped arrivals
 		for i := 0; i < v.Scenario.Users; i++ {
 			wg.Add(1)
 			go func(client *http.Client, actor int) {
@@ -327,19 +339,21 @@ func runWithTransport(parent context.Context, v config.Validated, transport *htt
 					select {
 					case <-ctx.Done():
 						return
-					case profileIndex, ok := <-arrivals:
+					case arrival, ok := <-arrivals:
 						if !ok {
 							return
 						}
-						iteration(client, v.Profiles[profileIndex], actor)
+						iteration(client, v.Profiles[arrival.profile], actor, arrival.ordinal)
 					}
 				}
 			}(clients[i], i)
 		}
+		var arrivalOrdinal uint64
 		arrivalStats = scheduler.Drive(scheduleCtx, v.Duration, v.Scenario.ArrivalRate, func() bool {
 			profileIndex := selector.next()
+			arrivalOrdinal++
 			select {
-			case arrivals <- profileIndex:
+			case arrivals <- selectedArrival{profile: profileIndex, ordinal: arrivalOrdinal}:
 				return true
 			default:
 				return false
@@ -363,9 +377,11 @@ func runWithTransport(parent context.Context, v config.Validated, transport *htt
 					return
 				}
 				profileIndex := closedProfiles[index]
+				var journeyOrdinal uint64
 				for scheduleCtx.Err() == nil {
 					scheduledIterations.Add(1)
-					iteration(clients[index], v.Profiles[profileIndex], index)
+					journeyOrdinal++
+					iteration(clients[index], v.Profiles[profileIndex], index, journeyOrdinal)
 				}
 			}(i)
 		}
@@ -408,7 +424,12 @@ func runWithTransport(parent context.Context, v config.Validated, transport *htt
 		for i, profile := range v.Profiles {
 			think := coll.profileThink[profile.Name]
 			profileResults = append(profileResults, report.ProfileResult{Name: profile.Name, Weight: profile.Weight, AssignedVUs: assignedVUs[i], Journeys: coll.profiles[profile.Name].Snapshot(), ObservedThinkTimeMS: ms(think.duration), ThinkTimeObservations: think.samples})
-			profileConfig = append(profileConfig, report.ProfileConfig{Name: profile.Name, Weight: profile.Weight, ThinkTime: profile.ThinkTime.String()})
+			entry := report.ProfileConfig{Name: profile.Name, Weight: profile.Weight, ThinkTime: profile.ThinkTime.String()}
+			if profile.ThinkTimeMax > 0 {
+				entry.ThinkTime = ""
+				entry.ThinkTimeRange = &report.ThinkTimeRange{Min: profile.ThinkTimeMin.String(), Max: profile.ThinkTimeMax.String()}
+			}
+			profileConfig = append(profileConfig, entry)
 		}
 	}
 	coll.mu.Unlock()
@@ -426,9 +447,12 @@ func runWithTransport(parent context.Context, v config.Validated, transport *htt
 		littleLawEstimate = float64(agg.Total) / v.Duration.Seconds() * agg.MeanMS / 1000
 	}
 	result := report.Result{SchemaVersion: report.CurrentSchemaVersion, Name: v.Scenario.Name, Target: v.Base.Scheme + "://" + v.Base.Host, StartedAt: started.UTC().Format(time.RFC3339), ElapsedSeconds: round(elapsed.Seconds()), ObservationSeconds: round(v.Duration.Seconds()),
-		Config:  report.RunConfig{WorkloadRevision: v.Scenario.WorkloadRevision, ApplicationRevision: v.Scenario.ApplicationRevision, WorkloadFingerprint: v.WorkloadFingerprint, Environment: v.Scenario.Environment, ProfileMixBasis: v.Scenario.ProfileMixBasis, ProfileMixReference: v.Scenario.ProfileMixReference, Users: v.Scenario.Users, Duration: v.Scenario.Duration, RampUp: v.Scenario.RampUp, ThinkTime: v.Scenario.ThinkTime, RequestTimeout: v.Timeout.String(), ConnectionPolicy: v.Scenario.ConnectionPolicy, MaxRPS: v.Scenario.MaxRPS, P95LimitMS: v.Scenario.P95LimitMS, MaxErrorRate: v.Scenario.MaxErrorRate, Mode: v.Scenario.Mode, ArrivalRate: v.Scenario.ArrivalRate, SeparateSessions: len(v.Cookies) > 0, MinSamplesPerStep: v.Scenario.MinSamplesPerStep, Profiles: profileConfig, WindowDuration: v.Window.String()},
+		Config:  report.RunConfig{WorkloadRevision: v.Scenario.WorkloadRevision, ApplicationRevision: v.Scenario.ApplicationRevision, WorkloadFingerprint: v.WorkloadFingerprint, Environment: v.Scenario.Environment, ProfileMixBasis: v.Scenario.ProfileMixBasis, ProfileMixReference: v.Scenario.ProfileMixReference, Users: v.Scenario.Users, Duration: v.Scenario.Duration, RampUp: v.Scenario.RampUp, ThinkTime: v.Scenario.ThinkTime, WorkloadSeed: v.Scenario.WorkloadSeed, RequestTimeout: v.Timeout.String(), ConnectionPolicy: v.Scenario.ConnectionPolicy, MaxRPS: v.Scenario.MaxRPS, P95LimitMS: v.Scenario.P95LimitMS, MaxErrorRate: v.Scenario.MaxErrorRate, Mode: v.Scenario.Mode, ArrivalRate: v.Scenario.ArrivalRate, SeparateSessions: len(v.Cookies) > 0, MinSamplesPerStep: v.Scenario.MinSamplesPerStep, Profiles: profileConfig, WindowDuration: v.Window.String()},
 		Metrics: agg, Journeys: journeyMetrics, Steps: steps, Profiles: profileResults, Windows: windows, Outcome: "PASS", ErrorsRate: round(errorsRate), IterationsStarted: startedIterations.Load(), IterationsCompleted: completedIterations.Load(), ArrivalsScheduled: scheduledIterations.Load(), ArrivalsAdmitted: &arrivalsAdmitted, ArrivalsDropped: droppedIterations.Load(), ArrivalsDroppedLate: arrivalStats.DroppedLate, ArrivalsDroppedBusy: arrivalStats.DroppedBusy, ArrivalsCancelledBeforeAdmission: &cancelledBeforeAdmission, SchedulerLagSamples: arrivalStats.LagSamples, SchedulerLagP50MS: float64(arrivalStats.P50Lag.Microseconds()) / 1000, SchedulerLagP95MS: float64(arrivalStats.P95Lag.Microseconds()) / 1000, SchedulerLagMaxMS: float64(arrivalStats.MaxLag.Microseconds()) / 1000, SchedulerLagMethod: calibration.SchedulerDispatchLagMethod, AverageInFlight: round(averageInFlight), LittleLawEstimate: round(littleLawEstimate), ObservedThinkTimeMS: ms(coll.thinkTime), ThinkTimeObservations: coll.thinkSamples,
 		Note: "Measured synthetic HTTP actors under the configured workload; not a universal server capacity or a browser-user count.", Generator: &generatorSnapshot}
+	if v.Scenario.ThinkTimeRange != nil {
+		result.Config.ThinkTimeRange = &report.ThinkTimeRange{Min: v.Scenario.ThinkTimeRange.Min, Max: v.Scenario.ThinkTimeRange.Max}
+	}
 	if agg.Total == 0 || agg.Success == 0 || errorsRate > v.Scenario.MaxErrorRate || agg.P95MS > v.Scenario.P95LimitMS || result.ArrivalsDropped > 0 {
 		result.Outcome = "FAIL"
 	}
@@ -542,6 +566,22 @@ func drainDuration(v config.Validated) time.Duration {
 		}
 	}
 	return min(30*time.Second, maximum)
+}
+
+func sampledThinkTime(seed uint64, actor int, journeyOrdinal uint64, stepIndex int, profile config.PreparedProfile) time.Duration {
+	minimum := uint64(profile.ThinkTimeMin)
+	span := uint64(profile.ThinkTimeMax - profile.ThinkTimeMin)
+	if span == 0 {
+		return profile.ThinkTimeMin
+	}
+	key := seed ^ (uint64(actor+1) * 0x9e3779b97f4a7c15)
+	key ^= journeyOrdinal * 0xbf58476d1ce4e5b9
+	key ^= uint64(stepIndex+1) * 0x94d049bb133111eb
+	key += 0x9e3779b97f4a7c15
+	key = (key ^ (key >> 30)) * 0xbf58476d1ce4e5b9
+	key = (key ^ (key >> 27)) * 0x94d049bb133111eb
+	key ^= key >> 31
+	return time.Duration(minimum + key%(span+1))
 }
 
 func sleep(ctx context.Context, d time.Duration) bool {

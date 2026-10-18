@@ -19,7 +19,7 @@ import (
 // by the engine. Readers must reject future versions until their semantics are
 // reviewed and supported. Version 20 adds DNS and connection failure details
 // to HTTP diagnostics.
-const CurrentSchemaVersion = 20
+const CurrentSchemaVersion = 21
 
 type MetricSet struct {
 	Total                 int                     `json:"total"`
@@ -290,6 +290,8 @@ type RunConfig struct {
 	Duration            string          `json:"duration"`
 	RampUp              string          `json:"ramp_up,omitempty"`
 	ThinkTime           string          `json:"think_time,omitempty"`
+	ThinkTimeRange      *ThinkTimeRange `json:"think_time_range,omitempty"`
+	WorkloadSeed        uint64          `json:"workload_seed,omitempty"`
 	RequestTimeout      string          `json:"request_timeout"`
 	ConnectionPolicy    string          `json:"connection_policy,omitempty"`
 	MaxRPS              int             `json:"max_rps"`
@@ -305,9 +307,15 @@ type RunConfig struct {
 
 // ProfileConfig records the intended workflow mix used for a run.
 type ProfileConfig struct {
-	Name      string `json:"name"`
-	Weight    int    `json:"weight"`
-	ThinkTime string `json:"think_time"`
+	Name           string          `json:"name"`
+	Weight         int             `json:"weight"`
+	ThinkTime      string          `json:"think_time"`
+	ThinkTimeRange *ThinkTimeRange `json:"think_time_range,omitempty"`
+}
+
+type ThinkTimeRange struct {
+	Min string `json:"min"`
+	Max string `json:"max"`
 }
 type StepResult struct {
 	Profile   string    `json:"profile,omitempty"`

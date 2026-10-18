@@ -157,8 +157,14 @@ func run(args []string, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stdout, "Scenario: %s | target: %s://%s | users: %d | duration: %s | max RPS: %d\n", validated.Scenario.Name, validated.Base.Scheme, validated.Base.Host, validated.Scenario.Users, validated.Duration, validated.Scenario.MaxRPS)
 	if len(validated.Scenario.Profiles) > 0 {
 		for _, profile := range validated.Profiles {
+			if profile.ThinkTimeMax > 0 {
+				fmt.Fprintf(stdout, "  Profile %s: weight=%d, uniform think time=%s..%s (seed=%d)\n", profile.Name, profile.Weight, profile.ThinkTimeMin, profile.ThinkTimeMax, validated.Scenario.WorkloadSeed)
+				continue
+			}
 			fmt.Fprintf(stdout, "  Profile %s: weight=%d, think time=%s\n", profile.Name, profile.Weight, profile.ThinkTime)
 		}
+	} else if validated.Profiles[0].ThinkTimeMax > 0 {
+		fmt.Fprintf(stdout, "  Uniform think time=%s..%s (seed=%d)\n", validated.Profiles[0].ThinkTimeMin, validated.Profiles[0].ThinkTimeMax, validated.Scenario.WorkloadSeed)
 	}
 	for _, step := range validated.Steps {
 		path := step.Path

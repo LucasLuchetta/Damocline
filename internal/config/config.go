@@ -16,39 +16,48 @@ import (
 )
 
 type Scenario struct {
-	Name                   string    `json:"name"`
-	WorkloadRevision       string    `json:"workload_revision,omitempty"`
-	ApplicationRevision    string    `json:"application_revision,omitempty"`
-	Environment            string    `json:"environment,omitempty"`
-	ProfileMixBasis        string    `json:"profile_mix_basis,omitempty"`
-	ProfileMixReference    string    `json:"profile_mix_reference,omitempty"`
-	BaseURL                string    `json:"base_url"`
-	Users                  int       `json:"users"`
-	Duration               string    `json:"duration"`
-	RampUp                 string    `json:"ramp_up"`
-	ThinkTime              string    `json:"think_time"`
-	Timeout                string    `json:"request_timeout"`
-	ConnectionPolicy       string    `json:"connection_policy,omitempty"`
-	MaxRPS                 int       `json:"max_rps"`
-	P95LimitMS             float64   `json:"p95_limit_ms"`
-	MaxErrorRate           float64   `json:"max_error_rate"`
-	Mode                   string    `json:"mode,omitempty"`
-	ArrivalRate            int       `json:"arrival_rate,omitempty"`
-	PerVUCookieEnvPrefix   string    `json:"per_vu_cookie_env_prefix,omitempty"`
-	SyntheticDataPrefixEnv string    `json:"synthetic_data_prefix_env,omitempty"`
-	MinSamplesPerStep      int       `json:"min_samples_per_step,omitempty"`
-	WindowDuration         string    `json:"window_duration,omitempty"`
-	Steps                  []Step    `json:"steps,omitempty"`
-	Profiles               []Profile `json:"profiles,omitempty"`
+	Name                   string          `json:"name"`
+	WorkloadRevision       string          `json:"workload_revision,omitempty"`
+	ApplicationRevision    string          `json:"application_revision,omitempty"`
+	Environment            string          `json:"environment,omitempty"`
+	ProfileMixBasis        string          `json:"profile_mix_basis,omitempty"`
+	ProfileMixReference    string          `json:"profile_mix_reference,omitempty"`
+	BaseURL                string          `json:"base_url"`
+	Users                  int             `json:"users"`
+	Duration               string          `json:"duration"`
+	RampUp                 string          `json:"ramp_up"`
+	ThinkTime              string          `json:"think_time"`
+	ThinkTimeRange         *ThinkTimeRange `json:"think_time_range,omitempty"`
+	WorkloadSeed           uint64          `json:"workload_seed,omitempty"`
+	Timeout                string          `json:"request_timeout"`
+	ConnectionPolicy       string          `json:"connection_policy,omitempty"`
+	MaxRPS                 int             `json:"max_rps"`
+	P95LimitMS             float64         `json:"p95_limit_ms"`
+	MaxErrorRate           float64         `json:"max_error_rate"`
+	Mode                   string          `json:"mode,omitempty"`
+	ArrivalRate            int             `json:"arrival_rate,omitempty"`
+	PerVUCookieEnvPrefix   string          `json:"per_vu_cookie_env_prefix,omitempty"`
+	SyntheticDataPrefixEnv string          `json:"synthetic_data_prefix_env,omitempty"`
+	MinSamplesPerStep      int             `json:"min_samples_per_step,omitempty"`
+	WindowDuration         string          `json:"window_duration,omitempty"`
+	Steps                  []Step          `json:"steps,omitempty"`
+	Profiles               []Profile       `json:"profiles,omitempty"`
 }
 
 // Profile is a weighted, named workflow. Its weight expresses the intended
 // share of journey starts, not a guarantee of completed journeys.
 type Profile struct {
-	Name      string `json:"name"`
-	Weight    int    `json:"weight"`
-	ThinkTime string `json:"think_time,omitempty"`
-	Steps     []Step `json:"steps"`
+	Name           string          `json:"name"`
+	Weight         int             `json:"weight"`
+	ThinkTime      string          `json:"think_time,omitempty"`
+	ThinkTimeRange *ThinkTimeRange `json:"think_time_range,omitempty"`
+	Steps          []Step          `json:"steps"`
+}
+
+// ThinkTimeRange selects a bounded uniform pause between steps.
+type ThinkTimeRange struct {
+	Min string `json:"min"`
+	Max string `json:"max"`
 }
 
 type Step struct {
@@ -93,10 +102,12 @@ type Validated struct {
 // PreparedProfile contains the safe, resolved workflow selected by the
 // scheduler. Steps remain flattened in Validated.Steps for aggregate metrics.
 type PreparedProfile struct {
-	Name      string
-	Weight    int
-	ThinkTime time.Duration
-	Steps     []PreparedStep
+	Name         string
+	Weight       int
+	ThinkTime    time.Duration
+	ThinkTimeMin time.Duration
+	ThinkTimeMax time.Duration
+	Steps        []PreparedStep
 }
 
 type PreparedStep struct {
@@ -255,6 +266,13 @@ func Parse(s Scenario, o Options) (Validated, error) {
 	if err != nil {
 		return v, err
 	}
+	if s.ThinkTime != "" && s.ThinkTimeRange != nil {
+		return v, errors.New("think_time and think_time_range cannot be combined")
+	}
+	globalMin, globalMax, err := parseThinkRange(s.ThinkTimeRange)
+	if err != nil {
+		return v, err
+	}
 	window, err := optionalDuration("window_duration", s.WindowDuration, 0, time.Minute)
 	if err != nil {
 		return v, err
@@ -288,9 +306,28 @@ func Parse(s Scenario, o Options) (Validated, error) {
 		}
 	}
 	for _, profile := range profiles {
+		if profile.ThinkTime != "" && profile.ThinkTimeRange != nil {
+			return v, fmt.Errorf("profile %q combines think_time and think_time_range", profile.Name)
+		}
 		profileThink, err := optionalDuration("profile think_time", profile.ThinkTime, think, 30*time.Second)
 		if err != nil {
 			return v, err
+		}
+		profileMin, profileMax := globalMin, globalMax
+		if profile.ThinkTime != "" {
+			profileMin, profileMax = 0, 0
+		}
+		if profile.ThinkTimeRange != nil {
+			profileMin, profileMax, err = parseThinkRange(profile.ThinkTimeRange)
+			if err != nil {
+				return v, fmt.Errorf("profile %q: %w", profile.Name, err)
+			}
+		}
+		if profileMin != 0 || profileMax != 0 {
+			profileThink = profileMax
+		}
+		if profileMax > 0 && len(profile.Steps) < 2 {
+			return v, fmt.Errorf("profile %q needs at least two steps for think_time_range", profile.Name)
 		}
 		profileSteps := make([]PreparedStep, 0, len(profile.Steps))
 		available := map[string]bool{}
@@ -391,7 +428,16 @@ func Parse(s Scenario, o Options) (Validated, error) {
 			prepared = append(prepared, preparedStep)
 			profileSteps = append(profileSteps, preparedStep)
 		}
-		preparedProfiles = append(preparedProfiles, PreparedProfile{Name: profile.Name, Weight: profile.Weight, ThinkTime: profileThink, Steps: profileSteps})
+		preparedProfiles = append(preparedProfiles, PreparedProfile{Name: profile.Name, Weight: profile.Weight, ThinkTime: profileThink, ThinkTimeMin: profileMin, ThinkTimeMax: profileMax, Steps: profileSteps})
+	}
+	if s.WorkloadSeed != 0 && !hasProfileRange(preparedProfiles) {
+		return v, errors.New("workload_seed requires a nonzero think_time_range")
+	}
+	if s.ThinkTimeRange != nil && !hasProfileRange(preparedProfiles) {
+		return v, errors.New("think_time_range is overridden by every profile")
+	}
+	if s.WorkloadSeed == 0 && hasProfileRange(preparedProfiles) {
+		s.WorkloadSeed = 1
 	}
 	cookies, err := ResolveSessions(s.PerVUCookieEnvPrefix, s.Users)
 	if err != nil {
@@ -400,6 +446,33 @@ func Parse(s Scenario, o Options) (Validated, error) {
 	v = Validated{Scenario: s, Base: u, Duration: duration, RampUp: ramp, ThinkTime: think, Timeout: timeout, Window: window, Steps: prepared, Profiles: preparedProfiles, Cookies: cookies, SyntheticDataPrefix: dataPrefix}
 	v.WorkloadFingerprint = WorkloadFingerprint(v)
 	return v, nil
+}
+
+func parseThinkRange(value *ThinkTimeRange) (time.Duration, time.Duration, error) {
+	if value == nil {
+		return 0, 0, nil
+	}
+	minDuration, err := requiredDuration("think_time_range.min", value.Min, 0, 30*time.Second)
+	if err != nil {
+		return 0, 0, err
+	}
+	maxDuration, err := requiredDuration("think_time_range.max", value.Max, 0, 30*time.Second)
+	if err != nil {
+		return 0, 0, err
+	}
+	if maxDuration < minDuration || maxDuration == 0 {
+		return 0, 0, errors.New("think_time_range must have 0 <= min <= max <= 30s and max > 0")
+	}
+	return minDuration, maxDuration, nil
+}
+
+func hasProfileRange(profiles []PreparedProfile) bool {
+	for _, profile := range profiles {
+		if profile.ThinkTimeMax > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func workloadProfiles(s Scenario) ([]Profile, error) {

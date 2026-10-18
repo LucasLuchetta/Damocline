@@ -56,6 +56,81 @@ func TestValid(t *testing.T) {
 	}
 }
 
+func TestThinkTimeRangeValidationAndFingerprint(t *testing.T) {
+	base := good()
+	base.Steps = []Step{{Name: "first", Path: "/first"}, {Name: "second", Path: "/second"}}
+	base.ThinkTimeRange = &ThinkTimeRange{Min: "10ms", Max: "30ms"}
+	validated, err := Parse(base, Options{Authorized: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if validated.Scenario.WorkloadSeed != 1 || validated.Profiles[0].ThinkTimeMin != 10*time.Millisecond || validated.Profiles[0].ThinkTimeMax != 30*time.Millisecond {
+		t.Fatalf("unexpected timing policy: %+v", validated)
+	}
+	base.WorkloadSeed = 42
+	seeded, err := Parse(base, Options{Authorized: true})
+	if err != nil || seeded.WorkloadFingerprint == validated.WorkloadFingerprint {
+		t.Fatalf("seed must change reproducible workload identity: %v", err)
+	}
+	base.ThinkTimeRange.Max = "40ms"
+	changed, err := Parse(base, Options{Authorized: true})
+	if err != nil || changed.WorkloadFingerprint == seeded.WorkloadFingerprint {
+		t.Fatalf("range must change workload identity: %v", err)
+	}
+	for _, tc := range []struct {
+		name string
+		min  string
+		max  string
+	}{
+		{name: "missing minimum", min: "", max: "10ms"},
+		{name: "negative", min: "-1ms", max: "10ms"},
+		{name: "reversed", min: "20ms", max: "10ms"},
+		{name: "zero maximum", min: "0s", max: "0s"},
+		{name: "too long", min: "0s", max: "31s"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			invalid := good()
+			invalid.ThinkTimeRange = &ThinkTimeRange{Min: tc.min, Max: tc.max}
+			if _, err := Parse(invalid, Options{Authorized: true}); err == nil {
+				t.Fatal("invalid range accepted")
+			}
+		})
+	}
+	conflicting := good()
+	conflicting.ThinkTime = "10ms"
+	conflicting.ThinkTimeRange = &ThinkTimeRange{Min: "10ms", Max: "20ms"}
+	if _, err := Parse(conflicting, Options{Authorized: true}); err == nil {
+		t.Fatal("fixed and ranged think time accepted together")
+	}
+	oneStep := good()
+	oneStep.ThinkTimeRange = &ThinkTimeRange{Min: "10ms", Max: "20ms"}
+	if _, err := Parse(oneStep, Options{Authorized: true}); err == nil {
+		t.Fatal("range with no between-step boundary accepted")
+	}
+}
+
+func TestProfileThinkTimeRangeOverrides(t *testing.T) {
+	s := good()
+	s.Steps = nil
+	s.Users = 2
+	s.ThinkTimeRange = &ThinkTimeRange{Min: "1ms", Max: "3ms"}
+	s.Profiles = []Profile{
+		{Name: "browse", Weight: 1, Steps: []Step{{Name: "browse-page", Path: "/browse"}, {Name: "browse-detail", Path: "/browse/detail"}}},
+		{Name: "search", Weight: 1, ThinkTime: "2ms", Steps: []Step{{Name: "search-page", Path: "/search"}}},
+	}
+	v, err := Parse(s, Options{Authorized: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.Profiles[0].ThinkTimeMin != time.Millisecond || v.Profiles[0].ThinkTimeMax != 3*time.Millisecond || v.Profiles[1].ThinkTimeMax != 0 || v.Profiles[1].ThinkTime != 2*time.Millisecond {
+		t.Fatalf("profile override mismatch: %+v", v.Profiles)
+	}
+	s.Profiles[0].ThinkTime = "1ms"
+	if _, err := Parse(s, Options{Authorized: true}); err == nil {
+		t.Fatal("unused global range accepted")
+	}
+}
+
 func TestConnectionPolicyIsBoundedAndFingerprintable(t *testing.T) {
 	base, err := Parse(good(), Options{Authorized: true})
 	if err != nil {

@@ -53,7 +53,39 @@ func ReadRun(path string) (report.Result, error) {
 	if !report.HasValidFailureClassification(r) {
 		return report.Result{}, errors.New("report HTTP failure-classification evidence does not match its schema")
 	}
+	if !validThinkTimeProvenance(r) {
+		return report.Result{}, errors.New("report think-time provenance does not match its schema")
+	}
 	return r, nil
+}
+
+func validThinkTimeProvenance(r report.Result) bool {
+	if r.SchemaVersion < 21 {
+		return r.Config.ThinkTimeRange == nil && r.Config.WorkloadSeed == 0
+	}
+	usesRange := false
+	if r.Config.ThinkTimeRange != nil {
+		if r.Config.ThinkTime != "" || !validThinkRange(r.Config.ThinkTimeRange) {
+			return false
+		}
+		usesRange = true
+	}
+	for _, profile := range r.Config.Profiles {
+		if profile.ThinkTimeRange == nil {
+			continue
+		}
+		if profile.ThinkTime != "" || !validThinkRange(profile.ThinkTimeRange) {
+			return false
+		}
+		usesRange = true
+	}
+	return usesRange == (r.Config.WorkloadSeed != 0)
+}
+
+func validThinkRange(value *report.ThinkTimeRange) bool {
+	minimum, minErr := time.ParseDuration(value.Min)
+	maximum, maxErr := time.ParseDuration(value.Max)
+	return minErr == nil && maxErr == nil && minimum >= 0 && maximum > 0 && maximum <= 30*time.Second && minimum <= maximum
 }
 
 func validFingerprint(value string) bool {

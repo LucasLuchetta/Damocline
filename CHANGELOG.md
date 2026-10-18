@@ -5,6 +5,8 @@ This project follows a human-maintained changelog. No release exists yet.
 ## [Unreleased]
 
 ### Added
+- Add bounded seeded between-step timing ranges for scenarios and weighted profiles, record policy and seed in schema-v21 reports and workload fingerprints, and keep fixed-pause scenarios compatible.
+- Audit merged measurement/workload/campaign capabilities against the remaining acceptance gates and group the next work into integrated delivery blocks.
 - Reconcile the G0 summary with the recorded schema-v7 Docker Desktop/WSL2 acceptance repeats and merged PRs through #88, retaining the bare-metal and cross-host limitations.
 - Reconcile native-engine response-body accounting at the exact configured read limit and one byte above it with independent loopback server counters.
 - Report DNS-resolution and connection-establishment failures as versioned transport subcategories; preserve unknown semantics for reports older than schema v20.
