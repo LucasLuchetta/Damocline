@@ -52,6 +52,7 @@ After checking out the PR branch in a separate worktree or clean checkout:
 
 ```powershell
 go version
+New-Item -ItemType Directory -Force .damocline | Out-Null
 go test ./internal/campaign ./internal/capacityplan ./internal/cli
 go test -race ./...
 go vet ./...
