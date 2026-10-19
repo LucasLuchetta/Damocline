@@ -34,6 +34,12 @@ func Evaluate(evidence campaign.Result, goal capacitygoal.Goal) (Result, error) 
 	return evaluateWithQuality(evidence, goal, report.AssessQuality)
 }
 
+// ValidateSavedCampaign validates the structure and native phase evidence of a
+// saved campaign without applying a business-demand goal.
+func ValidateSavedCampaign(evidence campaign.Result) error {
+	return validateEvidence(evidence)
+}
+
 type qualityAssessor func(report.Result) *report.Quality
 
 func evaluateWithQuality(evidence campaign.Result, goal capacitygoal.Goal, assess qualityAssessor) (Result, error) {
