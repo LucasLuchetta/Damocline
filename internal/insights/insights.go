@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/LucasLuchetta/Damocline/internal/appmetrics"
 	"github.com/LucasLuchetta/Damocline/internal/hostmon"
 	"github.com/LucasLuchetta/Damocline/internal/report"
 	"github.com/LucasLuchetta/Damocline/internal/statistics"
@@ -56,6 +57,14 @@ func ReadRun(path string) (report.Result, error) {
 	}
 	if !validThinkTimeProvenance(r) {
 		return report.Result{}, errors.New("report think-time provenance does not match its schema")
+	}
+	if r.SchemaVersion < 25 && r.ApplicationMetrics != nil {
+		return report.Result{}, errors.New("report application-metrics evidence does not match its schema")
+	}
+	if r.ApplicationMetrics != nil {
+		if err := appmetrics.ValidateTimeline(*r.ApplicationMetrics); err != nil {
+			return report.Result{}, fmt.Errorf("invalid application-metrics evidence: %w", err)
+		}
 	}
 	return r, nil
 }
@@ -288,6 +297,13 @@ func Evaluate(r report.Result, host *hostmon.Result) Assessment {
 			a.Findings = append(a.Findings, Finding{"CAUTION", "OS process CPU and resident-memory samples are unavailable on this platform; generator process headroom is unknown."})
 		}
 		a.Findings = append(a.Findings, Finding{"LIMIT", "Generator samples may miss brief resource peaks and do not describe host or target resources."})
+	}
+	if r.ApplicationMetrics != nil {
+		timeline := r.ApplicationMetrics
+		a.Findings = append(a.Findings, Finding{"INFO", fmt.Sprintf("Application metrics: %s; %d timestamped snapshots from %s. Values are retained in the JSON report for manual time alignment and are not interpreted as a bottleneck or capacity signal.", timeline.State(), len(timeline.Samples), timeline.Source)})
+		if timeline.State() != "COLLECTED" {
+			a.Findings = append(a.Findings, Finding{"CAUTION", fmt.Sprintf("Application-metrics collection is %s (%d failed, %d interrupted, limit reached=%t); the timeline is incomplete.", timeline.State(), timeline.FailedCollections, timeline.InterruptedScrapes, timeline.CollectionLimitHit)})
+		}
 	}
 	if r.ArrivalsDropped > 0 {
 		a.Findings = append(a.Findings, Finding{"LIMIT", fmt.Sprintf("%d scheduled journey starts were dropped: offered load was not delivered.", r.ArrivalsDropped)})

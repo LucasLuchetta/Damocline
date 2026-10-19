@@ -291,7 +291,15 @@ For an application that exposes a permitted Prometheus-text metric endpoint, tak
 .\damocline.exe metrics --endpoint https://app.example.com/metrics --authorized --out reports\application-metrics.json
 ```
 
-The collector accepts only HTTP(S), follows no redirects, caps the response body, aggregates labeled samples by metric name, and does not preserve labels or credentials. It is a point-in-time observation. Correlate it with a named campaign manually; a high queue, error, or latency metric does not by itself prove which component caused a bottleneck.
+The collector accepts only HTTP(S), follows no redirects, caps the response body and number of metric names, aggregates labeled samples by metric name, and does not preserve labels. URL credentials, query strings and fragments are rejected; reports retain only the endpoint origin. It is a point-in-time observation. Correlate it with a named campaign manually; a high queue, error, or latency metric does not by itself prove which component caused a bottleneck.
+
+For repeated collection during a bounded run or campaign, pass the same explicitly permitted endpoint to `--app-metrics-endpoint`:
+
+```powershell
+.\damocline.exe campaign --config .\scenario.local.json --warmup 30s --observation 2m --recovery 30s --repeats 2 --app-metrics-endpoint https://app.example.com/metrics --app-metrics-interval 10s --authorized --out reports\campaign.json
+```
+
+Each completed phase report retains its own timestamped snapshots and collection outcome; run report schema v25 adds the optional timeline. The interval is bounded to 1s–1m, and one campaign retains at most 1,000 scrape attempts and 4 MiB of metric sample data. Scrapes run concurrently with the workload, add requests outside `max_rps` and engine counters, and may consume application resources. Labels are discarded, metric values are not interpreted, and failed or interrupted scrapes leave an incomplete timeline. Dry-run validates the URL and interval but never contacts the metrics endpoint. Use this only when you are authorized to query the endpoint; timestamps support manual alignment, not causal diagnosis.
 
 For local Docker container snapshots, run `damocline docker --authorized --out reports/docker.json`. It invokes one bounded `docker stats --no-stream` call and records CPU and memory observations. Docker availability, access permissions, database waits, queue state, and application traces remain separate concerns.
 

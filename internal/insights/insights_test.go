@@ -650,8 +650,27 @@ func TestSupportedReportSchemaGoldensRoundTrip(t *testing.T) {
 				if len(got.Windows) != 1 || got.Windows[0].Journeys.Total != 0 {
 					t.Fatal("schema-v22 journey-window ledger was not preserved")
 				}
+			case 25:
+				if got.ApplicationMetrics == nil || got.ApplicationMetrics.State() != "COLLECTED" || got.ApplicationMetrics.Samples[0].Samples[0].Name != "queue_depth" {
+					t.Fatal("schema-v25 application-metrics timeline was not preserved")
+				}
 			}
 		})
+	}
+}
+
+func TestReadRunRejectsInvalidApplicationMetricsTimeline(t *testing.T) {
+	run, err := ReadRun(filepath.Join("testdata", "reports", "schema-v25.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	run.ApplicationMetrics.Samples[0].DurationMS = -1
+	path := filepath.Join(t.TempDir(), "invalid-metrics.json")
+	if err := report.WriteJSON(path, run); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadRun(path); err == nil {
+		t.Fatal("negative application-metrics duration was accepted")
 	}
 }
 

@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/LucasLuchetta/Damocline/internal/appmetrics"
 	"github.com/LucasLuchetta/Damocline/internal/arrivalcampaign"
 	"github.com/LucasLuchetta/Damocline/internal/calibration"
 	"github.com/LucasLuchetta/Damocline/internal/capacitygoal"
@@ -46,11 +47,17 @@ func arrivalCampaignCmd(args []string, stdout, stderr io.Writer) int {
 	insecure := fs.Bool("allow-insecure-http", false, "permit intentional plaintext HTTP to a non-loopback host")
 	out := fs.String("out", "", "JSON campaign report output path")
 	calibrationFile := fs.String("calibration", "", "require exact local generator coverage for every planned arrival rate")
+	applicationMetricsEndpoint := fs.String("app-metrics-endpoint", "", "optionally sample an authorized Prometheus-text endpoint during every phase")
+	applicationMetricsInterval := fs.Duration("app-metrics-interval", 10*time.Second, "application-metrics sampling interval (1s-1m)")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 	if *filename == "" || len(fs.Args()) != 0 {
 		fmt.Fprintln(stderr, "--config is required and positional arguments are not accepted")
+		return 2
+	}
+	if err := validateApplicationMetrics(*applicationMetricsEndpoint, *applicationMetricsInterval); err != nil {
+		fmt.Fprintf(stderr, "application metrics configuration error: %v\n", err)
 		return 2
 	}
 	if !*dry && *out == "" {
@@ -135,6 +142,9 @@ func arrivalCampaignCmd(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "Demand: peak %d/s, growth %.1f%%, reserve %.1f%%; exact required base rate %d/s.\n", options.PeakRate, options.GrowthPercent, options.ReservePercent, rate)
 	}
 	if *dry {
+		if *applicationMetricsEndpoint != "" {
+			fmt.Fprintf(stdout, "Application metrics endpoint validated; dry run will not scrape it (interval %s).\n", *applicationMetricsInterval)
+		}
 		if *calibrationFile != "" {
 			record, loadErr := loadCalibration(*calibrationFile)
 			if loadErr != nil {
@@ -187,6 +197,11 @@ func arrivalCampaignCmd(args []string, stdout, stderr io.Writer) int {
 			return run
 		}
 	}
+	if *applicationMetricsEndpoint != "" {
+		fmt.Fprintf(stdout, "Sampling application metrics from the explicitly configured endpoint every %s; scrapes are additional traffic outside max_rps.\n", *applicationMetricsInterval)
+		runner = arrivalcampaign.Runner(withApplicationMetrics(*applicationMetricsEndpoint, *applicationMetricsInterval,
+			appmetrics.NewBudget(appmetrics.MaxTimelineSamples), phaseRunner(runner)))
+	}
 	result, err := arrivalcampaign.WithRunnerProgress(ctx, validated, options, runner, func(snapshot arrivalcampaign.Result) error {
 		return report.WriteAnyJSON(*out, snapshot)
 	})
@@ -202,6 +217,7 @@ func arrivalCampaignCmd(args []string, stdout, stderr io.Writer) int {
 			if phase.Reason != "" {
 				fmt.Fprintf(stdout, "    %s\n", phase.Reason)
 			}
+			printApplicationMetricsSummary(stdout, run.ApplicationMetrics)
 		}
 		if trial.AbortReason != "" {
 			fmt.Fprintf(stdout, "  %s\n", trial.AbortReason)

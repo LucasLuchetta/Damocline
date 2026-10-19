@@ -2,18 +2,52 @@ package capacityplan
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/LucasLuchetta/Damocline/internal/appmetrics"
 	"github.com/LucasLuchetta/Damocline/internal/campaign"
 	"github.com/LucasLuchetta/Damocline/internal/capacitygoal"
 	"github.com/LucasLuchetta/Damocline/internal/config"
 	"github.com/LucasLuchetta/Damocline/internal/generatorhealth"
 	"github.com/LucasLuchetta/Damocline/internal/report"
 )
+
+func TestCampaignAuditValidatesAndCapsAttachedApplicationMetrics(t *testing.T) {
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC).Format(time.RFC3339Nano)
+	finish := time.Date(2026, 1, 1, 0, 0, 1, 0, time.UTC).Format(time.RFC3339Nano)
+	metrics := make([]appmetrics.Sample, appmetricsMaxTestMetrics)
+	for i := range metrics {
+		metrics[i] = appmetrics.Sample{Name: strings.Repeat("m", 120) + fmt.Sprintf("%08d", i), Value: 1}
+	}
+	makeTimeline := func() appmetrics.Timeline {
+		samples := make([]appmetrics.TimedSample, 220)
+		for i := range samples {
+			samples[i] = appmetrics.TimedSample{StartedAt: start, FinishedAt: start, Samples: metrics}
+		}
+		return appmetrics.Timeline{SchemaVersion: appmetrics.TimelineSchemaVersion, Source: "http://127.0.0.1", Interval: "10s",
+			StartedAt: start, FinishedAt: finish, Samples: samples, Note: "test"}
+	}
+	evidence := campaign.Result{Trials: []campaign.Trial{{Phases: []campaign.Phase{{Name: "observation", Run: report.Result{
+		SchemaVersion: report.CurrentSchemaVersion, ApplicationMetrics: func() *appmetrics.Timeline { x := makeTimeline(); return &x }(),
+	}}, {Name: "recovery", Run: report.Result{
+		SchemaVersion: report.CurrentSchemaVersion, ApplicationMetrics: func() *appmetrics.Timeline { x := makeTimeline(); return &x }(),
+	}}}}}}
+	if err := validateApplicationMetrics(evidence); err == nil || !strings.Contains(err.Error(), "exceed 4194304 bytes") {
+		t.Fatalf("campaign-wide metric sample budget was not enforced: %v", err)
+	}
+	evidence.Trials[0].Phases[0].Run.ApplicationMetrics = nil
+	evidence.Trials[0].Phases[1].Run.ApplicationMetrics = nil
+	if err := validateApplicationMetrics(evidence); err != nil {
+		t.Fatalf("campaign without attached application metrics was rejected: %v", err)
+	}
+}
+
+const appmetricsMaxTestMetrics = 64
 
 func TestFirstObservedFailureSurvivesPersistenceAndCannotBeHiddenByLaterPass(t *testing.T) {
 	base, err := config.Parse(config.Scenario{
