@@ -132,11 +132,12 @@ type Step struct {
 }
 
 type Profile struct {
-	ID             string  `json:"id"`
-	Weight         int     `json:"weight"`
-	SelectedStarts int     `json:"profile_selected_starts,omitempty"`
-	ActorsObserved int     `json:"actors_observed,omitempty"`
-	Journeys       Metrics `json:"journeys"`
+	ID                    string  `json:"id"`
+	Weight                int     `json:"weight"`
+	AuthenticationContext string  `json:"authentication_context,omitempty"`
+	SelectedStarts        int     `json:"profile_selected_starts,omitempty"`
+	ActorsObserved        int     `json:"actors_observed,omitempty"`
+	Journeys              Metrics `json:"journeys"`
 }
 
 type NamedMetrics struct {
@@ -303,7 +304,7 @@ func redactRun(r report.Result) *Run {
 		out.Steps = append(out.Steps, Step{ID: stepIDs[key], Method: safeMethod(s.Method), Cleanup: s.Cleanup, Metrics: safeMetrics(s.Metrics)})
 	}
 	for _, p := range r.Profiles {
-		out.Profiles = append(out.Profiles, Profile{ID: profileIDs[p.Name], Weight: p.Weight, SelectedStarts: p.SelectedStarts, ActorsObserved: p.ActorsObserved, Journeys: safeMetrics(p.Journeys)})
+		out.Profiles = append(out.Profiles, Profile{ID: profileIDs[p.Name], Weight: p.Weight, AuthenticationContext: safeAuthenticationContext(r.Config.Profiles, p.Name), SelectedStarts: p.SelectedStarts, ActorsObserved: p.ActorsObserved, Journeys: safeMetrics(p.Journeys)})
 	}
 	for _, w := range r.Windows {
 		window := Window{StartSeconds: w.StartSeconds, EndSeconds: w.EndSeconds, Requests: safeMetrics(w.Metrics), Journeys: safeMetrics(w.Journeys)}
@@ -464,6 +465,19 @@ func safeProfileSelection(v string) string {
 		return v
 	}
 	return "unknown"
+}
+func safeAuthenticationContext(profiles []report.ProfileConfig, name string) string {
+	for _, profile := range profiles {
+		if profile.Name == name {
+			switch profile.AuthenticationContext {
+			case "isolated_workflow_cookie_jar", "per_actor_workflow_cookie":
+				return profile.AuthenticationContext
+			default:
+				return ""
+			}
+		}
+	}
+	return ""
 }
 func safePhase(v string) string {
 	switch v {

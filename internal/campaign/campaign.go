@@ -351,6 +351,14 @@ func WithRunnerProgress(ctx context.Context, base config.Validated, options Opti
 			return Result{}, err
 		}
 	}
+	spikeProfileCookies := make([][]string, len(base.Profiles))
+	if options.SpikeUsers > 0 && base.ProfileAuthContexts {
+		var err error
+		spikeProfileCookies, err = config.ResolveProfileSessions(base.Scenario.Profiles, options.SpikeUsers)
+		if err != nil {
+			return Result{}, err
+		}
+	}
 	options.Budget = PlannedBudget(options)
 	options.Stability = effectiveStabilityPolicy(options.Stability)
 	options.Guardrails = effectiveGeneratorGuardrails(options.Guardrails)
@@ -452,6 +460,12 @@ func WithRunnerProgress(ctx context.Context, base config.Validated, options Opti
 			v.Duration = phase.Duration
 			v.Scenario.Duration = phase.Duration.String()
 			v.Scenario.Users = phase.Users
+			if phase.Name == "spike" && v.ProfileAuthContexts {
+				v.Profiles = append([]config.PreparedProfile(nil), base.Profiles...)
+				for index := range v.Profiles {
+					v.Profiles[index].Cookies = spikeProfileCookies[index]
+				}
+			}
 			if phase.Name != "warmup" && v.Window == 0 && phase.Duration >= 4*time.Second {
 				v.Window = min(30*time.Second, phase.Duration/4)
 				v.Scenario.WindowDuration = v.Window.String()

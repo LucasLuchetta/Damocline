@@ -3,12 +3,54 @@ package explorer
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"testing"
+	"time"
+
 	"github.com/LucasLuchetta/Damocline/internal/config"
 	"github.com/LucasLuchetta/Damocline/internal/generatorhealth"
 	"github.com/LucasLuchetta/Damocline/internal/report"
-	"testing"
-	"time"
 )
+
+func TestPerWorkflowSessionsScaleToExplorationMaximum(t *testing.T) {
+	for actor := 1; actor <= 3; actor++ {
+		t.Setenv(fmt.Sprintf("EXPLORE_READ_%d", actor), fmt.Sprintf("sid=read-%d", actor))
+		t.Setenv(fmt.Sprintf("EXPLORE_SEARCH_%d", actor), fmt.Sprintf("sid=search-%d", actor))
+	}
+	scenario := config.Scenario{Name: "bounded auth exploration", BaseURL: "https://app.example.com", Users: 1, Duration: "10s", MaxRPS: 20, P95LimitMS: 1000,
+		Profiles: []config.Profile{
+			{Name: "read", Weight: 1, PerVUCookieEnvPrefix: "EXPLORE_READ_", Steps: []config.Step{{Name: "read", Path: "/read"}}},
+			{Name: "search", Weight: 1, PerVUCookieEnvPrefix: "EXPLORE_SEARCH_", Steps: []config.Step{{Name: "search", Path: "/search"}}},
+		}}
+	base, err := config.Parse(scenario, config.Options{Authorized: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	observed := map[int]bool{}
+	_, err = WithRunner(context.Background(), base, Options{MinUsers: 1, MaxUsers: 3, Repeats: 2, StageDuration: 10 * time.Second}, func(_ context.Context, run config.Validated) report.Result {
+		for _, profile := range run.Profiles {
+			if len(profile.Cookies) != run.Scenario.Users {
+				t.Errorf("workflow %q has %d actor cookies at %d users", profile.Name, len(profile.Cookies), run.Scenario.Users)
+			}
+		}
+		observed[run.Scenario.Users] = true
+		return report.Result{Outcome: "PASS"}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !observed[1] || !observed[2] || !observed[3] {
+		t.Fatalf("exploration did not exercise expected worker levels with profile sessions: %v", observed)
+	}
+	t.Setenv("EXPLORE_SEARCH_2", "sid=read-2")
+	runnerCalled := false
+	if _, err := WithRunner(context.Background(), base, Options{MinUsers: 1, MaxUsers: 3, Repeats: 2, StageDuration: 10 * time.Second}, func(context.Context, config.Validated) report.Result {
+		runnerCalled = true
+		return report.Result{Outcome: "PASS"}
+	}); err == nil || runnerCalled {
+		t.Fatal("exploration did not validate distinct cookies through its maximum actor count")
+	}
+}
 
 func TestSchemaTwoPersistsProbeAndAbortReasons(t *testing.T) {
 	result := Result{SchemaVersion: 2, Outcome: "INCONCLUSIVE", Reason: "wall-time cap reached", Probes: []Probe{{Users: 7, Status: "INCONCLUSIVE", Reason: "arrivals were dropped"}}}

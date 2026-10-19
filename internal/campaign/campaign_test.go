@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -34,6 +35,39 @@ func TestCampaignSeparatesWarmupObservationAndRecovery(t *testing.T) {
 	})
 	if err != nil || result.Outcome != "PASS" || len(result.Trials) != 2 || len(durations) != 6 || result.ObservationVariability == nil || result.ObservationVariability.Runs != 2 || result.ObservationVariability.SuccessfulJourneysMinPerSec != 8 || result.ObservationVariability.SuccessfulJourneysMaxPerSec != 8 {
 		t.Fatalf("unexpected campaign: %+v err=%v durations=%v", result, err, durations)
+	}
+}
+
+func TestProfileCookieContextsScaleForCampaignSpikeUsers(t *testing.T) {
+	for actor := 1; actor <= 2; actor++ {
+		t.Setenv(fmt.Sprintf("CAMPAIGN_READ_%d", actor), fmt.Sprintf("sid=read-%d", actor))
+		t.Setenv(fmt.Sprintf("CAMPAIGN_SEARCH_%d", actor), fmt.Sprintf("sid=search-%d", actor))
+	}
+	base, err := config.Parse(config.Scenario{Name: "campaign auth contexts", BaseURL: "http://127.0.0.1:8080", Users: 1, Duration: "10s", MaxRPS: 10, P95LimitMS: 1000,
+		Profiles: []config.Profile{
+			{Name: "read", Weight: 1, PerVUCookieEnvPrefix: "CAMPAIGN_READ_", Steps: []config.Step{{Name: "read", Path: "/read"}}},
+			{Name: "search", Weight: 1, PerVUCookieEnvPrefix: "CAMPAIGN_SEARCH_", Steps: []config.Step{{Name: "search", Path: "/search"}}},
+		}}, config.Options{Authorized: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	seenBase, seenSpike := false, false
+	result, err := WithRunner(context.Background(), base, Options{Observation: 10 * time.Second, SpikeUsers: 2, SpikeDuration: 10 * time.Second, Recovery: 10 * time.Second, Repeats: 2}, func(_ context.Context, v config.Validated) report.Result {
+		want := v.Scenario.Users
+		for _, profile := range v.Profiles {
+			if len(profile.Cookies) != want {
+				t.Errorf("profile %q has %d cookies at %d campaign users", profile.Name, len(profile.Cookies), want)
+			}
+		}
+		if want == 1 {
+			seenBase = true
+		} else if want == 2 {
+			seenSpike = true
+		}
+		return stableResult(v)
+	})
+	if err != nil || len(result.Trials) != 2 || !seenBase || !seenSpike {
+		t.Fatalf("campaign did not load workflow sessions for base and spike users: seenBase=%v seenSpike=%v result=%+v err=%v", seenBase, seenSpike, result, err)
 	}
 }
 

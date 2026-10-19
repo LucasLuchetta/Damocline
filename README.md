@@ -281,7 +281,7 @@ go run ./cmd/damocline explore --config myapp.local.json --min-users 2 --max-use
 
 In addition to fixed closed-loop load, `mode: "arrival"` runs independently scheduled journey starts and exposes dropped arrivals. For independent authenticated identities, configure `per_vu_cookie_env_prefix` and supply **distinct, locally managed** session cookies (never commit them).
 
-Weighted workflow profiles are selected at each journey start in both closed-loop and open-arrival runs. Different workflow lengths or response times do not change the selected-start mix. A virtual user keeps its own cookie jar while moving between workflows; this does not provide a separate login identity per workflow. Saved schema-v26 reports reconcile selected workflow starts, worker-started journeys, and pre-worker drops.
+Weighted workflow profiles are selected at each journey start in both closed-loop and open-arrival runs. Different workflow lengths or response times do not change the selected-start mix. By default, a VU keeps its actor-local cookie jar when it moves between workflows. A profile may instead declare `per_vu_cookie_env_prefix` to give each actor an independent cookie jar for that workflow; use distinct, locally managed identities and keep all cookie values in environment variables. Schema-v27 reports record the isolation mode and reconcile selected workflow starts, worker-started journeys, and pre-worker drops without storing credentials.
 
 To observe a Linux VPS during a test, run the separate native monitor **on the host**, then join samples by UTC timestamps:
 

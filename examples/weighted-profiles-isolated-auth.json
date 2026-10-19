@@ -1,0 +1,29 @@
+{
+  "name": "synthetic isolated workflow identities",
+  "base_url": "https://app.example.com",
+  "users": 4,
+  "duration": "30s",
+  "ramp_up": "2s",
+  "request_timeout": "5s",
+  "max_rps": 20,
+  "p95_limit_ms": 1500,
+  "max_error_rate": 0.01,
+  "profiles": [
+    {
+      "name": "read dashboard",
+      "weight": 3,
+      "per_vu_cookie_env_prefix": "DAMOCLINE_DASHBOARD_COOKIE_",
+      "steps": [
+        { "name": "dashboard", "path": "/dashboard", "expected_status": [200] }
+      ]
+    },
+    {
+      "name": "search catalog",
+      "weight": 1,
+      "per_vu_cookie_env_prefix": "DAMOCLINE_SEARCH_COOKIE_",
+      "steps": [
+        { "name": "search", "path": "/catalog?q=synthetic", "expected_status": [200] }
+      ]
+    }
+  ]
+}

@@ -94,6 +94,14 @@ func AssessQuality(r Result) *Quality {
 	} else if r.Config.ProfileSelection != "" {
 		invalidate("Pre-v26 reports cannot carry profile selection semantics.")
 	}
+	if r.SchemaVersion < 27 {
+		for _, profile := range r.Config.Profiles {
+			if profile.AuthenticationContext != "" {
+				invalidate("Pre-v27 reports cannot carry per-workflow authentication-context semantics.")
+				break
+			}
+		}
+	}
 	if r.Metrics.Total < 0 || r.Metrics.Success < 0 || r.Metrics.Failures < 0 ||
 		r.Metrics.Cancelled < 0 || r.Metrics.Success > r.Metrics.Total || r.Metrics.Failures != r.Metrics.Total-r.Metrics.Success {
 		invalidate("Request aggregate accounting is inconsistent.")
@@ -432,6 +440,23 @@ func AssessQuality(r Result) *Quality {
 		var total, success, failures, cancelled int
 		var selectedProfileStarts, observedProfileStarts int64
 		var selectedProfileStartsInt int
+		profileAuthContexts := false
+		profileCookieContexts := 0
+		if r.SchemaVersion >= 27 {
+			for _, profile := range r.Config.Profiles {
+				if profile.AuthenticationContext == "" {
+					continue
+				}
+				profileAuthContexts = true
+				switch profile.AuthenticationContext {
+				case "isolated_workflow_cookie_jar":
+				case "per_actor_workflow_cookie":
+					profileCookieContexts++
+				default:
+					invalidate("Schema-v27 workflow authentication context is invalid.")
+				}
+			}
+		}
 		maxInt := int(^uint(0) >> 1)
 		maxInt64 := int64(^uint64(0) >> 1)
 		if r.SchemaVersion >= 26 {
@@ -509,6 +534,17 @@ func AssessQuality(r Result) *Quality {
 			}
 			if selectedProfileStarts != selectedExpected || observedProfileStarts != r.IterationsStarted {
 				invalidate("Schema-v26 per-workflow selected and started journeys do not reconcile with aggregate counters.")
+			}
+		}
+		if r.SchemaVersion >= 27 && profileAuthContexts {
+			for _, profile := range r.Config.Profiles {
+				if profile.AuthenticationContext != "isolated_workflow_cookie_jar" && profile.AuthenticationContext != "per_actor_workflow_cookie" {
+					invalidate("Schema-v27 per-workflow authentication contexts are incomplete.")
+					break
+				}
+			}
+			if profileCookieContexts == 0 || !r.Config.SeparateSessions {
+				invalidate("Schema-v27 per-workflow cookie contexts require distinct configured sessions.")
 			}
 		}
 	} else if r.SchemaVersion >= 26 && len(r.Config.Profiles) > 0 {

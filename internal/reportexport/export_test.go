@@ -18,12 +18,12 @@ func TestRedactedRunExportOmitsUncontrolledStringsAndPreservesEvidence(t *testin
 	start := "2026-04-03T12:30:00.123456789Z"
 	count := int64(8)
 	run := report.Result{
-		SchemaVersion: 26, Name: secret, Target: "https://user:token@" + secret + "/private/route?customer=731", Outcome: "PASS",
+		SchemaVersion: 27, Name: secret, Target: "https://user:token@" + secret + "/private/route?customer=731", Outcome: "PASS",
 		StartedAt: start, ElapsedSeconds: 8.5, ObservationSeconds: 8,
 		Config: report.RunConfig{WorkloadRevision: secret, ApplicationRevision: secret, WorkloadFingerprint: secret,
 			Environment: secret, ProfileMixReference: secret, Users: 4, Duration: "8s", RequestTimeout: "1s",
 			ConnectionPolicy: "reuse", MaxRPS: 50, P95LimitMS: 250, MaxErrorRate: .01, Mode: "arrival", ArrivalRate: 8,
-			WindowDuration: secret, ProfileSelection: "per_journey_start", Profiles: []report.ProfileConfig{{Name: "private-workflow", Weight: 2}}},
+			WindowDuration: secret, ProfileSelection: "per_journey_start", SeparateSessions: true, Profiles: []report.ProfileConfig{{Name: "private-workflow", Weight: 2, AuthenticationContext: "per_actor_workflow_cookie"}}},
 		Metrics:  report.MetricSet{Total: 8, Success: 7, Failures: 1, P95MS: 240, Reasons: map[string]int{secret: 1}},
 		Journeys: report.MetricSet{Total: 4, Success: 3, Failures: 1, P95MS: 400},
 		Steps:    []report.StepResult{{Profile: "private-workflow", Name: "private-step", Method: "GET", Path: "/private/customer-731", Metrics: report.MetricSet{Total: 8, Success: 7, Failures: 1}}},
@@ -62,6 +62,9 @@ func TestRedactedRunExportOmitsUncontrolledStringsAndPreservesEvidence(t *testin
 	}
 	if exported.Run.ProfileSelection != "per_journey_start" || exported.Run.Profiles[0].SelectedStarts != 8 || exported.Run.Profiles[0].ActorsObserved != 4 {
 		t.Fatalf("redacted workflow selection evidence was not preserved: %+v", exported.Run)
+	}
+	if exported.Run.Profiles[0].AuthenticationContext != "per_actor_workflow_cookie" {
+		t.Fatalf("safe workflow authentication-context enum was not preserved: %+v", exported.Run.Profiles[0])
 	}
 	if exported.Run.ApplicationMetrics == nil || len(exported.Run.ApplicationMetrics.Samples) != 1 || exported.Run.ApplicationMetrics.Samples[0].MetricCount != 1 || exported.Run.ApplicationMetrics.Samples[0].ElapsedMS != 1076.543 {
 		t.Fatalf("application metric timing was not safely retained: %+v", exported.Run.ApplicationMetrics)

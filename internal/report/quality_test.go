@@ -412,6 +412,62 @@ func TestSchemaTwentyTwoRequiresReconciledWindowJourneyLedger(t *testing.T) {
 	}
 }
 
+func TestSchemaTwentySevenRequiresCompletePerWorkflowCookieContextEvidence(t *testing.T) {
+	testRuntime := qualityTestRuntime()
+	admitted, cancelledBeforeAdmission := int64(0), int64(0)
+	r := Result{
+		SchemaVersion:  CurrentSchemaVersion,
+		ElapsedSeconds: 1, ObservationSeconds: 1,
+		Config: RunConfig{Users: 2, MaxRPS: 20, Mode: "closed", Duration: "1s", RequestTimeout: "1s", ConnectionPolicy: "reuse", ProfileSelection: "per_journey_start", SeparateSessions: true,
+			Profiles: []ProfileConfig{
+				{Name: "read", Weight: 1, AuthenticationContext: "per_actor_workflow_cookie"},
+				{Name: "write", Weight: 1, AuthenticationContext: "isolated_workflow_cookie_jar"},
+			}},
+		Metrics:  MetricSet{Total: 2, Success: 2, ResponseBody: ResponseBodyDiagnostics{CompleteObservations: 2}, HTTP: HTTPDiagnostics{FailureClassificationVersion: 1, StatusCodes: map[int]int{200: 2}, Status2xx: 2}},
+		Journeys: MetricSet{Total: 2, Success: 2}, ArrivalsScheduled: 2, ArrivalsAdmitted: &admitted, ArrivalsCancelledBeforeAdmission: &cancelledBeforeAdmission, IterationsStarted: 2, IterationsCompleted: 2,
+		Steps: []StepResult{
+			{Profile: "read", Name: "read", Method: "GET", Path: "/read", Metrics: MetricSet{Total: 1, Success: 1, ResponseBody: ResponseBodyDiagnostics{CompleteObservations: 1}, HTTP: HTTPDiagnostics{FailureClassificationVersion: 1, StatusCodes: map[int]int{200: 1}, Status2xx: 1}}, HTTPTrace: HTTPTrace{RateWaitCount: 1}},
+			{Profile: "write", Name: "write", Method: "GET", Path: "/write", Metrics: MetricSet{Total: 1, Success: 1, ResponseBody: ResponseBodyDiagnostics{CompleteObservations: 1}, HTTP: HTTPDiagnostics{FailureClassificationVersion: 1, StatusCodes: map[int]int{200: 1}, Status2xx: 1}}, HTTPTrace: HTTPTrace{RateWaitCount: 1}},
+		},
+		Generator: &generatorhealth.Summary{Samples: 10, ObservedSeconds: 1, SamplingIntervalMS: 250, MaxSampleGapMS: 250, LogicalCPUs: testRuntime.LogicalCPUs, GOMAXPROCS: testRuntime.GOMAXPROCS,
+			CPUCapacityCores: testRuntime.CPUCapacityCores, CPUCapacitySource: testRuntime.CPUCapacitySource, CPUCapacityKnown: true, PeakHeapAllocBytes: 1, PeakGoroutines: 1, GoCPUValid: true, GoCPUCapacitySeconds: 1,
+			ProcessSamples: 10, ProcessCPUSamples: 10, PeakProcessRSSBytes: 1, ProcessCPUValid: true},
+		Profiles: []ProfileResult{
+			{Name: "read", Weight: 1, SelectedStarts: 1, ActorsObserved: 1, Journeys: MetricSet{Total: 1, Success: 1}},
+			{Name: "write", Weight: 1, SelectedStarts: 1, ActorsObserved: 1, Journeys: MetricSet{Total: 1, Success: 1}},
+		}, Outcome: "PASS",
+	}
+	if q := AssessQuality(r); q.State == QualityInvalid {
+		t.Fatalf("complete schema-v27 workflow cookie evidence was rejected: %+v", q)
+	}
+	mutations := []struct {
+		name string
+		edit func(*Result)
+	}{
+		{name: "unknown enum", edit: func(r *Result) { r.Config.Profiles[0].AuthenticationContext = "private-cookie-value" }},
+		{name: "incomplete contexts", edit: func(r *Result) { r.Config.Profiles[1].AuthenticationContext = "" }},
+		{name: "sessions not declared", edit: func(r *Result) { r.Config.SeparateSessions = false }},
+		{name: "no profile has supplied cookies", edit: func(r *Result) {
+			r.Config.Profiles[0].AuthenticationContext = "isolated_workflow_cookie_jar"
+		}},
+	}
+	for _, mutation := range mutations {
+		t.Run(mutation.name, func(t *testing.T) {
+			bad := r
+			bad.Config.Profiles = append([]ProfileConfig(nil), r.Config.Profiles...)
+			mutation.edit(&bad)
+			if q := AssessQuality(bad); q.State != QualityInvalid {
+				t.Fatalf("invalid schema-v27 authentication evidence was accepted: %+v", q)
+			}
+		})
+	}
+	legacy := r
+	legacy.SchemaVersion = 26
+	if q := AssessQuality(legacy); q.State != QualityInvalid {
+		t.Fatalf("pre-v27 report accepted new authentication context fields: %+v", q)
+	}
+}
+
 func TestSchemaThirteenAllowsOnlyFinalWindowToEndAtObservationHorizon(t *testing.T) {
 	r := validSyntheticQualityRun()
 	r.SchemaVersion = 13

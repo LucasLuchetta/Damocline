@@ -4,6 +4,8 @@ This project follows a human-maintained changelog. No release exists yet.
 
 ## [Unreleased]
 
+- Add optional per-workflow, per-VU cookie contexts for weighted profiles in closed-loop and open-arrival runs, capacity searches, and campaign spikes. Isolate cookie jars by actor and workflow, reject ambiguous/shared credentials, fingerprint only the declared isolation mode, and record safe schema-v27 context enums without serializing secrets.
+
 - Select weighted workflows at every journey start in both closed-loop and open-arrival runs. Persist schema-v26 profile selection semantics, per-profile selected/start/drop counters and observed actors, validate their conservation, and keep historical actor-assignment reports readable.
 
 - Add an optional bounded `--stabilization` stage before campaign observation in closed-loop and open-arrival modes; persist schema v11/v7 evidence, screen it with the saved drift policy, budget its drain, and validate it during offline audit.

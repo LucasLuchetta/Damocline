@@ -1326,6 +1326,89 @@ func TestDistinctCookieSessions(t *testing.T) {
 	}
 }
 
+func TestProfileCookieContextsStayIsolatedInBothWorkloadModes(t *testing.T) {
+	for _, mode := range []string{"closed", "arrival"} {
+		t.Run(mode, func(t *testing.T) {
+			for name, entry := range map[string]string{
+				"DAMO_READ_1": "sid=read-actor-one", "DAMO_READ_2": "sid=read-actor-two",
+				"DAMO_WRITE_1": "sid=write-actor-one", "DAMO_WRITE_2": "sid=write-actor-two",
+			} {
+				t.Setenv(name, entry)
+			}
+			seen := map[string]bool{}
+			var mu sync.Mutex
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				prefix := "read"
+				if r.URL.Path == "/write" {
+					prefix = "write"
+				} else if r.URL.Path == "/anonymous" {
+					prefix = "anonymous"
+				} else if r.URL.Path != "/read" {
+					t.Errorf("unexpected path %q", r.URL.Path)
+					w.WriteHeader(http.StatusNotFound)
+					return
+				}
+				cookie, err := r.Cookie("sid")
+				if (prefix == "anonymous" && err == nil && !strings.HasPrefix(cookie.Value, "anonymous-")) ||
+					(prefix != "anonymous" && (err != nil || !strings.HasPrefix(cookie.Value, prefix+"-"))) {
+					t.Errorf("workflow %q received a different workflow's identity: cookie=%v err=%v", prefix, cookie, err)
+					w.WriteHeader(http.StatusUnauthorized)
+					return
+				}
+				mu.Lock()
+				seen[prefix] = true
+				mu.Unlock()
+				http.SetCookie(w, &http.Cookie{Name: "sid", Value: prefix + "-rotated", Path: "/"})
+				w.WriteHeader(http.StatusOK)
+			}))
+			defer srv.Close()
+			s := config.Scenario{Name: "isolated workflow identities", BaseURL: srv.URL, Users: 2, Duration: "1s", MaxRPS: 20, P95LimitMS: 1000, MaxErrorRate: 0,
+				Mode: mode,
+				Profiles: []config.Profile{
+					{Name: "read", Weight: 1, PerVUCookieEnvPrefix: "DAMO_READ_", Steps: []config.Step{{Name: "read", Path: "/read"}}},
+					{Name: "write", Weight: 1, PerVUCookieEnvPrefix: "DAMO_WRITE_", Steps: []config.Step{{Name: "write", Path: "/write"}}},
+					{Name: "anonymous", Weight: 1, Steps: []config.Step{{Name: "anonymous", Path: "/anonymous"}}},
+				}}
+			if mode == "arrival" {
+				s.ArrivalRate = 6
+			}
+			v, err := config.Parse(s, config.Options{Authorized: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			r := Run(context.Background(), v)
+			mu.Lock()
+			defer mu.Unlock()
+			if r.Outcome != "PASS" || r.Quality == nil || r.Quality.State == report.QualityInvalid || !seen["read"] || !seen["write"] || !seen["anonymous"] || !r.Config.SeparateSessions || len(r.Config.Profiles) != 3 {
+				t.Fatalf("workflow cookie contexts were not preserved: outcome=%s seen=%v config=%+v metrics=%+v", r.Outcome, seen, r.Config, r.Metrics)
+			}
+			for _, warning := range r.Warnings {
+				if strings.Contains(warning, "may share one login identity") {
+					t.Fatalf("profile-specific identities retained the shared-login warning: %v", r.Warnings)
+				}
+			}
+			for _, profile := range r.Config.Profiles {
+				want := "per_actor_workflow_cookie"
+				if profile.Name == "anonymous" {
+					want = "isolated_workflow_cookie_jar"
+				}
+				if profile.AuthenticationContext != want {
+					t.Errorf("authentication context semantics missing from report: %+v", profile)
+				}
+			}
+			encoded, err := json.Marshal(r)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, secret := range []string{"read-actor-one", "read-actor-two", "write-actor-one", "write-actor-two", "DAMO_READ_", "DAMO_WRITE_"} {
+				if strings.Contains(string(encoded), secret) {
+					t.Fatalf("credential material or source name leaked into report: %q", secret)
+				}
+			}
+		})
+	}
+}
+
 func TestConcurrentActorsKeepCookiesAndExtractedValuesIsolated(t *testing.T) {
 	var nextSession atomic.Int64
 	var mu sync.Mutex

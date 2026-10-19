@@ -90,6 +90,14 @@ func WithRunner(ctx context.Context, base config.Validated, opt Options, runner 
 			return Result{}, err
 		}
 	}
+	profileCookies := make([][]string, len(base.Profiles))
+	if base.ProfileAuthContexts {
+		var err error
+		profileCookies, err = config.ResolveProfileSessions(base.Scenario.Profiles, opt.MaxUsers)
+		if err != nil {
+			return Result{}, err
+		}
+	}
 	started := time.Now()
 	result := Result{SchemaVersion: 2, Scenario: base.Scenario.Name, Target: base.Base.Scheme + "://" + base.Base.Host, StartedAt: started.UTC().Format(time.RFC3339), StageDuration: opt.StageDuration.String(), Repeats: opt.Repeats, MinUsers: opt.MinUsers, MaxUsers: opt.MaxUsers, Outcome: "INCONCLUSIVE", Notes: []string{
 		"The highest repeatedly passing tested level is not a universal server capacity. It applies only to this HTTP workload, traffic cap, deployment, and service-level objectives.",
@@ -107,6 +115,15 @@ func WithRunner(ctx context.Context, base config.Validated, opt Options, runner 
 			v.Scenario.Users = users
 			v.Scenario.Duration = opt.StageDuration.String()
 			v.Duration = opt.StageDuration
+			if v.ProfileAuthContexts {
+				v.Profiles = append([]config.PreparedProfile(nil), base.Profiles...)
+				for index := range v.Profiles {
+					v.Profiles[index].Cookies = nil
+					if len(profileCookies[index]) > 0 {
+						v.Profiles[index].Cookies = profileCookies[index][:users]
+					}
+				}
+			}
 			if v.RampUp > v.Duration/3 {
 				v.RampUp = v.Duration / 3
 				v.Scenario.RampUp = v.RampUp.String()

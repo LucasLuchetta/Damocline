@@ -50,12 +50,13 @@ type Scenario struct {
 // Profile is a weighted, named workflow. Its weight expresses the intended
 // share of journey starts, not a guarantee of completed journeys.
 type Profile struct {
-	Name             string          `json:"name"`
-	Weight           int             `json:"weight"`
-	ThinkTime        string          `json:"think_time,omitempty"`
-	ThinkTimeRange   *ThinkTimeRange `json:"think_time_range,omitempty"`
-	ThinkTimeSamples []string        `json:"think_time_samples,omitempty"`
-	Steps            []Step          `json:"steps"`
+	Name                 string          `json:"name"`
+	Weight               int             `json:"weight"`
+	PerVUCookieEnvPrefix string          `json:"per_vu_cookie_env_prefix,omitempty"`
+	ThinkTime            string          `json:"think_time,omitempty"`
+	ThinkTimeRange       *ThinkTimeRange `json:"think_time_range,omitempty"`
+	ThinkTimeSamples     []string        `json:"think_time_samples,omitempty"`
+	Steps                []Step          `json:"steps"`
 }
 
 // ThinkTimeRange selects a bounded uniform pause between steps.
@@ -102,6 +103,7 @@ type Validated struct {
 	Steps               []PreparedStep
 	Profiles            []PreparedProfile
 	Cookies             []string
+	ProfileAuthContexts bool
 	SyntheticDataPrefix string
 	GeneratorGuardrails generatorhealth.Guardrails
 }
@@ -111,6 +113,7 @@ type Validated struct {
 type PreparedProfile struct {
 	Name             string
 	Weight           int
+	Cookies          []string
 	ThinkTime        time.Duration
 	ThinkTimeMin     time.Duration
 	ThinkTimeMax     time.Duration
@@ -230,9 +233,6 @@ func Parse(s Scenario, o Options) (Validated, error) {
 	} else if s.ArrivalRate != 0 {
 		return v, errors.New("arrival_rate requires mode=arrival")
 	}
-	if s.Mode == "closed" && len(s.Profiles) > 0 && s.Users < len(s.Profiles) {
-		return v, errors.New("users must be at least the number of profiles so every profile is represented")
-	}
 	if s.MinSamplesPerStep == 0 {
 		s.MinSamplesPerStep = 1
 	}
@@ -299,12 +299,32 @@ func Parse(s Scenario, o Options) (Validated, error) {
 	seen := map[string]bool{}
 	prepared := make([]PreparedStep, 0, totalSteps)
 	preparedProfiles := make([]PreparedProfile, 0, len(profiles))
+	profileAuthContexts := false
+	for _, profile := range profiles {
+		if profile.PerVUCookieEnvPrefix != "" {
+			profileAuthContexts = true
+		}
+	}
+	if profileAuthContexts && s.PerVUCookieEnvPrefix != "" {
+		return v, errors.New("per-profile and scenario-level per_vu_cookie_env_prefix cannot be combined")
+	}
 	if s.PerVUCookieEnvPrefix != "" {
 		for _, profile := range profiles {
 			if containsCookieHeader(profile.Steps) {
 				return v, errors.New("cannot combine per_vu_cookie_env_prefix with a shared Cookie header")
 			}
 		}
+	}
+	if profileAuthContexts {
+		for _, profile := range profiles {
+			if containsCookieHeader(profile.Steps) {
+				return v, errors.New("per-profile cookie contexts cannot be combined with a Cookie header")
+			}
+		}
+	}
+	profileSessions, err := ResolveProfileSessions(profiles, s.Users)
+	if err != nil {
+		return v, err
 	}
 	dataPrefix := ""
 	if s.SyntheticDataPrefixEnv != "" {
@@ -317,7 +337,7 @@ func Parse(s Scenario, o Options) (Validated, error) {
 			return v, fmt.Errorf("synthetic data prefix environment variable %s must contain 1-64 letters, digits, underscores, or hyphens", s.SyntheticDataPrefixEnv)
 		}
 	}
-	for _, profile := range profiles {
+	for profileIndex, profile := range profiles {
 		if countThinkPolicies(profile.ThinkTime, profile.ThinkTimeRange, profile.ThinkTimeSamples) > 1 {
 			return v, fmt.Errorf("profile %q combines think_time, think_time_range, or think_time_samples", profile.Name)
 		}
@@ -480,7 +500,7 @@ func Parse(s Scenario, o Options) (Validated, error) {
 		if cleanupStarted && businessSteps == 0 {
 			return v, fmt.Errorf("profile %q must include a business step before cleanup", profile.Name)
 		}
-		preparedProfiles = append(preparedProfiles, PreparedProfile{Name: profile.Name, Weight: profile.Weight, ThinkTime: profileThink, ThinkTimeMin: profileMin, ThinkTimeMax: profileMax, ThinkTimeSamples: profileSamples, Steps: profileSteps})
+		preparedProfiles = append(preparedProfiles, PreparedProfile{Name: profile.Name, Weight: profile.Weight, Cookies: profileSessions[profileIndex], ThinkTime: profileThink, ThinkTimeMin: profileMin, ThinkTimeMax: profileMax, ThinkTimeSamples: profileSamples, Steps: profileSteps})
 	}
 	if s.WorkloadSeed != 0 && !hasVariableThinkTime(preparedProfiles) {
 		return v, errors.New("workload_seed requires a variable think-time policy")
@@ -495,7 +515,7 @@ func Parse(s Scenario, o Options) (Validated, error) {
 	if err != nil {
 		return v, err
 	}
-	v = Validated{Scenario: s, Base: u, Duration: duration, RampUp: ramp, ThinkTime: think, Timeout: timeout, Window: window, Steps: prepared, Profiles: preparedProfiles, Cookies: cookies, SyntheticDataPrefix: dataPrefix}
+	v = Validated{Scenario: s, Base: u, Duration: duration, RampUp: ramp, ThinkTime: think, Timeout: timeout, Window: window, Steps: prepared, Profiles: preparedProfiles, Cookies: cookies, ProfileAuthContexts: profileAuthContexts, SyntheticDataPrefix: dataPrefix}
 	v.WorkloadFingerprint = WorkloadFingerprint(v)
 	return v, nil
 }

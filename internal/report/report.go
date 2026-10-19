@@ -22,9 +22,10 @@ import (
 // to HTTP diagnostics, v21 adds seeded think-time provenance, v22 adds
 // completed journeys to observation windows, v23 records generator resource
 // guardrails, v24 identifies explicit cleanup steps, v25 may attach a bounded
-// application-metrics timeline, and v26 records per-journey weighted-profile
-// selection semantics and per-profile start/actor ledgers.
-const CurrentSchemaVersion = 26
+// application-metrics timeline, v26 records per-journey weighted-profile
+// selection semantics and per-profile start/actor ledgers, and v27 records
+// isolated per-workflow authentication-context semantics.
+const CurrentSchemaVersion = 27
 
 type MetricSet struct {
 	Total                 int                     `json:"total"`
@@ -314,11 +315,12 @@ type RunConfig struct {
 
 // ProfileConfig records the intended workflow mix used for a run.
 type ProfileConfig struct {
-	Name             string          `json:"name"`
-	Weight           int             `json:"weight"`
-	ThinkTime        string          `json:"think_time"`
-	ThinkTimeRange   *ThinkTimeRange `json:"think_time_range,omitempty"`
-	ThinkTimeSamples []string        `json:"think_time_samples,omitempty"`
+	Name                  string          `json:"name"`
+	Weight                int             `json:"weight"`
+	AuthenticationContext string          `json:"authentication_context,omitempty"`
+	ThinkTime             string          `json:"think_time"`
+	ThinkTimeRange        *ThinkTimeRange `json:"think_time_range,omitempty"`
+	ThinkTimeSamples      []string        `json:"think_time_samples,omitempty"`
 }
 
 type ThinkTimeRange struct {

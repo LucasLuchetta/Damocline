@@ -2,8 +2,10 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -53,6 +55,130 @@ func TestValid(t *testing.T) {
 	}
 	if v.Scenario.ConnectionPolicy != "reuse" {
 		t.Fatalf("default connection policy = %q", v.Scenario.ConnectionPolicy)
+	}
+}
+
+func TestPerProfileCookieContextsResolveDistinctActorSessions(t *testing.T) {
+	t.Setenv("DAMO_A_1", "sid=a-one")
+	t.Setenv("DAMO_A_2", "sid=a-two")
+	t.Setenv("DAMO_B_1", "sid=b-one")
+	t.Setenv("DAMO_B_2", "sid=b-two")
+	s := good()
+	s.Steps = nil
+	s.Profiles = []Profile{
+		{Name: "read", Weight: 1, PerVUCookieEnvPrefix: "DAMO_A_", Steps: []Step{{Name: "read", Path: "/read"}}},
+		{Name: "write", Weight: 1, PerVUCookieEnvPrefix: "DAMO_B_", Steps: []Step{{Name: "write", Path: "/write"}}},
+	}
+	v, err := Parse(s, Options{Authorized: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !v.ProfileAuthContexts || len(v.Profiles[0].Cookies) != 2 || len(v.Profiles[1].Cookies) != 2 || v.Cookies != nil {
+		t.Fatalf("profile authentication contexts were not resolved: %+v", v)
+	}
+	if strings.Contains(v.WorkloadFingerprint, "a-one") || strings.Contains(v.WorkloadFingerprint, "DAMO_A_") {
+		t.Fatalf("fingerprint contains credential material or environment names: %s", v.WorkloadFingerprint)
+	}
+	if got := WorkloadFingerprint(v); got != v.WorkloadFingerprint {
+		t.Fatalf("fingerprint is not stable: %q != %q", got, v.WorkloadFingerprint)
+	}
+	t.Setenv("DAMO_A_1", "sid=changed")
+	changedSecret, err := Parse(s, Options{Authorized: true})
+	if err != nil || changedSecret.WorkloadFingerprint != v.WorkloadFingerprint {
+		t.Fatalf("resolved secret values must not affect workload identity: %v", err)
+	}
+	withoutContexts := s
+	withoutContexts.Profiles = append([]Profile(nil), s.Profiles...)
+	withoutContexts.Profiles[0].PerVUCookieEnvPrefix = ""
+	withoutContexts.Profiles[1].PerVUCookieEnvPrefix = ""
+	withoutAuth, err := Parse(withoutContexts, Options{Authorized: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if withoutAuth.WorkloadFingerprint == v.WorkloadFingerprint {
+		t.Fatal("workflow authentication isolation must change the workload fingerprint")
+	}
+}
+
+func TestPerProfileCookieContextsRejectAmbiguousConfiguration(t *testing.T) {
+	base := good()
+	base.Steps = nil
+	base.Profiles = []Profile{
+		{Name: "first", Weight: 1, PerVUCookieEnvPrefix: "DAMO_A_", Steps: []Step{{Name: "first", Path: "/first"}}},
+		{Name: "second", Weight: 1, PerVUCookieEnvPrefix: "DAMO_B_", Steps: []Step{{Name: "second", Path: "/second"}}},
+	}
+	t.Run("scenario and profile prefixes", func(t *testing.T) {
+		s := base
+		s.PerVUCookieEnvPrefix = "DAMO_GLOBAL_"
+		if _, err := Parse(s, Options{Authorized: true}); err == nil || !strings.Contains(err.Error(), "cannot be combined") {
+			t.Fatalf("ambiguous prefixes accepted: %v", err)
+		}
+	})
+	t.Run("shared cookie header", func(t *testing.T) {
+		s := base
+		s.Profiles = append([]Profile(nil), base.Profiles...)
+		s.Profiles[0].Steps = []Step{{Name: "first", Path: "/first", Headers: map[string]string{"Cookie": "${DAMO_COOKIE}"}}}
+		t.Setenv("DAMO_COOKIE", "sid=shared")
+		if _, err := Parse(s, Options{Authorized: true}); err == nil || !strings.Contains(err.Error(), "Cookie header") {
+			t.Fatalf("shared cookie header accepted: %v", err)
+		}
+	})
+	t.Run("duplicate prefixes", func(t *testing.T) {
+		s := base
+		s.Profiles = append([]Profile(nil), base.Profiles...)
+		s.Profiles[1].PerVUCookieEnvPrefix = s.Profiles[0].PerVUCookieEnvPrefix
+		if _, err := Parse(s, Options{Authorized: true}); err == nil || !strings.Contains(err.Error(), "distinct") {
+			t.Fatalf("duplicate profile prefixes accepted: %v", err)
+		}
+	})
+	t.Run("malformed prefix", func(t *testing.T) {
+		s := base
+		s.Profiles = append([]Profile(nil), base.Profiles...)
+		s.Profiles[0].PerVUCookieEnvPrefix = "invalid-prefix"
+		if _, err := Parse(s, Options{Authorized: true}); err == nil || !strings.Contains(err.Error(), "uppercase") {
+			t.Fatalf("malformed profile prefix accepted: %v", err)
+		}
+	})
+	t.Run("duplicate sessions across profiles", func(t *testing.T) {
+		t.Setenv("DAMO_A_1", "sid=actor-one")
+		t.Setenv("DAMO_A_2", "sid=actor-two")
+		t.Setenv("DAMO_B_1", "sid=actor-one")
+		t.Setenv("DAMO_B_2", "sid=other-two")
+		if _, err := Parse(base, Options{Authorized: true}); err == nil || !strings.Contains(err.Error(), "duplicate session cookie") {
+			t.Fatalf("reused cross-workflow credentials accepted: %v", err)
+		}
+	})
+}
+
+func TestOneActorCanExecuteMultipleWeightedProfiles(t *testing.T) {
+	s := good()
+	s.Users = 1
+	s.Steps = nil
+	s.Profiles = []Profile{
+		{Name: "first", Weight: 1, Steps: []Step{{Name: "first", Path: "/first"}}},
+		{Name: "second", Weight: 1, Steps: []Step{{Name: "second", Path: "/second"}}},
+	}
+	if _, err := Parse(s, Options{Authorized: true}); err != nil {
+		t.Fatalf("journey-start selection should not require one actor per workflow: %v", err)
+	}
+}
+
+func TestIsolatedAuthenticationExampleParsesWithoutPersistingCookieValues(t *testing.T) {
+	for _, prefix := range []string{"DAMOCLINE_DASHBOARD_COOKIE_", "DAMOCLINE_SEARCH_COOKIE_"} {
+		for actor := 1; actor <= 4; actor++ {
+			t.Setenv(prefix+strconv.Itoa(actor), fmt.Sprintf("sid=%s-%d", prefix, actor))
+		}
+	}
+	scenario, err := Load(filepath.Join("..", "..", "examples", "weighted-profiles-isolated-auth.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, err := Parse(scenario, Options{Authorized: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !v.ProfileAuthContexts || len(v.Profiles) != 2 || v.Profiles[0].Cookies[0] == v.Profiles[1].Cookies[0] {
+		t.Fatalf("example did not produce independent workflow identity contexts: %+v", v.Profiles)
 	}
 }
 
@@ -404,14 +530,6 @@ func TestRejectInvalidWeightedProfiles(t *testing.T) {
 			name:  "steps and profiles",
 			users: 2,
 			steps: []Step{{Name: "legacy", Path: "/"}},
-			profiles: []Profile{
-				{Name: "browse", Weight: 1, Steps: []Step{{Name: "browse", Path: "/"}}},
-				{Name: "search", Weight: 1, Steps: []Step{{Name: "search", Path: "/search"}}},
-			},
-		},
-		{
-			name:  "too few users",
-			users: 1,
 			profiles: []Profile{
 				{Name: "browse", Weight: 1, Steps: []Step{{Name: "browse", Path: "/"}}},
 				{Name: "search", Weight: 1, Steps: []Step{{Name: "search", Path: "/search"}}},
