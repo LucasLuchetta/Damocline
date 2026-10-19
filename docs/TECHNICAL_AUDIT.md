@@ -1,6 +1,6 @@
 ﻿# Technical audit: integrated capacity milestones
 
-This audit was reconciled against `master` at `f4e9183` after PR #125 merged. Recent PRs #120–#125 added isolated workflow cookie sessions, saved campaign observation-spread evidence, exact closed-loop calibration profiles, versioned workflow scenarios, client connection-acquisition diagnostics, and bounded expanded-request templates with explicit local request-construction rejection accounting. Broader workload representativeness remains open.
+This audit was reconciled against `master` at `07fabd9` after PR #126 merged. Recent PRs #120–#126 added isolated workflow cookie sessions, saved campaign observation-spread evidence, exact closed-loop calibration profiles, versioned workflow scenarios, client connection-acquisition diagnostics, bounded expanded-request templates with explicit local request-construction rejection accounting, and seeded bounded fuzz checks for request expansion. Broader workload representativeness remains open.
 
 ## What the recent merges delivered
 
