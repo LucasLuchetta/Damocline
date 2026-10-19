@@ -783,6 +783,79 @@ func TestSyntheticDataIDsAreUniqueAndNeverReported(t *testing.T) {
 	}
 }
 
+func TestExplicitCleanupRunsAfterExternalCancellation(t *testing.T) {
+	var mu sync.Mutex
+	created, deleted := map[string]bool{}, map[string]bool{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPost:
+			mu.Lock()
+			created[r.URL.Path] = true
+			mu.Unlock()
+			w.WriteHeader(http.StatusCreated)
+		case http.MethodGet:
+			<-r.Context().Done()
+		case http.MethodDelete:
+			mu.Lock()
+			deleted[r.URL.Path] = true
+			mu.Unlock()
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			w.WriteHeader(http.StatusMethodNotAllowed)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("DAMOCLINE_TEST_DATA_PREFIX", "damocline-cancel")
+	s := config.Scenario{Name: "cancel cleanup", BaseURL: srv.URL, Users: 2, Duration: "5s", Timeout: "4s", MaxRPS: 40, P95LimitMS: 1000, MaxErrorRate: 0,
+		SyntheticDataPrefixEnv: "DAMOCLINE_TEST_DATA_PREFIX", Steps: []config.Step{
+			{Name: "create", Method: "POST", Path: "/records/{{synthetic_id}}", ExpectedStatus: []int{http.StatusCreated}},
+			{Name: "work", Path: "/work"},
+			{Name: "cleanup", Method: "DELETE", Path: "/records/{{synthetic_id}}", ExpectedStatus: []int{http.StatusNoContent}, Cleanup: true},
+		}}
+	v, err := config.Parse(s, config.Options{Authorized: true, AllowWrites: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan report.Result, 1)
+	go func() { done <- Run(ctx, v) }()
+	deadline := time.After(2 * time.Second)
+	for {
+		mu.Lock()
+		count := len(created)
+		mu.Unlock()
+		if count == s.Users {
+			break
+		}
+		select {
+		case <-deadline:
+			cancel()
+			t.Fatal("all actors did not create synthetic records")
+		case <-time.After(time.Millisecond):
+		}
+	}
+	cancel()
+	select {
+	case r := <-done:
+		mu.Lock()
+		defer mu.Unlock()
+		if r.Outcome != "ABORTED" || r.Journeys.Cancelled == 0 || len(created) != s.Users || len(deleted) != len(created) {
+			t.Fatalf("cancelled journeys were not cleaned within the bounded drain: outcome=%s journeys=%+v created=%v deleted=%v", r.Outcome, r.Journeys, created, deleted)
+		}
+		cleanupSeen := false
+		for _, step := range r.Steps {
+			if step.Name == "cleanup" {
+				cleanupSeen = step.Cleanup && step.Metrics.Success == s.Users
+			}
+		}
+		if !cleanupSeen {
+			t.Fatalf("cleanup evidence missing from report: %+v", r.Steps)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("cancellation cleanup exceeded test bound")
+	}
+}
+
 func TestExplicitCleanupRunsAfterBusinessPostconditionFailure(t *testing.T) {
 	var mu sync.Mutex
 	created := map[string]bool{}
@@ -817,7 +890,7 @@ func TestExplicitCleanupRunsAfterBusinessPostconditionFailure(t *testing.T) {
 		Steps: []config.Step{
 			{Name: "create", Method: "POST", Path: "/records/{{synthetic_id}}", ExpectedStatus: []int{http.StatusCreated}},
 			{Name: "verify", Path: "/records/{{synthetic_id}}", JSONAssertions: map[string]string{"/state": "ready"}},
-			{Name: "cleanup", Method: "DELETE", Path: "/records/{{synthetic_id}}", ExpectedStatus: []int{http.StatusNoContent}},
+			{Name: "cleanup", Method: "DELETE", Path: "/records/{{synthetic_id}}", ExpectedStatus: []int{http.StatusNoContent}, Cleanup: true},
 		}}
 	v, err := config.Parse(s, config.Options{Authorized: true, AllowWrites: true})
 	if err != nil {

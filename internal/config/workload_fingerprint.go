@@ -29,6 +29,7 @@ type fingerprintStep struct {
 	BodyEnv        string             `json:"body_env,omitempty"`
 	BodyLength     int                `json:"body_length,omitempty"`
 	Extract        map[string]Extract `json:"extract,omitempty"`
+	Cleanup        bool               `json:"cleanup,omitempty"`
 }
 
 type fingerprintInput struct {
@@ -89,7 +90,7 @@ func WorkloadFingerprint(v Validated) string {
 				Name: step.Step.Name, Method: method, Path: step.PathTemplate,
 				Headers: headers, ExpectedStatus: statuses, MustContain: step.Step.MustContain,
 				JSONAssertions: step.Step.JSONAssertions,
-				BodyEnv:        step.Step.BodyEnv, BodyLength: len(step.Body), Extract: step.Step.Extract,
+				BodyEnv:        step.Step.BodyEnv, BodyLength: len(step.Body), Extract: step.Step.Extract, Cleanup: step.Step.Cleanup,
 			})
 		}
 		input.Profiles = append(input.Profiles, p)

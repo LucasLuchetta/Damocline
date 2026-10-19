@@ -4,6 +4,8 @@ This project follows a human-maintained changelog. No release exists yet.
 
 ## [Unreleased]
 
+- Add explicit synthetic-ID-scoped cleanup steps that run after business assertion failures and within the reserved drain window after external cancellation; identify cleanup steps in run report schema v24.
+
 ### Fixed
 - Enforce the configured observation boundary for scheduler arrivals and closed-loop journey starts even when timer delivery is delayed; late open-loop slots remain explicitly reconciled as generator drops while admitted work drains.
 

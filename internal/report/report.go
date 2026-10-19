@@ -19,9 +19,9 @@ import (
 // by the engine. Readers must reject future versions until their semantics are
 // reviewed and supported. Version 20 adds DNS and connection failure details
 // to HTTP diagnostics, v21 adds seeded think-time provenance, v22 adds
-// completed journeys to observation windows, and v23 records generator
-// resource guardrails and their abort trigger.
-const CurrentSchemaVersion = 23
+// completed journeys to observation windows, v23 records generator resource
+// guardrails, and v24 identifies explicit cleanup steps.
+const CurrentSchemaVersion = 24
 
 type MetricSet struct {
 	Total                 int                     `json:"total"`
@@ -326,6 +326,7 @@ type StepResult struct {
 	Name      string    `json:"name"`
 	Method    string    `json:"method"`
 	Path      string    `json:"path"`
+	Cleanup   bool      `json:"cleanup,omitempty"`
 	Metrics   MetricSet `json:"metrics"`
 	HTTPTrace HTTPTrace `json:"http_trace"`
 }
