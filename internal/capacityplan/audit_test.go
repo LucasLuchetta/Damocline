@@ -13,17 +13,33 @@ import (
 // auditFixture deliberately models a passing synthetic report with LIMITED
 // measurement quality. No test helper can manufacture remote generator proof.
 func auditFixture() campaign.Result {
+	return auditFixtureAtUsers(2)
+}
+
+func auditFixtureAtUsers(users int) campaign.Result {
 	phaseRun := func() report.Result {
+		metricSet := func(total int) report.MetricSet {
+			return report.MetricSet{
+				Total: total, Success: total, P50MS: 100, P95MS: 100, P99MS: 100,
+				HTTP:         report.HTTPDiagnostics{FailureClassificationVersion: 1, StatusCodes: map[int]int{200: total}, Status2xx: total},
+				ResponseBody: report.ResponseBodyDiagnostics{CompleteObservations: int64(total), MinBytes: 1, MaxBytes: 1, TotalBytes: int64(total)},
+			}
+		}
+		metrics := metricSet(80)
+		trace := report.HTTPTrace{RateWaitCount: 80, RequestAttemptCount: 80, CompleteCount: 80, FirstByteCount: 80, BodyCount: 80, WriteCount: 80}
 		r := report.Result{
-			SchemaVersion: 1, Outcome: "PASS", Target: "http://127.0.0.1:18080",
+			SchemaVersion: 14, Outcome: "PASS", Target: "http://127.0.0.1:18080",
 			ElapsedSeconds: 10, ObservationSeconds: 10,
-			Config:   report.RunConfig{Users: 2, Duration: "10s", WindowDuration: "2.5s", MaxRPS: 40, P95LimitMS: 1000, MaxErrorRate: 0.1},
-			Metrics:  report.MetricSet{Total: 80, Success: 80, P95MS: 100},
-			Journeys: report.MetricSet{Total: 80, Success: 80, P95MS: 100},
+			Config: report.RunConfig{Users: users, Duration: "10s", WindowDuration: "2.5s", MaxRPS: 40, P95LimitMS: 1000, MaxErrorRate: 0.1,
+				Mode: "closed", ConnectionPolicy: "reuse", MinSamplesPerStep: 1, WorkloadFingerprint: "sha256:" + strings.Repeat("a", 64),
+				WorkloadRevision: "workload-v1", ApplicationRevision: "app-v1", Environment: "synthetic"},
+			Metrics: metrics, Journeys: report.MetricSet{Total: 80, Success: 80, P95MS: 100},
+			Steps: []report.StepResult{{Name: "request", Method: "GET", Path: "/", Metrics: metrics, HTTPTrace: trace}},
 		}
 		for i := 0; i < 4; i++ {
 			r.Windows = append(r.Windows, report.WindowResult{StartSeconds: float64(i) * 2.5, EndSeconds: float64(i+1) * 2.5,
-				Metrics: report.MetricSet{Total: 20, Success: 20, P95MS: 100}, Journeys: report.MetricSet{Total: 20, Success: 20, P95MS: 100}})
+				Metrics: metricSet(20), Journeys: report.MetricSet{Total: 20, Success: 20, P95MS: 100},
+				Steps: []report.WindowMetric{{Name: "request", Metrics: metricSet(20)}}})
 		}
 		r.Quality = report.AssessQuality(r)
 		return r
@@ -31,7 +47,7 @@ func auditFixture() campaign.Result {
 	a, b := phaseRun(), phaseRun()
 	e := campaign.Result{
 		SchemaVersion: campaign.CurrentSchemaVersion, Scenario: "synthetic", Target: a.Target,
-		BaseUsers: 2, Warmup: "0s", Observation: "10s", SpikeDuration: "0s", Recovery: "10s",
+		BaseUsers: users, Warmup: "0s", Observation: "10s", SpikeDuration: "0s", Recovery: "10s",
 		Budget: "2m20s", Repeats: 2, Outcome: "PASS",
 	}
 	for n := 1; n <= 2; n++ {
@@ -114,19 +130,20 @@ func TestConfidenceDimensionsDoNotCompensateForEachOther(t *testing.T) {
 	}
 }
 
-func TestAuditListsOnlyObservedFailingWorkflow(t *testing.T) {
-	e := auditFixture()
-	for i := range e.Trials {
-		for j := range e.Trials[i].Phases {
-			phase := &e.Trials[i].Phases[j]
-			if phase.Name == "observation" {
-				phase.Run.Profiles = []report.ProfileResult{{Name: "checkout", Journeys: report.MetricSet{Total: 10, Success: 8, Failures: 2}}}
-			}
-		}
+func TestWorkflowBreachDiagnosisUsesOnlyExceededObjectives(t *testing.T) {
+	profiles := []report.ProfileResult{{Name: "checkout", Journeys: report.MetricSet{Total: 10, Success: 8, Failures: 2, P95MS: 900}}}
+	breaches := workflowBreaches(2, "observation", 4, profiles, report.MetricSet{}, 1000, 0.1)
+	if len(breaches) != 1 || breaches[0].Workflow != "checkout" || breaches[0].Trial != 2 || breaches[0].TestedUsers != 4 || breaches[0].Phase != "observation" || len(breaches[0].Reasons) != 1 || breaches[0].Reasons[0] != "ERROR_RATE_ABOVE_LIMIT" || breaches[0].ErrorRate != 0.2 {
+		t.Fatalf("expected traced workflow error-rate breach: %+v", breaches)
 	}
-	a := AuditCampaign(e)
-	if len(a.LimitingWorkflows) != 1 || a.LimitingWorkflows[0] != "checkout" {
-		t.Fatalf("expected named observed workflow failures: %+v", a.LimitingWorkflows)
+	profiles[0].Journeys = report.MetricSet{Total: 100, Success: 99, Failures: 1, P95MS: 900}
+	if got := workflowBreaches(1, "observation", 2, profiles, report.MetricSet{}, 1000, 0.1); len(got) != 0 {
+		t.Fatalf("an allowed isolated error was mislabeled as a workflow breach: %+v", got)
+	}
+	profiles[0].Journeys.P95MS = 1200
+	got := workflowBreaches(1, "spike", 8, profiles, report.MetricSet{}, 1000, 0.1)
+	if len(got) != 1 || len(got[0].Reasons) != 1 || got[0].Reasons[0] != "P95_ABOVE_LIMIT" {
+		t.Fatalf("latency-only breach was not identified by phase: %+v", got)
 	}
 }
 
@@ -168,7 +185,9 @@ func TestAuditCampaignRejectsMissingTrialsOrInvalidDelivery(t *testing.T) {
 	}
 	e = auditFixture()
 	e.Outcome = "INCONCLUSIVE"
+	e.Trials = e.Trials[:1]
 	e.Trials[0].Outcome = "INCONCLUSIVE"
+	e.Trials[0].Phases = e.Trials[0].Phases[:1]
 	e.Trials[0].Phases[0].Run.ArrivalsDropped = 1
 	e.Trials[0].Phases[0].Run.Outcome = "FAIL"
 	e.Trials[0].Phases[0].EvidenceState = "INVALID_DELIVERY"

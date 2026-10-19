@@ -1,0 +1,15 @@
+--- DAMOCLINE | CAMPAIGN LEVEL AUDIT (OFFLINE) ---
+Level collection verdict: NOT_COMPARABLE
+Scenario, target and workload match: NOT ESTABLISHED
+Observed passing levels: [] | failing levels: [] | inconclusive levels: []
+Observed pattern: UNAVAILABLE
+  2 VUs: ABORTED | audit INCONCLUSIVE | measurement LIMITED | evidence sha256:7a00d7d411ccda1b55e52a2551e789ee8485cb97f1c22a57f2afe8c7621156b4
+  4 VUs: ABORTED | audit INCONCLUSIVE | measurement LIMITED | evidence sha256:885d3c9ad3a2cffa5467f9d8ff7114b6803563930e182880e63be8e5c0194b73
+Demand target: 3 workload-equivalent active actors | plan state: INSUFFICIENT_EVIDENCE
+  - A demand decision requires a campaign at the exact calculated workload level; nearby levels are not interpolated.
+  - Each level is audited independently; no result is interpolated or extrapolated to an untested workload.
+  - Observed passing and failing levels do not establish a monotone capacity boundary or sustainable human-user capacity.
+  - Level 2 VUs cannot be compared: no required phase controls.
+  - Level 4 VUs cannot be compared: no required phase controls.
+  - Campaigns do not share a complete matching declared workload and control signature; per-level audits are retained, but levels are not aggregated.
+No traffic was generated; every level remains linked to its saved campaign evidence.
