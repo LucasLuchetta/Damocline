@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/LucasLuchetta/Damocline/internal/arrivalexplorer"
 	"github.com/LucasLuchetta/Damocline/internal/explorer"
 	"github.com/LucasLuchetta/Damocline/internal/generatorhealth"
 	"github.com/LucasLuchetta/Damocline/internal/report"
@@ -39,6 +40,35 @@ func TestGoalCommandUsesSavedExploreWithoutGeneratingTraffic(t *testing.T) {
 		}
 	}
 }
+
+func TestGoalCommandKeepsArrivalDemandInScheduledStartsPerSecond(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "arrival-capacity.json")
+	saved := arrivalexplorer.Result{
+		SchemaVersion: 1, Scenario: "synthetic arrival", StageDuration: "10s", Repeats: 2,
+		WorkerLimit: 4, MinJourneysPerSecond: 1, MaxJourneysPerSecond: 1,
+		Outcome: "PASSED_TO_CONFIGURED_CEILING",
+		Probes:  []arrivalexplorer.Probe{{JourneysPerSecond: 1, Status: "PASS_OBSERVED", Runs: []report.Result{}}},
+	}
+	if err := report.WriteAnyJSON(file, saved); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	exit := Run([]string{"goal", "--file", file, "--peak-journeys-per-second", "2", "--growth-percent", "25", "--reserve-percent", "20"}, &stdout, &stderr)
+	if exit != 0 {
+		t.Fatalf("exit %d: %s", exit, stderr.String())
+	}
+	for _, want := range []string{"DEMAND TO VALIDATE: 3 scheduled journey starts/s", "OUTSIDE_TESTED_CEILING", "VUs, admitted journeys, completed journeys, and HTTP requests/s are separate", "No load was generated"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("expected %q: %s", want, stdout.String())
+		}
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if exit = Run([]string{"goal", "--file", file, "--peak-users", "2"}, &stdout, &stderr); exit != 2 || !strings.Contains(stderr.String(), "VUs cannot be substituted") {
+		t.Fatalf("arrival artifact accepted VU demand: exit=%d stdout=%s stderr=%s", exit, stdout.String(), stderr.String())
+	}
+}
+
 func TestGoalCommandRejectsInvalidJSONAndMissingFlags(t *testing.T) {
 	var out, errOut bytes.Buffer
 	if c := Run([]string{"goal"}, &out, &errOut); c != 2 {

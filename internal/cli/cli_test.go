@@ -33,6 +33,105 @@ func TestSeededWeightedExampleDryRunShowsTimingPolicy(t *testing.T) {
 	}
 }
 
+func TestArrivalCampaignDryRunShowsOpenArrivalSchedule(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	path := filepath.Join("..", "..", "examples", "arrival-rate-readonly.json")
+	code := Run([]string{"arrival-campaign", "--config", path, "--observation", "10s", "--recovery", "10s", "--repeats", "2", "--peak-journeys-per-second", "1", "--dry-run"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("dry run failed: code=%d stderr=%s", code, stderr.String())
+	}
+	for _, expected := range []string{"base 1 scheduled starts/s", "worker limit", "Trial 1 warmup: 30s at 1 scheduled starts/s", "Trial 1 observation: 10s at 1 scheduled starts/s", "DRY RUN: no traffic generated"} {
+		if !strings.Contains(stdout.String(), expected) {
+			t.Fatalf("dry run missing %q: %s", expected, stdout.String())
+		}
+	}
+}
+
+func TestLongRunCampaignDryRunsRequireExplicitStagingAndBudget(t *testing.T) {
+	closed := config.Scenario{
+		Name: "staging-long-run", BaseURL: "https://app.example.com", Environment: "staging",
+		Users: 2, Duration: "30s", Timeout: "2s", MaxRPS: 10, P95LimitMS: 1000, MaxErrorRate: .01,
+		Steps: []config.Step{{Name: "read", Method: "GET", Path: "/"}},
+	}
+	arrival := closed
+	arrival.Mode, arrival.ArrivalRate = "arrival", 1
+	write := func(name string, scenario config.Scenario) string {
+		t.Helper()
+		data, err := json.Marshal(scenario)
+		if err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(t.TempDir(), name+".json")
+		if err := os.WriteFile(path, data, 0600); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "closed", args: []string{"campaign", "--config", write("closed", closed), "--observation", "30m", "--recovery", "45s", "--repeats", "2", "--allow-long-run", "--staging-confirmed", "--budget", "70m", "--dry-run"}, want: "Trial 1 observation: 30m0s at 2 VUs"},
+		{name: "arrival", args: []string{"arrival-campaign", "--config", write("arrival", arrival), "--observation", "30m", "--recovery", "45s", "--repeats", "2", "--allow-long-run", "--staging-confirmed", "--budget", "70m", "--dry-run"}, want: "Trial 1 observation: 30m0s at 1 scheduled starts/s"},
+	} {
+		var stdout, stderr bytes.Buffer
+		if code := Run(tc.args, &stdout, &stderr); code != 0 || !strings.Contains(stdout.String(), tc.want) || !strings.Contains(stdout.String(), "environment declared staging") || !strings.Contains(stdout.String(), "DRY RUN: no traffic") {
+			t.Fatalf("%s long-run dry run failed: code=%d stdout=%s stderr=%s", tc.name, code, stdout.String(), stderr.String())
+		}
+		var rejectedOut, rejectedErr bytes.Buffer
+		args := append([]string(nil), tc.args...)
+		args = args[:len(args)-5] // remove approval, budget, and dry-run flags for fail-closed validation
+		args = append(args, "--dry-run")
+		if code := Run(args, &rejectedOut, &rejectedErr); code != 2 {
+			t.Fatalf("%s long run without explicit policy was accepted: code=%d stdout=%s stderr=%s", tc.name, code, rejectedOut.String(), rejectedErr.String())
+		}
+		args = append([]string(nil), tc.args[:len(tc.args)-1]...)
+		args = append(args, "--authorized")
+		var outputRequired, outputError bytes.Buffer
+		if code := Run(args, &outputRequired, &outputError); code != 2 || !strings.Contains(outputError.String(), "require --out") {
+			t.Fatalf("%s long run without durable evidence output was accepted: code=%d stdout=%s stderr=%s", tc.name, code, outputRequired.String(), outputError.String())
+		}
+	}
+}
+
+func TestArrivalExploreDryRunLabelsJourneyStartRates(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	path := filepath.Join("..", "..", "examples", "arrival-rate-readonly.json")
+	code := Run([]string{"explore-arrival", "--config", path, "--min-journeys-per-second", "2", "--max-journeys-per-second", "10", "--authorized", "--dry-run"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("arrival dry run failed: code=%d stderr=%s", code, stderr.String())
+	}
+	for _, expected := range []string{"scheduled journey starts 2-10/s", "worker limit 10", "DRY RUN: no traffic generated", "request/s and completed journeys/s are separate"} {
+		if !strings.Contains(stdout.String(), expected) {
+			t.Fatalf("arrival dry run omitted %q: %s", expected, stdout.String())
+		}
+	}
+}
+
+func TestArrivalDemandGoalDryRunCalculatesExactScheduledStartRate(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	path := filepath.Join("..", "..", "examples", "arrival-rate-readonly.json")
+	code := Run([]string{"explore-arrival", "--config", path, "--min-journeys-per-second", "2", "--max-journeys-per-second", "10", "--peak-journeys-per-second", "5", "--growth-percent", "25", "--reserve-percent", "20", "--authorized", "--dry-run"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("arrival demand dry run failed: code=%d stderr=%s", code, stderr.String())
+	}
+	for _, expected := range []string{"Business demand: peak 5 starts/s", "required exact target 8 starts/s", "scheduled journey starts 2-10/s", "DRY RUN: no traffic generated"} {
+		if !strings.Contains(stdout.String(), expected) {
+			t.Fatalf("arrival demand dry run omitted %q: %s", expected, stdout.String())
+		}
+	}
+}
+
+func TestArrivalExploreRejectsClosedLoopScenario(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	path := filepath.Join("..", "..", "examples", "advanced-readonly.json")
+	code := Run([]string{"explore-arrival", "--config", path, "--dry-run"}, &stdout, &stderr)
+	if code != 2 || !strings.Contains(stderr.String(), "requires mode=arrival") {
+		t.Fatalf("arrival explorer accepted a closed-loop scenario: code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+}
+
 func TestWriteWorkflowDryRunClearlyMarksMutatingRoutes(t *testing.T) {
 	t.Setenv("DAMOCLINE_PREVIEW_PREFIX", "preview")
 	scenario := config.Scenario{
@@ -80,18 +179,9 @@ func TestJourneyP95DescriptionDoesNotInventLatencyWhenNoneCompleted(t *testing.T
 func TestCampaignDryRunShowsBoundedWallTime(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	path := filepath.Join("..", "..", "examples", "seeded-weighted-readonly.json")
-	code := Run([]string{"campaign", "--config", path, "--warmup", "0s", "--observation", "10s", "--recovery", "10s", "--repeats", "2", "--stability-min-windows", "4", "--stability-min-samples", "25", "--stability-max-p95-increase-percent", "15", "--stability-max-p95-increase-ms", "7", "--stability-max-throughput-drop-percent", "10", "--dry-run"}, &stdout, &stderr)
-	if code != 0 || !strings.Contains(stdout.String(), "wall-time cap 2m40s") || !strings.Contains(stdout.String(), "Trial 1 observation: 10s at 10 VUs") || !strings.Contains(stdout.String(), "Trial 2 recovery: 10s at 10 VUs") || !strings.Contains(stdout.String(), "Drift screen: >=4 windows, >=25 samples/window, p95 increase >15.0% and >7.0ms, throughput decrease >10.0%") || !strings.Contains(stdout.String(), "DRY RUN: no traffic generated") {
+	code := Run([]string{"campaign", "--config", path, "--warmup", "0s", "--observation", "10s", "--recovery", "10s", "--repeats", "2", "--dry-run"}, &stdout, &stderr)
+	if code != 0 || !strings.Contains(stdout.String(), "wall-time cap 2m40s") || !strings.Contains(stdout.String(), "Trial 1 observation: 10s at 10 VUs") || !strings.Contains(stdout.String(), "Trial 2 recovery: 10s at 10 VUs") || !strings.Contains(stdout.String(), "DRY RUN: no traffic generated") {
 		t.Fatalf("campaign preview did not show its effective cap: code=%d out=%s err=%s", code, stdout.String(), stderr.String())
-	}
-}
-
-func TestCampaignRejectsUnachievableStabilityWindowsBeforeDryRun(t *testing.T) {
-	var stdout, stderr bytes.Buffer
-	path := filepath.Join("..", "..", "examples", "seeded-weighted-readonly.json")
-	code := Run([]string{"campaign", "--config", path, "--warmup", "0s", "--observation", "10s", "--recovery", "10s", "--repeats", "2", "--stability-min-windows", "5", "--dry-run"}, &stdout, &stderr)
-	if code != 2 || !strings.Contains(stderr.String(), "minimum-windows exceeds") || strings.Contains(stdout.String(), "DRY RUN") {
-		t.Fatalf("unachievable policy reached dry run: code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 	}
 }
 

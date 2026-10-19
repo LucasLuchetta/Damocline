@@ -8,7 +8,7 @@
 | Virtual user (VU) | Isolated synthetic actor with its own state and journey. |
 | Active virtual user | VU currently executing a defined workflow, including its modeled think times. |
 | In-flight request | Started but not yet completed, failed, or timed out. |
-| Arrival rate | New request or iteration starts per second, not a number of users. |
+| Scheduled journey-start rate | Open-loop planned workflow starts per second; distinct from worker slots, scheduler-admitted starts, HTTP requests/s, and completed useful journeys/s. |
 | Request throughput | Completed HTTP requests per observation second; reported separately from the configured `max_rps` ceiling and scheduled arrivals. |
 | Useful journey throughput | Fully completed configured workflows whose every step passed, per observation second. Failed completed journeys and cancelled/incomplete journeys are counted separately. |
 | Response time | Measured duration from a defined boundary to completion; protocol breakdown when available. |
@@ -29,7 +29,7 @@ Completed-journey latency covers the configured sequence of HTTP steps, includin
 
 **Closed-loop VUs:** actors complete a journey, optionally pause, and repeat. When the target slows down, the operation arrival rate typically drops. This models a fixed population whose next journey depends on prior completion.
 
-**Open-loop journey arrivals:** planned journey starts are independent of previous response completion. Damocline reports scheduled, scheduler-admitted, worker-started, completed, dropped-late and dropped-busy arrivals, externally cancelled planned arrivals not admitted, plus scheduler lag. Schema v17 reconciles planned = admitted + dropped and admitted = worker-started iterations; schema v16 reconciles started plus dropped, and older reports leave the cancellation category unknown. A dropped or delayed start means offered demand was not fully delivered; a worker-busy drop is not evidence that the target itself saturated. Client-side limits can invalidate the intended load, so inspect generator observations too.
+**Open-loop journey arrivals:** planned journey starts are independent of previous response completion. Damocline reports scheduled, scheduler-admitted, worker-started, completed, dropped-late and dropped-busy arrivals, externally cancelled planned arrivals not admitted, plus scheduler lag. Schema v17 reconciles planned = admitted + dropped and admitted = worker-started iterations; schema v16 reconciles started plus dropped, and older reports leave the cancellation category unknown. A dropped or delayed start means offered demand was not fully delivered; a worker-busy drop is not evidence that the target itself saturated. Client-side limits can invalidate the intended load, so inspect generator observations too. `explore-arrival` searches this scheduled journey-start rate in a separate bounded experiment; `explore` searches closed-loop VUs. Neither search value can be converted into requests/s or the other workload unit without measured workflow and environment evidence.
 
 **Weighted profiles:** a scenario can define two to ten named workflows, each with a positive integer weight, steps, and optional think time. Closed-loop VUs are allocated deterministically across profiles; arrival mode selects each planned journey with smooth weighted round-robin. The report records configured weights, assigned closed-loop VUs, and actual started/completed/cancelled journeys. `profile_mix_basis` records `assumption` (the default), `sanitized_analytics`, or `business_estimate`; non-assumption bases require a safe short `profile_mix_reference` identifier. These are user declarations only: they do not validate the source, freshness, or representativeness of the proportions. Reports never accept raw event data in these fields.
 
@@ -99,7 +99,7 @@ Completed journey latency includes rate-token waits between steps, network/respo
 
 ## What is not yet measured
 
-- No predeclared long soak protocol for checking whether SLOs held throughout a production-representative steady state.
+- The new arrival campaign can preserve bounded observation windows and an optional final soak, but it has not been validated against production-representative sustained workloads or independent application/dependency evidence.
 - No uncertainty interval for latency percentiles or dependence-aware variability analysis across independent runs.
 - No latency estimate for incomplete journeys; they are counted as cancelled, and an otherwise passing run becomes inconclusive. Journey percentiles describe completed journeys only.
 - No fitted queueing or Universal Scalability Law model. Do not extrapolate beyond tested levels.

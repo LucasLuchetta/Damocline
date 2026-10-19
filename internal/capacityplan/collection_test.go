@@ -3,10 +3,28 @@ package capacityplan
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/LucasLuchetta/Damocline/internal/campaign"
 	"github.com/LucasLuchetta/Damocline/internal/capacitygoal"
 )
+
+func TestCampaignLevelScheduleValidatesDeclaredLongRunEnvelope(t *testing.T) {
+	policy := campaign.DefaultStabilityPolicy()
+	evidence := campaign.Result{
+		SchemaVersion: campaign.CurrentSchemaVersion, Scenario: "synthetic", Target: "https://app.example.com", BaseUsers: 10,
+		Warmup: "0s", Observation: "30m", SpikeDuration: "0s", Recovery: "45s", Budget: "70m", Repeats: 2,
+		LongRun: true, DeclaredEnvironment: "staging", StabilityPolicy: &policy,
+	}
+	options, phases, err := campaignLevelSchedule(evidence)
+	if err != nil || !options.LongRun || options.Budget != 70*time.Minute || len(phases) != 2 {
+		t.Fatalf("valid long-run schedule rejected: options=%+v phases=%+v err=%v", options, phases, err)
+	}
+	evidence.DeclaredEnvironment = "production"
+	if _, _, err := campaignLevelSchedule(evidence); err == nil {
+		t.Fatal("long-run campaign without staging declaration was accepted")
+	}
+}
 
 func TestCampaignCollectionAggregatesOnlyMatchedLevels(t *testing.T) {
 	lower := auditFixtureAtUsers(2)

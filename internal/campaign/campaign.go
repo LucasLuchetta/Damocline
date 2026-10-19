@@ -12,7 +12,14 @@ import (
 	"github.com/LucasLuchetta/Damocline/internal/report"
 )
 
-const CurrentSchemaVersion = 5
+const CurrentSchemaVersion = 6
+
+const (
+	DefaultWallTimeLimit = 15 * time.Minute
+	LongRunWallTimeLimit = 2 * time.Hour
+	LongRunPhaseLimit    = 30 * time.Minute
+	MaxCampaignWindows   = 120
+)
 
 // StabilityPolicy sets bounded thresholds for the campaign window drift
 // screen. It is a coarse screening policy, not a stationarity test.
@@ -59,15 +66,17 @@ func effectiveStabilityPolicy(policy StabilityPolicy) StabilityPolicy {
 }
 
 type Options struct {
-	Warmup        time.Duration
-	Observation   time.Duration
-	SpikeUsers    int
-	SpikeDuration time.Duration
-	Recovery      time.Duration
-	Soak          time.Duration
-	Repeats       int
-	Budget        time.Duration
-	Stability     StabilityPolicy
+	Warmup           time.Duration
+	Observation      time.Duration
+	SpikeUsers       int
+	SpikeDuration    time.Duration
+	Recovery         time.Duration
+	Soak             time.Duration
+	Repeats          int
+	Budget           time.Duration
+	Stability        StabilityPolicy
+	LongRun          bool
+	StagingConfirmed bool
 }
 
 // PlannedPhase is one bounded stage in each campaign trial.
@@ -131,6 +140,8 @@ type Result struct {
 	SpikeDuration          string           `json:"spike_duration,omitempty"`
 	Recovery               string           `json:"recovery"`
 	Soak                   string           `json:"soak,omitempty"`
+	LongRun                bool             `json:"long_run,omitempty"`
+	DeclaredEnvironment    string           `json:"declared_environment,omitempty"`
 	StabilityPolicy        *StabilityPolicy `json:"stability_policy,omitempty"`
 	Budget                 string           `json:"budget,omitempty"`
 	Repeats                int              `json:"repeats"`
@@ -169,17 +180,27 @@ type Variability struct {
 type Runner func(context.Context, config.Validated) report.Result
 
 func Validate(options Options) error {
+	if options.LongRun != options.StagingConfirmed {
+		return fmt.Errorf("long-run campaigns require both --allow-long-run and --staging-confirmed")
+	}
+	observationLimit, soakLimit, budgetLimit := 10*time.Minute, 3*time.Minute, DefaultWallTimeLimit
+	if options.LongRun {
+		observationLimit, soakLimit, budgetLimit = LongRunPhaseLimit, LongRunPhaseLimit, LongRunWallTimeLimit
+		if options.Budget == 0 {
+			return fmt.Errorf("long-run campaigns require an explicit --budget (maximum 2h)")
+		}
+	}
 	if err := ValidateStabilityPolicy(effectiveStabilityPolicy(options.Stability)); err != nil {
 		return err
 	}
 	if options.Warmup < 0 || options.Warmup > 3*time.Minute || options.Recovery < 0 || options.Recovery > 3*time.Minute {
 		return fmt.Errorf("warmup and recovery must be between 0 and 3m")
 	}
-	if options.Observation < 10*time.Second || options.Observation > 10*time.Minute {
-		return fmt.Errorf("observation must be between 10s and 10m")
+	if options.Observation < 10*time.Second || options.Observation > observationLimit {
+		return fmt.Errorf("observation must be between 10s and %s", observationLimit)
 	}
-	if options.Soak < 0 || options.Soak > 3*time.Minute || (options.Soak > 0 && options.Soak < 10*time.Second) {
-		return fmt.Errorf("soak must be between 10s and 3m when enabled")
+	if options.Soak < 0 || options.Soak > soakLimit || (options.Soak > 0 && options.Soak < 10*time.Second) {
+		return fmt.Errorf("soak must be between 10s and %s when enabled", soakLimit)
 	}
 	if (options.SpikeUsers == 0) != (options.SpikeDuration == 0) {
 		return fmt.Errorf("spike-users and spike-duration must be set together")
@@ -191,19 +212,20 @@ func Validate(options Options) error {
 		return fmt.Errorf("repeats must be between 2 and 5")
 	}
 	minimum := time.Duration(options.Repeats)*(options.Warmup+options.Observation+options.SpikeDuration+options.Recovery) + options.Soak
-	if options.Budget != 0 && (options.Budget < minimum || options.Budget > 15*time.Minute) {
-		return fmt.Errorf("budget must cover every phase and be at most 15m")
+	if options.Budget != 0 && (options.Budget < minimum || options.Budget > budgetLimit) {
+		return fmt.Errorf("budget must cover every phase and be at most %s", budgetLimit)
 	}
-	if options.Budget != 0 && options.Soak > 0 {
-		if options.Budget < defaultBudget(options) {
-			return fmt.Errorf("budget must reserve bounded drain allowance for every phase")
-		}
+	if options.Budget != 0 && options.Soak > 0 && options.Budget < defaultBudget(options) {
+		return fmt.Errorf("budget must reserve bounded drain allowance for every phase")
 	}
-	if minimum > 15*time.Minute {
-		return fmt.Errorf("configured phases exceed the 15m campaign safety budget")
+	if options.LongRun && options.Budget < defaultBudget(options) {
+		return fmt.Errorf("long-run budget must reserve bounded drain allowance for every phase")
 	}
-	if options.Budget == 0 && defaultBudget(options) > 15*time.Minute {
-		return fmt.Errorf("configured phases and bounded drain allowance exceed the 15m campaign safety budget")
+	if minimum > budgetLimit {
+		return fmt.Errorf("configured phases exceed the %s campaign safety budget", budgetLimit)
+	}
+	if options.Budget == 0 && defaultBudget(options) > budgetLimit {
+		return fmt.Errorf("configured phases and bounded drain allowance exceed the %s campaign safety budget", budgetLimit)
 	}
 	return nil
 }
@@ -213,6 +235,9 @@ func Validate(options Options) error {
 func ValidateForScenario(base config.Validated, options Options) error {
 	if err := Validate(options); err != nil {
 		return err
+	}
+	if options.LongRun && base.Scenario.Environment != "staging" {
+		return fmt.Errorf("long-run campaigns require scenario environment to be explicitly declared as staging")
 	}
 	policy := effectiveStabilityPolicy(options.Stability)
 	for _, duration := range []time.Duration{options.Observation, options.Soak} {
@@ -225,6 +250,9 @@ func ValidateForScenario(base config.Validated, options Options) error {
 		}
 		if window <= 0 || int(math.Ceil(duration.Seconds()/window.Seconds())) < policy.MinimumWindows {
 			return fmt.Errorf("stability minimum-windows exceeds the observation or soak window coverage")
+		}
+		if options.LongRun && int(math.Ceil(duration.Seconds()/window.Seconds())) > MaxCampaignWindows {
+			return fmt.Errorf("long-run observation and soak phases are limited to %d windows; increase window_duration", MaxCampaignWindows)
 		}
 	}
 	return nil
@@ -277,26 +305,31 @@ func WithRunner(ctx context.Context, base config.Validated, options Options, run
 		soakDuration = options.Soak.String()
 	}
 	result := Result{
-		SchemaVersion:   CurrentSchemaVersion,
-		Scenario:        base.Scenario.Name,
-		BaseUsers:       base.Scenario.Users,
-		Target:          base.Base.Scheme + "://" + base.Base.Host,
-		StartedAt:       time.Now().UTC().Format(time.RFC3339),
-		Warmup:          options.Warmup.String(),
-		Observation:     options.Observation.String(),
-		SpikeUsers:      options.SpikeUsers,
-		SpikeDuration:   options.SpikeDuration.String(),
-		Recovery:        options.Recovery.String(),
-		Soak:            soakDuration,
-		StabilityPolicy: &stabilityPolicy,
-		Budget:          options.Budget.String(),
-		Repeats:         options.Repeats,
-		Trials:          []Trial{},
-		Outcome:         "INCONCLUSIVE",
+		SchemaVersion:       CurrentSchemaVersion,
+		Scenario:            base.Scenario.Name,
+		BaseUsers:           base.Scenario.Users,
+		Target:              base.Base.Scheme + "://" + base.Base.Host,
+		StartedAt:           time.Now().UTC().Format(time.RFC3339),
+		Warmup:              options.Warmup.String(),
+		Observation:         options.Observation.String(),
+		SpikeUsers:          options.SpikeUsers,
+		SpikeDuration:       options.SpikeDuration.String(),
+		Recovery:            options.Recovery.String(),
+		Soak:                soakDuration,
+		LongRun:             options.LongRun,
+		DeclaredEnvironment: base.Scenario.Environment,
+		StabilityPolicy:     &stabilityPolicy,
+		Budget:              options.Budget.String(),
+		Repeats:             options.Repeats,
+		Trials:              []Trial{},
+		Outcome:             "INCONCLUSIVE",
 		Notes: []string{
 			"Warm-up runs establish workload state but are excluded from capacity conclusions.",
 			"Observation, configured spike, recovery, and the optional final soak all require PASS; this is evidence under the configured workload, not a universal capacity certification.",
 		},
+	}
+	if options.LongRun {
+		result.Notes = append(result.Notes, "Long-run mode was explicitly enabled for a user-declared staging environment with a bounded wall-time budget; Damocline does not verify the environment designation.")
 	}
 	for number := 1; number <= options.Repeats; number++ {
 		trial := Trial{Number: number, Phases: []Phase{}, Outcome: "PASS"}

@@ -330,6 +330,9 @@ func validateEvidence(evidence campaign.Result) error {
 			return fmt.Errorf("invalid persisted stability policy: %w", err)
 		}
 	}
+	if evidence.SchemaVersion < 6 && evidence.LongRun {
+		return errors.New("long-run declaration is unsupported by this campaign schema")
+	}
 	if evidence.Outcome == "PASS" && len(evidence.Trials) != evidence.Repeats {
 		return errors.New("a passing campaign must contain every configured trial")
 	}
@@ -510,7 +513,15 @@ func validateStageEvidence(evidence campaign.Result) error {
 		return errors.New("invalid warmup duration")
 	}
 	observation, err := parsePhaseDuration("observation", evidence.Observation)
-	if err != nil || observation < 10*time.Second || observation > 10*time.Minute {
+	longRun := evidence.SchemaVersion >= 6 && evidence.LongRun
+	observationLimit, soakLimit, wallTimeLimit := 10*time.Minute, 3*time.Minute, 15*time.Minute
+	if longRun {
+		observationLimit, soakLimit, wallTimeLimit = campaign.LongRunPhaseLimit, campaign.LongRunPhaseLimit, campaign.LongRunWallTimeLimit
+		if evidence.DeclaredEnvironment != "staging" {
+			return errors.New("long-run campaign is missing its declared staging environment")
+		}
+	}
+	if err != nil || observation < 10*time.Second || observation > observationLimit {
 		return errors.New("invalid observation duration")
 	}
 	spike, err := parsePhaseDuration("spike", evidence.SpikeDuration)
@@ -526,7 +537,7 @@ func validateStageEvidence(evidence campaign.Result) error {
 		if evidence.Soak != "" {
 			soak, err = parsePhaseDuration("soak", evidence.Soak)
 		}
-		if err != nil || (soak > 0 && (soak < 10*time.Second || soak > 3*time.Minute)) {
+		if err != nil || (soak > 0 && (soak < 10*time.Second || soak > soakLimit)) {
 			return errors.New("invalid soak stage")
 		}
 	}
@@ -536,7 +547,7 @@ func validateStageEvidence(evidence campaign.Result) error {
 	} else if evidence.SchemaVersion < 4 {
 		budget = campaign.PlannedBudget(campaign.Options{Warmup: warmup, Observation: observation, SpikeUsers: evidence.SpikeUsers, SpikeDuration: spike, Recovery: recovery, Repeats: evidence.Repeats})
 	}
-	if err != nil || budget == 0 || budget > 15*time.Minute || budget < time.Duration(evidence.Repeats)*(warmup+observation+spike+recovery)+soak || evidence.Target == "" || evidence.BaseUsers > 50 {
+	if err != nil || budget == 0 || budget > wallTimeLimit || budget < time.Duration(evidence.Repeats)*(warmup+observation+spike+recovery)+soak || evidence.Target == "" || evidence.BaseUsers > 50 {
 		return errors.New("invalid campaign wall-time budget")
 	}
 	if spike > 0 {
@@ -544,9 +555,15 @@ func validateStageEvidence(evidence campaign.Result) error {
 			return errors.New("spike load does not exceed base load")
 		}
 	}
-	options := campaign.Options{Warmup: warmup, Observation: observation, SpikeUsers: evidence.SpikeUsers, SpikeDuration: spike, Recovery: recovery, Soak: soak, Repeats: evidence.Repeats}
+	options := campaign.Options{Warmup: warmup, Observation: observation, SpikeUsers: evidence.SpikeUsers, SpikeDuration: spike, Recovery: recovery, Soak: soak, Repeats: evidence.Repeats, LongRun: longRun, StagingConfirmed: longRun}
 	if evidence.SchemaVersion >= 4 && budget < campaign.PlannedBudget(options) {
 		return errors.New("campaign wall-time budget omits bounded phase drain allowance")
+	}
+	if evidence.SchemaVersion >= 4 {
+		options.Budget = budget
+		if err := campaign.Validate(options); err != nil {
+			return fmt.Errorf("invalid saved campaign schedule: %w", err)
+		}
 	}
 	for i, trial := range evidence.Trials {
 		expected := campaign.PlannedTrialPhases(options, evidence.BaseUsers, i+1)

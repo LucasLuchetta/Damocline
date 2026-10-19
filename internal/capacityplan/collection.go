@@ -54,6 +54,8 @@ type campaignLevelShape struct {
 	SpikeRatio      string                   `json:"spike_ratio"`
 	Recovery        string                   `json:"recovery"`
 	Soak            string                   `json:"soak,omitempty"`
+	LongRun         bool                     `json:"long_run,omitempty"`
+	Environment     string                   `json:"declared_environment,omitempty"`
 	StabilityPolicy campaign.StabilityPolicy `json:"stability_policy"`
 	Budget          string                   `json:"budget,omitempty"`
 	Repeats         int                      `json:"repeats"`
@@ -215,6 +217,7 @@ func campaignCollectionShape(e campaign.Result) (string, error) {
 		SchemaVersion: e.SchemaVersion, Scenario: e.Scenario, Target: e.Target,
 		Warmup: e.Warmup, Observation: e.Observation,
 		SpikeDuration: e.SpikeDuration, Recovery: e.Recovery, Soak: e.Soak, StabilityPolicy: e.EffectiveStabilityPolicy(), Budget: e.Budget, Repeats: e.Repeats,
+		LongRun: e.LongRun, Environment: e.DeclaredEnvironment,
 	}
 	if e.SpikeUsers == 0 {
 		shape.SpikeRatio = "none"
@@ -306,6 +309,12 @@ func digestCampaignShape(shape campaignLevelShape) (string, error) {
 }
 
 func campaignLevelSchedule(e campaign.Result) (campaign.Options, []campaign.PlannedPhase, error) {
+	if e.SchemaVersion < 6 && e.LongRun {
+		return campaign.Options{}, nil, errors.New("long-run declaration is unsupported by this campaign schema")
+	}
+	if e.LongRun && e.DeclaredEnvironment != "staging" {
+		return campaign.Options{}, nil, errors.New("long-run campaign is missing its declared staging environment")
+	}
 	warmup, err := time.ParseDuration(e.Warmup)
 	if err != nil {
 		return campaign.Options{}, nil, errors.New("invalid campaign warmup schedule")
@@ -338,7 +347,7 @@ func campaignLevelSchedule(e campaign.Result) (campaign.Options, []campaign.Plan
 	}
 	options := campaign.Options{Warmup: warmup, Observation: observation, SpikeUsers: e.SpikeUsers,
 		SpikeDuration: spike, Recovery: recovery, Soak: soak, Repeats: e.Repeats, Budget: budget,
-		Stability: e.EffectiveStabilityPolicy()}
+		Stability: e.EffectiveStabilityPolicy(), LongRun: e.LongRun, StagingConfirmed: e.LongRun}
 	if err := campaign.Validate(options); err != nil {
 		if !(e.SchemaVersion < 4 && options.Budget > 0 && options.Budget <= 15*time.Minute && options.Budget >= time.Duration(options.Repeats)*(options.Warmup+options.Observation+options.SpikeDuration+options.Recovery)) {
 			return campaign.Options{}, nil, fmt.Errorf("invalid campaign schedule: %w", err)

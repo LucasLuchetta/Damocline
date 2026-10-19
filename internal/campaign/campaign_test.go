@@ -83,6 +83,37 @@ func TestCampaignSoakMustFitBoundedBudget(t *testing.T) {
 	}
 }
 
+func TestLongRunRequiresStagingDeclarationExplicitApprovalAndBoundedBudget(t *testing.T) {
+	options := Options{Observation: 30 * time.Minute, Recovery: 10 * time.Second, Repeats: 2,
+		Budget: 70 * time.Minute, LongRun: true, StagingConfirmed: true}
+	base := scenario(t)
+	base.Scenario.Environment = "staging"
+	if err := ValidateForScenario(base, options); err != nil {
+		t.Fatalf("valid explicit staging run rejected: %v", err)
+	}
+	if err := ValidateForScenario(base, Options{Observation: options.Observation, Recovery: options.Recovery, Repeats: 2}); err == nil {
+		t.Fatal("30m observation bypassed the default campaign bound")
+	}
+	for name, candidate := range map[string]Options{
+		"approval missing":        {Observation: options.Observation, Recovery: options.Recovery, Repeats: 2, Budget: options.Budget, LongRun: true},
+		"explicit budget missing": {Observation: options.Observation, Recovery: options.Recovery, Repeats: 2, LongRun: true, StagingConfirmed: true},
+		"budget too large":        {Observation: options.Observation, Recovery: options.Recovery, Repeats: 2, Budget: LongRunWallTimeLimit + time.Minute, LongRun: true, StagingConfirmed: true},
+	} {
+		if err := Validate(candidate); err == nil {
+			t.Errorf("%s was accepted", name)
+		}
+	}
+	base.Scenario.Environment = "production"
+	if err := ValidateForScenario(base, options); err == nil {
+		t.Fatal("long run accepted a non-staging environment declaration")
+	}
+	base.Scenario.Environment = "staging"
+	base.Window = time.Second
+	if err := ValidateForScenario(base, options); err == nil {
+		t.Fatal("long-run phase accepted a report with unbounded window count")
+	}
+}
+
 func TestCampaignFailsObservationAndStops(t *testing.T) {
 	calls := 0
 	result, err := WithRunner(context.Background(), scenario(t), Options{Observation: 10 * time.Second, Recovery: 10 * time.Second, Repeats: 2}, func(_ context.Context, v config.Validated) report.Result {

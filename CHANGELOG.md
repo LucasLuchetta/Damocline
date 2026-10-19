@@ -5,6 +5,7 @@ This project follows a human-maintained changelog. No release exists yet.
 ## [Unreleased]
 
 ### Added
+- Add an explicit staging long-run mode to closed-loop and open-arrival campaigns: 30-minute observation/soak phases, a required operator-supplied budget capped at two hours, retained JSON output, and a 120-window limit. Existing default run and campaign ceilings remain unchanged.
 - Add a concurrent loopback fixture that cross-checks each actor's cookie against the response-derived ID used by that actor's next request.
 - Mark every non-GET/HEAD route as `MUTATING` in CLI previews, prove synthetic IDs are unique per journey, and test that configured cleanup still runs after a failed business postcondition.
 - Extend loopback coverage to prove per-journey synthetic write IDs are unique and explicit cleanup steps run after business postcondition failures; document when cancellation or cleanup failure can leave synthetic data behind.
@@ -14,6 +15,10 @@ This project follows a human-maintained changelog. No release exists yet.
 - Add optional final campaign soak (`--soak`, 10s–3m) after all independent trials; include its drain allowance in the 15-minute wall-time cap, persist schema-v4 stage evidence, validate it offline, and screen full journey/window SLOs and coarse drift. This remains bounded local campaign evidence, not a capacity certification.
 - Classify current-schema campaign PASS/FAIL phases as invalid delivery when generator health, sustained CPU headroom, or configured client-rate headroom is inadequate; use mean process CPU so an isolated diagnostic peak does not reject a phase.
 - Persist bounded configurable campaign drift-screen policies in campaign schema v5, reject policies that cannot be supported by the declared observation windows, and recompute the exact policy during offline audit and cross-level comparability checks.
+- Add bounded repeated open-arrival campaigns with warm-up, sustained observation, optional spike, recovery and final soak; retain every phase report and support offline exact scheduled-start demand assessment.
+- Calculate an optional peak, growth, and reserve demand in scheduled journey starts/s during `explore-arrival`, and add an offline `goal` assessment that requires the exact recorded rate and keeps LIMITED short-trial evidence inconclusive.
+- Add bounded `explore-arrival` journey-start-rate exploration, separate from VU exploration, with repeated passing probes, optional exact target, preserved native run evidence, campaign-aligned evidence classifications, and inconclusive handling for underdelivery or generator/client limits.
+- Add a reserved-origin read-only arrival-mode example and document the distinct units and schema-v1 exploration artifact.
 - Plot aggregate request p95/p99 across saved observation windows in the loopback-only report dashboard, and show request/journey outcome counts per window plus clearly labeled run-wide dropped-start and generator summaries.
 - Label request p95 separately from completed-journey p95 in run output, show when there are no completed journeys, and state that HTTP-only measurements do not include browser rendering or full page load.
 - Aggregate two to twenty offline campaign assessments across tested workload levels only when their declared fingerprints and controls match; retain individual evidence, detect non-monotonic pass/fail observations, explain per-workflow SLO breaches by phase and measured values, and evaluate demand only at its exact tested level.
@@ -136,6 +141,7 @@ This project follows a human-maintained changelog. No release exists yet.
 - Safety-oriented caveats for small sample sizes, long-tail responses, shared sessions, dropped arrivals and uncontrolled comparisons.
 
 ### Fixed
+- Validate campaign window coverage before load generation, bound default windows across observation/recovery/soak phases, and keep inadequate generator or measurement evidence from becoming an offline SLO-failure finding.
 - Require exact arrival rate, rate ceiling, worker count, duration, timeout, mode, transport and connection policy when matching a workload profile; do not claim offline equivalence for unresolved environment-backed request bodies.
 - Classify non-timeout response-body read failures such as truncated responses as transport failures while preserving their HTTP status and incomplete-body observations as separate counters.
 - Count only successfully completed response-body reads in `body_count`; truncated and timed-out body reads are represented exclusively by `body_incomplete_count`, preserving phase-counter conservation and quality validation.
