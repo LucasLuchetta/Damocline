@@ -4,6 +4,8 @@ This project follows a human-maintained changelog. No release exists yet.
 
 ## [Unreleased]
 
+- Select weighted workflows at every journey start in both closed-loop and open-arrival runs. Persist schema-v26 profile selection semantics, per-profile selected/start/drop counters and observed actors, validate their conservation, and keep historical actor-assignment reports readable.
+
 - Add an optional bounded `--stabilization` stage before campaign observation in closed-loop and open-arrival modes; persist schema v11/v7 evidence, screen it with the saved drift policy, budget its drain, and validate it during offline audit.
 
 - Add explicit synthetic-ID-scoped cleanup steps that run after business assertion failures and within the reserved drain window after external cancellation; identify cleanup steps in run report schema v24.

@@ -83,6 +83,17 @@ func AssessQuality(r Result) *Quality {
 	if r.SchemaVersion >= 20 && !validFailureClassificationEvidence(r) {
 		invalidate("HTTP failure-classification evidence is missing or inconsistent for schema 20.")
 	}
+	if r.SchemaVersion >= 26 {
+		wantSelection := ""
+		if len(r.Config.Profiles) > 0 {
+			wantSelection = "per_journey_start"
+		}
+		if r.Config.ProfileSelection != wantSelection {
+			invalidate("Profile selection semantics are missing or inconsistent for schema 26.")
+		}
+	} else if r.Config.ProfileSelection != "" {
+		invalidate("Pre-v26 reports cannot carry profile selection semantics.")
+	}
 	if r.Metrics.Total < 0 || r.Metrics.Success < 0 || r.Metrics.Failures < 0 ||
 		r.Metrics.Cancelled < 0 || r.Metrics.Success > r.Metrics.Total || r.Metrics.Failures != r.Metrics.Total-r.Metrics.Success {
 		invalidate("Request aggregate accounting is inconsistent.")
@@ -419,7 +430,56 @@ func AssessQuality(r Result) *Quality {
 	}
 	if len(r.Profiles) > 0 {
 		var total, success, failures, cancelled int
+		var selectedProfileStarts, observedProfileStarts int64
+		var selectedProfileStartsInt int
+		maxInt := int(^uint(0) >> 1)
+		maxInt64 := int64(^uint64(0) >> 1)
+		if r.SchemaVersion >= 26 {
+			configured := make(map[string]int, len(r.Config.Profiles))
+			if len(r.Profiles) != len(r.Config.Profiles) {
+				invalidate("Schema-v26 workflow results do not match configured profiles.")
+			}
+			for _, profile := range r.Config.Profiles {
+				if profile.Name == "" || profile.Weight < 1 || profile.Weight > 1000 {
+					invalidate("Schema-v26 configured workflow identity or weight is invalid.")
+					continue
+				}
+				if _, duplicate := configured[profile.Name]; duplicate {
+					invalidate("Schema-v26 configured workflow names are duplicated.")
+				}
+				configured[profile.Name] = profile.Weight
+			}
+			for _, profile := range r.Profiles {
+				weight, exists := configured[profile.Name]
+				if !exists || weight != profile.Weight {
+					invalidate("Schema-v26 workflow results do not match configured names and weights.")
+				}
+				delete(configured, profile.Name)
+			}
+			if len(configured) != 0 {
+				invalidate("Schema-v26 workflow results omit configured profiles.")
+			}
+		}
 		for _, profile := range r.Profiles {
+			if r.SchemaVersion >= 26 {
+				started := -1
+				if profile.Journeys.Total >= 0 && profile.Journeys.Cancelled >= 0 && profile.Journeys.Total <= maxInt-profile.Journeys.Cancelled {
+					started = profile.Journeys.Total + profile.Journeys.Cancelled
+				}
+				if profile.AssignedVUs != 0 || profile.SelectedStarts < 0 || profile.SelectedStarts > maxInt-selectedProfileStartsInt ||
+					started < 0 || profile.SelectedStarts < started ||
+					profile.ActorsObserved < 0 || profile.ActorsObserved > r.Config.Users ||
+					(profile.Journeys.Total > 0 && profile.ActorsObserved == 0) ||
+					selectedProfileStarts > maxInt64-int64(profile.SelectedStarts) || observedProfileStarts > maxInt64-int64(started) {
+					invalidate("Schema-v26 workflow selection or actor observations are invalid.")
+				} else {
+					selectedProfileStartsInt += profile.SelectedStarts
+					selectedProfileStarts += int64(profile.SelectedStarts)
+					observedProfileStarts += int64(started)
+				}
+			} else if profile.ActorsObserved != 0 {
+				invalidate("Pre-v26 reports cannot carry workflow actor observations.")
+			}
 			if r.SchemaVersion >= 7 && (math.IsNaN(profile.ObservedThinkTimeMS) || math.IsInf(profile.ObservedThinkTimeMS, 0) || profile.ObservedThinkTimeMS < 0 || profile.ThinkTimeObservations < 0) {
 				invalidate("Profile think-time totals or counts are invalid.")
 			}
@@ -439,6 +499,20 @@ func AssessQuality(r Result) *Quality {
 			failures != r.Journeys.Failures || cancelled != r.Journeys.Cancelled {
 			invalidate("Profile journey ledger does not reconcile with aggregate journeys.")
 		}
+		if r.SchemaVersion >= 26 {
+			selectedExpected := r.ArrivalsScheduled
+			if r.Config.Mode == "arrival" {
+				selectedExpected = 0
+				if r.ArrivalsAdmitted != nil && *r.ArrivalsAdmitted >= 0 && r.ArrivalsDroppedBusy >= 0 && *r.ArrivalsAdmitted <= maxInt64-int64(r.ArrivalsDroppedBusy) {
+					selectedExpected = *r.ArrivalsAdmitted + int64(r.ArrivalsDroppedBusy)
+				}
+			}
+			if selectedProfileStarts != selectedExpected || observedProfileStarts != r.IterationsStarted {
+				invalidate("Schema-v26 per-workflow selected and started journeys do not reconcile with aggregate counters.")
+			}
+		}
+	} else if r.SchemaVersion >= 26 && len(r.Config.Profiles) > 0 {
+		invalidate("Schema-v26 report omits per-workflow journey evidence.")
 	}
 	if r.Calibration == nil {
 		limit("No local generator preflight is attached; workload-specific generator equivalence is unverified.")

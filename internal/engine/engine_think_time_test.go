@@ -122,9 +122,12 @@ func TestThreeProfilesShareRateBudgetWithTimingOverrides(t *testing.T) {
 		t.Fatalf("three profile ledgers missing: %+v", result.Profiles)
 	}
 	for _, profile := range result.Profiles {
-		if profile.AssignedVUs != 1 || profile.Journeys.Total == 0 {
-			t.Fatalf("profile %q not exercised by its assigned actor: %+v", profile.Name, profile)
+		if profile.ActorsObserved < 1 || profile.ActorsObserved > s.Users || profile.Journeys.Total == 0 {
+			t.Fatalf("profile %q lacks journey-start or actor evidence: %+v", profile.Name, profile)
 		}
+	}
+	if result.Config.ProfileSelection != "per_journey_start" {
+		t.Fatalf("profile selection semantics missing: %+v", result.Config)
 	}
 	if result.Config.Profiles[0].ThinkTimeRange == nil || len(result.Config.Profiles[1].ThinkTimeSamples) != 3 || result.Config.Profiles[1].ThinkTime != "" || result.Config.Profiles[2].ThinkTimeRange != nil || result.Config.Profiles[2].ThinkTime != "10ms" {
 		t.Fatalf("profile timing overrides not persisted: %+v", result.Config.Profiles)

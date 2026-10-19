@@ -484,15 +484,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	for _, profile := range result.Profiles {
 		started := profile.Journeys.Total + profile.Journeys.Cancelled
+		droppedBeforeStart := profile.SelectedStarts - started
 		rate := 0.0
 		if result.ObservationSeconds > 0 {
 			rate = float64(profile.Journeys.Success) / result.ObservationSeconds
 		}
-		if result.Config.Mode == "closed" {
-			fmt.Fprintf(stdout, "  Profile %s: configured weight=%d, assigned VUs=%d, started=%d, successful=%d (%.2f journeys/s), failed-complete=%d, cancelled-incomplete=%d\n", profile.Name, profile.Weight, profile.AssignedVUs, started, profile.Journeys.Success, rate, profile.Journeys.Failures, profile.Journeys.Cancelled)
-			continue
-		}
-		fmt.Fprintf(stdout, "  Profile %s: configured weight=%d, started=%d, successful=%d (%.2f journeys/s), failed-complete=%d, cancelled-incomplete=%d\n", profile.Name, profile.Weight, started, profile.Journeys.Success, rate, profile.Journeys.Failures, profile.Journeys.Cancelled)
+		fmt.Fprintf(stdout, "  Profile %s: configured journey-start weight=%d, selected=%d, started=%d, dropped before worker=%d, actors observed=%d, successful=%d (%.2f journeys/s), failed-complete=%d, cancelled-incomplete=%d\n", profile.Name, profile.Weight, profile.SelectedStarts, started, droppedBeforeStart, profile.ActorsObserved, profile.Journeys.Success, rate, profile.Journeys.Failures, profile.Journeys.Cancelled)
 	}
 	fmt.Fprintf(stdout, "Iterations: %d started / %d completed; arrivals dropped: %d\n", result.IterationsStarted, result.IterationsCompleted, result.ArrivalsDropped)
 	fmt.Fprintf(stdout, "Observed configured think-time waits: %.1f ms across %d intervals; completed journey latency includes rate-token waits and configured between-step pauses.\n", result.ObservedThinkTimeMS, result.ThinkTimeObservations)

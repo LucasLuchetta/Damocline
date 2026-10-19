@@ -131,6 +131,25 @@ func TestProfileThinkTimeRangeOverrides(t *testing.T) {
 	}
 }
 
+func TestWorkloadFingerprintIncludesProfileSelectionSemantics(t *testing.T) {
+	s := Scenario{Name: "synthetic profiles", BaseURL: "http://127.0.0.1", Users: 2, Duration: "1s", MaxRPS: 10, P95LimitMS: 100, MaxErrorRate: 0,
+		Profiles: []Profile{{Name: "read", Weight: 1, Steps: []Step{{Name: "read", Path: "/read"}}}, {Name: "write", Weight: 1, Steps: []Step{{Name: "write", Path: "/write"}}}}}
+	v, err := Parse(s, Options{Authorized: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	perJourney := WorkloadFingerprint(v)
+	if perJourney == "" {
+		t.Fatal("per-journey workload fingerprint is empty")
+	}
+	legacySemantics := v
+	legacySemantics.Scenario.Profiles = nil
+	legacy := WorkloadFingerprint(legacySemantics)
+	if legacy == "" || legacy == perJourney {
+		t.Fatalf("profile selection semantics did not affect the declared workload fingerprint: new=%q old=%q", perJourney, legacy)
+	}
+}
+
 func TestThinkTimeSamplesValidationAndFingerprint(t *testing.T) {
 	s := good()
 	s.Steps = []Step{{Name: "first", Path: "/first"}, {Name: "second", Path: "/second"}}

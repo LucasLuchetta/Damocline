@@ -21,9 +21,10 @@ import (
 // reviewed and supported. Version 20 adds DNS and connection failure details
 // to HTTP diagnostics, v21 adds seeded think-time provenance, v22 adds
 // completed journeys to observation windows, v23 records generator resource
-// guardrails, v24 identifies explicit cleanup steps, and v25 may attach a
-// bounded, timestamped application-metrics timeline collected during a run.
-const CurrentSchemaVersion = 25
+// guardrails, v24 identifies explicit cleanup steps, v25 may attach a bounded
+// application-metrics timeline, and v26 records per-journey weighted-profile
+// selection semantics and per-profile start/actor ledgers.
+const CurrentSchemaVersion = 26
 
 type MetricSet struct {
 	Total                 int                     `json:"total"`
@@ -290,6 +291,7 @@ type RunConfig struct {
 	Environment         string          `json:"environment,omitempty"`
 	ProfileMixBasis     string          `json:"profile_mix_basis,omitempty"`
 	ProfileMixReference string          `json:"profile_mix_reference,omitempty"`
+	ProfileSelection    string          `json:"profile_selection,omitempty"`
 	Users               int             `json:"users"`
 	Duration            string          `json:"duration"`
 	RampUp              string          `json:"ramp_up,omitempty"`
@@ -335,11 +337,14 @@ type StepResult struct {
 
 // ProfileResult records completed and interrupted journeys by workflow. Its
 // actual share is based on starts, because failures and cancellation can alter
-// the share of completed journeys.
+// the share of completed journeys. Schema v26 selects profiles at each
+// journey start, so actors can appear in more than one profile's count.
 type ProfileResult struct {
 	Name                  string    `json:"name"`
 	Weight                int       `json:"weight"`
 	AssignedVUs           int       `json:"assigned_vus,omitempty"`
+	SelectedStarts        int       `json:"profile_selected_starts,omitempty"`
+	ActorsObserved        int       `json:"actors_observed,omitempty"`
 	Journeys              MetricSet `json:"journeys"`
 	ObservedThinkTimeMS   float64   `json:"observed_think_time_ms,omitempty"`
 	ThinkTimeObservations int       `json:"think_time_observations,omitempty"`
