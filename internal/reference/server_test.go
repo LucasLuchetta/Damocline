@@ -88,6 +88,41 @@ func TestSnapshotCountsDistinctAcceptedConnectionsByProfile(t *testing.T) {
 	}
 }
 
+func TestProfileCountersRemainRaceSafeAcrossConcurrentRequests(t *testing.T) {
+	h, err := New(Config{MaxConcurrent: 8, MaxRequests: 100, Profiles: []WorkloadProfile{
+		{ID: "synthetic-get", CounterID: "synthetic-shape", Method: http.MethodGet, Path: "/matrix/get", ResponseBodyBytes: 1},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewUnstartedServer(h)
+	server.Config.ConnContext = h.ConnContext
+	server.Start()
+	defer server.Close()
+
+	var wg sync.WaitGroup
+	for range 32 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			response, err := http.Get(server.URL + "/matrix/get")
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			_, _ = io.Copy(io.Discard, response.Body)
+			_ = response.Body.Close()
+			if response.StatusCode != http.StatusOK {
+				t.Errorf("unexpected status: %d", response.StatusCode)
+			}
+		}()
+	}
+	wg.Wait()
+	if snapshot := h.Snapshot(); snapshot.ProfileReceived["synthetic-shape"] != 32 || snapshot.ProfileCompleted["synthetic-shape"] != 32 || snapshot.ProfileResponseBytes["synthetic-shape"] != 32 {
+		t.Fatalf("profile counters did not reconcile concurrent requests: %+v", snapshot)
+	}
+}
+
 func TestBoundedQueueAndRecovery(t *testing.T) {
 	h, err := New(Config{Delay: 80 * time.Millisecond, FailureFirst: 1, MaxConcurrent: 1, MaxRequests: 5})
 	if err != nil {
