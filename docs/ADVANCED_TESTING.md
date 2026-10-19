@@ -186,7 +186,7 @@ For local Docker container snapshots, run `damocline docker --authorized --out r
 .\damocline.exe dashboard --file reports\run.json
 ```
 
-The dashboard binds only to `127.0.0.1` (or `localhost`/`::1`), reads one existing report, and displays the saved outcome, request metrics, steps, and observation windows. It makes no load requests and does not expose the report to the network.
+The dashboard binds only to `127.0.0.1` (or `localhost`/`::1`), reads one existing report, and displays the saved outcome, request metrics, steps, and observation windows. When the report has observation windows, it draws aggregate request p95/p99 by window and lists request and journey success/failure counts. Dropped starts and generator resource peaks are shown only as run-wide context because the report does not retain them per window. It makes no load requests and does not expose the report to the network.
 
 ## 8. Limitations and quality checks
 
