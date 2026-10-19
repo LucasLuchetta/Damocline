@@ -203,6 +203,49 @@ func TestInterruptionBetweenLevelsNeverCreatesAFailureBracket(t *testing.T) {
 	}
 }
 
+func TestDeadlineDuringProbeAbortsSearch(t *testing.T) {
+	base := arrivalScenario(t, 100, 10)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	result, err := WithRunner(ctx, base, Options{
+		MinJourneysPerSecond: 1, MaxJourneysPerSecond: 2, Repeats: 2, StageDuration: 10 * time.Second,
+	}, func(ctx context.Context, _ config.Validated) report.Result {
+		<-ctx.Done()
+		return report.Result{Outcome: "ABORTED"}
+	})
+	if err != nil || result.Outcome != "ABORTED" || result.FirstFailingJourneysPerSecond != nil ||
+		len(result.Probes) != 1 || result.Probes[0].Status != "ABORTED" || result.Reason == "" {
+		t.Fatalf("deadline during a probe was interpreted as an application limit: result=%+v err=%v", result, err)
+	}
+}
+
+func TestMissingApplicationAuthenticationCannotFormRateBracket(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "authentication required", http.StatusUnauthorized)
+	}))
+	defer server.Close()
+	base, err := config.Parse(config.Scenario{
+		Name: "loopback-auth-required", BaseURL: server.URL, Users: 2,
+		Mode: "arrival", ArrivalRate: 1, Duration: "10s", MaxRPS: 10,
+		Timeout: "2s", P95LimitMS: 5000, MaxErrorRate: 0.01,
+		Steps: []config.Step{{Name: "protected-read", Method: http.MethodGet, Path: "/private", ExpectedStatus: []int{http.StatusOK}}},
+	}, config.Options{Authorized: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := Run(context.Background(), base, Options{
+		MinJourneysPerSecond: 1, MaxJourneysPerSecond: 1, Repeats: 2,
+		StageDuration: 10 * time.Second, Budget: time.Minute,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Outcome != "INSUFFICIENT_EVIDENCE" || result.FirstFailingJourneysPerSecond != nil ||
+		len(result.Probes) != 1 || result.Probes[0].Status != "INSUFFICIENT_EVIDENCE" || len(result.Probes[0].Runs) != 1 {
+		t.Fatalf("missing application authentication was treated as a capacity failure: result=%+v", result)
+	}
+}
+
 func arrivalScenario(t *testing.T, maxRPS, workers int) config.Validated {
 	t.Helper()
 	v, err := config.Parse(config.Scenario{
