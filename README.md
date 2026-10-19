@@ -198,6 +198,27 @@ and 50 VUs. Coverage remains blocked for other VU levels, request ceilings,
 durations, timeouts, connection policies, workload shapes, ramp-up, or think
 time; arrival-rate profiles never stand in for VU evidence.
 
+Reusable closed-loop campaign settings can be kept as private local profiles:
+
+```powershell
+damocline campaign profile save --file examples/campaign-profile-v1.json
+damocline campaign profile list
+damocline campaign profile show --name local-readonly
+damocline campaign profile run --name local-readonly --dry-run
+damocline campaign profile run --name local-readonly --authorized
+```
+
+Profiles are stored under `.damocline/profiles/`; schema-less/v0 profiles are
+migrated in memory and can be rewritten with `campaign profile migrate`. Updating
+an existing profile requires `--replace`, and removal uses the explicit
+`campaign profile delete` command. Profile execution requires fresh authorization
+and any required write, insecure HTTP, long-run staging, or calibration opt-ins.
+Application-metrics endpoints are also supplied per execution. Non-dry runs
+write the full trial and phase report to a unique file under
+`.damocline/reports/` unless `--out` is provided. Profiles capture settings, not
+target state or credentials; environment variables and body data must be supplied
+at run time. Do not commit local profiles or reports.
+
 Open a saved run or campaign without generating traffic:
 
 ```powershell

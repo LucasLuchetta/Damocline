@@ -4,6 +4,8 @@ This project follows a human-maintained changelog. No release exists yet.
 
 ## [Unreleased]
 
+- Add versioned private local campaign profiles with migration, explicit replacement/deletion, repeatable run controls, fresh execution opt-ins, and automatic complete campaign reports under `.damocline/reports/`.
+
 - Define nearest-rank latency percentiles and replace the approximate p95 rank interval with an exact binomial order-statistic interval; persist the estimator, confidence method, and IID/stationarity assumption in schema v30.
 
 - Add an exact, assumption-labeled repeat-trial pass probability interval to offline campaign audits; aborted and incomplete trials remain excluded.
