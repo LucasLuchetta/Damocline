@@ -13,11 +13,13 @@
     {
       "name": "dashboard reads",
       "weight": 3,
+      "per_vu_cookie_env_prefix": "DAMOCLINE_DASHBOARD_COOKIE_",
       "steps": [{"name": "dashboard", "method": "GET", "path": "/dashboard", "expected_status": [200]}]
     },
     {
       "name": "catalog search",
       "weight": 1,
+      "per_vu_cookie_env_prefix": "DAMOCLINE_SEARCH_COOKIE_",
       "steps": [{"name": "search", "method": "GET", "path": "/catalog?q=synthetic", "expected_status": [200]}]
     }
   ]

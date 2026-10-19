@@ -104,6 +104,10 @@ func TestScenarioV1LoaderAndParserRejectAmbiguousOrFutureFormats(t *testing.T) {
 }
 
 func TestVersionedWorkflowExampleParses(t *testing.T) {
+	for actor := 1; actor <= 4; actor++ {
+		t.Setenv(fmt.Sprintf("DAMOCLINE_DASHBOARD_COOKIE_%d", actor), fmt.Sprintf("sid=dashboard-%d", actor))
+		t.Setenv(fmt.Sprintf("DAMOCLINE_SEARCH_COOKIE_%d", actor), fmt.Sprintf("sid=search-%d", actor))
+	}
 	path := filepath.Join("..", "..", "examples", "versioned-weighted-workflows.json")
 	scenario, err := Load(path)
 	if err != nil {
@@ -113,7 +117,7 @@ func TestVersionedWorkflowExampleParses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(validated.Profiles) != 2 || validated.Profiles[0].Name != "dashboard reads" || validated.Profiles[1].Weight != 1 {
+	if len(validated.Profiles) != 2 || validated.Profiles[0].Name != "dashboard reads" || validated.Profiles[1].Weight != 1 || len(validated.Profiles[0].Cookies) != 4 || len(validated.Profiles[1].Cookies) != 4 || !validated.ProfileAuthContexts {
 		t.Fatalf("versioned example did not reach the validated workflow model: %+v", validated.Profiles)
 	}
 }
