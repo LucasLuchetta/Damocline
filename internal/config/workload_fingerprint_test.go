@@ -7,8 +7,8 @@ import (
 
 func TestWorkloadFingerprintIsStableAndOpaque(t *testing.T) {
 	t.Setenv("DAMOCLINE_TOKEN", "private-token-value")
-	t.Setenv("DAMOCLINE_SESSION_1", "session-one")
-	t.Setenv("DAMOCLINE_SESSION_2", "session-two")
+	t.Setenv("DAMOCLINE_SESSION_1", "sid=session-one")
+	t.Setenv("DAMOCLINE_SESSION_2", "sid=session-two")
 	base := Scenario{
 		Name: "fingerprint", BaseURL: "https://app.example.com", Users: 2, Duration: "1s", MaxRPS: 20,
 		P95LimitMS: 1000, PerVUCookieEnvPrefix: "DAMOCLINE_SESSION_",

@@ -234,6 +234,33 @@ func TestPerProfileCookieContextsRejectAmbiguousConfiguration(t *testing.T) {
 			t.Fatalf("reused cross-workflow credentials accepted: %v", err)
 		}
 	})
+	t.Run("cookie order and header whitespace do not bypass duplicate detection", func(t *testing.T) {
+		t.Setenv("DAMO_A_1", "sid=actor-one; theme=light")
+		t.Setenv("DAMO_A_2", "sid=actor-two; theme=dark")
+		t.Setenv("DAMO_B_1", " theme=light ; sid =actor-one ")
+		t.Setenv("DAMO_B_2", "theme=dark; sid=actor-three")
+		if _, err := Parse(base, Options{Authorized: true}); err == nil || !strings.Contains(err.Error(), "duplicate session cookie") {
+			t.Fatalf("equivalent cookie sets in different order accepted: %v", err)
+		}
+	})
+	t.Run("duplicate cookie sets across actors", func(t *testing.T) {
+		t.Setenv("DAMO_A_1", "sid=actor-one; theme=light")
+		t.Setenv("DAMO_A_2", " theme=light; sid=actor-one ")
+		t.Setenv("DAMO_B_1", "sid=actor-two")
+		t.Setenv("DAMO_B_2", "sid=actor-three")
+		if _, err := Parse(base, Options{Authorized: true}); err == nil || !strings.Contains(err.Error(), "duplicate session cookie set") {
+			t.Fatalf("equivalent actor cookie sets accepted: %v", err)
+		}
+	})
+	t.Run("ambiguous duplicate cookie names", func(t *testing.T) {
+		t.Setenv("DAMO_A_1", "sid=first; sid=second")
+		t.Setenv("DAMO_A_2", "sid=actor-two")
+		t.Setenv("DAMO_B_1", "sid=actor-three")
+		t.Setenv("DAMO_B_2", "sid=actor-four")
+		if _, err := Parse(base, Options{Authorized: true}); err == nil || !strings.Contains(err.Error(), "duplicate name") {
+			t.Fatalf("ambiguous cookie names accepted: %v", err)
+		}
+	})
 }
 
 func TestOneActorCanExecuteMultipleWeightedProfiles(t *testing.T) {
