@@ -195,9 +195,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 			result.Warnings = append(result.Warnings, "The requested local generator calibration could not be validated and was not attached.")
 		}
 	}
-	fmt.Fprintf(stdout, "Result: %s | requests: %d (%d passed, %d failed, %d cancelled) | p95: %.1f ms | error rate: %.2f%% | %.1f req/s\n", result.Outcome, result.Metrics.Total, result.Metrics.Success, result.Metrics.Failures, result.Metrics.Cancelled, result.Metrics.P95MS, result.ErrorsRate*100, float64(result.Metrics.Total)/result.WindowSeconds())
+	fmt.Fprintf(stdout, "Result: %s | requests: %d (%d passed, %d failed, %d cancelled) | request p95: %.1f ms | error rate: %.2f%% | %.1f req/s\n", result.Outcome, result.Metrics.Total, result.Metrics.Success, result.Metrics.Failures, result.Metrics.Cancelled, result.Metrics.P95MS, result.ErrorsRate*100, float64(result.Metrics.Total)/result.WindowSeconds())
 	if result.ObservationSeconds > 0 {
-		fmt.Fprintf(stdout, "Journey throughput: %.2f successful configured journeys/s; %.2f completed journeys/s (%d complete, %d failed, %d cancelled/incomplete).\n", report.SuccessfulJourneysPerSecond(result), report.CompletedJourneysPerSecond(result), result.Journeys.Total, result.Journeys.Failures, result.Journeys.Cancelled)
+		fmt.Fprintf(stdout, "Journey throughput: %.2f successful configured journeys/s; %.2f completed journeys/s (%d complete, %d failed, %d cancelled/incomplete); completed journey p95: %s.\n", report.SuccessfulJourneysPerSecond(result), report.CompletedJourneysPerSecond(result), result.Journeys.Total, result.Journeys.Failures, result.Journeys.Cancelled, journeyP95Description(result.Journeys))
 	}
 	fmt.Fprintf(
 		stdout,
@@ -221,7 +221,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "P95 IID 95%% rank approximation: %.1f-%.1f ms; this assumes independent, stationary request latencies.\n", result.Metrics.P95IID95LowerMS, result.Metrics.P95IID95UpperMS)
 	}
 	for _, st := range result.Steps {
-		fmt.Fprintf(stdout, "  - %s/%s: total=%d failures=%d p95=%.1f ms\n", st.Profile, st.Name, st.Metrics.Total, st.Metrics.Failures, st.Metrics.P95MS)
+		fmt.Fprintf(stdout, "  - %s/%s: total=%d failures=%d request p95=%.1f ms\n", st.Profile, st.Name, st.Metrics.Total, st.Metrics.Failures, st.Metrics.P95MS)
 		fmt.Fprintf(stdout, "    client timing totals: rate-wait=%.1f ms, DNS=%.1f ms (%d attempts), connect=%.1f ms (%d attempts), TLS=%.1f ms (%d attempts), request-write=%.1f ms (%d observations), first-byte=%.1f ms, body=%.1f ms, full=%.1f ms; first-byte is not server processing time.\n", st.HTTPTrace.RateWaitMS, st.HTTPTrace.DNSMS, st.HTTPTrace.DNSCount, st.HTTPTrace.ConnectMS, st.HTTPTrace.ConnectCount, st.HTTPTrace.TLSMS, st.HTTPTrace.TLSCount, st.HTTPTrace.WriteMS, st.HTTPTrace.WriteCount, st.HTTPTrace.FirstByteMS, st.HTTPTrace.BodyMS, st.HTTPTrace.CompleteMS)
 	}
 	for _, profile := range result.Profiles {
@@ -237,7 +237,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "  Profile %s: configured weight=%d, started=%d, successful=%d (%.2f journeys/s), failed-complete=%d, cancelled-incomplete=%d\n", profile.Name, profile.Weight, started, profile.Journeys.Success, rate, profile.Journeys.Failures, profile.Journeys.Cancelled)
 	}
 	fmt.Fprintf(stdout, "Iterations: %d started / %d completed; arrivals dropped: %d\n", result.IterationsStarted, result.IterationsCompleted, result.ArrivalsDropped)
-	fmt.Fprintf(stdout, "Observed configured think-time waits: %.1f ms across %d intervals; journey latency includes rate-token waits and these intervals.\n", result.ObservedThinkTimeMS, result.ThinkTimeObservations)
+	fmt.Fprintf(stdout, "Observed configured think-time waits: %.1f ms across %d intervals; completed journey latency includes rate-token waits and configured between-step pauses.\n", result.ObservedThinkTimeMS, result.ThinkTimeObservations)
+	fmt.Fprintln(stdout, "Latency scope: request p95 measures individual client-observed HTTP requests; completed journey p95 covers the configured HTTP workflow. Neither measures browser rendering or full page load.")
 	for _, w := range result.Warnings {
 		fmt.Fprintf(stdout, "WARNING: %s\n", w)
 	}
@@ -254,6 +255,13 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+func journeyP95Description(metrics report.MetricSet) string {
+	if metrics.Total == 0 {
+		return "unavailable (no completed journeys)"
+	}
+	return fmt.Sprintf("%.1f ms across completed journeys", metrics.P95MS)
 }
 
 func campaignCmd(args []string, stdout, stderr io.Writer) int {

@@ -19,6 +19,12 @@ Reports from schema v22 retain completed-journey counts and latency distribution
 
 Do not describe a request rate, open TCP connection count, or total logins as "simultaneous users" without qualifications. A real browser page includes client rendering and third-party resource work that HTTP-only simulations may not measure.
 
+## Interpreting latency
+
+The CLI labels request p95 and completed-journey p95 separately. Request latency is measured for an individual HTTP step from the client call through transport/body completion; observed DNS, connection, TLS, network, target response, and body-read delays may contribute. The optional HTTP trace fields are diagnostic totals, can overlap, and do not isolate server processing. Rate-token waits before a request are outside request latency.
+
+Completed-journey latency covers the configured sequence of HTTP steps, including per-request rate-token waits and configured between-step think-time pauses. It describes completed journeys only; cancelled or unfinished journeys have no completed-journey percentile. Neither measure includes browser rendering, client-side JavaScript, or the full set of browser page resources. Do not call one HTTP request a page-load measurement.
+
 ## Workload types
 
 **Closed-loop VUs:** actors complete a journey, optionally pause, and repeat. When the target slows down, the operation arrival rate typically drops. This models a fixed population whose next journey depends on prior completion.

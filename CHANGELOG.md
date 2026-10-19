@@ -5,6 +5,7 @@ This project follows a human-maintained changelog. No release exists yet.
 ## [Unreleased]
 
 ### Added
+- Label request p95 separately from completed-journey p95 in run output, show when there are no completed journeys, and state that HTTP-only measurements do not include browser rendering or full page load.
 - Aggregate two to twenty offline campaign assessments across tested workload levels only when their declared fingerprints and controls match; retain individual evidence, detect non-monotonic pass/fail observations, explain per-workflow SLO breaches by phase and measured values, and evaluate demand only at its exact tested level.
 - Keep measurement-envelope quality, workload-representativeness declarations, and decision confidence as independent fields in offline campaign assessment artifacts; prevent favorable measurement evidence from upgrading unverified workload or decision dimensions.
 - Report successful configured journey throughput separately from HTTP requests per second, preserve completed failures and cancelled journeys as distinct counts, and summarize successful journeys-per-second spread across campaign trials in campaign schema v3.
