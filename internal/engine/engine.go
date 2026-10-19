@@ -246,7 +246,10 @@ func runWithTransport(parent context.Context, v config.Validated, transport *htt
 	}
 	tr.MaxIdleConns = v.Scenario.Users * 3
 	tr.MaxIdleConnsPerHost = v.Scenario.Users * 2
-	tr.MaxConnsPerHost = v.Scenario.Users + 4
+	tr.MaxConnsPerHost = v.Scenario.MaxConnectionsPerHost
+	if tr.MaxConnsPerHost == 0 {
+		tr.MaxConnsPerHost = v.Scenario.Users + 4
+	}
 	tr.DisableKeepAlives = v.Scenario.ConnectionPolicy == "new_per_request"
 	tr.ResponseHeaderTimeout = v.Timeout
 	tr.IdleConnTimeout = 15 * time.Second
@@ -554,7 +557,7 @@ func runWithTransport(parent context.Context, v config.Validated, transport *htt
 		littleLawEstimate = float64(agg.Total) / v.Duration.Seconds() * agg.MeanMS / 1000
 	}
 	result := report.Result{SchemaVersion: report.CurrentSchemaVersion, Name: v.Scenario.Name, Target: v.Base.Scheme + "://" + v.Base.Host, StartedAt: started.UTC().Format(time.RFC3339Nano), ElapsedSeconds: round(elapsed.Seconds()), ObservationSeconds: round(v.Duration.Seconds()),
-		Config:  report.RunConfig{WorkloadRevision: v.Scenario.WorkloadRevision, ApplicationRevision: v.Scenario.ApplicationRevision, WorkloadFingerprint: v.WorkloadFingerprint, Environment: v.Scenario.Environment, ProfileMixBasis: v.Scenario.ProfileMixBasis, ProfileMixReference: v.Scenario.ProfileMixReference, ProfileSelection: profileSelectionMode(len(v.Scenario.Profiles) > 0), Users: v.Scenario.Users, Duration: v.Scenario.Duration, RampUp: v.Scenario.RampUp, ThinkTime: v.Scenario.ThinkTime, WorkloadSeed: v.Scenario.WorkloadSeed, RequestTimeout: v.Timeout.String(), ConnectionPolicy: v.Scenario.ConnectionPolicy, MaxRPS: v.Scenario.MaxRPS, P95LimitMS: v.Scenario.P95LimitMS, MaxErrorRate: v.Scenario.MaxErrorRate, Mode: v.Scenario.Mode, ArrivalRate: v.Scenario.ArrivalRate, SeparateSessions: len(v.Cookies) > 0, MinSamplesPerStep: v.Scenario.MinSamplesPerStep, Profiles: profileConfig, WindowDuration: v.Window.String()},
+		Config:  report.RunConfig{WorkloadRevision: v.Scenario.WorkloadRevision, ApplicationRevision: v.Scenario.ApplicationRevision, WorkloadFingerprint: v.WorkloadFingerprint, Environment: v.Scenario.Environment, ProfileMixBasis: v.Scenario.ProfileMixBasis, ProfileMixReference: v.Scenario.ProfileMixReference, ProfileSelection: profileSelectionMode(len(v.Scenario.Profiles) > 0), Users: v.Scenario.Users, Duration: v.Scenario.Duration, RampUp: v.Scenario.RampUp, ThinkTime: v.Scenario.ThinkTime, WorkloadSeed: v.Scenario.WorkloadSeed, RequestTimeout: v.Timeout.String(), ConnectionPolicy: v.Scenario.ConnectionPolicy, MaxConnectionsPerHost: v.Scenario.MaxConnectionsPerHost, MaxRPS: v.Scenario.MaxRPS, P95LimitMS: v.Scenario.P95LimitMS, MaxErrorRate: v.Scenario.MaxErrorRate, Mode: v.Scenario.Mode, ArrivalRate: v.Scenario.ArrivalRate, SeparateSessions: len(v.Cookies) > 0 || len(v.ProfileCookies) > 0, MinSamplesPerStep: v.Scenario.MinSamplesPerStep, Profiles: profileConfig, WindowDuration: v.Window.String()},
 		Metrics: agg, Journeys: journeyMetrics, Steps: steps, Profiles: profileResults, Windows: windows, Outcome: "PASS", ErrorsRate: round(errorsRate), IterationsStarted: startedIterations.Load(), IterationsCompleted: completedIterations.Load(), ArrivalsScheduled: scheduledIterations.Load(), ArrivalsAdmitted: &arrivalsAdmitted, ArrivalsDropped: droppedIterations.Load(), ArrivalsDroppedLate: arrivalStats.DroppedLate, ArrivalsDroppedBusy: arrivalStats.DroppedBusy, ArrivalsCancelledBeforeAdmission: &cancelledBeforeAdmission, SchedulerLagSamples: arrivalStats.LagSamples, SchedulerLagP50MS: float64(arrivalStats.P50Lag.Microseconds()) / 1000, SchedulerLagP95MS: float64(arrivalStats.P95Lag.Microseconds()) / 1000, SchedulerLagMaxMS: float64(arrivalStats.MaxLag.Microseconds()) / 1000, SchedulerLagMethod: calibration.SchedulerDispatchLagMethod, AverageInFlight: round(averageInFlight), LittleLawEstimate: round(littleLawEstimate), ObservedThinkTimeMS: ms(coll.thinkTime), ThinkTimeObservations: coll.thinkSamples,
 		Note: "Measured synthetic HTTP actors under the configured workload; not a universal server capacity or a browser-user count.", Generator: &generatorSnapshot}
 	if v.Scenario.ThinkTimeRange != nil {
@@ -800,9 +803,31 @@ func execute(parent context.Context, client *http.Client, base *url.URL, timeout
 	var traceMu sync.Mutex
 	trace := report.HTTPTrace{}
 	trace.RequestAttemptCount = 1
-	var dnsStart, tlsStart, firstByte time.Time
+	var dnsStart, tlsStart, firstByte, getConnStart time.Time
 	connectStarts := make(map[string][]time.Time)
 	clientTrace := &httptrace.ClientTrace{
+		GetConn: func(string) {
+			traceMu.Lock()
+			getConnStart = time.Now()
+			traceMu.Unlock()
+		},
+		GotConn: func(info httptrace.GotConnInfo) {
+			traceMu.Lock()
+			if !getConnStart.IsZero() {
+				elapsed := time.Since(getConnStart)
+				trace.ConnectionAcquireCount++
+				trace.ConnectionAcquireMS += ms(elapsed)
+				if info.Reused {
+					trace.ConnectionReusedCount++
+					if elapsed >= 10*time.Millisecond {
+						trace.ConnectionWaitCount++
+						trace.ConnectionWaitMS += ms(elapsed)
+					}
+				}
+				getConnStart = time.Time{}
+			}
+			traceMu.Unlock()
+		},
 		DNSStart: func(httptrace.DNSStartInfo) {
 			traceMu.Lock()
 			dnsStart = time.Now()

@@ -15,19 +15,19 @@ import (
 )
 
 func TestRedactedRunExportOmitsUncontrolledStringsAndPreservesEvidence(t *testing.T) {
-	secret := "customer-731-secret.example.internal"
-	start := "2026-04-03T12:30:00.123456789Z"
+	secret := "customer-731-secret.example.test"
+	start := "2001-02-03T12:30:00.123456789Z"
 	count := int64(8)
 	run := report.Result{
-		SchemaVersion: 26, Name: secret, Target: "https://user:token@" + secret + "/private/route?customer=731", Outcome: "PASS",
+		SchemaVersion: 28, Name: secret, Target: "https://user:token@" + secret + "/private/route?customer=731", Outcome: "PASS",
 		StartedAt: start, ElapsedSeconds: 8.5, ObservationSeconds: 8,
 		Config: report.RunConfig{WorkloadRevision: secret, ApplicationRevision: secret, WorkloadFingerprint: secret,
 			Environment: secret, ProfileMixReference: secret, Users: 4, Duration: "8s", RequestTimeout: "1s",
 			ConnectionPolicy: "reuse", MaxRPS: 50, P95LimitMS: 250, MaxErrorRate: .01, Mode: "arrival", ArrivalRate: 8,
-			WindowDuration: secret, ProfileSelection: "per_journey_start", Profiles: []report.ProfileConfig{{Name: "private-workflow", Weight: 2}}},
+			WindowDuration: secret, ProfileSelection: "per_journey_start", ProfileSessionScopes: []string{"private-workflow"}, SeparateSessions: true, MaxConnectionsPerHost: 4, Profiles: []report.ProfileConfig{{Name: "private-workflow", Weight: 2}}},
 		Metrics:  report.MetricSet{Total: 8, Success: 7, Failures: 1, P95MS: 240, Reasons: map[string]int{secret: 1}},
 		Journeys: report.MetricSet{Total: 4, Success: 3, Failures: 1, P95MS: 400},
-		Steps:    []report.StepResult{{Profile: "private-workflow", Name: "private-step", Method: "GET", Path: "/private/customer-731", Metrics: report.MetricSet{Total: 8, Success: 7, Failures: 1}}},
+		Steps:    []report.StepResult{{Profile: "private-workflow", Name: "private-step", Method: "GET", Path: "/private/customer-731", Metrics: report.MetricSet{Total: 8, Success: 7, Failures: 1}, HTTPTrace: report.HTTPTrace{ConnectionAcquireCount: 8, ConnectionAcquireMS: 56, ConnectionReusedCount: 6, ConnectionWaitCount: 2, ConnectionWaitMS: 35}}},
 		Profiles: []report.ProfileResult{{Name: "private-workflow", Weight: 2, SelectedStarts: 8, ActorsObserved: 4, Journeys: report.MetricSet{Total: 4, Success: 3, Failures: 1}}},
 		Windows: []report.WindowResult{{StartSeconds: 0, EndSeconds: 8, Metrics: report.MetricSet{Total: 8, Success: 7, Failures: 1, P95MS: 240},
 			Journeys: report.MetricSet{Total: 4, Success: 3, Failures: 1, P95MS: 400},
@@ -36,8 +36,8 @@ func TestRedactedRunExportOmitsUncontrolledStringsAndPreservesEvidence(t *testin
 		ArrivalsScheduled: 8, ArrivalsAdmitted: &count, IterationsStarted: 8, IterationsCompleted: 4, ArrivalsDropped: 0,
 		Warnings: []string{secret}, Note: secret,
 		ApplicationMetrics: &appmetrics.Timeline{SchemaVersion: 1, Source: "https://" + secret + "/metrics", Interval: "1s", StartedAt: start,
-			FinishedAt: "2026-04-03T12:30:08.100000000Z", Note: secret,
-			Samples: []appmetrics.TimedSample{{FinishedAt: "2026-04-03T12:30:01.200000000Z", DurationMS: 2,
+			FinishedAt: "2001-02-03T12:30:08.100000000Z", Note: secret,
+			Samples: []appmetrics.TimedSample{{FinishedAt: "2001-02-03T12:30:01.200000000Z", DurationMS: 2,
 				Samples: []appmetrics.Sample{{Name: secret, Value: 731}}}}},
 	}
 	data, err := Marshal(FromRun(run))
@@ -45,7 +45,7 @@ func TestRedactedRunExportOmitsUncontrolledStringsAndPreservesEvidence(t *testin
 		t.Fatal(err)
 	}
 	text := string(data)
-	if strings.Contains(text, secret) || strings.Contains(text, "2026-04-03") || strings.Contains(text, "/private/") || strings.Contains(text, "731") {
+	if strings.Contains(text, secret) || strings.Contains(text, "2001-02-03") || strings.Contains(text, "/private/") || strings.Contains(text, "731") {
 		t.Fatalf("export leaked uncontrolled data: %s", text)
 	}
 	var exported Evidence
@@ -64,6 +64,9 @@ func TestRedactedRunExportOmitsUncontrolledStringsAndPreservesEvidence(t *testin
 	if exported.Run.ProfileSelection != "per_journey_start" || exported.Run.Profiles[0].SelectedStarts != 8 || exported.Run.Profiles[0].ActorsObserved != 4 {
 		t.Fatalf("redacted workflow selection evidence was not preserved: %+v", exported.Run)
 	}
+	if exported.Workload.MaxConnectionsPerHost != 4 || exported.Run.MaxConnectionsPerHost != 4 || exported.Run.Steps[0].ConnectionWaitCount != 2 || exported.Run.Steps[0].ConnectionWaitMS != 35 {
+		t.Fatalf("safe client connection diagnostics were not preserved: workload=%+v step=%+v", exported.Workload, exported.Run.Steps[0])
+	}
 	if exported.Run.ApplicationMetrics == nil || len(exported.Run.ApplicationMetrics.Samples) != 1 || exported.Run.ApplicationMetrics.Samples[0].MetricCount != 1 || exported.Run.ApplicationMetrics.Samples[0].ElapsedMS != 1076.543 {
 		t.Fatalf("application metric timing was not safely retained: %+v", exported.Run.ApplicationMetrics)
 	}
@@ -73,7 +76,7 @@ func TestRedactedRunExportOmitsUncontrolledStringsAndPreservesEvidence(t *testin
 }
 
 func TestCampaignExportsDropFreeTextAndPreservePhaseMetrics(t *testing.T) {
-	secret := "tenant-998.example.private"
+	secret := "tenant-998.example.test"
 	phaseRun := report.Result{SchemaVersion: report.CurrentSchemaVersion, Name: secret, Target: "https://" + secret,
 		Config:  report.RunConfig{Mode: "closed", Users: 3, MaxRPS: 30, P95LimitMS: 250, MaxErrorRate: .01, ConnectionPolicy: "reuse"},
 		Metrics: report.MetricSet{Total: 60, Success: 60, P95MS: 100}}
@@ -131,7 +134,7 @@ func TestExplorerExportsPreserveLoadUnitsAndDropPrivateText(t *testing.T) {
 		Config:  report.RunConfig{Mode: "closed", Users: 3, Duration: "10s", MaxRPS: 30, P95LimitMS: 250, MaxErrorRate: .01},
 		Metrics: report.MetricSet{Total: 300, Success: 300, P95MS: 75}}
 	passed := 3
-	closed := explorer.Result{SchemaVersion: 2, Scenario: secret, Target: "https://" + secret, StartedAt: "2026-04-03T12:30:00Z",
+	closed := explorer.Result{SchemaVersion: 2, Scenario: secret, Target: "https://" + secret, StartedAt: "2001-02-03T12:30:00Z",
 		StageDuration: "10s", Repeats: 2, MinUsers: 2, MaxUsers: 10, HighestPassingUsers: &passed, Outcome: "PASS",
 		Reason: secret, Notes: []string{secret}, Probes: []explorer.Probe{{Users: 3, Status: "PASS", Reason: secret, Runs: []report.Result{closedRun}}}}
 	data, err := Marshal(FromClosedExplorer(closed))
@@ -150,7 +153,7 @@ func TestExplorerExportsPreserveLoadUnitsAndDropPrivateText(t *testing.T) {
 	arrivalRun := report.Result{Outcome: "PASS", ElapsedSeconds: 10, ObservationSeconds: 10,
 		Config:  report.RunConfig{Mode: "arrival", Users: 15, ArrivalRate: 4, Duration: "10s", MaxRPS: 20, P95LimitMS: 250, MaxErrorRate: .01},
 		Metrics: report.MetricSet{Total: 40, Success: 40, P95MS: 80}}
-	arrival := arrivalexplorer.Result{SchemaVersion: 2, Scenario: secret, Target: "https://" + secret, StartedAt: "2026-04-03T12:30:00Z",
+	arrival := arrivalexplorer.Result{SchemaVersion: 2, Scenario: secret, Target: "https://" + secret, StartedAt: "2001-02-03T12:30:00Z",
 		StageDuration: "10s", Repeats: 2, WorkerLimit: 15, MinJourneysPerSecond: 2, MaxJourneysPerSecond: 10,
 		RequestedMinJourneysPerSecond: 1, RequestedMaxJourneysPerSecond: 20, CalibratedProbeRates: []int{2, 4, 10},
 		TargetJourneysPerSecond: 4, TargetTested: true, Outcome: "PASS", Reason: secret, Notes: []string{secret},
@@ -178,7 +181,7 @@ func TestSafeEnumFallbacksCannotCopyArbitraryText(t *testing.T) {
 }
 
 func FuzzRedactedRunExportDoesNotCopyCallerStrings(f *testing.F) {
-	f.Add("customer-731-secret.example.internal/private/path")
+	f.Add("customer-731-secret.example.test/private/path")
 	f.Add("token=secret-abc-123")
 	f.Add("\u001b[31mforged\nfield")
 	f.Fuzz(func(t *testing.T, secret string) {
@@ -187,16 +190,16 @@ func FuzzRedactedRunExportDoesNotCopyCallerStrings(f *testing.F) {
 		}
 		marker := "private-marker-" + secret
 		run := report.Result{SchemaVersion: 25, Name: marker, Target: "https://" + marker,
-			StartedAt: "2026-04-03T12:30:00Z", Outcome: "PASS", ElapsedSeconds: 2, ObservationSeconds: 2,
+			StartedAt: "2001-02-03T12:30:00Z", Outcome: "PASS", ElapsedSeconds: 2, ObservationSeconds: 2,
 			Config: report.RunConfig{Users: 1, Mode: "closed", Duration: marker, WindowDuration: marker,
 				WorkloadRevision: marker, ApplicationRevision: marker, ProfileMixReference: marker,
 				Profiles: []report.ProfileConfig{{Name: marker, Weight: 1}}},
 			Metrics:  report.MetricSet{Total: 1, Success: 1, Reasons: map[string]int{marker: 1}},
 			Steps:    []report.StepResult{{Profile: marker, Name: marker, Path: "/" + marker, Method: "GET"}},
 			Warnings: []string{marker}, Note: marker,
-			ApplicationMetrics: &appmetrics.Timeline{SchemaVersion: 1, Source: "https://" + marker, Interval: "1s", StartedAt: "2026-04-03T12:30:00Z",
-				FinishedAt: "2026-04-03T12:30:02Z", Note: marker,
-				Samples: []appmetrics.TimedSample{{FinishedAt: "2026-04-03T12:30:01Z", Samples: []appmetrics.Sample{{Name: marker, Value: 1}}}}},
+			ApplicationMetrics: &appmetrics.Timeline{SchemaVersion: 1, Source: "https://" + marker, Interval: "1s", StartedAt: "2001-02-03T12:30:00Z",
+				FinishedAt: "2001-02-03T12:30:02Z", Note: marker,
+				Samples: []appmetrics.TimedSample{{FinishedAt: "2001-02-03T12:30:01Z", Samples: []appmetrics.Sample{{Name: marker, Value: 1}}}}},
 		}
 		data, err := Marshal(FromRun(run))
 		if err != nil {

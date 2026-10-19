@@ -33,15 +33,16 @@ type fingerprintStep struct {
 }
 
 type fingerprintInput struct {
-	ConnectionPolicy     string               `json:"connection_policy,omitempty"`
-	ProfileSelection     string               `json:"profile_selection,omitempty"`
-	Profiles             []fingerprintProfile `json:"profiles"`
-	PerVUCookieSessions  bool                 `json:"per_vu_cookie_sessions"`
-	ProfileSessionScopes []string             `json:"profile_session_scopes,omitempty"`
-	SyntheticIdentifiers bool                 `json:"synthetic_identifiers"`
-	SyntheticPrefix      string               `json:"synthetic_prefix,omitempty"`
-	SessionCount         int                  `json:"session_count,omitempty"`
-	WorkloadSeed         uint64               `json:"workload_seed,omitempty"`
+	ConnectionPolicy      string               `json:"connection_policy,omitempty"`
+	MaxConnectionsPerHost int                  `json:"max_connections_per_host,omitempty"`
+	ProfileSelection      string               `json:"profile_selection,omitempty"`
+	Profiles              []fingerprintProfile `json:"profiles"`
+	PerVUCookieSessions   bool                 `json:"per_vu_cookie_sessions"`
+	ProfileSessionScopes  []string             `json:"profile_session_scopes,omitempty"`
+	SyntheticIdentifiers  bool                 `json:"synthetic_identifiers"`
+	SyntheticPrefix       string               `json:"synthetic_prefix,omitempty"`
+	SessionCount          int                  `json:"session_count,omitempty"`
+	WorkloadSeed          uint64               `json:"workload_seed,omitempty"`
 }
 
 // WorkloadFingerprint returns a stable digest of the declared request and
@@ -65,6 +66,7 @@ func WorkloadFingerprint(v Validated) string {
 	if v.Scenario.ConnectionPolicy != "reuse" {
 		input.ConnectionPolicy = v.Scenario.ConnectionPolicy
 	}
+	input.MaxConnectionsPerHost = v.Scenario.MaxConnectionsPerHost
 	if len(v.Scenario.Profiles) > 0 {
 		input.ProfileSelection = "per_journey_start"
 	}

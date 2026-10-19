@@ -495,6 +495,9 @@ func AssessDeclaredWorkloadShape(s config.Scenario, rec Record) Dimension {
 			Reason: "The calibration record has no versioned workload-shape fingerprint.",
 		}
 	}
+	if s.MaxConnectionsPerHost != 0 {
+		return Dimension{Name: "declared_workload_shape", Status: "OUTSIDE_REFERENCE", Reason: "The fixed reference uses the worker-scaled connection default and does not qualify an explicit per-host connection cap."}
+	}
 	if rec.SchemaVersion >= 3 {
 		return assessMatrixWorkloadShape(s, rec)
 	}
@@ -665,6 +668,9 @@ func assessMatrixWorkloadShape(s config.Scenario, rec Record) Dimension {
 }
 
 func exactProfileControlsMatch(profiles []WorkloadProfile, s config.Scenario, connectionPolicy string) bool {
+	if s.MaxConnectionsPerHost != 0 {
+		return false
+	}
 	for _, profile := range profiles {
 		if profile.ArrivalRate == s.ArrivalRate && profile.MaxRPS == s.MaxRPS && profile.Users == s.Users &&
 			profile.Duration == s.Duration && profile.Timeout == s.Timeout && profile.ConnectionPolicy == connectionPolicy {
@@ -675,7 +681,7 @@ func exactProfileControlsMatch(profiles []WorkloadProfile, s config.Scenario, co
 }
 
 func exactReferenceSoakControlsMatch(s config.Scenario, connectionPolicy string) bool {
-	return connectionPolicy == "reuse" && s.Mode == "arrival" && s.ArrivalRate == 10 && s.Users == 10 &&
+	return s.MaxConnectionsPerHost == 0 && connectionPolicy == "reuse" && s.Mode == "arrival" && s.ArrivalRate == 10 && s.Users == 10 &&
 		s.MaxRPS == 50 && s.Duration == "30s" && s.Timeout == "1s" &&
 		(s.RampUp == "" || s.RampUp == "0s") && (s.ThinkTime == "" || s.ThinkTime == "0s")
 }

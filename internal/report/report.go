@@ -23,9 +23,10 @@ import (
 // completed journeys to observation windows, v23 records generator resource
 // guardrails, v24 identifies explicit cleanup steps, v25 may attach a bounded
 // application-metrics timeline, v26 records per-journey weighted-profile
-// selection semantics and per-profile start/actor ledgers. Version 27 records
-// per-workflow cookie-session scope names.
-const CurrentSchemaVersion = 27
+// selection semantics and per-profile start/actor ledgers, v27 records
+// per-workflow cookie-session scope names, and v28 records
+// configured connection limits and observed connection-acquisition waits.
+const CurrentSchemaVersion = 28
 
 type MetricSet struct {
 	Total                 int                     `json:"total"`
@@ -174,6 +175,11 @@ type HTTPTrace struct {
 	ConnectCount           int     `json:"connect_count"`
 	ConnectStartCount      int     `json:"connect_start_count"`
 	ConnectMS              float64 `json:"connect_ms,omitempty"`
+	ConnectionAcquireCount int     `json:"connection_acquire_count,omitempty"`
+	ConnectionAcquireMS    float64 `json:"connection_acquire_ms,omitempty"`
+	ConnectionReusedCount  int     `json:"connection_reused_count,omitempty"`
+	ConnectionWaitCount    int     `json:"connection_wait_count,omitempty"`
+	ConnectionWaitMS       float64 `json:"connection_wait_ms,omitempty"`
 	TLSCount               int     `json:"tls_count"`
 	TLSStartCount          int     `json:"tls_start_count"`
 	TLSMS                  float64 `json:"tls_ms,omitempty"`
@@ -200,6 +206,11 @@ func (t *HTTPTrace) Record(o HTTPTrace) {
 	t.ConnectCount += o.ConnectCount
 	t.ConnectStartCount += o.ConnectStartCount
 	t.ConnectMS += o.ConnectMS
+	t.ConnectionAcquireCount += o.ConnectionAcquireCount
+	t.ConnectionAcquireMS += o.ConnectionAcquireMS
+	t.ConnectionReusedCount += o.ConnectionReusedCount
+	t.ConnectionWaitCount += o.ConnectionWaitCount
+	t.ConnectionWaitMS += o.ConnectionWaitMS
 	t.TLSCount += o.TLSCount
 	t.TLSStartCount += o.TLSStartCount
 	t.TLSMS += o.TLSMS
@@ -286,32 +297,33 @@ func percentile(values []time.Duration, p float64) time.Duration {
 func roundMS(d time.Duration) float64 { return float64(d.Microseconds()) / 1000.0 }
 
 type RunConfig struct {
-	WorkloadRevision     string          `json:"workload_revision,omitempty"`
-	ApplicationRevision  string          `json:"application_revision,omitempty"`
-	WorkloadFingerprint  string          `json:"workload_fingerprint,omitempty"`
-	Environment          string          `json:"environment,omitempty"`
-	ProfileMixBasis      string          `json:"profile_mix_basis,omitempty"`
-	ProfileMixReference  string          `json:"profile_mix_reference,omitempty"`
-	ProfileSelection     string          `json:"profile_selection,omitempty"`
-	ProfileSessionScopes []string        `json:"profile_session_scopes,omitempty"`
-	Users                int             `json:"users"`
-	Duration             string          `json:"duration"`
-	RampUp               string          `json:"ramp_up,omitempty"`
-	ThinkTime            string          `json:"think_time,omitempty"`
-	ThinkTimeRange       *ThinkTimeRange `json:"think_time_range,omitempty"`
-	ThinkTimeSamples     []string        `json:"think_time_samples,omitempty"`
-	WorkloadSeed         uint64          `json:"workload_seed,omitempty"`
-	RequestTimeout       string          `json:"request_timeout"`
-	ConnectionPolicy     string          `json:"connection_policy,omitempty"`
-	MaxRPS               int             `json:"max_rps"`
-	P95LimitMS           float64         `json:"p95_limit_ms"`
-	MaxErrorRate         float64         `json:"max_error_rate"`
-	Mode                 string          `json:"mode"`
-	ArrivalRate          int             `json:"arrival_rate,omitempty"`
-	SeparateSessions     bool            `json:"separate_sessions"`
-	MinSamplesPerStep    int             `json:"min_samples_per_step"`
-	Profiles             []ProfileConfig `json:"profiles,omitempty"`
-	WindowDuration       string          `json:"window_duration,omitempty"`
+	WorkloadRevision      string          `json:"workload_revision,omitempty"`
+	ApplicationRevision   string          `json:"application_revision,omitempty"`
+	WorkloadFingerprint   string          `json:"workload_fingerprint,omitempty"`
+	Environment           string          `json:"environment,omitempty"`
+	ProfileMixBasis       string          `json:"profile_mix_basis,omitempty"`
+	ProfileMixReference   string          `json:"profile_mix_reference,omitempty"`
+	ProfileSelection      string          `json:"profile_selection,omitempty"`
+	ProfileSessionScopes  []string        `json:"profile_session_scopes,omitempty"`
+	Users                 int             `json:"users"`
+	Duration              string          `json:"duration"`
+	RampUp                string          `json:"ramp_up,omitempty"`
+	ThinkTime             string          `json:"think_time,omitempty"`
+	ThinkTimeRange        *ThinkTimeRange `json:"think_time_range,omitempty"`
+	ThinkTimeSamples      []string        `json:"think_time_samples,omitempty"`
+	WorkloadSeed          uint64          `json:"workload_seed,omitempty"`
+	RequestTimeout        string          `json:"request_timeout"`
+	ConnectionPolicy      string          `json:"connection_policy,omitempty"`
+	MaxConnectionsPerHost int             `json:"max_connections_per_host,omitempty"`
+	MaxRPS                int             `json:"max_rps"`
+	P95LimitMS            float64         `json:"p95_limit_ms"`
+	MaxErrorRate          float64         `json:"max_error_rate"`
+	Mode                  string          `json:"mode"`
+	ArrivalRate           int             `json:"arrival_rate,omitempty"`
+	SeparateSessions      bool            `json:"separate_sessions"`
+	MinSamplesPerStep     int             `json:"min_samples_per_step"`
+	Profiles              []ProfileConfig `json:"profiles,omitempty"`
+	WindowDuration        string          `json:"window_duration,omitempty"`
 }
 
 // ProfileConfig records the intended workflow mix used for a run.

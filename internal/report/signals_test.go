@@ -113,3 +113,19 @@ func TestSignalsDoNotInferUnknownInfrastructure(t *testing.T) {
 		t.Fatalf("missing process metrics should be explicit: %+v", sigs)
 	}
 }
+
+func TestConnectionAcquisitionWaitIsAnObservationNotAProvenCause(t *testing.T) {
+	r := validSyntheticQualityRun()
+	r.SchemaVersion = 28
+	r.Config.MaxConnectionsPerHost = 1
+	r.Steps = []StepResult{{HTTPTrace: HTTPTrace{ConnectionAcquireCount: 2, ConnectionAcquireMS: 35, ConnectionReusedCount: 1, ConnectionWaitCount: 1, ConnectionWaitMS: 35}}}
+	for _, signal := range DetectSignals(r) {
+		if signal.Code == "CLIENT_CONNECTION_ACQUISITION_WAIT" {
+			if signal.Origin != "client_transport" || !strings.Contains(signal.Evidence, "not proven") {
+				t.Fatalf("transport wait was mislabeled as a proven cause: %+v", signal)
+			}
+			return
+		}
+	}
+	t.Fatal("observed reused-connection wait did not produce a client diagnostic")
+}
