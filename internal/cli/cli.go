@@ -101,7 +101,7 @@ Usage:
 	  damocline dashboard --file run.json [--addr 127.0.0.1:8787]
   damocline goal --file capacity.json --peak-users 20 [--growth-percent 25] [--reserve-percent 20]
 	  damocline plan --campaign campaign.json --peak-users 20 [--growth-percent 25] [--reserve-percent 20]
-  damocline audit --campaign campaign.json [--out audit.json]
+	damocline audit --campaign campaign.json [--peak-users 20] [--growth-percent 25] [--reserve-percent 20] [--out assessment.json]
   damocline run --config scenario.json --authorized [--calibration reports/reference.json] [--out reports/run.json]
   damocline run --config scenario.json --dry-run
   damocline explore --config scenario.json --min-users 2 --max-users 20 --stage-duration 20s --repeats 2 --authorized

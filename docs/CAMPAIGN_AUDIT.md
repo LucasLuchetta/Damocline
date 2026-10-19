@@ -28,8 +28,20 @@ The audit distinguishes:
 Recomputed quality `LIMITED` remains visible *separately* from the
 observational verdict. Only the separately validated loopback calibration
 owns the current positive generator measurement envelope. For a specific
-business-demand check, use the independent `damocline plan` command, which
-retains its strict generator equivalence and statistical requirements.
+business-demand check, pass `--peak-users` (and optional growth and reserve
+percentages) to `audit`. The combined JSON assessment contains the observed
+audit and demand plan in one artifact; `plan` remains available for a
+standalone demand check.
+
+Each assessment includes a SHA-256 digest of the saved campaign and each
+reviewed phase report, the workload fingerprint recorded by each run, target,
+timestamps and observation durations, the sum of required phase durations,
+observed levels, workflow failures visible in observation evidence, and known
+unknowns. These digests identify the exact serialized evidence reviewed; they
+do not authenticate who produced it or protect it from replacement. Confidence
+is explicitly `NOT_ESTABLISHED`: current conditional intervals assume IID
+observations and do not establish dependence-aware confidence. Demand is not
+extrapolated into untested workload levels.
 
 ## Stricter observation window screen
 
@@ -63,7 +75,7 @@ go test ./internal/campaign -run 'TestStability' -v
 go test ./internal/capacityplan -run 'TestAuditCampaign' -v
 
 # Review an existing campaign report without contacting its target:
-.\.damocline\damocline-audit.exe audit --campaign .damocline\reports\campaign.json --out .damocline\reports\campaign-audit.json
+.\.damocline\damocline-audit.exe audit --campaign .damocline\reports\campaign.json --peak-users 8 --out .damocline\reports\campaign-assessment.json
 ```
 
 To preview a new bounded campaign without generating traffic:
