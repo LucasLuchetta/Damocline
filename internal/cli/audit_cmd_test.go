@@ -43,8 +43,9 @@ func TestAuditCommandIsOfflineAndProducesMachineReadableEvidence(t *testing.T) {
 		t.Fatal(err)
 	}
 	var audit struct {
-		State string `json:"state"`
-		Audit struct {
+		SchemaVersion int    `json:"schema_version"`
+		State         string `json:"state"`
+		Audit         struct {
 			State      string `json:"state"`
 			EvidenceID string `json:"evidence_id"`
 		} `json:"audit"`
@@ -57,7 +58,7 @@ func TestAuditCommandIsOfflineAndProducesMachineReadableEvidence(t *testing.T) {
 			TargetUsers int `json:"target_users"`
 		} `json:"demand"`
 	}
-	if err := json.Unmarshal(raw, &audit); err != nil || audit.Audit.State != "INCONCLUSIVE" || audit.State != "INSUFFICIENT_EVIDENCE" {
+	if err := json.Unmarshal(raw, &audit); err != nil || audit.SchemaVersion != 2 || audit.Audit.State != "INCONCLUSIVE" || audit.State != "INSUFFICIENT_EVIDENCE" {
 		t.Fatalf("invalid audit JSON: %+v %v", audit, err)
 	}
 	if audit.Audit.EvidenceID == "" || audit.Demand == nil || audit.Demand.TargetUsers != 2 {
@@ -79,6 +80,8 @@ func TestAuditObservationSummaryOutputKeepsUnitsAndLimitationsExplicit(t *testin
 	var output bytes.Buffer
 	audit := capacityplan.CampaignAudit{
 		SpreadConsistency: "MATCHED",
+		Repeatability: capacityplan.RepeatabilityEvidence{Status: "CONDITIONAL_INTERVAL", EvaluatedTrials: 2, PassingTrials: 2, Lower95: 0.158, Upper95: 1,
+			Method: "EXACT_CLOPPER_PEARSON_BINOMIAL", Assumption: "INDEPENDENT_STATIONARY_REPEAT_TRIALS"},
 		ObservationTrials: []capacityplan.ObservationTrial{{
 			Trial: 1, Requests: 40, RequestP95MS: 125, RequestErrorRate: floatPointer(0.025),
 			CompletedJourneys: 20, JourneyP95MS: 240, JourneyErrorRate: floatPointer(0.05),
@@ -91,7 +94,7 @@ func TestAuditObservationSummaryOutputKeepsUnitsAndLimitationsExplicit(t *testin
 		},
 	}
 	writeObservationEvidence(&output, audit, "")
-	for _, want := range []string{"request-p95=125.00 ms", "request-errors=2.50%", "completed-journeys=20", "successful-journeys=2.00/s", "request-rate 4.00–4.00/s", "not a confidence interval"} {
+	for _, want := range []string{"2/2 evaluable trials passed", "exact 95% interval 15.8%–100.0%", "not capacity confidence", "request-p95=125.00 ms", "request-errors=2.50%", "completed-journeys=20", "successful-journeys=2.00/s", "request-rate 4.00–4.00/s", "not a confidence interval"} {
 		if !strings.Contains(output.String(), want) {
 			t.Fatalf("observation summary omitted %q: %s", want, output.String())
 		}
