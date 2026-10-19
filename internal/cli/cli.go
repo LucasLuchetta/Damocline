@@ -467,6 +467,10 @@ func campaignCmd(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "--config is required and positional arguments are not accepted")
 		return 2
 	}
+	if !*dry && *out == "" {
+		fmt.Fprintln(stderr, "campaigns require --out to preserve every attempted phase and trial")
+		return 2
+	}
 	if *maxGeneratorRSSMB > (1<<64-1)/(1024*1024) {
 		fmt.Fprintln(stderr, "--max-generator-rss-mb is too large")
 		return 2
@@ -513,10 +517,6 @@ func campaignCmd(args []string, stdout, stderr io.Writer) int {
 		}
 		fmt.Fprintln(stdout, "DRY RUN: no traffic generated. Warm-up is excluded from the conclusion; observation, recovery, and any final soak must pass.")
 		return 0
-	}
-	if options.LongRun && *out == "" {
-		fmt.Fprintln(stderr, "long-run campaigns require --out so the complete stage evidence is retained")
-		return 2
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

@@ -1,16 +1,74 @@
 package capacityplan
 
 import (
+	"context"
 	"math"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/LucasLuchetta/Damocline/internal/campaign"
 	"github.com/LucasLuchetta/Damocline/internal/capacitygoal"
+	"github.com/LucasLuchetta/Damocline/internal/config"
 	"github.com/LucasLuchetta/Damocline/internal/generatorhealth"
 	"github.com/LucasLuchetta/Damocline/internal/report"
 )
+
+func TestFirstObservedFailureSurvivesPersistenceAndCannotBeHiddenByLaterPass(t *testing.T) {
+	base, err := config.Parse(config.Scenario{
+		Name: "synthetic", BaseURL: "http://127.0.0.1:18080", Users: 2, Duration: "10s", Timeout: "1s",
+		MaxRPS: 40, P95LimitMS: 1000, MaxErrorRate: 0.1, WindowDuration: "2.5s",
+		Steps: []config.Step{{Name: "request", Method: "GET", Path: "/"}},
+	}, config.Options{Authorized: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	evidence, err := campaign.WithRunner(context.Background(), base, campaign.Options{
+		Observation: 10 * time.Second, Recovery: 10 * time.Second, Repeats: 2,
+	}, func(_ context.Context, v config.Validated) report.Result {
+		calls++
+		run := auditFixture().Trials[0].Phases[0].Run
+		run.Target = v.Base.Scheme + "://" + v.Base.Host
+		run.Config.Users = v.Scenario.Users
+		run.Config.Duration = v.Duration.String()
+		run.Config.WindowDuration = v.Window.String()
+		if calls == 1 {
+			run.Outcome = "FAIL"
+		}
+		return run
+	})
+	if err != nil || calls != 1 || evidence.Outcome != "FAIL" || len(evidence.Trials) != 1 || len(evidence.Trials[0].Phases) != 1 {
+		t.Fatalf("first observed failure was not terminal and retained: calls=%d evidence=%+v err=%v", calls, evidence, err)
+	}
+
+	path := filepath.Join(t.TempDir(), "failed-campaign.json")
+	if err := report.WriteAnyJSON(path, evidence); err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := ReadCampaign(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	audit := AuditCampaign(reloaded)
+	if audit.State != "OBSERVED_FAIL" || len(reloaded.Trials) != 1 || len(reloaded.Trials[0].Phases) != 1 ||
+		audit.RequiredPhases != 1 || len(audit.PassingLevels) != 0 ||
+		len(audit.FailingLevels) != 1 || audit.FailingLevels[0] != evidence.BaseUsers {
+		t.Fatalf("the first observed failure was lost or summarized as a pass: audit=%+v evidence=%+v", audit, reloaded)
+	}
+
+	forged := evidence
+	forged.Outcome = "PASS"
+	forged.Trials = append(append([]campaign.Trial(nil), evidence.Trials...), auditFixture().Trials[1])
+	forged.Trials[1].Number = 2
+	forged.Trials[1].Outcome = "PASS"
+	forged.ObservationVariability = validVariability()
+	forgedAudit := AuditCampaign(forged)
+	if forgedAudit.State != "INVALID_EVIDENCE" {
+		t.Fatalf("a later passing trial hid the earlier failure: %+v", forgedAudit)
+	}
+}
 
 func TestCampaignRunGuardrailsMustMatchOfflinePolicy(t *testing.T) {
 	policy := generatorhealth.Guardrails{MaxProcessRSSBytes: 512 * 1024 * 1024, ConsecutiveSamples: 3}

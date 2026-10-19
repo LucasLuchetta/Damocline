@@ -47,6 +47,23 @@ func TestArrivalCampaignDryRunShowsOpenArrivalSchedule(t *testing.T) {
 	}
 }
 
+func TestCampaignsRequireOutputArtifactOutsideDryRun(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{name: "closed", args: []string{"campaign", "--config", "unused.json"}},
+		{name: "arrival", args: []string{"arrival-campaign", "--config", "unused.json"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			if code := Run(tc.args, &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "campaigns require --out") {
+				t.Fatalf("campaign without a retained artifact was not rejected before execution: code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+			}
+		})
+	}
+}
+
 func TestCampaignDryRunsShowLocalGeneratorGuardrails(t *testing.T) {
 	for _, tc := range []struct {
 		name string
