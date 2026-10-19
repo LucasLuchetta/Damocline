@@ -8,6 +8,7 @@ import (
 	"github.com/LucasLuchetta/Damocline/internal/appmetrics"
 	"github.com/LucasLuchetta/Damocline/internal/arrivalcampaign"
 	"github.com/LucasLuchetta/Damocline/internal/arrivalexplorer"
+	"github.com/LucasLuchetta/Damocline/internal/calibration"
 	"github.com/LucasLuchetta/Damocline/internal/campaign"
 	"github.com/LucasLuchetta/Damocline/internal/explorer"
 	"github.com/LucasLuchetta/Damocline/internal/report"
@@ -20,7 +21,7 @@ func TestRedactedRunExportOmitsUncontrolledStringsAndPreservesEvidence(t *testin
 	run := report.Result{
 		SchemaVersion: 28, Name: secret, Target: "https://user:token@" + secret + "/private/route?customer=731", Outcome: "PASS",
 		StartedAt: start, ElapsedSeconds: 8.5, ObservationSeconds: 8,
-		Config: report.RunConfig{WorkloadRevision: secret, ApplicationRevision: secret, WorkloadFingerprint: secret,
+		Config: report.RunConfig{WorkloadRevision: secret, ApplicationRevision: secret, WorkloadFingerprint: secret, AuthenticationSessionScope: "trial_scoped_cookie_sets",
 			Environment: secret, ProfileMixReference: secret, Users: 4, Duration: "8s", RequestTimeout: "1s",
 			ConnectionPolicy: "reuse", MaxRPS: 50, P95LimitMS: 250, MaxErrorRate: .01, Mode: "arrival", ArrivalRate: 8,
 			WindowDuration: secret, ProfileSelection: "per_journey_start", SeparateSessions: true, MaxConnectionsPerHost: 4, Profiles: []report.ProfileConfig{{Name: "private-workflow", Weight: 2, AuthenticationContext: "per_actor_workflow_cookie"}}},
@@ -63,6 +64,9 @@ func TestRedactedRunExportOmitsUncontrolledStringsAndPreservesEvidence(t *testin
 	if exported.Run.ProfileSelection != "per_journey_start" || exported.Run.Profiles[0].SelectedStarts != 8 || exported.Run.Profiles[0].ActorsObserved != 4 {
 		t.Fatalf("redacted workflow selection evidence was not preserved: %+v", exported.Run)
 	}
+	if exported.Run.AuthenticationSessionScope != "trial_scoped_cookie_sets" {
+		t.Fatalf("safe trial-scoped authentication enum was not preserved: %+v", exported.Run)
+	}
 	if exported.Run.Profiles[0].AuthenticationContext != "per_actor_workflow_cookie" {
 		t.Fatalf("safe workflow authentication-context enum was not preserved: %+v", exported.Run.Profiles[0])
 	}
@@ -99,6 +103,17 @@ func TestCampaignExportsDropFreeTextAndPreservePhaseMetrics(t *testing.T) {
 	}
 	if exported.Kind != "closed_loop_campaign" || exported.Workload.VirtualUsers != 3 || len(exported.Trials) != 1 || exported.Trials[0].Phases[0].Run.Metrics.Total != 60 {
 		t.Fatalf("closed campaign evidence missing: %+v", exported)
+	}
+	closed.CalibrationRequired = true
+	closed.Calibration = &calibration.ClosedLoopEnvelope{Status: "BLOCKED", Levels: []calibration.ClosedLoopAssessment{{Users: 3, Status: "BLOCKED", Reason: secret, Dimensions: []calibration.Dimension{{Name: "workload_model", Status: "OUTSIDE_REFERENCE", Reason: secret}}}}}
+	closed.CalibrationSource = "C:\\private\\calibration.json"
+	data, err = Marshal(FromClosedCampaign(closed))
+	if err != nil || strings.Contains(string(data), "private") || strings.Contains(string(data), secret) {
+		t.Fatalf("calibration export leaked its local path or reason: err=%v export=%s", err, data)
+	}
+	var calibrated Evidence
+	if err := json.Unmarshal(data, &calibrated); err != nil || calibrated.Calibration == nil || !calibrated.Calibration.Required || calibrated.Calibration.Status != "BLOCKED" {
+		t.Fatalf("calibration aggregate was not retained: err=%v evidence=%+v", err, calibrated.Calibration)
 	}
 
 	arrival := arrivalcampaign.Result{SchemaVersion: 6, Scenario: secret, Target: "https://" + secret, WorkerLimit: 20,

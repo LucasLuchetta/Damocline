@@ -41,6 +41,59 @@ type ArrivalEnvelope struct {
 	Rates  []RateAssessment `json:"rates"`
 }
 
+// ClosedLoopAssessment records the exact VU levels a closed-loop campaign
+// would run. Current calibration fixtures contain arrival-mode profiles only,
+// so they cannot qualify closed-loop generator capacity.
+type ClosedLoopAssessment struct {
+	Users      int         `json:"users"`
+	Status     string      `json:"status"`
+	Reason     string      `json:"reason"`
+	Dimensions []Dimension `json:"dimensions"`
+}
+
+type ClosedLoopEnvelope struct {
+	Status string                 `json:"status"`
+	Levels []ClosedLoopAssessment `json:"levels"`
+}
+
+// AssessClosedLoopEnvelope checks each distinct planned VU level. Arrival
+// profiles are deliberately not treated as evidence for closed-loop users.
+func AssessClosedLoopEnvelope(users []int, rec Record, local Runtime, now time.Time) ClosedLoopEnvelope {
+	result := ClosedLoopEnvelope{Status: "BLOCKED", Levels: []ClosedLoopAssessment{}}
+	seen := map[int]bool{}
+	for _, count := range users {
+		assessment := ClosedLoopAssessment{Users: count, Status: "BLOCKED"}
+		switch {
+		case count < 1 || count > 10000:
+			assessment.Reason = "Planned virtual-user levels must be within the bounded 1-10000 range."
+			assessment.Dimensions = []Dimension{{Name: "users", Status: "OUTSIDE_REFERENCE", Reason: assessment.Reason}}
+		case seen[count]:
+			assessment.Reason = "Planned virtual-user levels must be unique."
+			assessment.Dimensions = []Dimension{{Name: "users", Status: "INVALID", Reason: assessment.Reason}}
+		default:
+			seen[count] = true
+			assessment.Reason = "No closed-loop VU calibration profiles are present; arrival-mode profiles do not qualify this workload model."
+			assessment.Dimensions = []Dimension{{Name: "workload_model", Status: "OUTSIDE_REFERENCE", Reason: assessment.Reason}}
+			if err := ValidateRecord(rec); err != nil || rec.Status != "REFERENCE_SMOKE_PASSED" {
+				assessment.Dimensions = []Dimension{{Name: "calibration", Status: "UNVERIFIED", Reason: "A validated passing calibration record is unavailable."}}
+				assessment.Reason = "A validated passing calibration record is unavailable."
+			}
+		}
+		result.Levels = append(result.Levels, assessment)
+	}
+	if len(result.Levels) == 0 {
+		return result
+	}
+	result.Status = "READY"
+	for _, level := range result.Levels {
+		if level.Status != "READY" {
+			result.Status = "BLOCKED"
+			break
+		}
+	}
+	return result
+}
+
 type Runtime struct {
 	OS                string
 	Arch              string

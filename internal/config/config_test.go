@@ -582,6 +582,29 @@ func TestSeparateSessionsRequiredAndUnique(t *testing.T) {
 		t.Fatal("duplicate cookie accepted")
 	}
 }
+
+func TestResolveTrialCookieSetsExpandsAndPreflightsEveryTrial(t *testing.T) {
+	profile := Profile{Name: "read", PerVUCookieEnvPrefix: "DAMO_{trial}_READ_", Steps: []Step{{Name: "read", Path: "/"}}}
+	for trial := 1; trial <= 2; trial++ {
+		t.Setenv(fmt.Sprintf("DAMO_%d_READ_1", trial), fmt.Sprintf("sid=trial-%d", trial))
+	}
+	sets, err := ResolveTrialCookieSets("", []Profile{profile}, []int{1, 1})
+	if err != nil || !sets.Rotated || len(sets.Trials) != 2 || sets.Trials[0].Profiles[0][0] != "sid=trial-1" || sets.Trials[1].Profiles[0][0] != "sid=trial-2" {
+		t.Fatalf("trial cookie resolution = %+v, %v", sets, err)
+	}
+	t.Setenv("DAMO_2_READ_1", "sid=trial-1")
+	if _, err := ResolveTrialCookieSets("", []Profile{profile}, []int{1, 1}); err == nil || !strings.Contains(err.Error(), "distinct") {
+		t.Fatalf("duplicate cross-trial cookies were accepted: %v", err)
+	}
+}
+
+func TestResolveTrialCookieSetsRequiresAllPrefixesToRotate(t *testing.T) {
+	profiles := []Profile{{Name: "read", PerVUCookieEnvPrefix: "DAMO_{trial}_READ_"}, {Name: "search", PerVUCookieEnvPrefix: "DAMO_SEARCH_"}}
+	if _, err := ResolveTrialCookieSets("", profiles, []int{1, 1}); err == nil || !strings.Contains(err.Error(), "all configured") {
+		t.Fatalf("mixed rotation policy was accepted: %v", err)
+	}
+}
+
 func TestArrivalValidation(t *testing.T) {
 	s := good()
 	s.Mode = "arrival"

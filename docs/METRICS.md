@@ -143,6 +143,8 @@ A result for "Dashboard" at 150 VUs and one for "Search" at 100 VUs **cannot be 
 
 ## Illustrative example only
 
+Trial-scoped cookie sessions are optional: put `{trial}` in each configured `per_vu_cookie_env_prefix` (for example `DAMO_TRIAL_{trial}_VU_`) and provide numbered environment variables for every repeat and actor. All trial cookie sets are resolved before a campaign phase begins; a missing set or duplicate canonical set stops execution before traffic. Schema-v29 reports store only `authentication_session_scope: trial_scoped_cookie_sets`, never cookie values or variable names. This describes configured scope only; it does not validate session freshness, validity, distinct accounts, or permissions.
+
 > Scenario: 60% search journeys and 40% approval journeys. Criteria: p95 below 1.5 s, business errors below 1%, 15-minute steady-state window. The 80-VU level passed repeated tests; the 100-VU level breached the p95 criterion. This is not an estimate for idle sessions or a different infrastructure configuration.
 
 No numbers above are actual Damocline measurements.

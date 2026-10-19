@@ -91,6 +91,12 @@ func AssessQuality(r Result) *Quality {
 			invalidate("Pre-v28 reports cannot carry a per-host connection limit.")
 		}
 	}
+	if r.SchemaVersion < 29 && r.Config.AuthenticationSessionScope != "" {
+		invalidate("Pre-v29 reports cannot carry authentication session scope.")
+	}
+	if r.SchemaVersion >= 29 && r.Config.AuthenticationSessionScope != "" && r.Config.AuthenticationSessionScope != "trial_scoped_cookie_sets" {
+		invalidate("Authentication session scope is not a supported safe enum.")
+	}
 	if r.SchemaVersion >= 26 {
 		wantSelection := ""
 		if len(r.Config.Profiles) > 0 {

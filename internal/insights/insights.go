@@ -70,6 +70,12 @@ func ValidateRunReport(r report.Result) error {
 	if r.SchemaVersion < 25 && r.ApplicationMetrics != nil {
 		return errors.New("report application-metrics evidence does not match its schema")
 	}
+	if r.SchemaVersion < 29 && r.Config.AuthenticationSessionScope != "" {
+		return errors.New("report authentication session scope does not match its schema")
+	}
+	if r.Config.AuthenticationSessionScope != "" && r.Config.AuthenticationSessionScope != "trial_scoped_cookie_sets" {
+		return errors.New("report authentication session scope is unsupported")
+	}
 	if r.ApplicationMetrics != nil {
 		if err := appmetrics.ValidateTimeline(*r.ApplicationMetrics); err != nil {
 			return fmt.Errorf("invalid application-metrics evidence: %w", err)

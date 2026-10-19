@@ -42,7 +42,7 @@ Scenario fields:
 | `workload_seed` | Optional positive integer for reproducible timing choices; defaults to 1 when a variable policy is used. |
 | `connection_policy` | `reuse` (default) or `new_per_request`; controls keep-alive behavior. |
 | `max_connections_per_host` | Optional generator-side connection cap per target host, from 1 to 100. Omitted or zero values use a worker-scaled default. A lower cap can constrain delivered concurrency; inspect schema-v28 acquisition-wait evidence. Explicit caps are outside the current fixed calibration matrix. |
-| `per_vu_cookie_env_prefix` | Optional scenario-level prefix for distinct actor cookies shared across that actor's workflows. |
+| `per_vu_cookie_env_prefix` | Optional scenario-level prefix for distinct actor cookies shared across that actor's workflows. Campaigns may include one `{trial}` token, expanded to the one-based repeat number; all configured cookie prefixes must opt into rotation together. |
 | `profiles` | Optional replacement for `steps`: 2-10 named weighted workflows, each with `name`, `weight`, `steps`, an optional `per_vu_cookie_env_prefix` for an independent per-actor workflow identity, and an optional fixed, uniform, or discrete timing override. |
 | `extract` | Optional map of response values to capture using exactly one `json_pointer` or `header` selector. |
 | `json_assertions` | Optional map of JSON Pointer paths to expected scalar values; a mismatch fails the request even when HTTP status is successful. |

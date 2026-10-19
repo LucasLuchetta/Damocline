@@ -321,6 +321,14 @@ func WithRunnerProgress(parent context.Context, base config.Validated, options O
 	if err := Validate(base, options); err != nil {
 		return Result{}, err
 	}
+	actorCounts := make([]int, options.Repeats)
+	for index := range actorCounts {
+		actorCounts[index] = base.Scenario.Users
+	}
+	trialCookies, err := config.ResolveTrialCookieSets(base.Scenario.PerVUCookieEnvPrefix, base.Scenario.Profiles, actorCounts)
+	if err != nil {
+		return Result{}, err
+	}
 	options.Budget = PlannedBudget(options)
 	options.Guardrails = effectiveGeneratorGuardrails(options.Guardrails)
 	var generatorGuardrails *generatorhealth.Guardrails
@@ -347,6 +355,9 @@ func WithRunnerProgress(parent context.Context, base config.Validated, options O
 			"All phase rates are scheduled open-loop journey starts/s. They are not VUs, scheduler admissions, completed journeys/s, or HTTP requests/s.",
 			"Stabilization and observation are bounded repeated load stages with configured SLO windows. Passing phases do not establish universal or long-term sustainable capacity.",
 		},
+	}
+	if trialCookies.Rotated {
+		result.Notes = append(result.Notes, "Independent trials use distinct configured cookie sets. This does not verify account identity, permissions, or session freshness.")
 	}
 	if options.LongRun {
 		result.Notes = append(result.Notes, "Long-run mode was explicitly enabled for a user-declared staging environment with a bounded wall-time budget; Damocline does not verify the environment designation.")
@@ -406,6 +417,18 @@ func WithRunnerProgress(parent context.Context, base config.Validated, options O
 			validated.Scenario.RampUp = "0s"
 			validated.Duration = phase.Duration
 			validated.RampUp = 0
+			cookies := trialCookies.Trials[number-1]
+			if validated.ProfileAuthContexts {
+				validated.Profiles = append([]config.PreparedProfile(nil), base.Profiles...)
+				for index := range validated.Profiles {
+					validated.Profiles[index].Cookies = cookies.Profiles[index]
+				}
+			} else if len(cookies.Scenario) > 0 {
+				validated.Cookies = cookies.Scenario
+			}
+			if trialCookies.Rotated {
+				validated.AuthenticationSessionScope = "trial_scoped_cookie_sets"
+			}
 			if phase.Name != "warmup" {
 				if validated.Window == 0 {
 					validated.Window = min(30*time.Second, phase.Duration/4)

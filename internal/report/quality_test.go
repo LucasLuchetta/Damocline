@@ -468,6 +468,22 @@ func TestSchemaTwentySevenRequiresCompletePerWorkflowCookieContextEvidence(t *te
 	}
 }
 
+func TestSchemaTwentyNineValidatesAuthenticationSessionScope(t *testing.T) {
+	r := Result{SchemaVersion: 29, Config: RunConfig{AuthenticationSessionScope: "trial_scoped_cookie_sets"}}
+	if quality := AssessQuality(r); quality.State == QualityInvalid && containsFinding(quality.Findings, "Authentication session scope is not a supported safe enum.") {
+		t.Fatalf("safe schema-v29 auth scope was rejected: %+v", quality)
+	}
+	r.SchemaVersion = 28
+	if quality := AssessQuality(r); !containsFinding(quality.Findings, "Pre-v29 reports cannot carry authentication session scope.") {
+		t.Fatalf("pre-v29 auth scope was not rejected: %+v", quality)
+	}
+	r.SchemaVersion = 29
+	r.Config.AuthenticationSessionScope = "secret-value"
+	if quality := AssessQuality(r); !containsFinding(quality.Findings, "Authentication session scope is not a supported safe enum.") {
+		t.Fatalf("unknown auth scope enum was accepted: %+v", quality)
+	}
+}
+
 func TestSchemaThirteenAllowsOnlyFinalWindowToEndAtObservationHorizon(t *testing.T) {
 	r := validSyntheticQualityRun()
 	r.SchemaVersion = 13
