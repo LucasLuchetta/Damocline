@@ -124,6 +124,9 @@ Usage:
   damocline explore-arrival --config arrival.json --min-journeys-per-second 2 --max-journeys-per-second 20 [--calibration reference.json --require-calibration] --authorized
 	  damocline campaign --config scenario.json --warmup 30s --observation 2m --recovery 30s --repeats 2 --calibration reports/reference.json --require-calibration --app-metrics-endpoint https://app.example.com/metrics --authorized
 	  damocline campaign --config staging.json --observation 30m --allow-long-run --staging-confirmed --budget 70m --authorized
+	  damocline campaign profile save --file profile.json [--replace]
+	  damocline campaign profile list | show --name NAME | migrate --name NAME | delete --name NAME
+	  damocline campaign profile run --name NAME --authorized [--allow-writes] [--allow-insecure-http] [--staging-confirmed] [--calibration FILE]
 	  damocline arrival-campaign --config arrival.json --observation 2m --recovery 30s --repeats 2 --calibration reports/reference.json --app-metrics-endpoint https://app.example.com/metrics --authorized
 	  damocline arrival-campaign --config staging-arrival.json --observation 30m --allow-long-run --staging-confirmed --budget 70m --authorized
   damocline explore --config scenario.json --peak-users 10 --growth-percent 25 --reserve-percent 20 --authorized
@@ -588,6 +591,9 @@ func journeyP95Description(metrics report.MetricSet) string {
 }
 
 func campaignCmd(args []string, stdout, stderr io.Writer) int {
+	if len(args) > 0 && args[0] == "profile" {
+		return campaignProfileCmd(args[1:], stdout, stderr)
+	}
 	fs := flag.NewFlagSet("campaign", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	filename := fs.String("config", "", "scenario JSON")
