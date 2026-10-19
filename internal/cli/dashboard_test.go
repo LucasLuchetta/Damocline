@@ -35,6 +35,10 @@ func TestLoadDashboardHandlerSupportsRunAndCampaignArtifacts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	phaseRun.SchemaVersion = report.CurrentSchemaVersion
+	phaseRun.Config.Profiles = nil
+	phaseRun.Config.ProfileSelection = ""
+	phaseRun.Profiles = nil
 	phaseRun.Name, phaseRun.Target, phaseRun.Outcome = "Synthetic", "http://127.0.0.1", "PASS"
 	phaseRun.Config.Users = 4
 	phase := func(name string) campaign.Phase {
@@ -73,12 +77,18 @@ func TestLoadDashboardHandlerSupportsOpenArrivalCheckpoint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	phaseRun.SchemaVersion = report.CurrentSchemaVersion
+	phaseRun.Config.Profiles = nil
+	phaseRun.Config.ProfileSelection = ""
+	phaseRun.Profiles = nil
 	var checkpoint arrivalcampaign.Result
+	phaseOrdinal := 0
 	_, err = arrivalcampaign.WithRunnerProgress(context.Background(), base, arrivalcampaign.Options{Observation: 10 * time.Second, Recovery: 10 * time.Second, Repeats: 2},
 		func(_ context.Context, phaseBase config.Validated) report.Result {
+			phaseOrdinal++
 			run := phaseRun
 			run.Name, run.Target, run.Outcome = phaseBase.Scenario.Name, phaseBase.Base.Scheme+"://"+phaseBase.Base.Host, "PASS"
-			run.StartedAt = time.Now().UTC().Format(time.RFC3339)
+			run.StartedAt = time.Now().UTC().Add(time.Duration(phaseOrdinal) * time.Millisecond).Format(time.RFC3339Nano)
 			run.Config.Mode, run.Config.ArrivalRate, run.Config.Users = "arrival", phaseBase.Scenario.ArrivalRate, phaseBase.Scenario.Users
 			run.Config.Duration, run.Config.WindowDuration = phaseBase.Scenario.Duration, phaseBase.Window.String()
 			run.Config.WorkloadFingerprint, run.Config.MaxRPS = phaseBase.WorkloadFingerprint, phaseBase.Scenario.MaxRPS

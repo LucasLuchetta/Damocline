@@ -387,13 +387,15 @@ func TestSchemaTwentyTwoRequiresReconciledWindowJourneyLedger(t *testing.T) {
 	r.Windows[0].Journeys = MetricSet{Total: 2, Success: 2}
 	r.Windows[0].Profiles = []WindowMetric{{Name: "default", Metrics: MetricSet{Total: 2, Success: 2}}}
 	r.Journeys = MetricSet{Total: 3, Success: 3}
-	r.Profiles = []ProfileResult{{Name: "default", Weight: 1, Journeys: MetricSet{Total: 3, Success: 3}}}
+	r.Profiles = []ProfileResult{{Name: "default", Weight: 1, SelectedStarts: 3, ActorsObserved: 1, Journeys: MetricSet{Total: 3, Success: 3}}}
 	r.Config.Profiles = []ProfileConfig{{Name: "default", Weight: 1}}
+	r.Config.ProfileSelection = "per_journey_start"
 	r.Windows[0].Profiles[0].Metrics = MetricSet{Total: 1, Success: 1}
 	if q := AssessQuality(r); q.State != QualityInvalid {
 		t.Fatalf("profile and aggregate window journeys must reconcile: %+v", q)
 	}
 	r.Profiles[0].Journeys.Total, r.Profiles[0].Journeys.Success = 2, 2
+	r.Profiles[0].SelectedStarts = 2
 	r.Journeys.Total, r.Journeys.Success = 2, 2
 	r.Windows[0].Profiles[0].Metrics = MetricSet{Total: 2, Success: 2}
 	if q := AssessQuality(r); q.State == QualityInvalid {
@@ -402,6 +404,11 @@ func TestSchemaTwentyTwoRequiresReconciledWindowJourneyLedger(t *testing.T) {
 	r.Windows[0].Journeys = MetricSet{Total: 3, Success: 3}
 	if q := AssessQuality(r); q.State != QualityInvalid {
 		t.Fatalf("journey-window totals above run totals were trusted: %+v", q)
+	}
+	r.Windows[0].Journeys = MetricSet{Total: 2, Success: 2}
+	r.Profiles[0].Name = "unconfigured"
+	if q := AssessQuality(r); q.State != QualityInvalid {
+		t.Fatalf("schema-v26 workflow name not present in configuration was trusted: %+v", q)
 	}
 }
 

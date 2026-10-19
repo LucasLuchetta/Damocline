@@ -724,15 +724,65 @@ func TestWeightedProfilesAreMeasuredSeparately(t *testing.T) {
 	}
 	v.Duration = 300 * time.Millisecond
 	r := Run(context.Background(), v)
-	if r.Outcome != "PASS" || len(r.Profiles) != 2 || r.Profiles[0].AssignedVUs != 3 || r.Profiles[1].AssignedVUs != 1 ||
+	if r.Outcome != "PASS" || len(r.Profiles) != 2 || r.SchemaVersion != report.CurrentSchemaVersion || r.Config.ProfileSelection != "per_journey_start" ||
 		r.Profiles[0].Journeys.Total == 0 || r.Profiles[1].Journeys.Total == 0 {
 		t.Fatalf("weighted profile evidence missing: %+v", r)
+	}
+	starts := []int{r.Profiles[0].Journeys.Total + r.Profiles[0].Journeys.Cancelled, r.Profiles[1].Journeys.Total + r.Profiles[1].Journeys.Cancelled}
+	if starts[0]+starts[1] < 12 || absInt(starts[0]*4-(starts[0]+starts[1])*3) > 4 ||
+		r.Profiles[0].SelectedStarts != starts[0] || r.Profiles[1].SelectedStarts != starts[1] || int64(starts[0]+starts[1]) != r.ArrivalsScheduled ||
+		r.Profiles[0].ActorsObserved < 1 || r.Profiles[0].ActorsObserved > s.Users || r.Profiles[1].ActorsObserved < 1 || r.Profiles[1].ActorsObserved > s.Users {
+		t.Fatalf("workflow start weights or actor observations do not reconcile: starts=%v profiles=%+v", starts, r.Profiles)
 	}
 	mu.Lock()
 	defer mu.Unlock()
 	if seen["/dashboard"] == 0 || seen["/search"] == 0 {
 		t.Fatalf("expected both workflows, got %+v", seen)
 	}
+}
+
+func TestClosedLoopJourneyMixIsIndependentOfWorkflowDurationAndLength(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/slow" {
+			time.Sleep(20 * time.Millisecond)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	s := config.Scenario{
+		Name: "synthetic mixed journeys", BaseURL: srv.URL, Users: 4, Duration: "1s", MaxRPS: 100,
+		P95LimitMS: 1000, MaxErrorRate: 0,
+		Profiles: []config.Profile{
+			{Name: "slower_multi_step", Weight: 1, Steps: []config.Step{{Name: "slow", Path: "/slow"}, {Name: "detail", Path: "/detail"}}},
+			{Name: "fast_single_step", Weight: 3, Steps: []config.Step{{Name: "summary", Path: "/summary"}}},
+		},
+	}
+	v, err := config.Parse(s, config.Options{Authorized: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := Run(context.Background(), v)
+	if r.Outcome != "PASS" || len(r.Profiles) != 2 || r.Config.Mode != "closed" {
+		t.Fatalf("closed-loop mixed workflow fixture did not complete: %+v", r)
+	}
+	starts := []int{r.Profiles[0].Journeys.Total + r.Profiles[0].Journeys.Cancelled, r.Profiles[1].Journeys.Total + r.Profiles[1].Journeys.Cancelled}
+	total := starts[0] + starts[1]
+	if total < 20 || absInt(starts[0]*4-total) > 4 || absInt(starts[1]*4-total*3) > 4 {
+		t.Fatalf("different journey durations or request counts distorted the configured journey-start mix: starts=%v total=%d", starts, total)
+	}
+	if starts[0]+starts[1] != int(r.IterationsStarted) {
+		t.Fatalf("per-workflow starts %d do not reconcile with engine starts %d", total, r.IterationsStarted)
+	}
+	if r.Profiles[0].SelectedStarts != starts[0] || r.Profiles[1].SelectedStarts != starts[1] || int64(total) != r.ArrivalsScheduled {
+		t.Fatalf("per-workflow scheduled starts do not reconcile: profiles=%+v scheduled=%d", r.Profiles, r.ArrivalsScheduled)
+	}
+}
+
+func absInt(v int) int {
+	if v < 0 {
+		return -v
+	}
+	return v
 }
 
 func TestSyntheticDataIDsAreUniqueAndNeverReported(t *testing.T) {
@@ -1173,8 +1223,42 @@ func TestArrivalProfilesFollowConfiguredWeights(t *testing.T) {
 	r := Run(context.Background(), v)
 	if r.Outcome != "PASS" || r.ArrivalsScheduled != 10 || r.ArrivalsDropped != 0 || len(r.Profiles) != 2 ||
 		r.Profiles[0].Journeys.Total != 8 || r.Profiles[1].Journeys.Total != 2 ||
+		r.Profiles[0].SelectedStarts != 8 || r.Profiles[1].SelectedStarts != 2 ||
 		r.Profiles[0].AssignedVUs != 0 || r.Profiles[1].AssignedVUs != 0 {
 		t.Fatalf("arrival profile mix was not measured deterministically: %+v", r)
+	}
+}
+
+func TestArrivalProfileLedgersReconcileBusyWorkerDrops(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/slow" {
+			time.Sleep(100 * time.Millisecond)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	s := config.Scenario{
+		Name: "synthetic open mix", BaseURL: srv.URL, Users: 1, Duration: "1s", Mode: "arrival", ArrivalRate: 20, MaxRPS: 40,
+		P95LimitMS: 1000, MaxErrorRate: 0,
+		Profiles: []config.Profile{
+			{Name: "slower", Weight: 1, Steps: []config.Step{{Name: "slow", Path: "/slow"}}},
+			{Name: "faster", Weight: 1, Steps: []config.Step{{Name: "fast", Path: "/fast"}}},
+		},
+	}
+	v, err := config.Parse(s, config.Options{Authorized: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := Run(context.Background(), v)
+	if r.ArrivalsDroppedBusy == 0 || r.ArrivalsAdmitted == nil || r.Quality == nil || r.Quality.State == report.QualityInvalid {
+		t.Fatalf("worker exhaustion was not retained as limited profile delivery evidence: %+v", r)
+	}
+	selected := r.Profiles[0].SelectedStarts + r.Profiles[1].SelectedStarts
+	started := r.Profiles[0].Journeys.Total + r.Profiles[0].Journeys.Cancelled + r.Profiles[1].Journeys.Total + r.Profiles[1].Journeys.Cancelled
+	if int64(selected) != *r.ArrivalsAdmitted+int64(r.ArrivalsDroppedBusy) || int64(started) != r.IterationsStarted ||
+		r.Profiles[0].SelectedStarts < r.Profiles[0].Journeys.Total+r.Profiles[0].Journeys.Cancelled ||
+		r.Profiles[1].SelectedStarts < r.Profiles[1].Journeys.Total+r.Profiles[1].Journeys.Cancelled {
+		t.Fatalf("per-workflow selected, worker-started and dropped ledgers do not reconcile: %+v", r.Profiles)
 	}
 }
 func TestLoginRedirectIsFailure(t *testing.T) {

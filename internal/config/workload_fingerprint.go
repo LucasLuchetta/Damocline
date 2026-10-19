@@ -34,6 +34,7 @@ type fingerprintStep struct {
 
 type fingerprintInput struct {
 	ConnectionPolicy     string               `json:"connection_policy,omitempty"`
+	ProfileSelection     string               `json:"profile_selection,omitempty"`
 	Profiles             []fingerprintProfile `json:"profiles"`
 	PerVUCookieSessions  bool                 `json:"per_vu_cookie_sessions"`
 	SyntheticIdentifiers bool                 `json:"synthetic_identifiers"`
@@ -57,6 +58,9 @@ func WorkloadFingerprint(v Validated) string {
 	}
 	if v.Scenario.ConnectionPolicy != "reuse" {
 		input.ConnectionPolicy = v.Scenario.ConnectionPolicy
+	}
+	if len(v.Scenario.Profiles) > 0 {
+		input.ProfileSelection = "per_journey_start"
 	}
 	if v.SyntheticDataPrefix != "" {
 		input.SyntheticPrefix = v.Scenario.SyntheticDataPrefixEnv

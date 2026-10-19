@@ -46,19 +46,21 @@ type sample struct {
 	reason             string
 }
 type collector struct {
-	mu           sync.Mutex
-	aggregate    *report.MetricSet
-	steps        map[string]*report.MetricSet
-	stepTraces   map[string]*report.HTTPTrace
-	thinkTime    time.Duration
-	thinkSamples int
-	profileThink map[string]thinkTimeTotal
-	journeys     *report.MetricSet
-	profiles     map[string]*report.MetricSet
-	started      time.Time
-	window       time.Duration
-	observation  time.Duration
-	windows      []*windowMetrics
+	mu            sync.Mutex
+	aggregate     *report.MetricSet
+	steps         map[string]*report.MetricSet
+	stepTraces    map[string]*report.HTTPTrace
+	thinkTime     time.Duration
+	thinkSamples  int
+	profileThink  map[string]thinkTimeTotal
+	journeys      *report.MetricSet
+	profiles      map[string]*report.MetricSet
+	profileActors map[string]map[int]struct{}
+	profileStarts map[string]int
+	started       time.Time
+	window        time.Duration
+	observation   time.Duration
+	windows       []*windowMetrics
 }
 
 type windowMetrics struct {
@@ -75,13 +77,14 @@ type thinkTimeTotal struct {
 
 func newCollector(v config.Validated, started time.Time) *collector {
 	c := &collector{aggregate: report.NewMetricSet(),
-		journeys: report.NewMetricSet(), steps: make(map[string]*report.MetricSet, len(v.Steps)), stepTraces: make(map[string]*report.HTTPTrace, len(v.Steps)), profiles: make(map[string]*report.MetricSet, len(v.Profiles)), profileThink: make(map[string]thinkTimeTotal, len(v.Profiles)), started: started, window: v.Window, observation: v.Duration}
+		journeys: report.NewMetricSet(), steps: make(map[string]*report.MetricSet, len(v.Steps)), stepTraces: make(map[string]*report.HTTPTrace, len(v.Steps)), profiles: make(map[string]*report.MetricSet, len(v.Profiles)), profileActors: make(map[string]map[int]struct{}, len(v.Profiles)), profileStarts: make(map[string]int, len(v.Profiles)), profileThink: make(map[string]thinkTimeTotal, len(v.Profiles)), started: started, window: v.Window, observation: v.Duration}
 	for _, s := range v.Steps {
 		c.steps[s.Name] = report.NewMetricSet()
 		c.stepTraces[s.Name] = &report.HTTPTrace{}
 	}
 	for _, profile := range v.Profiles {
 		c.profiles[profile.Name] = report.NewMetricSet()
+		c.profileActors[profile.Name] = make(map[int]struct{})
 	}
 	if c.window > 0 {
 		windowCount := int((c.observation + c.window - 1) / c.window)
@@ -103,11 +106,18 @@ func (c *collector) addThinkTime(profile string, elapsed time.Duration) {
 	c.profileThink[profile] = v
 }
 
-func (c *collector) addJourney(profile string, latency time.Duration, success, cancelled bool, reason string) {
+func (c *collector) addProfileStart(profile string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.profileStarts[profile]++
+}
+
+func (c *collector) addJourney(profile string, actor int, latency time.Duration, success, cancelled bool, reason string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.journeys.Record(latency, success, cancelled, reason)
 	c.profiles[profile].Record(latency, success, cancelled, reason)
+	c.profileActors[profile][actor] = struct{}{}
 	if c.window > 0 {
 		elapsed := time.Since(c.started)
 		if elapsed < c.observation {
@@ -119,6 +129,7 @@ func (c *collector) addJourney(profile string, latency time.Duration, success, c
 }
 
 type profileSelector struct {
+	mu      sync.Mutex
 	weights []int
 	current []int
 	total   int
@@ -133,9 +144,18 @@ func newProfileSelector(profiles []config.PreparedProfile) *profileSelector {
 	return s
 }
 
+func profileSelectionMode(hasProfiles bool) string {
+	if hasProfiles {
+		return "per_journey_start"
+	}
+	return ""
+}
+
 // next uses smooth weighted round-robin. For every prefix of selections, each
 // profile remains close to its requested weight without random sampling noise.
 func (s *profileSelector) next() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	selected := 0
 	for i := range s.weights {
 		s.current[i] += s.weights[i]
@@ -361,18 +381,17 @@ func runWithTransport(parent context.Context, v config.Validated, transport *htt
 		}
 		if fullyCompleted {
 			completedIterations.Add(1)
-			coll.addJourney(profile.Name, time.Since(journeyStart), journeyOk, false, func() string {
+			coll.addJourney(profile.Name, actor, time.Since(journeyStart), journeyOk, false, func() string {
 				if journeyOk {
 					return ""
 				}
 				return "journey_step_failed"
 			}())
 		} else {
-			coll.addJourney(profile.Name, time.Since(journeyStart), false, true, "journey_cancelled")
+			coll.addJourney(profile.Name, actor, time.Since(journeyStart), false, true, "journey_cancelled")
 		}
 	}
 	selector := newProfileSelector(v.Profiles)
-	assignedVUs := make([]int, len(v.Profiles))
 	if v.Scenario.Mode == "arrival" {
 		type selectedArrival struct {
 			profile int
@@ -399,6 +418,9 @@ func runWithTransport(parent context.Context, v config.Validated, transport *htt
 		var arrivalOrdinal uint64
 		arrivalStats = scheduler.Drive(scheduleCtx, v.Duration, v.Scenario.ArrivalRate, func() bool {
 			profileIndex := selector.next()
+			if len(v.Scenario.Profiles) > 0 {
+				coll.addProfileStart(v.Profiles[profileIndex].Name)
+			}
 			arrivalOrdinal++
 			select {
 			case arrivals <- selectedArrival{profile: profileIndex, ordinal: arrivalOrdinal}:
@@ -411,11 +433,6 @@ func runWithTransport(parent context.Context, v config.Validated, transport *htt
 		droppedIterations.Store(arrivalStats.Dropped())
 		close(arrivals)
 	} else {
-		closedProfiles := make([]int, v.Scenario.Users)
-		for i := range closedProfiles {
-			closedProfiles[i] = selector.next()
-			assignedVUs[closedProfiles[i]]++
-		}
 		for i := 0; i < v.Scenario.Users; i++ {
 			wg.Add(1)
 			go func(index int) {
@@ -424,9 +441,12 @@ func runWithTransport(parent context.Context, v config.Validated, transport *htt
 				if !sleep(scheduleCtx, delay) {
 					return
 				}
-				profileIndex := closedProfiles[index]
 				var journeyOrdinal uint64
 				for scheduleCtx.Err() == nil && time.Now().Before(scheduleDeadline) {
+					profileIndex := selector.next()
+					if len(v.Scenario.Profiles) > 0 {
+						coll.addProfileStart(v.Profiles[profileIndex].Name)
+					}
 					scheduledIterations.Add(1)
 					journeyOrdinal++
 					iteration(clients[index], v.Profiles[profileIndex], index, journeyOrdinal)
@@ -477,9 +497,9 @@ func runWithTransport(parent context.Context, v config.Validated, transport *htt
 	if len(v.Scenario.Profiles) > 0 {
 		profileResults = make([]report.ProfileResult, 0, len(v.Profiles))
 		profileConfig = make([]report.ProfileConfig, 0, len(v.Profiles))
-		for i, profile := range v.Profiles {
+		for _, profile := range v.Profiles {
 			think := coll.profileThink[profile.Name]
-			profileResults = append(profileResults, report.ProfileResult{Name: profile.Name, Weight: profile.Weight, AssignedVUs: assignedVUs[i], Journeys: coll.profiles[profile.Name].Snapshot(), ObservedThinkTimeMS: ms(think.duration), ThinkTimeObservations: think.samples})
+			profileResults = append(profileResults, report.ProfileResult{Name: profile.Name, Weight: profile.Weight, SelectedStarts: coll.profileStarts[profile.Name], ActorsObserved: len(coll.profileActors[profile.Name]), Journeys: coll.profiles[profile.Name].Snapshot(), ObservedThinkTimeMS: ms(think.duration), ThinkTimeObservations: think.samples})
 			entry := report.ProfileConfig{Name: profile.Name, Weight: profile.Weight, ThinkTime: profile.ThinkTime.String()}
 			if profile.ThinkTimeMax > 0 {
 				entry.ThinkTime = ""
@@ -509,7 +529,7 @@ func runWithTransport(parent context.Context, v config.Validated, transport *htt
 		littleLawEstimate = float64(agg.Total) / v.Duration.Seconds() * agg.MeanMS / 1000
 	}
 	result := report.Result{SchemaVersion: report.CurrentSchemaVersion, Name: v.Scenario.Name, Target: v.Base.Scheme + "://" + v.Base.Host, StartedAt: started.UTC().Format(time.RFC3339Nano), ElapsedSeconds: round(elapsed.Seconds()), ObservationSeconds: round(v.Duration.Seconds()),
-		Config:  report.RunConfig{WorkloadRevision: v.Scenario.WorkloadRevision, ApplicationRevision: v.Scenario.ApplicationRevision, WorkloadFingerprint: v.WorkloadFingerprint, Environment: v.Scenario.Environment, ProfileMixBasis: v.Scenario.ProfileMixBasis, ProfileMixReference: v.Scenario.ProfileMixReference, Users: v.Scenario.Users, Duration: v.Scenario.Duration, RampUp: v.Scenario.RampUp, ThinkTime: v.Scenario.ThinkTime, WorkloadSeed: v.Scenario.WorkloadSeed, RequestTimeout: v.Timeout.String(), ConnectionPolicy: v.Scenario.ConnectionPolicy, MaxRPS: v.Scenario.MaxRPS, P95LimitMS: v.Scenario.P95LimitMS, MaxErrorRate: v.Scenario.MaxErrorRate, Mode: v.Scenario.Mode, ArrivalRate: v.Scenario.ArrivalRate, SeparateSessions: len(v.Cookies) > 0, MinSamplesPerStep: v.Scenario.MinSamplesPerStep, Profiles: profileConfig, WindowDuration: v.Window.String()},
+		Config:  report.RunConfig{WorkloadRevision: v.Scenario.WorkloadRevision, ApplicationRevision: v.Scenario.ApplicationRevision, WorkloadFingerprint: v.WorkloadFingerprint, Environment: v.Scenario.Environment, ProfileMixBasis: v.Scenario.ProfileMixBasis, ProfileMixReference: v.Scenario.ProfileMixReference, ProfileSelection: profileSelectionMode(len(v.Scenario.Profiles) > 0), Users: v.Scenario.Users, Duration: v.Scenario.Duration, RampUp: v.Scenario.RampUp, ThinkTime: v.Scenario.ThinkTime, WorkloadSeed: v.Scenario.WorkloadSeed, RequestTimeout: v.Timeout.String(), ConnectionPolicy: v.Scenario.ConnectionPolicy, MaxRPS: v.Scenario.MaxRPS, P95LimitMS: v.Scenario.P95LimitMS, MaxErrorRate: v.Scenario.MaxErrorRate, Mode: v.Scenario.Mode, ArrivalRate: v.Scenario.ArrivalRate, SeparateSessions: len(v.Cookies) > 0, MinSamplesPerStep: v.Scenario.MinSamplesPerStep, Profiles: profileConfig, WindowDuration: v.Window.String()},
 		Metrics: agg, Journeys: journeyMetrics, Steps: steps, Profiles: profileResults, Windows: windows, Outcome: "PASS", ErrorsRate: round(errorsRate), IterationsStarted: startedIterations.Load(), IterationsCompleted: completedIterations.Load(), ArrivalsScheduled: scheduledIterations.Load(), ArrivalsAdmitted: &arrivalsAdmitted, ArrivalsDropped: droppedIterations.Load(), ArrivalsDroppedLate: arrivalStats.DroppedLate, ArrivalsDroppedBusy: arrivalStats.DroppedBusy, ArrivalsCancelledBeforeAdmission: &cancelledBeforeAdmission, SchedulerLagSamples: arrivalStats.LagSamples, SchedulerLagP50MS: float64(arrivalStats.P50Lag.Microseconds()) / 1000, SchedulerLagP95MS: float64(arrivalStats.P95Lag.Microseconds()) / 1000, SchedulerLagMaxMS: float64(arrivalStats.MaxLag.Microseconds()) / 1000, SchedulerLagMethod: calibration.SchedulerDispatchLagMethod, AverageInFlight: round(averageInFlight), LittleLawEstimate: round(littleLawEstimate), ObservedThinkTimeMS: ms(coll.thinkTime), ThinkTimeObservations: coll.thinkSamples,
 		Note: "Measured synthetic HTTP actors under the configured workload; not a universal server capacity or a browser-user count.", Generator: &generatorSnapshot}
 	if v.Scenario.ThinkTimeRange != nil {

@@ -90,6 +90,7 @@ type Run struct {
 	P95LimitMS         float64     `json:"p95_limit_ms"`
 	MaxErrorRate       float64     `json:"max_error_rate"`
 	ConnectionPolicy   string      `json:"connection_policy,omitempty"`
+	ProfileSelection   string      `json:"profile_selection,omitempty"`
 	Metrics            Metrics     `json:"requests"`
 	Journeys           Metrics     `json:"completed_journeys"`
 	Steps              []Step      `json:"steps,omitempty"`
@@ -131,9 +132,11 @@ type Step struct {
 }
 
 type Profile struct {
-	ID       string  `json:"id"`
-	Weight   int     `json:"weight"`
-	Journeys Metrics `json:"journeys"`
+	ID             string  `json:"id"`
+	Weight         int     `json:"weight"`
+	SelectedStarts int     `json:"profile_selected_starts,omitempty"`
+	ActorsObserved int     `json:"actors_observed,omitempty"`
+	Journeys       Metrics `json:"journeys"`
 }
 
 type NamedMetrics struct {
@@ -294,13 +297,13 @@ func redactRun(r report.Result) *Run {
 	out := &Run{Outcome: safeOutcome(r.Outcome), ElapsedSeconds: r.ElapsedSeconds, ObservationSeconds: r.ObservationSeconds,
 		Mode: safeMode(r.Config.Mode), VirtualUsers: r.Config.Users, JourneyStartsPS: r.Config.ArrivalRate,
 		RequestCeiling: r.Config.MaxRPS, P95LimitMS: r.Config.P95LimitMS, MaxErrorRate: r.Config.MaxErrorRate,
-		ConnectionPolicy: safeConnectionPolicy(r.Config.ConnectionPolicy), Metrics: safeMetrics(r.Metrics), Journeys: safeMetrics(r.Journeys)}
+		ConnectionPolicy: safeConnectionPolicy(r.Config.ConnectionPolicy), ProfileSelection: safeProfileSelection(r.Config.ProfileSelection), Metrics: safeMetrics(r.Metrics), Journeys: safeMetrics(r.Journeys)}
 	for _, s := range r.Steps {
 		key := stepKey(s.Profile, s.Name)
 		out.Steps = append(out.Steps, Step{ID: stepIDs[key], Method: safeMethod(s.Method), Cleanup: s.Cleanup, Metrics: safeMetrics(s.Metrics)})
 	}
 	for _, p := range r.Profiles {
-		out.Profiles = append(out.Profiles, Profile{ID: profileIDs[p.Name], Weight: p.Weight, Journeys: safeMetrics(p.Journeys)})
+		out.Profiles = append(out.Profiles, Profile{ID: profileIDs[p.Name], Weight: p.Weight, SelectedStarts: p.SelectedStarts, ActorsObserved: p.ActorsObserved, Journeys: safeMetrics(p.Journeys)})
 	}
 	for _, w := range r.Windows {
 		window := Window{StartSeconds: w.StartSeconds, EndSeconds: w.EndSeconds, Requests: safeMetrics(w.Metrics), Journeys: safeMetrics(w.Journeys)}
@@ -452,6 +455,12 @@ func safeLoadUnit(mode string) string {
 }
 func safeConnectionPolicy(v string) string {
 	if v == "reuse" || v == "new_per_request" {
+		return v
+	}
+	return "unknown"
+}
+func safeProfileSelection(v string) string {
+	if v == "per_journey_start" {
 		return v
 	}
 	return "unknown"
