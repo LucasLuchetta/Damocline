@@ -199,6 +199,11 @@ func TestNativeEngineCampaignRecordsStableLoopbackWindows(t *testing.T) {
 	if state, reason := ClassifyEvidence(run); state != "INVALID_DELIVERY" || reason == "" {
 		t.Fatalf("generator-bound native phase was accepted: %s %q", state, reason)
 	}
+	run.Outcome = "FAIL"
+	if state, reason := ClassifyEvidence(run); state != "INVALID_DELIVERY" || reason == "" {
+		t.Fatalf("generator-bound native failure was reported as an application result: %s %q", state, reason)
+	}
+	run.Outcome = "PASS"
 	run.Generator.MeanProcessCPUUtilizationRatio = 0.1
 	run.Generator.PeakProcessCPUUtilizationRatio = 1.1
 	if state, reason := ClassifyEvidence(run); state != "PASS_OBSERVED" {
