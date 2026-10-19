@@ -94,6 +94,24 @@ func AssessQuality(r Result) *Quality {
 	} else if r.Config.ProfileSelection != "" {
 		invalidate("Pre-v26 reports cannot carry profile selection semantics.")
 	}
+	if r.SchemaVersion >= 27 {
+		seenScopes := make(map[string]struct{}, len(r.Config.ProfileSessionScopes))
+		profileNames := make(map[string]struct{}, len(r.Config.Profiles))
+		for _, profile := range r.Config.Profiles {
+			profileNames[profile.Name] = struct{}{}
+		}
+		for _, name := range r.Config.ProfileSessionScopes {
+			if _, ok := profileNames[name]; !ok {
+				invalidate("Profile session scope refers to an unknown workflow.")
+			}
+			if _, duplicate := seenScopes[name]; duplicate {
+				invalidate("Profile session scopes contain a duplicate workflow.")
+			}
+			seenScopes[name] = struct{}{}
+		}
+	} else if len(r.Config.ProfileSessionScopes) != 0 {
+		invalidate("Pre-v27 reports cannot carry per-workflow session scopes.")
+	}
 	if r.Metrics.Total < 0 || r.Metrics.Success < 0 || r.Metrics.Failures < 0 ||
 		r.Metrics.Cancelled < 0 || r.Metrics.Success > r.Metrics.Total || r.Metrics.Failures != r.Metrics.Total-r.Metrics.Success {
 		invalidate("Request aggregate accounting is inconsistent.")

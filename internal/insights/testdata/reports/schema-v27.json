@@ -1,0 +1,43 @@
+{
+  "schema_version": 27,
+  "name": "Synthetic weighted workflow fixture",
+  "target": "http://127.0.0.1",
+  "started_at": "2026-10-19T00:00:00Z",
+  "elapsed_seconds": 1,
+  "observation_seconds": 1,
+  "arrivals_scheduled": 4,
+  "arrivals_admitted": 0,
+  "arrivals_cancelled_before_admission": 0,
+  "iterations_started": 4,
+  "iterations_completed": 4,
+  "config": {
+    "users": 2,
+    "duration": "1s",
+    "request_timeout": "1s",
+    "connection_policy": "reuse",
+    "workload_fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "max_rps": 10,
+    "p95_limit_ms": 100,
+    "max_error_rate": 0.1,
+    "mode": "closed",
+    "profile_selection": "per_journey_start",
+    "profile_session_scopes": ["fast"],
+    "profiles": [
+      {"name": "fast", "weight": 3, "think_time": "0s"},
+      {"name": "slow", "weight": 1, "think_time": "0s"}
+    ]
+  },
+  "metrics": {"total": 4, "success": 4, "failures": 0, "p50_ms": 1, "mean_ms": 1, "p95_ms": 1, "p99_ms": 1,
+    "http_diagnostics": {"failure_classification_version": 1}},
+  "journeys": {"total": 4, "success": 4, "failures": 0, "cancelled": 0, "p50_ms": 1, "mean_ms": 1, "p95_ms": 1, "p99_ms": 1},
+  "profiles": [
+    {"name": "fast", "weight": 3, "profile_selected_starts": 3, "actors_observed": 2,
+     "journeys": {"total": 3, "success": 3, "failures": 0, "cancelled": 0, "p50_ms": 1, "mean_ms": 1, "p95_ms": 1, "p99_ms": 1,
+       "http_diagnostics": {"failure_classification_version": 1}}},
+    {"name": "slow", "weight": 1, "profile_selected_starts": 1, "actors_observed": 1,
+     "journeys": {"total": 1, "success": 1, "failures": 0, "cancelled": 0, "p50_ms": 1, "mean_ms": 1, "p95_ms": 1, "p99_ms": 1,
+       "http_diagnostics": {"failure_classification_version": 1}}}
+  ]
+}
+
+

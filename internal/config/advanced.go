@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -29,11 +30,28 @@ func ResolveSessions(prefix string, users int) ([]string, error) {
 		if len(v) > 8192 || strings.ContainsAny(v, "\r\n") {
 			return nil, fmt.Errorf("invalid cookie in %s", name)
 		}
-		if seen[v] {
+		canonical := normalizeCookieSet(v)
+		if seen[canonical] {
 			return nil, fmt.Errorf("duplicate session cookie in %s; independent identities are required", name)
 		}
-		seen[v] = true
+		seen[canonical] = true
 		sessions[i] = v
 	}
 	return sessions, nil
+}
+
+func normalizeCookieSet(value string) string {
+	pairs := strings.Split(value, ";")
+	canonical := make([]string, 0, len(pairs))
+	for _, pair := range pairs {
+		pair = strings.TrimSpace(pair)
+		parts := strings.SplitN(pair, "=", 2)
+		if len(parts) == 2 {
+			canonical = append(canonical, strings.TrimSpace(parts[0])+"="+strings.TrimSpace(parts[1]))
+		} else if pair != "" {
+			canonical = append(canonical, pair)
+		}
+	}
+	sort.Strings(canonical)
+	return strings.Join(canonical, ";")
 }

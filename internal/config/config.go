@@ -18,33 +18,34 @@ import (
 )
 
 type Scenario struct {
-	Name                   string          `json:"name"`
-	WorkloadRevision       string          `json:"workload_revision,omitempty"`
-	ApplicationRevision    string          `json:"application_revision,omitempty"`
-	Environment            string          `json:"environment,omitempty"`
-	ProfileMixBasis        string          `json:"profile_mix_basis,omitempty"`
-	ProfileMixReference    string          `json:"profile_mix_reference,omitempty"`
-	BaseURL                string          `json:"base_url"`
-	Users                  int             `json:"users"`
-	Duration               string          `json:"duration"`
-	RampUp                 string          `json:"ramp_up"`
-	ThinkTime              string          `json:"think_time"`
-	ThinkTimeRange         *ThinkTimeRange `json:"think_time_range,omitempty"`
-	ThinkTimeSamples       []string        `json:"think_time_samples,omitempty"`
-	WorkloadSeed           uint64          `json:"workload_seed,omitempty"`
-	Timeout                string          `json:"request_timeout"`
-	ConnectionPolicy       string          `json:"connection_policy,omitempty"`
-	MaxRPS                 int             `json:"max_rps"`
-	P95LimitMS             float64         `json:"p95_limit_ms"`
-	MaxErrorRate           float64         `json:"max_error_rate"`
-	Mode                   string          `json:"mode,omitempty"`
-	ArrivalRate            int             `json:"arrival_rate,omitempty"`
-	PerVUCookieEnvPrefix   string          `json:"per_vu_cookie_env_prefix,omitempty"`
-	SyntheticDataPrefixEnv string          `json:"synthetic_data_prefix_env,omitempty"`
-	MinSamplesPerStep      int             `json:"min_samples_per_step,omitempty"`
-	WindowDuration         string          `json:"window_duration,omitempty"`
-	Steps                  []Step          `json:"steps,omitempty"`
-	Profiles               []Profile       `json:"profiles,omitempty"`
+	Name                     string            `json:"name"`
+	WorkloadRevision         string            `json:"workload_revision,omitempty"`
+	ApplicationRevision      string            `json:"application_revision,omitempty"`
+	Environment              string            `json:"environment,omitempty"`
+	ProfileMixBasis          string            `json:"profile_mix_basis,omitempty"`
+	ProfileMixReference      string            `json:"profile_mix_reference,omitempty"`
+	BaseURL                  string            `json:"base_url"`
+	Users                    int               `json:"users"`
+	Duration                 string            `json:"duration"`
+	RampUp                   string            `json:"ramp_up"`
+	ThinkTime                string            `json:"think_time"`
+	ThinkTimeRange           *ThinkTimeRange   `json:"think_time_range,omitempty"`
+	ThinkTimeSamples         []string          `json:"think_time_samples,omitempty"`
+	WorkloadSeed             uint64            `json:"workload_seed,omitempty"`
+	Timeout                  string            `json:"request_timeout"`
+	ConnectionPolicy         string            `json:"connection_policy,omitempty"`
+	MaxRPS                   int               `json:"max_rps"`
+	P95LimitMS               float64           `json:"p95_limit_ms"`
+	MaxErrorRate             float64           `json:"max_error_rate"`
+	Mode                     string            `json:"mode,omitempty"`
+	ArrivalRate              int               `json:"arrival_rate,omitempty"`
+	PerVUCookieEnvPrefix     string            `json:"per_vu_cookie_env_prefix,omitempty"`
+	ProfileCookieEnvPrefixes map[string]string `json:"profile_cookie_env_prefixes,omitempty"`
+	SyntheticDataPrefixEnv   string            `json:"synthetic_data_prefix_env,omitempty"`
+	MinSamplesPerStep        int               `json:"min_samples_per_step,omitempty"`
+	WindowDuration           string            `json:"window_duration,omitempty"`
+	Steps                    []Step            `json:"steps,omitempty"`
+	Profiles                 []Profile         `json:"profiles,omitempty"`
 }
 
 // Profile is a weighted, named workflow. Its weight expresses the intended
@@ -102,6 +103,7 @@ type Validated struct {
 	Steps               []PreparedStep
 	Profiles            []PreparedProfile
 	Cookies             []string
+	ProfileCookies      map[string][]string
 	SyntheticDataPrefix string
 	GeneratorGuardrails generatorhealth.Guardrails
 }
@@ -111,6 +113,7 @@ type Validated struct {
 type PreparedProfile struct {
 	Name             string
 	Weight           int
+	Cookies          []string
 	ThinkTime        time.Duration
 	ThinkTimeMin     time.Duration
 	ThinkTimeMax     time.Duration
@@ -491,11 +494,55 @@ func Parse(s Scenario, o Options) (Validated, error) {
 	if s.WorkloadSeed == 0 && hasVariableThinkTime(preparedProfiles) {
 		s.WorkloadSeed = 1
 	}
+	if len(s.ProfileCookieEnvPrefixes) > 0 {
+		if len(profiles) < 2 {
+			return v, errors.New("profile_cookie_env_prefixes requires at least two named workflow profiles")
+		}
+		if s.PerVUCookieEnvPrefix != "" {
+			return v, errors.New("profile_cookie_env_prefixes cannot be combined with per_vu_cookie_env_prefix")
+		}
+		profileNames := make(map[string]struct{}, len(profiles))
+		profileSteps := make(map[string][]Step, len(profiles))
+		for _, profile := range profiles {
+			profileNames[profile.Name] = struct{}{}
+			profileSteps[profile.Name] = profile.Steps
+		}
+		for name, prefix := range s.ProfileCookieEnvPrefixes {
+			if _, ok := profileNames[name]; !ok {
+				return v, fmt.Errorf("profile_cookie_env_prefixes contains unknown workflow %q", name)
+			}
+			if containsCookieHeader(profileSteps[name]) {
+				return v, fmt.Errorf("workflow %q cannot combine profile_cookie_env_prefixes with a Cookie header", name)
+			}
+			if !envPrefixPattern.MatchString(prefix) {
+				return v, fmt.Errorf("invalid cookie prefix for workflow %q", name)
+			}
+		}
+	}
 	cookies, err := ResolveSessions(s.PerVUCookieEnvPrefix, s.Users)
 	if err != nil {
 		return v, err
 	}
-	v = Validated{Scenario: s, Base: u, Duration: duration, RampUp: ramp, ThinkTime: think, Timeout: timeout, Window: window, Steps: prepared, Profiles: preparedProfiles, Cookies: cookies, SyntheticDataPrefix: dataPrefix}
+	profileCookies := make(map[string][]string, len(s.ProfileCookieEnvPrefixes))
+	seenProfileSessions := make(map[string]string)
+	for profile, prefix := range s.ProfileCookieEnvPrefixes {
+		resolved, err := ResolveSessions(prefix, s.Users)
+		if err != nil {
+			return v, fmt.Errorf("workflow %q session configuration: %w", profile, err)
+		}
+		for actor, cookie := range resolved {
+			canonical := normalizeCookieSet(cookie)
+			if previous, exists := seenProfileSessions[canonical]; exists {
+				return v, fmt.Errorf("workflow session sets for %q and %q must be distinct for actor %d", previous, profile, actor+1)
+			}
+			seenProfileSessions[canonical] = profile
+		}
+		profileCookies[profile] = resolved
+	}
+	for i := range preparedProfiles {
+		preparedProfiles[i].Cookies = profileCookies[preparedProfiles[i].Name]
+	}
+	v = Validated{Scenario: s, Base: u, Duration: duration, RampUp: ramp, ThinkTime: think, Timeout: timeout, Window: window, Steps: prepared, Profiles: preparedProfiles, Cookies: cookies, ProfileCookies: profileCookies, SyntheticDataPrefix: dataPrefix}
 	v.WorkloadFingerprint = WorkloadFingerprint(v)
 	return v, nil
 }

@@ -256,6 +256,7 @@ func runWithTransport(parent context.Context, v config.Validated, transport *htt
 	var wg sync.WaitGroup
 	var arrivalStats scheduler.Stats
 	clients := make([]*http.Client, v.Scenario.Users)
+	profileClients := make(map[string][]*http.Client, len(v.ProfileCookies))
 	sampleDone := make(chan struct{})
 	go func() {
 		<-scheduleCtx.Done()
@@ -286,6 +287,21 @@ func runWithTransport(parent context.Context, v config.Validated, transport *htt
 			}
 		}
 		clients[i] = &http.Client{Transport: tr, Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	}
+	if len(v.ProfileCookies) > 0 {
+		for _, profile := range v.Profiles {
+			profileClients[profile.Name] = make([]*http.Client, v.Scenario.Users)
+			for actor, cookieSet := range profile.Cookies {
+				jar, _ := cookiejar.New(nil)
+				for _, part := range strings.Split(cookieSet, ";") {
+					pair := strings.SplitN(strings.TrimSpace(part), "=", 2)
+					if len(pair) == 2 && strings.TrimSpace(pair[0]) != "" {
+						jar.SetCookies(v.Base, []*http.Cookie{{Name: strings.TrimSpace(pair[0]), Value: strings.TrimSpace(pair[1]), Path: "/"}})
+					}
+				}
+				profileClients[profile.Name][actor] = &http.Client{Transport: tr, Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+			}
+		}
 	}
 	var syntheticSequence atomic.Int64
 	iteration := func(client *http.Client, profile config.PreparedProfile, actor int, journeyOrdinal uint64) {
@@ -410,7 +426,11 @@ func runWithTransport(parent context.Context, v config.Validated, transport *htt
 						if !ok {
 							return
 						}
-						iteration(client, v.Profiles[arrival.profile], actor, arrival.ordinal)
+						profile := v.Profiles[arrival.profile]
+						if profileClients[profile.Name] != nil {
+							client = profileClients[profile.Name][actor]
+						}
+						iteration(client, profile, actor, arrival.ordinal)
 					}
 				}
 			}(clients[i], i)
@@ -449,7 +469,12 @@ func runWithTransport(parent context.Context, v config.Validated, transport *htt
 					}
 					scheduledIterations.Add(1)
 					journeyOrdinal++
-					iteration(clients[index], v.Profiles[profileIndex], index, journeyOrdinal)
+					profile := v.Profiles[profileIndex]
+					client := clients[index]
+					if profileClients[profile.Name] != nil {
+						client = profileClients[profile.Name][index]
+					}
+					iteration(client, profile, index, journeyOrdinal)
 				}
 			}(i)
 		}
@@ -534,6 +559,11 @@ func runWithTransport(parent context.Context, v config.Validated, transport *htt
 		Note: "Measured synthetic HTTP actors under the configured workload; not a universal server capacity or a browser-user count.", Generator: &generatorSnapshot}
 	if v.Scenario.ThinkTimeRange != nil {
 		result.Config.ThinkTimeRange = &report.ThinkTimeRange{Min: v.Scenario.ThinkTimeRange.Min, Max: v.Scenario.ThinkTimeRange.Max}
+	}
+	for _, profile := range v.Profiles {
+		if len(profile.Cookies) > 0 {
+			result.Config.ProfileSessionScopes = append(result.Config.ProfileSessionScopes, profile.Name)
+		}
 	}
 	result.Config.ThinkTimeSamples = append([]string(nil), v.Scenario.ThinkTimeSamples...)
 	if agg.Total == 0 || agg.Success == 0 || errorsRate > v.Scenario.MaxErrorRate || agg.P95MS > v.Scenario.P95LimitMS || result.ArrivalsDropped > 0 {

@@ -428,6 +428,29 @@ func TestSchemaThirteenAllowsOnlyFinalWindowToEndAtObservationHorizon(t *testing
 	}
 }
 
+func TestSchemaTwentySevenValidatesProfileSessionScopes(t *testing.T) {
+	r := validSyntheticQualityRun()
+	r.SchemaVersion = 27
+	r.Config.Profiles = []ProfileConfig{{Name: "browse", Weight: 1}, {Name: "edit", Weight: 1}}
+	r.Config.ProfileSelection = "per_journey_start"
+	r.Config.ProfileSessionScopes = []string{"browse"}
+	if q := AssessQuality(r); strings.Contains(strings.Join(q.Findings, " "), "Profile session scope") {
+		t.Fatalf("valid workflow session scope failed its schema check: %+v", q)
+	}
+	r.Config.ProfileSessionScopes = []string{"browse", "browse"}
+	if q := AssessQuality(r); q.State != QualityInvalid {
+		t.Fatalf("duplicate workflow session scope was trusted: %+v", q)
+	}
+	r.Config.ProfileSessionScopes = []string{"unknown"}
+	if q := AssessQuality(r); q.State != QualityInvalid {
+		t.Fatalf("unknown workflow session scope was trusted: %+v", q)
+	}
+	r.SchemaVersion = 26
+	if q := AssessQuality(r); q.State != QualityInvalid {
+		t.Fatalf("legacy report with unsupported workflow session scopes was trusted: %+v", q)
+	}
+}
+
 func TestSchemaThirteenRejectsProfileWindowTotalsAboveRunLedger(t *testing.T) {
 	r := Result{
 		Config:   RunConfig{Profiles: []ProfileConfig{{Name: "browse"}}},
