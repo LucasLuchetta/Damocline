@@ -204,6 +204,7 @@ func Run(parent context.Context, v config.Validated) report.Result {
 
 func runWithTransport(parent context.Context, v config.Validated, transport *http.Transport) report.Result {
 	started := time.Now()
+	scheduleDeadline := started.Add(v.Duration)
 	// Stop admitting new work at the configured boundary, then allow any
 	// already-started journey a bounded time to finish.
 	drainAllowance := drainDuration(v)
@@ -383,7 +384,7 @@ func runWithTransport(parent context.Context, v config.Validated, transport *htt
 				}
 				profileIndex := closedProfiles[index]
 				var journeyOrdinal uint64
-				for scheduleCtx.Err() == nil {
+				for scheduleCtx.Err() == nil && time.Now().Before(scheduleDeadline) {
 					scheduledIterations.Add(1)
 					journeyOrdinal++
 					iteration(clients[index], v.Profiles[profileIndex], index, journeyOrdinal)

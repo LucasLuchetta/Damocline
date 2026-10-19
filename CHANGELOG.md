@@ -4,6 +4,9 @@ This project follows a human-maintained changelog. No release exists yet.
 
 ## [Unreleased]
 
+### Fixed
+- Enforce the configured observation boundary for scheduler arrivals and closed-loop journey starts even when timer delivery is delayed; late open-loop slots remain explicitly reconciled as generator drops while admitted work drains.
+
 ### Added
 - Add an integrated loopback saturation/recovery fixture for closed-loop and open-arrival campaigns, reconciling phase SLO outcomes, planned and completed workload, unfinished journeys, and generator samples.
 - Preserve the recovery probe after an observed spike SLO failure in closed-loop and open-arrival campaigns, keep the trial outcome FAIL, and require that evidence during offline audit.
