@@ -283,6 +283,8 @@ In addition to fixed closed-loop load, `mode: "arrival"` runs independently sche
 
 Weighted workflow profiles are selected at each journey start in both closed-loop and open-arrival runs. Different workflow lengths or response times do not change the selected-start mix. By default, a VU keeps its actor-local cookie jar when it moves between workflows. A profile may instead declare `per_vu_cookie_env_prefix` to give each actor an independent cookie jar for that workflow; use distinct, locally managed identities and keep all cookie values in environment variables. Schema-v27 reports record the isolation mode and reconcile selected workflow starts, worker-started journeys, and pre-worker drops without storing credentials.
 
+Scenario files may use the versionless legacy `steps`/`profiles` fields or scenario version 1 with a named `workflows` list. Convert an existing file without replacing it with `damocline migrate-scenario --config old.json --out versioned.json`; the command refuses an existing destination. [`examples/versioned-weighted-workflows.json`](examples/versioned-weighted-workflows.json) shows the version 1 form. Scenario versioning is independent of the HTTP report schema.
+
 To observe a Linux VPS during a test, run the separate native monitor **on the host**, then join samples by UTC timestamps:
 
 ```bash

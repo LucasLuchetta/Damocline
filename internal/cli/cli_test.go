@@ -35,6 +35,43 @@ func TestSeededWeightedExampleDryRunShowsTimingPolicy(t *testing.T) {
 	}
 }
 
+func TestMigrateScenarioCommandWritesVersionedOutputWithoutOverwriting(t *testing.T) {
+	dir := t.TempDir()
+	input := filepath.Join(dir, "legacy.json")
+	output := filepath.Join(dir, "versioned.json")
+	legacy := config.Scenario{Name: "synthetic", BaseURL: "https://app.example.com", Users: 1, Duration: "10s", Timeout: "1s", MaxRPS: 10, P95LimitMS: 500, MaxErrorRate: .01,
+		Steps: []config.Step{{Name: "read", Method: "GET", Path: "/items"}}}
+	data, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(input, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	if code := Run([]string{"migrate-scenario", "--config", input, "--out", output}, &stdout, &stderr); code != 0 {
+		t.Fatalf("migration failed: code=%d stderr=%s", code, stderr.String())
+	}
+	migrated, err := config.Load(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if migrated.ScenarioVersion != config.CurrentScenarioVersion || len(migrated.Workflows) != 1 || migrated.Workflows[0].Steps[0].Path != "/items" {
+		t.Fatalf("command output did not use the versioned workflow format: %+v", migrated)
+	}
+	after, err := os.ReadFile(input)
+	if err != nil || !bytes.Equal(after, data) {
+		t.Fatalf("migration changed its source: err=%v", err)
+	}
+
+	if code := Run([]string{"migrate-scenario", "--config", input, "--out", output}, &stdout, &stderr); code == 0 {
+		t.Fatal("migration overwrote an existing destination")
+	}
+	if code := Run([]string{"migrate-scenario", "--config", input, "--out", input}, &stdout, &stderr); code == 0 {
+		t.Fatal("migration allowed the source path as its output")
+	}
+}
+
 func TestArrivalCampaignDryRunShowsOpenArrivalSchedule(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	path := filepath.Join("..", "..", "examples", "arrival-rate-readonly.json")
