@@ -3,12 +3,14 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -91,6 +93,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return dockerCmd(args[1:], stdout, stderr)
 	case "correlate":
 		return correlateCmd(args[1:], stdout, stderr)
+	case "migrate-scenario":
+		return migrateScenarioCmd(args[1:], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "unknown command: %q (try 'damocline help')\n", args[0])
 		return 2
@@ -127,6 +131,7 @@ Usage:
 	  damocline metrics --endpoint https://app.example.com/metrics --authorized [--out reports/app-metrics.json]
 	  damocline docker --authorized [--out reports/docker.json]
   damocline correlate --load reports/load.json --host reports/host.json --out reports/correlated.json
+	  damocline migrate-scenario --config legacy.json --out versioned.json
   damocline update           # check and install source updates
   damocline update --auto    # enable automatic updates
   damocline update --off     # disable automatic updates
@@ -142,6 +147,68 @@ mode. 'explore' searches VU levels; 'explore-arrival' searches scheduled open-lo
 journey starts per second. Neither is requests/second, successful journeys per
 second, or a universal server limit.
 `)
+}
+
+func migrateScenarioCmd(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("migrate-scenario", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	in := fs.String("config", "", "legacy scenario JSON to migrate")
+	out := fs.String("out", "", "new versioned scenario path (must not already exist)")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if *in == "" || *out == "" || len(fs.Args()) != 0 {
+		fmt.Fprintln(stderr, "usage: damocline migrate-scenario --config legacy.json --out versioned.json")
+		return 2
+	}
+	inAbs, err := filepath.Abs(*in)
+	if err != nil {
+		fmt.Fprintf(stderr, "resolve input path: %v\n", err)
+		return 1
+	}
+	outAbs, err := filepath.Abs(*out)
+	if err != nil {
+		fmt.Fprintf(stderr, "resolve output path: %v\n", err)
+		return 1
+	}
+	if filepath.Clean(inAbs) == filepath.Clean(outAbs) {
+		fmt.Fprintln(stderr, "input and output paths must be different; migration never overwrites the source")
+		return 2
+	}
+	scenario, err := config.Load(*in)
+	if err != nil {
+		fmt.Fprintf(stderr, "load scenario: %v\n", err)
+		return 1
+	}
+	migrated, err := config.MigrateScenario(scenario)
+	if err != nil {
+		fmt.Fprintf(stderr, "migrate scenario: %v\n", err)
+		return 1
+	}
+	data, err := json.MarshalIndent(migrated, "", "  ")
+	if err != nil {
+		fmt.Fprintf(stderr, "encode migrated scenario: %v\n", err)
+		return 1
+	}
+	file, err := os.OpenFile(*out, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		fmt.Fprintf(stderr, "create output without overwriting an existing file: %v\n", err)
+		return 1
+	}
+	if _, err = file.Write(append(data, '\n')); err == nil {
+		err = file.Sync()
+	}
+	closeErr := file.Close()
+	if err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		_ = os.Remove(*out)
+		fmt.Fprintf(stderr, "write migrated scenario: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(stdout, "Scenario v%d written to %s; source left unchanged.\n", config.CurrentScenarioVersion, *out)
+	return 0
 }
 
 func exploreArrival(args []string, stdout, stderr io.Writer) int {

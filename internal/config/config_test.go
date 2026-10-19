@@ -34,6 +34,88 @@ func TestLoadEnforcesExactScenarioByteLimit(t *testing.T) {
 	}
 }
 
+func TestScenarioV1MigratesLegacyStepsAndWorkflows(t *testing.T) {
+	legacy := good()
+	migrated, err := MigrateScenario(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if migrated.ScenarioVersion != CurrentScenarioVersion || len(migrated.Workflows) != 1 || migrated.Workflows[0].Name != "default" || migrated.Workflows[0].Weight != 1 || len(migrated.Workflows[0].Steps) != 1 || len(migrated.Steps) != 0 {
+		t.Fatalf("legacy single-workflow scenario did not migrate canonically: %+v", migrated)
+	}
+	validated, err := Parse(migrated, Options{Authorized: true})
+	if err != nil {
+		t.Fatalf("migrated scenario failed normal validation: %v", err)
+	}
+	if len(validated.Profiles) != 1 || validated.Profiles[0].Name != "default" || len(validated.Profiles[0].Steps) != 1 || validated.Profiles[0].Steps[0].Path != "/" {
+		t.Fatalf("migrated workflow did not reach the engine model: %+v", validated.Profiles)
+	}
+
+	legacyProfiles := good()
+	legacyProfiles.Steps = nil
+	legacyProfiles.Profiles = []Profile{{Name: "read", Weight: 3, Steps: []Step{{Name: "list", Path: "/items"}}}, {Name: "search", Weight: 1, Steps: []Step{{Name: "query", Path: "/search"}}}}
+	migratedProfiles, err := MigrateScenario(legacyProfiles)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(migratedProfiles.Workflows) != 2 || migratedProfiles.Workflows[0].Weight != 3 || migratedProfiles.Workflows[1].Name != "search" {
+		t.Fatalf("legacy weighted profiles did not migrate intact: %+v", migratedProfiles.Workflows)
+	}
+	if _, err := Parse(migratedProfiles, Options{Authorized: true}); err != nil {
+		t.Fatalf("migrated weighted scenario failed normal validation: %v", err)
+	}
+}
+
+func TestScenarioV1LoaderAndParserRejectAmbiguousOrFutureFormats(t *testing.T) {
+	base := good()
+	base.ScenarioVersion = CurrentScenarioVersion
+	base.Workflows = []Profile{{Name: "only", Weight: 1, Steps: []Step{{Name: "read", Path: "/"}}}}
+	base.Steps = nil
+	encoded, err := json.Marshal(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "scenario.json")
+	if err := os.WriteFile(path, encoded, 0600); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if validated, err := Parse(loaded, Options{Authorized: true}); err != nil || len(validated.Profiles) != 1 {
+		t.Fatalf("versioned single workflow failed: profiles=%d err=%v", len(validated.Profiles), err)
+	}
+
+	for _, input := range []string{
+		`{"scenario_version":2,"workflows":[{"name":"x","weight":1,"steps":[{"name":"a","path":"/"}]}]}`,
+		`{"scenario_version":1,"steps":[{"name":"a","path":"/"}],"workflows":[{"name":"x","weight":1,"steps":[{"name":"a","path":"/"}]}]}`,
+		`{"workflows":[{"name":"x","weight":1,"steps":[{"name":"a","path":"/"}]}]}`,
+	} {
+		if err := os.WriteFile(path, []byte(input), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Load(path); err == nil {
+			t.Fatalf("invalid versioned format accepted: %s", input)
+		}
+	}
+}
+
+func TestVersionedWorkflowExampleParses(t *testing.T) {
+	path := filepath.Join("..", "..", "examples", "versioned-weighted-workflows.json")
+	scenario, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	validated, err := Parse(scenario, Options{Authorized: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(validated.Profiles) != 2 || validated.Profiles[0].Name != "dashboard reads" || validated.Profiles[1].Weight != 1 {
+		t.Fatalf("versioned example did not reach the validated workflow model: %+v", validated.Profiles)
+	}
+}
+
 func good() Scenario {
 	return Scenario{Name: "smoke", BaseURL: "http://127.0.0.1:9876", Users: 2, Duration: "1s", MaxRPS: 5, P95LimitMS: 1500, MaxErrorRate: .01, Steps: []Step{{Name: "home", Path: "/"}}}
 }
@@ -311,6 +393,17 @@ func TestSeparateSessionsRequiredAndUnique(t *testing.T) {
 	t.Setenv("DAMOCLINE_TEST_VU_2", "session=alpha")
 	if _, err := Parse(s, Options{Authorized: true}); err == nil {
 		t.Fatal("duplicate cookie accepted")
+	}
+}
+
+func TestSessionCookiesRequireWellFormedUniquePairs(t *testing.T) {
+	for _, value := range []string{"session-only", "=missing-name", "sid=one; sid=two", " ; "} {
+		t.Run(value, func(t *testing.T) {
+			t.Setenv("DAMOCLINE_COOKIE_1", value)
+			if _, err := ResolveSessions("DAMOCLINE_COOKIE_", 1); err == nil {
+				t.Fatalf("malformed cookie set %q was accepted", value)
+			}
+		})
 	}
 }
 

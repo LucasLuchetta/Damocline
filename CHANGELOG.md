@@ -4,6 +4,10 @@ This project follows a human-maintained changelog. No release exists yet.
 
 ## [Unreleased]
 
+- Add explicit scenario version 1 with named workflows and a non-overwriting `migrate-scenario` command that converts legacy flat steps or weighted profiles while preserving the source file.
+
+- Validate configured session cookies as non-empty, uniquely named `name=value` sets before counting them as independent workflow sessions; cookie values remain in-memory only.
+
 - Recompute closed-loop campaign observation spread from saved phases during offline audit, expose per-trial request/journey SLO and useful-throughput evidence, and reject a persisted spread that does not reconcile with its source observations.
 - Add optional per-workflow/per-actor authentication cookie sessions for weighted journeys in both closed-loop and open-arrival runs; keep credentials and environment-variable names out of reports and workload fingerprints, and persist only the selected workflow session scopes in report schema v27.
 - Advance calibration evidence to schema v9 with exact 1/2/5/10/20/50-VU closed-loop profiles, and acceptance manifest v5 with per-profile iteration and independent server-ledger reconciliation. Exact closed-loop campaign preflight can now pass for matching short local generator profiles; other VU levels and controls remain blocked.

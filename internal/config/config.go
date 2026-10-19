@@ -18,6 +18,8 @@ import (
 )
 
 type Scenario struct {
+	ScenarioVersion          int               `json:"scenario_version,omitempty"`
+	Workflows                []Profile         `json:"workflows,omitempty"`
 	Name                     string            `json:"name"`
 	WorkloadRevision         string            `json:"workload_revision,omitempty"`
 	ApplicationRevision      string            `json:"application_revision,omitempty"`
@@ -136,6 +138,8 @@ var variableNamePattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
 
 const maxScenarioBytes = 1 << 20
 
+const CurrentScenarioVersion = 1
+
 func Load(path string) (Scenario, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -159,11 +163,71 @@ func Load(path string) (Scenario, error) {
 	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
 		return Scenario{}, errors.New("scenario must contain exactly one JSON object")
 	}
+	if err := validateScenarioFormat(s); err != nil {
+		return Scenario{}, err
+	}
+	return s, nil
+}
+
+func validateScenarioFormat(s Scenario) error {
+	switch s.ScenarioVersion {
+	case 0:
+		if len(s.Workflows) != 0 {
+			return errors.New("workflows require scenario_version 1")
+		}
+	case CurrentScenarioVersion:
+		if len(s.Workflows) == 0 {
+			return errors.New("scenario_version 1 requires at least one workflow")
+		}
+		if len(s.Steps) != 0 || len(s.Profiles) != 0 {
+			return errors.New("scenario_version 1 uses workflows and cannot include legacy steps or profiles")
+		}
+		if len(s.Workflows) > 10 {
+			return errors.New("scenario_version 1 supports at most 10 workflows")
+		}
+	default:
+		return fmt.Errorf("unsupported scenario_version %d; this Damocline version supports through %d", s.ScenarioVersion, CurrentScenarioVersion)
+	}
+	return nil
+}
+
+// MigrateScenario converts a versionless legacy scenario into the current
+// named-workflow format without changing its workload settings or steps.
+func MigrateScenario(s Scenario) (Scenario, error) {
+	if err := validateScenarioFormat(s); err != nil {
+		return Scenario{}, err
+	}
+	if s.ScenarioVersion == CurrentScenarioVersion {
+		return s, nil
+	}
+	if len(s.Steps) > 0 && len(s.Profiles) > 0 {
+		return Scenario{}, errors.New("legacy scenario cannot combine steps and profiles")
+	}
+	switch {
+	case len(s.Profiles) > 0:
+		s.Workflows = append([]Profile(nil), s.Profiles...)
+	case len(s.Steps) > 0:
+		s.Workflows = []Profile{{Name: "default", Weight: 1, Steps: append([]Step(nil), s.Steps...)}}
+	default:
+		return Scenario{}, errors.New("legacy scenario must contain steps or profiles to migrate")
+	}
+	s.ScenarioVersion = CurrentScenarioVersion
+	s.Profiles = nil
+	s.Steps = nil
 	return s, nil
 }
 
 func Parse(s Scenario, o Options) (Validated, error) {
 	var v Validated
+	if err := validateScenarioFormat(s); err != nil {
+		return v, err
+	}
+	versionedWorkflows := s.ScenarioVersion == CurrentScenarioVersion
+	if versionedWorkflows {
+		s.Profiles = append([]Profile(nil), s.Workflows...)
+		s.Workflows = nil
+		s.ScenarioVersion = 0
+	}
 	if !o.Authorized {
 		return v, errors.New("explicit --authorized confirmation is required before generating traffic")
 	}
@@ -196,7 +260,7 @@ func Parse(s Scenario, o Options) (Validated, error) {
 	if s.MaxRPS < 1 || s.MaxRPS > 100 {
 		return v, errors.New("max_rps must be between 1 and 100; use conservative limits on production")
 	}
-	profiles, err := workloadProfiles(s)
+	profiles, err := workloadProfiles(s, versionedWorkflows)
 	if err != nil {
 		return v, err
 	}
@@ -536,7 +600,10 @@ func Parse(s Scenario, o Options) (Validated, error) {
 			return v, fmt.Errorf("workflow %q session configuration: %w", profile, err)
 		}
 		for actor, cookie := range resolved {
-			canonical := normalizeCookieSet(cookie)
+			canonical, err := normalizeCookieSet(cookie)
+			if err != nil {
+				return v, fmt.Errorf("workflow %q has an invalid session for actor %d: %w", profile, actor+1, err)
+			}
 			if previous, exists := seenProfileSessions[canonical]; exists {
 				return v, fmt.Errorf("workflow session sets for %q and %q must be distinct for actor %d", previous, profile, actor+1)
 			}
@@ -611,7 +678,7 @@ func hasVariableThinkTime(profiles []PreparedProfile) bool {
 	return false
 }
 
-func workloadProfiles(s Scenario) ([]Profile, error) {
+func workloadProfiles(s Scenario, allowSingle bool) ([]Profile, error) {
 	if len(s.Profiles) == 0 {
 		if len(s.Steps) < 1 || len(s.Steps) > 20 {
 			return nil, errors.New("steps must contain 1 to 20 entries when profiles are absent")
@@ -621,8 +688,12 @@ func workloadProfiles(s Scenario) ([]Profile, error) {
 	if len(s.Steps) > 0 {
 		return nil, errors.New("steps and profiles cannot be combined")
 	}
-	if len(s.Profiles) < 2 || len(s.Profiles) > 10 {
-		return nil, errors.New("profiles must contain 2 to 10 entries")
+	minimum := 2
+	if allowSingle {
+		minimum = 1
+	}
+	if len(s.Profiles) < minimum || len(s.Profiles) > 10 {
+		return nil, fmt.Errorf("profiles must contain %d to 10 entries", minimum)
 	}
 	seen := map[string]bool{}
 	totalWeight := 0

@@ -1,0 +1,24 @@
+{
+  "scenario_version": 1,
+  "name": "synthetic weighted workflow mix",
+  "base_url": "https://app.example.com",
+  "users": 4,
+  "duration": "30s",
+  "ramp_up": "2s",
+  "request_timeout": "5s",
+  "max_rps": 20,
+  "p95_limit_ms": 1500,
+  "max_error_rate": 0.01,
+  "workflows": [
+    {
+      "name": "dashboard reads",
+      "weight": 3,
+      "steps": [{"name": "dashboard", "method": "GET", "path": "/dashboard", "expected_status": [200]}]
+    },
+    {
+      "name": "catalog search",
+      "weight": 1,
+      "steps": [{"name": "search", "method": "GET", "path": "/catalog?q=synthetic", "expected_status": [200]}]
+    }
+  ]
+}
