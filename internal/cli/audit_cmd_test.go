@@ -112,7 +112,8 @@ func TestAuditCommandAcceptsMultipleCampaignsAndKeepsExactDemandUnknown(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rendered != string(golden) {
+	goldenText := strings.ReplaceAll(string(golden), "\r\n", "\n")
+	if rendered != goldenText {
 		t.Fatalf("campaign collection CLI output changed:\n%s", rendered)
 	}
 	raw, err := os.ReadFile(out)
