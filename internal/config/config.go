@@ -74,6 +74,7 @@ type Step struct {
 	JSONAssertions map[string]string  `json:"json_assertions,omitempty"`
 	BodyEnv        string             `json:"body_env,omitempty"`
 	Extract        map[string]Extract `json:"extract,omitempty"`
+	Cleanup        bool               `json:"cleanup,omitempty"`
 }
 
 // Extract declares a value that a step may capture for later steps in the same
@@ -359,6 +360,8 @@ func Parse(s Scenario, o Options) (Validated, error) {
 		if dataPrefix != "" {
 			available["synthetic_id"] = true
 		}
+		cleanupStarted := false
+		businessSteps := 0
 		for _, step := range profile.Steps {
 			if step.Name == "" || len(step.Name) > 80 || seen[step.Name] {
 				return v, fmt.Errorf("step names must be non-empty, unique, and at most 80 characters: %q", step.Name)
@@ -373,6 +376,24 @@ func Parse(s Scenario, o Options) (Validated, error) {
 			}
 			if method != "GET" && method != "HEAD" && !o.AllowWrites {
 				return v, fmt.Errorf("step %q uses %s: --allow-writes is required", step.Name, method)
+			}
+			if step.Cleanup {
+				cleanupStarted = true
+				path := strings.SplitN(step.Path, "?", 2)[0]
+				syntheticSegments := 0
+				for _, segment := range strings.Split(path, "/") {
+					if segment == "{{synthetic_id}}" {
+						syntheticSegments++
+					}
+				}
+				if method != "DELETE" || syntheticSegments != 1 || dataPrefix == "" {
+					return v, fmt.Errorf("cleanup step %q must be DELETE and target {{synthetic_id}} with synthetic_data_prefix_env configured", step.Name)
+				}
+			} else {
+				businessSteps++
+				if cleanupStarted {
+					return v, fmt.Errorf("cleanup steps must be a final suffix in profile %q", profile.Name)
+				}
 			}
 			if step.BodyEnv != "" && method != "POST" && method != "PUT" && method != "PATCH" {
 				return v, fmt.Errorf("body_env requires POST, PUT, or PATCH in %q", step.Name)
@@ -455,6 +476,9 @@ func Parse(s Scenario, o Options) (Validated, error) {
 			preparedStep := PreparedStep{Step: step, Profile: profile.Name, URL: u.ResolveReference(p).String(), ResolvedHeaders: head, Body: body, PathTemplate: step.Path}
 			prepared = append(prepared, preparedStep)
 			profileSteps = append(profileSteps, preparedStep)
+		}
+		if cleanupStarted && businessSteps == 0 {
+			return v, fmt.Errorf("profile %q must include a business step before cleanup", profile.Name)
 		}
 		preparedProfiles = append(preparedProfiles, PreparedProfile{Name: profile.Name, Weight: profile.Weight, ThinkTime: profileThink, ThinkTimeMin: profileMin, ThinkTimeMax: profileMax, ThinkTimeSamples: profileSamples, Steps: profileSteps})
 	}

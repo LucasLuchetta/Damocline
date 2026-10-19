@@ -52,6 +52,30 @@ func TestGeneratorGuardrailTriggerRequiresMatchingPolicyAndConsecutiveSamples(t 
 	}
 }
 
+func TestSchema24CleanupEvidenceRequiresDELETE(t *testing.T) {
+	r := validSyntheticQualityRun()
+	r.SchemaVersion = 24
+	r.Steps = []StepResult{{Name: "cleanup", Method: "GET", Cleanup: true}}
+	q := AssessQuality(r)
+	if q.State != QualityInvalid || !containsFinding(q.Findings, "Cleanup steps must use DELETE.") {
+		t.Fatalf("non-DELETE cleanup evidence was accepted: %+v", q)
+	}
+	r.Steps[0].Method = http.MethodDelete
+	q = AssessQuality(r)
+	if containsFinding(q.Findings, "Cleanup steps must use DELETE.") {
+		t.Fatalf("DELETE cleanup evidence was rejected: %+v", q)
+	}
+}
+
+func containsFinding(findings []string, want string) bool {
+	for _, finding := range findings {
+		if finding == want {
+			return true
+		}
+	}
+	return false
+}
+
 func qualityTestRuntime() calibration.Runtime {
 	runtime := calibration.CurrentRuntime()
 	if runtime.LogicalCPUs < 1 {

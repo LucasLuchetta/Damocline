@@ -227,19 +227,22 @@ $env:DAMOCLINE_TEST_DATA_PREFIX = "damocline-check"
   "synthetic_data_prefix_env": "DAMOCLINE_TEST_DATA_PREFIX",
   "steps": [
     {"name": "create", "method": "POST", "path": "/records/{{synthetic_id}}"},
-    {"name": "cleanup", "method": "DELETE", "path": "/records/{{synthetic_id}}"}
+    {"name": "cleanup", "method": "DELETE", "path": "/records/{{synthetic_id}}", "cleanup": true}
   ]
 }
 ```
 
-Cleanup is an explicit workflow step. The engine continues through configured
-steps after a business assertion fails, so a final DELETE can clean up that
-journey; the step's own status and failures remain visible in the report.
-Cancellation, process termination, missing extracted values, or a failed
-cleanup request can still leave test data behind. Use an isolated test
-namespace, validate cleanup in staging, and retain an application-specific
-cleanup procedure; Damocline does not delete resources outside the configured,
-authorized journey.
+Mark cleanup steps with `"cleanup": true`. They must be a final suffix of
+synthetic-ID-scoped DELETE requests and require `--allow-writes`. The engine
+runs them after ordinary business assertion failures and after external
+cancellation when a mutating business request was attempted. Cancelled runs
+use only the remaining reserved drain window (up to 30 seconds), while cleanup
+still obeys `max_rps`. The report identifies cleanup steps and records their
+HTTP outcomes. Process termination, missing generated identifiers, exhausted
+drain time, or a failed cleanup request can still leave test data behind. Use
+an isolated test namespace, validate cleanup in staging, and retain an
+application-specific cleanup procedure; Damocline does not delete resources
+outside the configured, authorized journey.
 
 ## 8. Monitor the Linux VPS independently
 

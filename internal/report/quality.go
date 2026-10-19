@@ -196,6 +196,13 @@ func AssessQuality(r Result) *Quality {
 			limit("One or more generator process samples were zero or implausible and were excluded.")
 		}
 	}
+	if r.SchemaVersion >= 24 {
+		for _, step := range r.Steps {
+			if step.Cleanup && step.Method != "DELETE" {
+				invalidate("Cleanup steps must use DELETE.")
+			}
+		}
+	}
 	if r.SchemaVersion >= 10 && r.Generator != nil {
 		g := r.Generator
 		values := []float64{g.ObservedSeconds, g.SamplingIntervalMS, g.SampleCollectionTotalMS, g.SampleCollectionMaxMS, g.MaxSampleGapMS, g.GoCPUBusySeconds, g.GoCPUCapacitySeconds, g.GoCPUUtilizationRatio, g.PeakProcessCPUUtilizationRatio, g.MeanProcessCPUUtilizationRatio}

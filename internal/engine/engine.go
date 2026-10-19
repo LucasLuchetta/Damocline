@@ -273,12 +273,16 @@ func runWithTransport(parent context.Context, v config.Validated, transport *htt
 		journeyStart := time.Now()
 		journeyOk := true
 		fullyCompleted := true
+		cleanupNeeded := false
 		variables := map[string]string{}
 		if v.SyntheticDataPrefix != "" {
 			sequence := syntheticSequence.Add(1)
 			variables["synthetic_id"] = fmt.Sprintf("%s-%x-%d-%d", v.SyntheticDataPrefix, started.UnixNano(), actor+1, sequence)
 		}
 		for stepIndex, step := range profile.Steps {
+			if step.Step.Cleanup {
+				continue
+			}
 			waitStarted := time.Now()
 			if !waitToken(ctx, ticker.C) {
 				coll.add(sample{name: step.Name, cancelled: true, reason: "journey_cancelled", trace: report.HTTPTrace{RateWaitCancelledCount: 1, RateWaitMS: ms(time.Since(waitStarted))}})
@@ -286,6 +290,9 @@ func runWithTransport(parent context.Context, v config.Validated, transport *htt
 				break
 			}
 			s, extracted := execute(ctx, client, v.Base, v.Timeout, step, variables, &inFlight)
+			if step.Method != http.MethodGet && step.Method != http.MethodHead && s.trace.RequestAttemptCount > 0 {
+				cleanupNeeded = true
+			}
 			s.trace.RateWaitCount = 1
 			s.trace.RateWaitMS = ms(time.Since(waitStarted))
 			coll.add(s)
@@ -307,13 +314,48 @@ func runWithTransport(parent context.Context, v config.Validated, transport *htt
 				}
 				pause = sampledThinkTime(v.Scenario.WorkloadSeed, timingActor, journeyOrdinal, stepIndex, profile)
 			}
-			if stepIndex < len(profile.Steps)-1 && pause > 0 {
+			hasNextBusinessStep := false
+			for _, next := range profile.Steps[stepIndex+1:] {
+				if !next.Step.Cleanup {
+					hasNextBusinessStep = true
+					break
+				}
+			}
+			if hasNextBusinessStep && pause > 0 {
 				thinkStarted := time.Now()
 				continued := sleep(ctx, pause)
 				coll.addThinkTime(profile.Name, time.Since(thinkStarted))
 				if !continued {
 					fullyCompleted = false
 					break
+				}
+			}
+		}
+		if hasCleanup(profile) && cleanupNeeded {
+			cleanupCtx := ctx
+			var cleanupCancel context.CancelFunc
+			if errors.Is(parent.Err(), context.Canceled) || errors.Is(parent.Err(), context.DeadlineExceeded) {
+				cleanupCtx, cleanupCancel = cleanupContext(ctx)
+			}
+			if cleanupCtx != nil {
+				if cleanupCancel != nil {
+					defer cleanupCancel()
+				}
+				for _, step := range profile.Steps {
+					if !step.Step.Cleanup {
+						continue
+					}
+					waitStarted := time.Now()
+					if !waitToken(cleanupCtx, ticker.C) {
+						break
+					}
+					s, _ := execute(cleanupCtx, client, v.Base, v.Timeout, step, variables, &inFlight)
+					s.trace.RateWaitCount = 1
+					s.trace.RateWaitMS = ms(time.Since(waitStarted))
+					coll.add(s)
+					if !s.success {
+						journeyOk = false
+					}
 				}
 			}
 		}
@@ -405,7 +447,15 @@ func runWithTransport(parent context.Context, v config.Validated, transport *htt
 		if len(v.Scenario.Profiles) > 0 {
 			profileName = st.Profile
 		}
-		steps = append(steps, report.StepResult{Profile: profileName, Name: st.Name, Method: st.Method, Path: safePath(st.Path), Metrics: coll.steps[st.Name].Snapshot(), HTTPTrace: *coll.stepTraces[st.Name]})
+		cleanup := false
+		for _, profile := range v.Profiles {
+			for _, candidate := range profile.Steps {
+				if candidate.Step.Name == st.Name && candidate.Step.Cleanup {
+					cleanup = true
+				}
+			}
+		}
+		steps = append(steps, report.StepResult{Profile: profileName, Name: st.Name, Method: st.Method, Path: safePath(st.Path), Cleanup: cleanup, Metrics: coll.steps[st.Name].Snapshot(), HTTPTrace: *coll.stepTraces[st.Name]})
 	}
 	windows := make([]report.WindowResult, 0, len(coll.windows))
 	for index, metrics := range coll.windows {
@@ -599,6 +649,30 @@ func runWithTransport(parent context.Context, v config.Validated, transport *htt
 		result.Warnings = append(result.Warnings, "Inconsistent delivery/accounting evidence prevents a passing observation.")
 	}
 	return result
+}
+
+func hasCleanup(profile config.PreparedProfile) bool {
+	for _, step := range profile.Steps {
+		if step.Step.Cleanup {
+			return true
+		}
+	}
+	return false
+}
+
+func cleanupContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if ctx == nil {
+		return nil, nil
+	}
+	allowance := 30 * time.Second
+	if deadline, ok := ctx.Deadline(); ok {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return nil, nil
+		}
+		allowance = min(allowance, remaining)
+	}
+	return context.WithTimeout(context.WithoutCancel(ctx), allowance)
 }
 
 func waitToken(ctx context.Context, ch <-chan time.Time) bool {

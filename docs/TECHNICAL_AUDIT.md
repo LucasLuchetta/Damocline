@@ -1,6 +1,6 @@
 ﻿# Technical audit: integrated capacity milestones
 
-This audit was reconciled against `origin/master` at `27d15bf` (merged PR #100) and the current PR #104 branch. PRs #98-#100 added exact-level multi-campaign audits, request-vs-journey latency labels, and report plots by saved observation window. The open PR #104 adds a bounded final soak, explicit staging long-run mode, generator CPU/RSS abort guardrails, atomic report replacement, repeated open-arrival campaigns, recovery evidence after failed spikes, and an integrated loopback spike/recovery fixture. It remains unmerged and is not shipped.
+This audit was reconciled after PRs #103 and #104 merged to `master` at `d05c718`. PR #104 added bounded final soaks, explicit staging long-run mode, generator CPU/RSS abort guardrails, atomic report replacement, repeated open-arrival campaigns, recovery evidence after failed spikes, and an integrated loopback spike/recovery fixture. PR #103 added bounded local report history and terminal-safe history output. This working cohort addresses explicit synthetic cleanup during external cancellation.
 
 ## What the recent merges delivered
 

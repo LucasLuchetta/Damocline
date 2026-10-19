@@ -511,6 +511,57 @@ func TestSyntheticDataPrefixEnablesOnlyTheSyntheticIDTemplate(t *testing.T) {
 	}
 }
 
+func TestCleanupMustBeFinalSyntheticDeleteAndChangesFingerprint(t *testing.T) {
+	t.Setenv("DAMOCLINE_TEST_DATA_PREFIX", "damocline-test")
+	s := good()
+	s.SyntheticDataPrefixEnv = "DAMOCLINE_TEST_DATA_PREFIX"
+	s.Steps = []Step{{Name: "create", Method: "POST", Path: "/records/{{synthetic_id}}"}, {Name: "cleanup", Method: "DELETE", Path: "/records/{{synthetic_id}}", Cleanup: true}}
+	base, err := Parse(s, Options{Authorized: true, AllowWrites: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Steps[1].Cleanup = false
+	changed, err := Parse(s, Options{Authorized: true, AllowWrites: true})
+	if err != nil || base.WorkloadFingerprint == changed.WorkloadFingerprint {
+		t.Fatalf("cleanup semantic must change fingerprint: err=%v", err)
+	}
+	invalid := []Scenario{}
+	noPrefix := s
+	noPrefix.SyntheticDataPrefixEnv = ""
+	noPrefix.Steps[1].Cleanup = true
+	invalid = append(invalid, noPrefix)
+	nonDelete := s
+	nonDelete.Steps = append([]Step(nil), s.Steps...)
+	nonDelete.Steps[1].Method = "POST"
+	nonDelete.Steps[1].Cleanup = true
+	invalid = append(invalid, nonDelete)
+	unsafePath := s
+	unsafePath.Steps = append([]Step(nil), s.Steps...)
+	unsafePath.Steps[1].Path = "/records/all"
+	unsafePath.Steps[1].Cleanup = true
+	invalid = append(invalid, unsafePath)
+	embeddedID := s
+	embeddedID.Steps = append([]Step(nil), s.Steps...)
+	embeddedID.Steps[1].Path = "/records/prefix-{{synthetic_id}}"
+	embeddedID.Steps[1].Cleanup = true
+	invalid = append(invalid, embeddedID)
+	queryID := s
+	queryID.Steps = append([]Step(nil), s.Steps...)
+	queryID.Steps[1].Path = "/records?record={{synthetic_id}}"
+	queryID.Steps[1].Cleanup = true
+	invalid = append(invalid, queryID)
+	notFinal := s
+	notFinal.Steps = append([]Step(nil), s.Steps...)
+	notFinal.Steps[1].Cleanup = true
+	notFinal.Steps = append(notFinal.Steps, Step{Name: "after", Path: "/after"})
+	invalid = append(invalid, notFinal)
+	for i, scenario := range invalid {
+		if _, err := Parse(scenario, Options{Authorized: true, AllowWrites: true}); err == nil {
+			t.Errorf("invalid cleanup scenario %d accepted", i)
+		}
+	}
+}
+
 func TestWorkloadRevisionAndEnvironmentLabelsAreValidated(t *testing.T) {
 	s := good()
 	s.WorkloadRevision = "checkout-v3.2"
