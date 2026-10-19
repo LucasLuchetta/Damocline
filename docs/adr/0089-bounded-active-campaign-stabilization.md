@@ -17,4 +17,3 @@ Closed-loop campaign schema advances to v11 and open-arrival campaign schema to 
 ## Consequences
 
 Operators can explicitly require short, bounded evidence of coarse stability before observation. This does not adaptively wait for stability, detect every transient, establish statistical stationarity, qualify memory leaks, prove generator/endpoint equivalence, or certify application capacity. The phase adds bounded traffic and time when enabled. Local deterministic fixtures verify phase order, drift and cancellation stops, dry-run schedules, budget accounting, and offline replay; they do not qualify arbitrary targets.
-
