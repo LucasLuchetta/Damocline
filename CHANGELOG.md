@@ -4,6 +4,8 @@ This project follows a human-maintained changelog. No release exists yet.
 
 ## [Unreleased]
 
+- Add bounded Go fuzz smoke checks for request-template interpolation, escaped-query byte accounting, and expanded URL size/origin invariants.
+
 - Bound base origins, path templates, and expanded HTTP request URLs, headers, and bodies; stop expansion at intermediate/output limits, record local rejections in schema v29, and invalidate delivery attribution when a generated request never reaches the target.
 
 - Add an optional per-host connection cap and schema-v28 transport acquisition diagnostics. A delayed reused-connection acquisition is surfaced as a client-side queue symptom without claiming proven pool exhaustion.

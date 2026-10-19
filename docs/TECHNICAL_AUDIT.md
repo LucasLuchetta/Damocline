@@ -1,12 +1,12 @@
 ﻿# Technical audit: integrated capacity milestones
 
-This audit was reconciled against `master` at `d78bbd4` after PR #124 merged. Recent PRs #120–#124 added isolated workflow cookie sessions, saved campaign observation-spread evidence, exact closed-loop calibration profiles, versioned workflow scenarios, and client connection-acquisition diagnostics. This change adds bounded expanded-request templates and explicit local request-construction rejection accounting; broader workload representativeness remains open.
+This audit was reconciled against `master` at `f4e9183` after PR #125 merged. Recent PRs #120–#125 added isolated workflow cookie sessions, saved campaign observation-spread evidence, exact closed-loop calibration profiles, versioned workflow scenarios, client connection-acquisition diagnostics, and bounded expanded-request templates with explicit local request-construction rejection accounting. Broader workload representativeness remains open.
 
 ## What the recent merges delivered
 
 PRs #76 through #96 extended the bounded G0 acceptance lab, calibrated 30 exact request-shape/rate/connection-policy combinations, recorded effective Linux cgroup CPU entitlement, classified DNS and connection-establishment failures, and added loopback ledgers for drain, interruption, and response-size boundaries. PR #92 added persisted campaign auditing and named step/profile drift screening; PR #93 removed a false closed-loop arrival signal; PR #94 added journey-window SLO evidence; PR #95 made audit and demand findings traceable to saved content digests; PR #96 separated successful journey throughput from request rate. These changes strengthen local fixtures and report accounting. They do not validate arbitrary application endpoints or establish sustainable capacity. `docs/G0_STATUS.md` records the fixture and platform limits.
 
-The current report schema is v29. Template expansion is bounded at the final URL/header/body representation; local construction failures are visible in request and step metrics and classified as invalid delivery. This closes a concrete request-allocation gap, while aggregate worker-memory, stress/fuzz, host-pressure, and broader G1 workload verification remain open.
+The current report schema is v29. Template expansion is bounded at the final URL/header/body representation; local construction failures are visible in request and step metrics and classified as invalid delivery. Seeded bounded fuzz smoke checks now exercise interpolation, query escaping, and URL size/origin invariants. This closes part of the request-input robustness gap, while aggregate worker-memory, exhaustive fuzzing, host-pressure, and broader G1 workload verification remain open.
 
 ## Implementation versus acceptance
 
