@@ -95,7 +95,7 @@ damocline report --file .damocline/reports/later-run.json --compare .damocline/r
 damocline report --file .damocline/reports/your-run.json --host host.json
 ```
 
-It distinguishes **meeting your p95/error objectives** from **proving user capacity** and **having evidence that a bigger server is needed**. Achieved RPS is not the configured `max_rps` ceiling; HTTP request latency is not complete journey duration. A single PASS cannot certify infrastructure headroom. Controlled comparisons require matching schema-v15 workload fingerprints, recorded connection policy, and declared run conditions; older or mismatched reports are labeled `NOT_COMPARABLE` because their connection policy is unknown.
+It distinguishes **meeting your p95/error objectives** from **proving user capacity** and **having evidence that a bigger server is needed**. Achieved request throughput is not the configured `max_rps` ceiling; successful configured journeys/s are shown separately from requests/s and cancelled journeys. HTTP request latency is not complete journey duration. A single PASS cannot certify infrastructure headroom. Controlled comparisons require matching schema-v15 workload fingerprints, recorded connection policy, and declared run conditions; older or mismatched reports are labeled `NOT_COMPARABLE` because their connection policy is unknown.
 
 See [Understand your results](docs/REPORT_EXPLAINER.md) for interpretation, sample-size and comparison warnings. The command never sends traffic.
 
@@ -148,7 +148,7 @@ The command calculates the demand to validate and reports
 repeated campaign exercised that exact base VU level and every required phase
 has `VALID_WITHIN_ENVELOPE` data quality, adequate conditional p95/error
 bounds for aggregates, steps and every SLO window, continuous window coverage,
-and variability for every independent trial. Schema-v2 campaigns additionally retain phase classification and a coarse observation-window drift screen, then require the exact saved schedule to reconcile. Missing or insufficient evidence
+and variability for every independent trial. Schema-v2/v3 campaigns additionally retain phase classification and a coarse observation-window drift screen, then require the exact saved schedule to reconcile. Schema v3 also records the observed successful journey throughput range. Missing or insufficient evidence
 returns `INSUFFICIENT_EVIDENCE`; 50 error-free requests cannot substantiate a
 1% error budget at 95% under the stated binomial assumptions. Ordinary external run reports remain `LIMITED` while workload-specific generator equivalence and controlled endpoint identity are unavailable. The local calibrator can qualify only its own fixed loopback soak; that does not certify application capacity. Existing statistical bounds assume independent, stationary
 observations; that assumption is not established, so the result is not a

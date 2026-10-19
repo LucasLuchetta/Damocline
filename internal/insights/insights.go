@@ -209,6 +209,9 @@ func Evaluate(r report.Result, host *hostmon.Result) Assessment {
 	if r.Journeys.Total > 0 {
 		a.Findings = append(a.Findings, Finding{"INFO", fmt.Sprintf("Complete journey p95: %.0f ms, including configured think time; this is different from HTTP request p95.", r.Journeys.P95MS)})
 	}
+	if r.ObservationSeconds > 0 {
+		a.Findings = append(a.Findings, Finding{"INFO", fmt.Sprintf("Successful configured journey throughput: %.2f/s; %.2f complete journeys/s including failures; %d journeys cancelled before completion. max_rps is an HTTP request ceiling and is not comparable to journey throughput.", report.SuccessfulJourneysPerSecond(r), report.CompletedJourneysPerSecond(r), r.Journeys.Cancelled)})
+	}
 	for _, window := range r.Windows {
 		if window.Metrics.Total == 0 {
 			a.Findings = append(a.Findings, Finding{"CAUTION", fmt.Sprintf("Observation window %.1f-%.1fs has no completed requests.", window.StartSeconds, window.EndSeconds)})
@@ -446,6 +449,14 @@ func writeComparison(w io.Writer, old, current report.Result) {
 		fmt.Fprintf(w, "  Achieved throughput: %.2f -> %.2f requests/s.\n", a, b)
 		if a > 0 && math.Abs(b-a)/a > 0.15 {
 			fmt.Fprintln(w, "  [LIMIT] Achieved throughput differs by more than 15%, so latency changes cannot be attributed to an application improvement.")
+		}
+	}
+	if old.ObservationSeconds > 0 && current.ObservationSeconds > 0 {
+		a := report.SuccessfulJourneysPerSecond(old)
+		b := report.SuccessfulJourneysPerSecond(current)
+		fmt.Fprintf(w, "  Successful configured journey throughput: %.2f -> %.2f journeys/s (cancelled/incomplete: %d -> %d).\n", a, b, old.Journeys.Cancelled, current.Journeys.Cancelled)
+		if a > 0 && math.Abs(b-a)/a > 0.15 {
+			fmt.Fprintln(w, "  [LIMIT] Successful journey throughput differs by more than 15%, so latency changes cannot be attributed to an application improvement.")
 		}
 	}
 	fmt.Fprintf(w, "  HTTP p95: %.0f -> %.0f ms; failures: %d/%d -> %d/%d.\n", old.Metrics.P95MS, current.Metrics.P95MS, old.Metrics.Failures, old.Metrics.Total, current.Metrics.Failures, current.Metrics.Total)

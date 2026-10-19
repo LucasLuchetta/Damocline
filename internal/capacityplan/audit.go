@@ -159,7 +159,7 @@ func AuditCampaign(e campaign.Result) CampaignAudit {
 		}
 	}
 	a.StartedAt = e.StartedAt
-	if e.SchemaVersion != 1 && e.SchemaVersion != campaign.CurrentSchemaVersion {
+	if e.SchemaVersion < 1 || e.SchemaVersion > campaign.CurrentSchemaVersion {
 		a.State = "INVALID_EVIDENCE"
 		a.Findings = append(a.Findings, "Unsupported campaign evidence schema.")
 		return a
@@ -210,7 +210,7 @@ func AuditCampaign(e campaign.Result) CampaignAudit {
 				invalid = true
 				a.Findings = append(a.Findings, fmt.Sprintf("Trial %d %s claims %s measurement quality but recomputes to %s.", trial.Number, phase.Name, phase.Run.Quality.State, quality.State))
 			}
-			if e.SchemaVersion == campaign.CurrentSchemaVersion {
+			if e.SchemaVersion >= 2 {
 				if phase.EvidenceState != state || (phase.Name == "observation" && phase.Stability != stability) {
 					invalid = true
 					a.Findings = append(a.Findings, fmt.Sprintf("Trial %d %s has stale or altered stage evidence.", trial.Number, phase.Name))

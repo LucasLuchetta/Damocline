@@ -28,13 +28,15 @@ func synthetic() report.Result {
 }
 func TestReportCallsOutSingleVUAndTailNotServerUpgrade(t *testing.T) {
 	r := synthetic()
+	r.ObservationSeconds = 30
+	r.Journeys = report.MetricSet{Total: 20, Success: 18, Failures: 2, Cancelled: 3}
 	a := Evaluate(r, nil)
 	if a.Performance != "OBJECTIVES MET IN THIS RUN" || a.Capacity != "NOT DETERMINED" || a.Infrastructure != "NOT MEASURED" {
 		t.Fatalf("unexpected verdict: %+v", a)
 	}
 	var b bytes.Buffer
 	Write(&b, r, nil, nil)
-	for _, part := range []string{"SERVER UPGRADE: NOT JUSTIFIED", "Only one virtual user", "Long-tail latency", "max_rps setting", "Complete journey p95"} {
+	for _, part := range []string{"SERVER UPGRADE: NOT JUSTIFIED", "Only one virtual user", "Long-tail latency", "max_rps setting", "Complete journey p95", "Successful configured journey throughput: 0.60/s", "cancelled before completion"} {
 		if !strings.Contains(b.String(), part) {
 			t.Fatalf("expected %q in output: %s", part, b.String())
 		}
@@ -150,15 +152,19 @@ func TestHostWithoutOverlap(t *testing.T) {
 func TestComparisonExplainsDifferentRPSCaps(t *testing.T) {
 	prev := synthetic()
 	prev.Config.MaxRPS = 5
+	prev.ObservationSeconds = 30
+	prev.Journeys = report.MetricSet{Total: 24, Success: 20, Failures: 4, Cancelled: 5}
 	now := synthetic()
 	now.Metrics.Total = 50
 	now.Metrics.Success = 50
 	now.ElapsedSeconds = 60
 	now.Config.Duration = "60s"
 	now.Metrics.P95MS = 368
+	now.ObservationSeconds = 60
+	now.Journeys = report.MetricSet{Total: 36, Success: 30, Failures: 6, Cancelled: 3}
 	var b bytes.Buffer
 	Write(&b, now, nil, &prev)
-	for _, x := range []string{"max_rps ceilings differ", "Test durations differ", "HTTP p95: 412 -> 368 ms", "Achieved throughput"} {
+	for _, x := range []string{"max_rps ceilings differ", "Test durations differ", "HTTP p95: 412 -> 368 ms", "Achieved throughput", "Successful configured journey throughput: 0.67 -> 0.50 journeys/s", "cancelled/incomplete: 5 -> 3"} {
 		if !strings.Contains(b.String(), x) {
 			t.Fatalf("missing %q in %s", x, b.String())
 		}

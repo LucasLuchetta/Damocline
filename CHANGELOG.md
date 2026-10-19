@@ -5,6 +5,7 @@ This project follows a human-maintained changelog. No release exists yet.
 ## [Unreleased]
 
 ### Added
+- Report successful configured journey throughput separately from HTTP requests per second, preserve completed failures and cancelled journeys as distinct counts, and summarize successful journeys-per-second spread across campaign trials in campaign schema v3.
 - Combine offline campaign evidence audit and optional business-demand assessment in a traceable JSON artifact with campaign and phase digests, workload fingerprints, observed duration and levels, visible limiting workflows, and explicit confidence limitations.
 - Advance HTTP run reports to schema v22 with completed-journey metrics in every observation window; evaluate journey SLOs in engine outcomes and campaign audits, reconcile journey ledgers in offline demand assessments, and include full-journey sample adequacy/drift in campaign screening.
 - Record schema-v2 campaign stage classifications and an observation-window drift screen; reserve bounded phase drains in the default wall-time cap and validate the exact saved phase schedule offline.

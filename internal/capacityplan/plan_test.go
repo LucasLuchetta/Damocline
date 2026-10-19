@@ -1,6 +1,7 @@
 package capacityplan
 
 import (
+	"math"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -193,11 +194,30 @@ func TestSchemaTwoRequiresExactStageSequenceAndClassification(t *testing.T) {
 	}
 	restored, err := ReadCampaign(path)
 	if err != nil || validateEvidence(restored) != nil {
-		t.Fatalf("schema-v2 report did not round-trip: %v", err)
+		t.Fatalf("schema-v3 report did not round-trip: %v", err)
 	}
 	positive, err := evaluateWithDeclaredTestQuality(makeEvidence(), capacitygoal.Goal{PeakUsers: 10})
 	if err != nil || positive.State != "GOAL_MET_UNDER_TESTED_CONDITIONS" {
-		t.Fatalf("complete schema-v2 fixture was not usable: %+v %v", positive, err)
+		t.Fatalf("complete schema-v3 fixture was not usable: %+v %v", positive, err)
+	}
+	legacyV2 := makeEvidence()
+	legacyV2.SchemaVersion = 2
+	legacyPositive, err := evaluateWithDeclaredTestQuality(legacyV2, capacitygoal.Goal{PeakUsers: 10})
+	if err != nil || legacyPositive.State != "GOAL_MET_UNDER_TESTED_CONDITIONS" {
+		t.Fatalf("schema-v2 staged campaign compatibility failed: %+v %v", legacyPositive, err)
+	}
+	v3 := makeEvidence()
+	v3.SchemaVersion = 3
+	v3.ObservationVariability.SuccessfulJourneysMinPerSec = 4
+	v3.ObservationVariability.SuccessfulJourneysMaxPerSec = 5
+	currentPositive, err := evaluateWithDeclaredTestQuality(v3, capacitygoal.Goal{PeakUsers: 10})
+	if err != nil || currentPositive.State != "GOAL_MET_UNDER_TESTED_CONDITIONS" {
+		t.Fatalf("complete schema-v3 evidence rejected: %+v %v", currentPositive, err)
+	}
+	v3.ObservationVariability.SuccessfulJourneysMinPerSec = math.NaN()
+	malformed, err := evaluateWithDeclaredTestQuality(v3, capacitygoal.Goal{PeakUsers: 10})
+	if err != nil || malformed.State != "INSUFFICIENT_EVIDENCE" || !containsFinding(malformed.Findings, "journey throughput spread is missing or malformed") {
+		t.Fatalf("malformed schema-v3 journey throughput accepted: %+v %v", malformed, err)
 	}
 	for _, tc := range []struct {
 		name   string
