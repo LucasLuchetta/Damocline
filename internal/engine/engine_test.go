@@ -774,7 +774,7 @@ func TestClosedLoopJourneyMixIsIndependentOfWorkflowDurationAndLength(t *testing
 		t.Fatalf("per-workflow starts %d do not reconcile with engine starts %d", total, r.IterationsStarted)
 	}
 	if r.Profiles[0].SelectedStarts != starts[0] || r.Profiles[1].SelectedStarts != starts[1] || int64(total) != r.ArrivalsScheduled {
-		t.Fatalf("per-workflow scheduled starts do not reconcile: profiles=%+v scheduled=%d", r.Profiles, r.ArrivalsScheduled)
+		t.Fatalf("per-workflow selected starts do not reconcile: profiles=%+v scheduled=%d", r.Profiles, r.ArrivalsScheduled)
 	}
 }
 

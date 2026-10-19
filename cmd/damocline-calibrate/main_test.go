@@ -244,6 +244,13 @@ func passingStageFixture() report.Result {
 func passingWorkloadProfileFixture(profile calibration.WorkloadProfile) (report.Result, calibration.WorkloadObservation) {
 	duration, _ := time.ParseDuration(profile.Duration)
 	planned := int64(profile.ArrivalRate) * int64(duration/time.Second)
+	if profile.Mode == "closed" {
+		planned = int64(profile.Users)
+	}
+	measurementCount := planned
+	if profile.Mode == "closed" {
+		measurementCount = 1
+	}
 	responseBytes := int64(profile.ResponseBodyBytes)
 	body := report.ResponseBodyDiagnostics{
 		CompleteObservations: planned, MinBytes: responseBytes, MaxBytes: responseBytes,
@@ -253,8 +260,7 @@ func passingWorkloadProfileFixture(profile calibration.WorkloadProfile) (report.
 	stepMetrics := metrics
 	admitted := planned
 	run := report.Result{
-		ArrivalsScheduled: planned, ArrivalsAdmitted: &admitted, IterationsStarted: planned,
-		IterationsCompleted: planned, SchedulerLagSamples: planned, Metrics: metrics,
+		IterationsStarted: planned, IterationsCompleted: planned, Metrics: metrics,
 		Journeys: metrics, Outcome: "PASS", Steps: []report.StepResult{{Method: profile.Method, Path: profile.Path, Metrics: stepMetrics}},
 		Config: report.RunConfig{
 			Mode: profile.Mode, ArrivalRate: profile.ArrivalRate, MaxRPS: profile.MaxRPS,
@@ -262,13 +268,17 @@ func passingWorkloadProfileFixture(profile calibration.WorkloadProfile) (report.
 			ConnectionPolicy: profile.ConnectionPolicy,
 		},
 	}
-	tcpConnections, _ := calibration.ExpectedReferenceTCPConnections(profile, planned)
+	if profile.Mode == "arrival" {
+		run.ArrivalsScheduled, run.ArrivalsAdmitted, run.SchedulerLagSamples = planned, &admitted, planned
+	}
+	tcpConnections, _ := calibration.ExpectedReferenceTCPConnections(profile, measurementCount)
 	tlsHandshakes, _ := calibration.ExpectedReferenceTLSHandshakes(profile, planned)
 	if tlsHandshakes > 0 {
 		run.Steps[0].HTTPTrace.TLSCount = int(tlsHandshakes)
 	}
 	observation := calibration.WorkloadObservation{
-		Scheduled: planned, Admitted: planned, Started: planned, Completed: planned,
+		Mode: profile.Mode, ArrivalAccountingApplicable: profile.Mode == "arrival",
+		Started: planned, Completed: planned,
 		Outcome: "PASS", ClientCompleteBodyObservations: planned, ClientTLSHandshakes: tlsHandshakes,
 		ClientResponseMinBytes: responseBytes, ClientResponseMaxBytes: responseBytes,
 		ClientResponseTotalBytes: planned * responseBytes,
@@ -276,6 +286,9 @@ func passingWorkloadProfileFixture(profile calibration.WorkloadProfile) (report.
 		ServerTCPConnections:    tcpConnections,
 		ServerRequestBodyBytes:  planned * int64(profile.RequestBodyBytes),
 		ServerResponseBodyBytes: planned * responseBytes,
+	}
+	if profile.Mode == "arrival" {
+		observation.Scheduled, observation.Admitted = planned, planned
 	}
 	return run, observation
 }

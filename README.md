@@ -193,8 +193,10 @@ for bounds and limitations.
 Closed-loop campaigns accept `--calibration FILE` to retain local generator
 preflight evidence. `--require-calibration` fails before any phase unless every
 planned base and spike VU level has exact closed-loop coverage. The current
-reference matrix contains arrival-mode profiles only, so it reports closed-loop
-coverage as blocked; arrival-rate profiles never stand in for VU evidence.
+schema-v9 reference matrix includes six exact short profiles at 1, 2, 5, 10, 20,
+and 50 VUs. Coverage remains blocked for other VU levels, request ceilings,
+durations, timeouts, connection policies, workload shapes, ramp-up, or think
+time; arrival-rate profiles never stand in for VU evidence.
 
 Open a saved run or campaign without generating traffic:
 
@@ -324,7 +326,7 @@ This intentionally produces `INCONCLUSIVE` for application-capacity readiness: t
 
 ## Run the repeated G0 acceptance lab
 
-The acceptance lab runs bounded, independent calibrator processes against fresh loopback reference servers, then runs the local HTTP transport fixture matrix. It checks 30 exact HTTP shape/connection/rate profiles plus three trusted HTTPS reuse profiles, planned and completed arrivals, response sizes, client TLS handshakes, independent server request/body/TCP counters, the 30-second controlled soak, overload and HTTP-failure controls, and persisted quality recomputation. Two repeats are required; three are allowed for the baseline matrix. Each repeat has a 240-second default deadline, and every requested run is recorded.
+The acceptance lab runs bounded, independent calibrator processes against fresh loopback reference servers, then runs the local HTTP transport fixture matrix. Acceptance manifest v5 checks 30 exact HTTP arrival shape/connection/rate profiles, three trusted HTTPS reuse profiles, and six closed-loop VU profiles at 1/2/5/10/20/50 users. It reconciles mode-specific client iterations and response sizes with independent server request/body/TCP counters, then checks the 30-second controlled soak, overload and HTTP-failure controls, and persisted quality recomputation. These short local generator profiles do not establish application capacity or longer campaign headroom. Two repeats are required; three are allowed for the baseline matrix. Each repeat has a 240-second default deadline, and every requested run is recorded.
 
 Build both local commands first:
 

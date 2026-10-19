@@ -665,9 +665,9 @@ func runWithTransport(parent context.Context, v config.Validated, transport *htt
 	if len(v.Cookies) == 0 && v.Scenario.Users > 1 {
 		result.Warnings = append(result.Warnings, "Multiple virtual users may share one login identity; configure per_vu_cookie_env_prefix to test independent authenticated sessions.")
 	}
-	// A saturated request-rate governor masks the offered capacity of added VUs.
+	// A saturated request-rate governor masks offered workload capacity.
 	if agg.Total > 0 && v.Duration.Seconds() > 0 && float64(agg.Total)/v.Duration.Seconds() > 0.9*float64(v.Scenario.MaxRPS) {
-		result.Warnings = append(result.Warnings, "Request throughput is near max_rps: the configured client-side rate ceiling may hide server capacity. This run alone cannot establish a user-count limit.")
+		result.Warnings = append(result.Warnings, "Request throughput is near max_rps: the configured client-side rate ceiling may hide target headroom.")
 	}
 	if arrivalStats.DroppedBusy > 0 {
 		result.Warnings = append(result.Warnings, "Planned arrivals found no idle synthetic workers. This is not proof of server saturation.")

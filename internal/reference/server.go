@@ -34,6 +34,7 @@ type Config struct {
 // an exact local fixture path.
 type WorkloadProfile struct {
 	ID                string `json:"id"`
+	CounterID         string `json:"counter_id,omitempty"`
 	Method            string `json:"method"`
 	Path              string `json:"path"`
 	RequestBodyBytes  int    `json:"request_body_bytes"`
@@ -52,6 +53,10 @@ type Snapshot struct {
 	RequestBodyBytes      int64
 	ResponseBodyBytes     int64
 	ProfileTCPConnections map[string]int64 `json:"profile_tcp_connections,omitempty"`
+	ProfileReceived       map[string]int64 `json:"profile_received,omitempty"`
+	ProfileCompleted      map[string]int64 `json:"profile_completed,omitempty"`
+	ProfileRequestBytes   map[string]int64 `json:"profile_request_body_bytes,omitempty"`
+	ProfileResponseBytes  map[string]int64 `json:"profile_response_body_bytes,omitempty"`
 }
 
 type acceptedConnectionContextKey struct{}
@@ -74,6 +79,10 @@ type Handler struct {
 	nextConnectionID       atomic.Int64
 	connectionsMu          sync.Mutex
 	tcpConnectionIDsByPath map[string]map[int64]struct{}
+	profileReceived        map[string]*atomic.Int64
+	profileCompleted       map[string]*atomic.Int64
+	profileRequestBytes    map[string]*atomic.Int64
+	profileResponseBytes   map[string]*atomic.Int64
 	profiles               map[string]WorkloadProfile
 }
 
@@ -84,29 +93,46 @@ func New(config Config) (*Handler, error) {
 		config.MaxConcurrent < 1 || config.MaxConcurrent > 50 || config.MaxRequests < 1 || config.MaxRequests > 10000 {
 		return nil, errors.New("reference workload is outside bounded limits")
 	}
-	if len(config.Profiles) > 16 {
+	if len(config.Profiles) > 20 {
 		return nil, errors.New("reference workload has too many profiles")
 	}
 	profiles := make(map[string]WorkloadProfile, len(config.Profiles))
 	profileIDs := make(map[string]bool, len(config.Profiles))
+	counterIDs := make(map[string]bool, len(config.Profiles))
 	profilePaths := make(map[string]bool, len(config.Profiles))
 	for _, profile := range config.Profiles {
 		validMethod := profile.Method == http.MethodGet || profile.Method == http.MethodPost
-		validPath := strings.HasPrefix(profile.Path, "/matrix/") && profile.Path != "/matrix/" &&
+		validPath := (strings.HasPrefix(profile.Path, "/matrix/") && profile.Path != "/matrix/" || profile.Path == "/work") &&
 			len(profile.Path) <= 128 && !strings.ContainsAny(profile.Path, "?#") && !profilePaths[profile.Path]
 		validSizes := profile.RequestBodyBytes >= 0 && profile.RequestBodyBytes <= 64<<10 &&
 			profile.ResponseBodyBytes >= 0 && profile.ResponseBodyBytes <= 64<<10 &&
 			(profile.Method != http.MethodGet || profile.RequestBodyBytes == 0)
-		if profile.ID == "" || len(profile.ID) > 32 || profileIDs[profile.ID] || !validMethod || !validPath || !validSizes {
+		counterIDValid := profile.CounterID == "" || len(profile.CounterID) <= 64 && !counterIDs[profile.CounterID]
+		if profile.ID == "" || len(profile.ID) > 64 || !counterIDValid || profileIDs[profile.ID] || !validMethod || !validPath || !validSizes {
 			return nil, errors.New("reference profile is outside bounded limits")
 		}
 		profileIDs[profile.ID] = true
+		if profile.CounterID != "" {
+			counterIDs[profile.CounterID] = true
+		}
 		profilePaths[profile.Path] = true
 		profiles[profile.Path] = profile
+	}
+	profileReceived := make(map[string]*atomic.Int64, len(counterIDs))
+	profileCompleted := make(map[string]*atomic.Int64, len(counterIDs))
+	profileRequestBytes := make(map[string]*atomic.Int64, len(counterIDs))
+	profileResponseBytes := make(map[string]*atomic.Int64, len(counterIDs))
+	for id := range counterIDs {
+		profileReceived[id] = &atomic.Int64{}
+		profileCompleted[id] = &atomic.Int64{}
+		profileRequestBytes[id] = &atomic.Int64{}
+		profileResponseBytes[id] = &atomic.Int64{}
 	}
 	return &Handler{
 		config: config, slots: make(chan struct{}, config.MaxConcurrent), profiles: profiles,
 		tcpConnectionIDsByPath: make(map[string]map[int64]struct{}),
+		profileReceived:        profileReceived, profileCompleted: profileCompleted,
+		profileRequestBytes: profileRequestBytes, profileResponseBytes: profileResponseBytes,
 	}, nil
 }
 
@@ -118,7 +144,8 @@ func (h *Handler) ConnContext(ctx context.Context, _ net.Conn) context.Context {
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	profile, profiled := h.profiles[r.URL.Path]
+	selected, profiled := h.profiles[r.URL.Path]
+	profile := selected
 	validLegacyRequest := !profiled && r.Method == http.MethodGet && r.URL.Path == "/work"
 	validProfileRequest := profiled && r.Method == profile.Method
 	if !validLegacyRequest && !validProfileRequest {
@@ -126,14 +153,23 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.recordTCPConnection(r)
+	if profiled && profile.CounterID != "" {
+		h.incrementProfile(h.profileReceived, profile.CounterID)
+	}
 	index := h.received.Add(1)
 	if profiled {
 		body, readErr := io.ReadAll(io.LimitReader(r.Body, int64(profile.RequestBodyBytes)+1))
 		h.requestBodyBytes.Add(int64(len(body)))
+		if profiled && profile.CounterID != "" {
+			h.addProfile(profile.CounterID, h.profileRequestBytes, int64(len(body)))
+		}
 		if readErr != nil || len(body) != profile.RequestBodyBytes {
 			w.WriteHeader(http.StatusRequestEntityTooLarge)
 			h.failures.Add(1)
 			h.completed.Add(1)
+			if profiled && profile.CounterID != "" {
+				h.incrementProfile(h.profileCompleted, profile.CounterID)
+			}
 			return
 		}
 	}
@@ -187,6 +223,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.failures.Add(1)
 		w.WriteHeader(http.StatusServiceUnavailable)
 		h.completed.Add(1)
+		if profiled && profile.CounterID != "" {
+			h.incrementProfile(h.profileCompleted, profile.CounterID)
+		}
 		return
 	}
 	responseBytes := h.config.ResponseBytes
@@ -206,12 +245,18 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	written, err := w.Write(body)
 	h.responseBodyBytes.Add(int64(written))
+	if profiled && profile.CounterID != "" {
+		h.addProfile(profile.CounterID, h.profileResponseBytes, int64(written))
+	}
 	if err != nil || written != len(body) {
 		h.cancelled.Add(1)
 		return
 	}
 	h.success.Add(1)
 	h.completed.Add(1)
+	if profiled && profile.CounterID != "" {
+		h.incrementProfile(h.profileCompleted, profile.CounterID)
+	}
 }
 
 // ServeReferenceControl exposes counters only when explicitly mounted by the
@@ -234,12 +279,35 @@ func (h *Handler) Snapshot() Snapshot {
 		profileConnections[path] = int64(len(connectionIDs))
 	}
 	h.connectionsMu.Unlock()
+	profileReceived := snapshotProfileCounts(h.profileReceived)
+	profileCompleted := snapshotProfileCounts(h.profileCompleted)
+	profileRequestBytes := snapshotProfileCounts(h.profileRequestBytes)
+	profileResponseBytes := snapshotProfileCounts(h.profileResponseBytes)
 	return Snapshot{
 		Received: h.received.Load(), Completed: h.completed.Load(), Success: h.success.Load(),
 		Failures: h.failures.Load(), Cancelled: h.cancelled.Load(), Rejected: h.rejected.Load(),
 		PeakConcurrent: h.peakActive.Load(), PeakQueued: h.peakQueued.Load(),
 		RequestBodyBytes: h.requestBodyBytes.Load(), ResponseBodyBytes: h.responseBodyBytes.Load(),
-		ProfileTCPConnections: profileConnections,
+		ProfileTCPConnections: profileConnections, ProfileReceived: profileReceived, ProfileCompleted: profileCompleted,
+		ProfileRequestBytes: profileRequestBytes, ProfileResponseBytes: profileResponseBytes,
+	}
+}
+
+func snapshotProfileCounts(counts map[string]*atomic.Int64) map[string]int64 {
+	result := make(map[string]int64, len(counts))
+	for id, count := range counts {
+		result[id] = count.Load()
+	}
+	return result
+}
+
+func (h *Handler) incrementProfile(counts map[string]*atomic.Int64, id string) {
+	h.addProfile(id, counts, 1)
+}
+
+func (h *Handler) addProfile(id string, counts map[string]*atomic.Int64, value int64) {
+	if count := counts[id]; count != nil {
+		count.Add(value)
 	}
 }
 
@@ -250,10 +318,14 @@ func (h *Handler) recordTCPConnection(r *http.Request) {
 	}
 	h.connectionsMu.Lock()
 	defer h.connectionsMu.Unlock()
-	connections := h.tcpConnectionIDsByPath[r.URL.Path]
+	counterID := r.URL.Path
+	if profile, ok := h.profiles[r.URL.Path]; ok && profile.CounterID != "" {
+		counterID = profile.CounterID
+	}
+	connections := h.tcpConnectionIDsByPath[counterID]
 	if connections == nil {
 		connections = make(map[int64]struct{})
-		h.tcpConnectionIDsByPath[r.URL.Path] = connections
+		h.tcpConnectionIDsByPath[counterID] = connections
 	}
 	connections[connectionID] = struct{}{}
 }
