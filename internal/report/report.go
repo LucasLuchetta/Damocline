@@ -18,8 +18,9 @@ import (
 // CurrentSchemaVersion is the newest persisted HTTP run report schema emitted
 // by the engine. Readers must reject future versions until their semantics are
 // reviewed and supported. Version 20 adds DNS and connection failure details
-// to HTTP diagnostics.
-const CurrentSchemaVersion = 21
+// to HTTP diagnostics, v21 adds seeded think-time provenance, and v22 adds
+// completed journeys to observation windows.
+const CurrentSchemaVersion = 22
 
 type MetricSet struct {
 	Total                 int                     `json:"total"`
@@ -343,6 +344,7 @@ type WindowResult struct {
 	StartSeconds float64        `json:"start_seconds"`
 	EndSeconds   float64        `json:"end_seconds"`
 	Metrics      MetricSet      `json:"metrics"`
+	Journeys     MetricSet      `json:"journeys"`
 	Steps        []WindowMetric `json:"steps,omitempty"`
 	Profiles     []WindowMetric `json:"profiles,omitempty"`
 }

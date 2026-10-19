@@ -305,6 +305,61 @@ func TestSchemaThirteenRequiresReconciledNamedWindowLedgers(t *testing.T) {
 	}
 }
 
+func TestSchemaTwentyTwoRequiresReconciledWindowJourneyLedger(t *testing.T) {
+	r := validSyntheticQualityRun()
+	r.SchemaVersion = CurrentSchemaVersion
+	r.Config.WindowDuration = "1s"
+	r.Config.Mode = "arrival"
+	r.Config.ConnectionPolicy = "reuse"
+	r.Config.MaxErrorRate = 0.01
+	r.Config.Users, r.Config.MaxRPS, r.Config.P95LimitMS = 2, 10, 100
+	r.Config.MinSamplesPerStep = 1
+	r.Config.WindowDuration = "1s"
+	r.Config.Duration = "1s"
+	r.ObservationSeconds, r.ElapsedSeconds = 1, 1
+	admitted := int64(2)
+	cancelledBeforeAdmission := int64(0)
+	r.ArrivalsAdmitted, r.ArrivalsCancelledBeforeAdmission = &admitted, &cancelledBeforeAdmission
+	r.ArrivalsScheduled = 2
+	r.SchedulerLagSamples, r.SchedulerLagMethod = 2, "scheduled_start_to_dispatch"
+	r.Generator = &generatorhealth.Summary{Samples: 10, ObservedSeconds: 1, SamplingIntervalMS: 250, MaxSampleGapMS: 250,
+		LogicalCPUs: 1, GOMAXPROCS: 1, CPUCapacityCores: 1, CPUCapacitySource: "test", CPUCapacityKnown: true,
+		PeakHeapAllocBytes: 1, PeakGoroutines: 1, GoCPUValid: true, GoCPUCapacitySeconds: 1,
+		ProcessSamples: 10, ProcessCPUSamples: 10, PeakProcessRSSBytes: 1, ProcessCPUValid: true}
+	r.IterationsStarted, r.IterationsCompleted = 2, 2
+	r.Metrics = MetricSet{Total: 2, Success: 2, HTTP: HTTPDiagnostics{FailureClassificationVersion: 1}}
+	trace := HTTPTrace{RateWaitCount: 2, RequestAttemptCount: 2, CompleteCount: 2, FirstByteCount: 2, BodyCount: 2, WriteCount: 2}
+	r.Steps = []StepResult{{Name: "step", Method: "GET", Path: "/", Metrics: r.Metrics, HTTPTrace: trace}}
+	r.Journeys = MetricSet{Total: 2, Success: 2}
+	r.Windows = []WindowResult{{StartSeconds: 0, EndSeconds: 1, Metrics: r.Metrics, Steps: []WindowMetric{{Name: "step", Metrics: r.Metrics}}, Journeys: MetricSet{Total: 2, Success: 2}}}
+	if q := AssessQuality(r); q.State == QualityInvalid {
+		t.Fatalf("reconciled journey-window ledger was rejected: %+v", q)
+	}
+	r.Windows[0].Journeys = MetricSet{}
+	if q := AssessQuality(r); q.State == QualityInvalid {
+		t.Fatalf("empty journey-window ledger should represent zero observations: %+v", q)
+	}
+	r.Windows[0].Journeys = MetricSet{Total: 2, Success: 2}
+	r.Windows[0].Profiles = []WindowMetric{{Name: "default", Metrics: MetricSet{Total: 2, Success: 2}}}
+	r.Journeys = MetricSet{Total: 3, Success: 3}
+	r.Profiles = []ProfileResult{{Name: "default", Weight: 1, Journeys: MetricSet{Total: 3, Success: 3}}}
+	r.Config.Profiles = []ProfileConfig{{Name: "default", Weight: 1}}
+	r.Windows[0].Profiles[0].Metrics = MetricSet{Total: 1, Success: 1}
+	if q := AssessQuality(r); q.State != QualityInvalid {
+		t.Fatalf("profile and aggregate window journeys must reconcile: %+v", q)
+	}
+	r.Profiles[0].Journeys.Total, r.Profiles[0].Journeys.Success = 2, 2
+	r.Journeys.Total, r.Journeys.Success = 2, 2
+	r.Windows[0].Profiles[0].Metrics = MetricSet{Total: 2, Success: 2}
+	if q := AssessQuality(r); q.State == QualityInvalid {
+		t.Fatalf("reconciled profile and aggregate journey ledgers were rejected: %+v", q)
+	}
+	r.Windows[0].Journeys = MetricSet{Total: 3, Success: 3}
+	if q := AssessQuality(r); q.State != QualityInvalid {
+		t.Fatalf("journey-window totals above run totals were trusted: %+v", q)
+	}
+}
+
 func TestSchemaThirteenAllowsOnlyFinalWindowToEndAtObservationHorizon(t *testing.T) {
 	r := validSyntheticQualityRun()
 	r.SchemaVersion = 13

@@ -476,7 +476,7 @@ func TestReadRunAcceptsCurrentSchemaFourteenConnectionPolicyAndWindowLedgers(t *
 		t.Fatal(err)
 	}
 	got, err := ReadRun(path)
-	if err != nil || got.SchemaVersion != report.CurrentSchemaVersion || len(got.Windows) != 1 || len(got.Windows[0].Steps) != 1 {
+	if err != nil || got.SchemaVersion != report.CurrentSchemaVersion || len(got.Windows) != 1 || len(got.Windows[0].Steps) != 1 || got.Windows[0].Journeys.Total != r.Windows[0].Journeys.Total {
 		t.Fatalf("current-schema window report not readable: %+v err=%v", got, err)
 	}
 }
@@ -639,6 +639,10 @@ func TestSupportedReportSchemaGoldensRoundTrip(t *testing.T) {
 			case 21:
 				if got.Config.WorkloadSeed != 42 || got.Config.ThinkTimeRange == nil || got.Config.ThinkTimeRange.Max != "30ms" || len(got.Config.Profiles[1].ThinkTimeSamples) != 3 {
 					t.Fatal("schema-v21 timing provenance was not preserved")
+				}
+			case 22:
+				if len(got.Windows) != 1 || got.Windows[0].Journeys.Total != 0 {
+					t.Fatal("schema-v22 journey-window ledger was not preserved")
 				}
 			}
 		})

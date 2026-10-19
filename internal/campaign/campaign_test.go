@@ -75,9 +75,9 @@ func TestDefaultCampaignBudgetIncludesBoundedDrain(t *testing.T) {
 }
 
 func stableResult(v config.Validated) report.Result {
-	run := report.Result{Outcome: "PASS", ElapsedSeconds: v.Duration.Seconds(), ObservationSeconds: v.Duration.Seconds(), Metrics: report.MetricSet{Total: 80, Success: 80, P95MS: 100}, Config: report.RunConfig{Users: v.Scenario.Users, Duration: v.Duration.String(), WindowDuration: v.Window.String()}, Target: v.Base.Scheme + "://" + v.Base.Host}
+	run := report.Result{Outcome: "PASS", ElapsedSeconds: v.Duration.Seconds(), ObservationSeconds: v.Duration.Seconds(), Metrics: report.MetricSet{Total: 80, Success: 80, P95MS: 100}, Journeys: report.MetricSet{Total: 80, Success: 80, P95MS: 100}, Config: report.RunConfig{Users: v.Scenario.Users, Duration: v.Duration.String(), WindowDuration: v.Window.String()}, Target: v.Base.Scheme + "://" + v.Base.Host}
 	for i := 0; i < 4; i++ {
-		run.Windows = append(run.Windows, report.WindowResult{StartSeconds: float64(i) * v.Duration.Seconds() / 4, EndSeconds: float64(i+1) * v.Duration.Seconds() / 4, Metrics: report.MetricSet{Total: 20, Success: 20, P95MS: 100}})
+		run.Windows = append(run.Windows, report.WindowResult{StartSeconds: float64(i) * v.Duration.Seconds() / 4, EndSeconds: float64(i+1) * v.Duration.Seconds() / 4, Metrics: report.MetricSet{Total: 20, Success: 20, P95MS: 100}, Journeys: report.MetricSet{Total: 20, Success: 20, P95MS: 100}})
 	}
 	return run
 }

@@ -262,7 +262,7 @@ func AssessStability(run report.Result) string {
 	for _, window := range run.Windows {
 		if math.IsNaN(window.StartSeconds) || math.IsInf(window.StartSeconds, 0) || math.IsNaN(window.EndSeconds) || math.IsInf(window.EndSeconds, 0) ||
 			math.Abs(window.StartSeconds-expectedStart) > 0.001 || window.EndSeconds <= window.StartSeconds ||
-			window.EndSeconds > run.ObservationSeconds+0.001 || !stableScreenMetric(window.Metrics) {
+			window.EndSeconds > run.ObservationSeconds+0.001 || !stableScreenMetric(window.Metrics) || !stableScreenMetric(window.Journeys) {
 			return "INSUFFICIENT_WINDOWS"
 		}
 		if len(window.Steps) != len(first.Steps) || len(window.Profiles) != len(first.Profiles) {
@@ -280,7 +280,8 @@ func AssessStability(run report.Result) string {
 	firstDuration := first.EndSeconds - first.StartSeconds
 	for _, window := range run.Windows[1:] {
 		duration := window.EndSeconds - window.StartSeconds
-		if largeWindowDrift(first.Metrics, window.Metrics, firstDuration, duration) {
+		if largeWindowDrift(first.Metrics, window.Metrics, firstDuration, duration) ||
+			largeWindowDrift(first.Journeys, window.Journeys, firstDuration, duration) {
 			return "NON_STATIONARY"
 		}
 		for _, pair := range []struct{ baseline, observed []report.WindowMetric }{
@@ -345,6 +346,24 @@ func ClassifyEvidence(run report.Result) (string, string) {
 	}
 	if run.ArrivalsDropped > 0 || run.ArrivalsCancelledBeforeAdmission != nil && *run.ArrivalsCancelledBeforeAdmission > 0 {
 		return "INVALID_DELIVERY", "Planned arrivals were dropped or cancelled before admission."
+	}
+	if run.SchemaVersion >= 22 && run.Outcome == "PASS" {
+		if run.Config.P95LimitMS <= 0 || run.Config.MaxErrorRate < 0 || run.Config.MaxErrorRate >= 1 || run.Journeys.Total <= 0 {
+			return "INSUFFICIENT_EVIDENCE", "Completed-journey SLO evidence is absent or not statistically assessable."
+		}
+		journeyErrorRate := float64(run.Journeys.Failures) / float64(run.Journeys.Total)
+		if run.Journeys.Success == 0 || journeyErrorRate > run.Config.MaxErrorRate || run.Journeys.P95MS > run.Config.P95LimitMS {
+			return "FAIL_OBSERVED", "The completed-journey latency or error objective was not met."
+		}
+		for _, window := range run.Windows {
+			if window.Journeys.Total <= 0 {
+				return "INSUFFICIENT_EVIDENCE", "One or more observation windows have no completed-journey SLO evidence."
+			}
+			windowErrorRate := float64(window.Journeys.Failures) / float64(window.Journeys.Total)
+			if window.Journeys.Success == 0 || windowErrorRate > run.Config.MaxErrorRate || window.Journeys.P95MS > run.Config.P95LimitMS {
+				return "FAIL_OBSERVED", "A completed-journey observation-window objective was not met."
+			}
+		}
 	}
 	switch run.Outcome {
 	case "PASS":

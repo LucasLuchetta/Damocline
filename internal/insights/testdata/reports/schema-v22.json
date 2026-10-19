@@ -1,0 +1,47 @@
+{
+  "schema_version": 22,
+  "name": "Synthetic timing fixture",
+  "target": "http://127.0.0.1",
+  "elapsed_seconds": 1,
+  "arrivals_admitted": 0,
+  "arrivals_cancelled_before_admission": 0,
+  "observation_seconds": 1,
+  "config": {
+    "users": 1,
+    "connection_policy": "reuse",
+    "workload_fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "workload_seed": 42,
+    "think_time_range": {"min": "10ms", "max": "30ms"},
+    "profiles": [
+      {"name": "browse", "weight": 2, "think_time": "", "think_time_range": {"min": "10ms", "max": "30ms"}},
+      {"name": "review", "weight": 1, "think_time": "", "think_time_samples": ["10ms", "10ms", "20ms"]}
+    ]
+  },
+  "metrics": {
+    "total": 0,
+    "success": 0,
+    "failures": 0,
+    "http_diagnostics": {
+      "failure_classification_version": 1,
+      "dns_failures": 0,
+      "connection_failures": 0
+    }
+  },
+  "journeys": {"total": 0, "success": 0, "failures": 0, "cancelled": 0},
+  "windows": [
+    {
+      "start_seconds": 0,
+      "end_seconds": 1,
+      "metrics": {"total": 0, "success": 0, "failures": 0, "cancelled": 0, "http_diagnostics": {"failure_classification_version": 1, "dns_failures": 0, "connection_failures": 0}},
+      "journeys": {"total": 0, "success": 0, "failures": 0, "cancelled": 0}
+    }
+  ],
+  "generator": {
+    "samples": 2,
+    "logical_cpus": 12,
+    "gomaxprocs": 12,
+    "cpu_capacity_cores": 4,
+    "cpu_capacity_source": "cgroup_v2_cpu_quota_hierarchy",
+    "cpu_capacity_known": true
+  }
+}
