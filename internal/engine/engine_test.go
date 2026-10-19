@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -1130,6 +1131,62 @@ func TestDistinctCookieSessions(t *testing.T) {
 		t.Fatalf("session isolation failed result=%+v observed=%v", r, observed)
 	}
 }
+
+func TestConcurrentActorsKeepCookiesAndExtractedValuesIsolated(t *testing.T) {
+	var nextSession atomic.Int64
+	var mu sync.Mutex
+	seenSessions := map[string]bool{}
+	seenPairs := map[string]bool{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/session":
+			cookie, err := r.Cookie("sid")
+			id := ""
+			if err == nil {
+				id = cookie.Value
+			} else {
+				id = fmt.Sprintf("actor-%d", nextSession.Add(1))
+				http.SetCookie(w, &http.Cookie{Name: "sid", Value: id, Path: "/"})
+			}
+			mu.Lock()
+			seenSessions[id] = true
+			mu.Unlock()
+			time.Sleep(10 * time.Millisecond)
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": id})
+		case "/records/actor-1", "/records/actor-2":
+			id := strings.TrimPrefix(r.URL.Path, "/records/")
+			cookie, err := r.Cookie("sid")
+			if err != nil || cookie.Value != id {
+				t.Errorf("actor state crossed: path id=%q cookie=%v err=%v", id, cookie, err)
+			}
+			mu.Lock()
+			seenPairs[id] = true
+			mu.Unlock()
+			_, _ = w.Write([]byte(`{"state":"ready"}`))
+		default:
+			t.Errorf("unexpected path %q", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	s := config.Scenario{Name: "isolated dependent actors", BaseURL: srv.URL, Users: 2, Duration: "1s", MaxRPS: 20, P95LimitMS: 1000, MaxErrorRate: 0,
+		Steps: []config.Step{
+			{Name: "session", Path: "/session", Extract: map[string]config.Extract{"record_id": {JSONPointer: "/id"}}},
+			{Name: "record", Path: "/records/{{record_id}}", JSONAssertions: map[string]string{"/state": "ready"}},
+		}}
+	v, err := config.Parse(s, config.Options{Authorized: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	v.Duration = 350 * time.Millisecond
+	r := Run(context.Background(), v)
+	mu.Lock()
+	defer mu.Unlock()
+	if r.Outcome != "PASS" || len(seenSessions) != 2 || len(seenPairs) != 2 {
+		t.Fatalf("concurrent actor cookies or extracted values were not isolated: outcome=%s sessions=%v pairs=%v report=%+v", r.Outcome, seenSessions, seenPairs, r)
+	}
+}
+
 func TestArrivalDropReporting(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { time.Sleep(250 * time.Millisecond); w.WriteHeader(200) }))
 	defer srv.Close()
