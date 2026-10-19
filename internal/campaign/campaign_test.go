@@ -3,6 +3,7 @@ package campaign
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -52,6 +53,47 @@ func TestCooldownSeparatesTrialsAndPersistsDistinctRunIDs(t *testing.T) {
 	if err != nil || result.Outcome != "PASS" || result.Cooldown != cooldown.String() || len(result.Trials) != 2 ||
 		result.Trials[0].RunID == "" || result.Trials[0].RunID == result.Trials[1].RunID || len(trialStarts) != 2 || trialStarts[1].Sub(trialStarts[0]) < cooldown {
 		t.Fatalf("cooldown or independent trial identity was not preserved: starts=%v result=%+v err=%v", trialStarts, result, err)
+	}
+}
+
+func TestProgressCheckpointsRetainPendingPhasesAndFinalState(t *testing.T) {
+	var snapshots []Result
+	runnerCalls := 0
+	result, err := WithRunnerProgress(context.Background(), scenario(t), Options{Observation: 10 * time.Second, Recovery: 10 * time.Second, Repeats: 2}, func(_ context.Context, v config.Validated) report.Result {
+		runnerCalls++
+		return stableResult(v)
+	}, func(snapshot Result) error {
+		snapshots = append(snapshots, snapshot)
+		return nil
+	})
+	if err != nil || result.Outcome != "PASS" || result.ExecutionState != "COMPLETED" || result.PendingTrial != nil || len(result.Trials) != 2 {
+		t.Fatalf("campaign did not finish with a complete durable report: %+v err=%v", result, err)
+	}
+	if runnerCalls != 4 || len(snapshots) < 7 || snapshots[len(snapshots)-1].ExecutionState != "COMPLETED" {
+		t.Fatalf("unexpected progress snapshots: calls=%d count=%d last=%+v", runnerCalls, len(snapshots), snapshots[len(snapshots)-1])
+	}
+	foundRetainedPhase := false
+	for _, snapshot := range snapshots[:len(snapshots)-1] {
+		if snapshot.ExecutionState != "RUNNING" || snapshot.Outcome != "INCONCLUSIVE" || snapshot.PendingTrial == nil || snapshot.PendingTrial.Outcome != "IN_PROGRESS" {
+			t.Fatalf("running checkpoint overstated completion: %+v", snapshot)
+		}
+		if len(snapshot.PendingTrial.Phases) == 1 {
+			foundRetainedPhase = true
+		}
+	}
+	if !foundRetainedPhase {
+		t.Fatal("no checkpoint retained a completed phase from the active trial")
+	}
+}
+
+func TestProgressPersistenceFailureStopsBeforeStartingPhases(t *testing.T) {
+	runnerCalls := 0
+	result, err := WithRunnerProgress(context.Background(), scenario(t), Options{Observation: 10 * time.Second, Recovery: 10 * time.Second, Repeats: 2}, func(_ context.Context, v config.Validated) report.Result {
+		runnerCalls++
+		return stableResult(v)
+	}, func(Result) error { return errors.New("disk full") })
+	if err == nil || !strings.Contains(err.Error(), "persist campaign checkpoint") || runnerCalls != 0 || result.Outcome != "INCONCLUSIVE" {
+		t.Fatalf("checkpoint write failure did not stop traffic: calls=%d result=%+v err=%v", runnerCalls, result, err)
 	}
 }
 

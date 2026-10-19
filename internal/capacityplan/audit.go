@@ -20,6 +20,7 @@ import (
 // confidence interval, or a sustainable-capacity certificate.
 type CampaignAudit struct {
 	SchemaVersion       int              `json:"schema_version"`
+	ExecutionState      string           `json:"execution_state,omitempty"`
 	EvidenceID          string           `json:"evidence_id"`
 	ScenarioFingerprint string           `json:"scenario_fingerprint,omitempty"`
 	Scenario            string           `json:"scenario"`
@@ -184,9 +185,15 @@ func evidenceDigest(value any) string {
 }
 
 func AuditCampaign(e campaign.Result) CampaignAudit {
+	original := e
+	inProgress := e.ExecutionState == "RUNNING"
+	if inProgress && e.PendingTrial != nil {
+		e = checkpointAsAbortedEvidence(e)
+	}
 	a := CampaignAudit{
 		SchemaVersion:   e.SchemaVersion,
-		EvidenceID:      evidenceDigest(e),
+		ExecutionState:  original.ExecutionState,
+		EvidenceID:      evidenceDigest(original),
 		Scenario:        e.Scenario,
 		TestedBaseUsers: e.BaseUsers,
 		HostType:        "NOT_RECORDED",
@@ -195,11 +202,14 @@ func AuditCampaign(e campaign.Result) CampaignAudit {
 		Unknowns:           []string{"Dependence-aware confidence and stationarity are not established.", "Physical host type and equivalence to independent users are not verified."},
 		State:              "INCONCLUSIVE",
 		MeasurementQuality: report.QualityLimited,
-		ObservedOutcome:    e.Outcome,
+		ObservedOutcome:    original.Outcome,
 		Findings: []string{
 			"Observed HTTP SLO results are not a validated capacity ceiling or a count of independent human users.",
 			"Ordinary external-target reports cannot certify generator/endpoint equivalence from loopback calibration alone.",
 		},
+	}
+	if inProgress {
+		a.Findings = append(a.Findings, "This is a RUNNING checkpoint. Its final campaign and pending-trial outcomes are unknown; the saved phases are retained for review only.")
 	}
 	var duration time.Duration
 	profiles := map[string]bool{}

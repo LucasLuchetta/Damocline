@@ -324,6 +324,28 @@ func readCampaignBytes(path string, maxBytes int64) ([]byte, error) {
 }
 
 func validateEvidence(evidence campaign.Result) error {
+	if evidence.SchemaVersion >= 10 {
+		switch evidence.ExecutionState {
+		case "RUNNING":
+			if evidence.Outcome != "INCONCLUSIVE" || evidence.PendingTrial == nil || len(evidence.Trials) >= evidence.Repeats {
+				return errors.New("in-progress campaign checkpoint is missing a pending trial or has an invalid state")
+			}
+			pending := *evidence.PendingTrial
+			if pending.Number != len(evidence.Trials)+1 || pending.Outcome != "IN_PROGRESS" || !validCampaignRunID(pending.RunID) || pending.AbortReason != "" {
+				return errors.New("in-progress campaign checkpoint has an invalid pending trial")
+			}
+			normalized := checkpointAsAbortedEvidence(evidence)
+			return validateEvidence(normalized)
+		case "COMPLETED":
+			if evidence.PendingTrial != nil {
+				return errors.New("completed campaign cannot contain a pending trial")
+			}
+		default:
+			return errors.New("campaign execution state is missing or unsupported")
+		}
+	} else if evidence.ExecutionState != "" || evidence.PendingTrial != nil {
+		return errors.New("execution checkpoints are unsupported by this campaign schema")
+	}
 	if evidence.SchemaVersion < 1 || evidence.SchemaVersion > campaign.CurrentSchemaVersion || evidence.Scenario == "" || evidence.BaseUsers < 1 || evidence.Repeats < 2 || evidence.Repeats > 5 || len(evidence.Trials) == 0 || len(evidence.Trials) > evidence.Repeats {
 		return errors.New("expected a complete supported repeated campaign")
 	}
@@ -397,6 +419,17 @@ func validateEvidence(evidence campaign.Result) error {
 		}
 	}
 	return nil
+}
+
+func checkpointAsAbortedEvidence(evidence campaign.Result) campaign.Result {
+	pending := *evidence.PendingTrial
+	pending.Outcome = "ABORTED"
+	pending.AbortReason = "The saved checkpoint has no terminal trial result; campaign completion is unknown."
+	evidence.Trials = append(append([]campaign.Trial(nil), evidence.Trials...), pending)
+	evidence.PendingTrial = nil
+	evidence.ExecutionState = "COMPLETED"
+	evidence.Outcome = "ABORTED"
+	return evidence
 }
 
 func validatePartialStageEvidence(evidence campaign.Result) error {

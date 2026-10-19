@@ -17,6 +17,41 @@ import (
 // EvaluateJourneyCampaign checks a saved sustained open-arrival campaign
 // offline. It only assesses an exact scheduled journey-start demand target.
 func EvaluateJourneyCampaign(saved arrivalcampaign.Result, goal JourneyStartGoal) (JourneyStartAssessment, error) {
+	inProgressCheckpoint := saved.ExecutionState == "RUNNING"
+	if saved.SchemaVersion >= 6 {
+		switch saved.ExecutionState {
+		case "RUNNING":
+			if saved.Outcome != "INCONCLUSIVE" || saved.PendingTrial == nil || len(saved.Trials) >= saved.Repeats {
+				return JourneyStartAssessment{}, errors.New("in-progress arrival campaign checkpoint is malformed")
+			}
+			pending := *saved.PendingTrial
+			if pending.Number != len(saved.Trials)+1 || pending.Outcome != "IN_PROGRESS" || pending.AbortReason != "" || len(pending.RunID) != 32 {
+				return JourneyStartAssessment{}, errors.New("in-progress arrival campaign pending trial is malformed")
+			}
+			if _, decodeErr := hex.DecodeString(pending.RunID); decodeErr != nil {
+				return JourneyStartAssessment{}, errors.New("in-progress arrival campaign run ID is malformed")
+			}
+			for _, trial := range saved.Trials {
+				if trial.RunID == pending.RunID {
+					return JourneyStartAssessment{}, errors.New("campaign trials must have distinct run IDs")
+				}
+			}
+			saved.Trials = append(append([]arrivalcampaign.Trial(nil), saved.Trials...), pending)
+			saved.Trials[len(saved.Trials)-1].Outcome = "ABORTED"
+			saved.Trials[len(saved.Trials)-1].AbortReason = "The saved checkpoint has no terminal trial result; campaign completion is unknown."
+			saved.PendingTrial = nil
+			saved.ExecutionState = "COMPLETED"
+			saved.Outcome = "ABORTED"
+		case "COMPLETED":
+			if saved.PendingTrial != nil {
+				return JourneyStartAssessment{}, errors.New("completed arrival campaign cannot contain a pending trial")
+			}
+		default:
+			return JourneyStartAssessment{}, errors.New("arrival campaign execution state is missing or unsupported")
+		}
+	} else if saved.ExecutionState != "" || saved.PendingTrial != nil {
+		return JourneyStartAssessment{}, errors.New("execution checkpoints are unsupported by this arrival campaign schema")
+	}
 	target, err := goal.required()
 	if err != nil {
 		return JourneyStartAssessment{}, err
@@ -145,11 +180,11 @@ func EvaluateJourneyCampaign(saved arrivalcampaign.Result, goal JourneyStartGoal
 				observedSLOFailure = true
 			}
 			if state == "INSUFFICIENT_EVIDENCE" || state == "INVALID_DELIVERY" {
-				if trial.Outcome != "INCONCLUSIVE" {
+				if trial.Outcome != "INCONCLUSIVE" && !(inProgressCheckpoint && trial.Outcome == "ABORTED" && index == len(saved.Trials)-1) {
 					return JourneyStartAssessment{}, errors.New("trial outcome hides incomplete or invalid phase evidence")
 				}
 			}
-			if expected.Required && state == "FAIL_OBSERVED" && trial.Outcome != "FAIL" && trial.Outcome != "INCONCLUSIVE" {
+			if expected.Required && state == "FAIL_OBSERVED" && trial.Outcome != "FAIL" && trial.Outcome != "INCONCLUSIVE" && !(inProgressCheckpoint && trial.Outcome == "ABORTED" && index == len(saved.Trials)-1) {
 				return JourneyStartAssessment{}, errors.New("trial outcome hides a required phase SLO failure")
 			}
 			if expected.Required && run.Outcome != "PASS" && state == "PASS_OBSERVED" {

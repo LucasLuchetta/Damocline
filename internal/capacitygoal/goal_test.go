@@ -137,7 +137,7 @@ func TestArrivalCampaignDemandRequiresExactBaseAndConsistentArtifact(t *testing.
 
 func TestCurrentArrivalCampaignRejectsDuplicateTrialRunIDs(t *testing.T) {
 	saved := arrivalcampaign.Result{
-		SchemaVersion: arrivalcampaign.CurrentSchemaVersion, Scenario: "synthetic", Target: "https://app.example.com",
+		SchemaVersion: arrivalcampaign.CurrentSchemaVersion, ExecutionState: "COMPLETED", Scenario: "synthetic", Target: "https://app.example.com",
 		StartedAt: time.Now().UTC().Format(time.RFC3339), WorkloadFingerprint: "fingerprint", WorkerLimit: 2,
 		RequestTimeout: "2s", RequestRateCeiling: 10, P95LimitMS: 500, MaxErrorRate: .1, MinSamplesPerStep: 1,
 		WindowDuration: "10s", BaseStartsPerSecond: 2, Warmup: "0s", Observation: "30s", Recovery: "10s",
@@ -146,6 +146,60 @@ func TestCurrentArrivalCampaignRejectsDuplicateTrialRunIDs(t *testing.T) {
 	}
 	if _, err := EvaluateJourneyCampaign(saved, JourneyStartGoal{PeakStartsPerSecond: 2}); err == nil || !strings.Contains(err.Error(), "distinct run IDs") {
 		t.Fatalf("duplicate trial run IDs accepted: %v", err)
+	}
+}
+
+func TestArrivalCampaignCheckpointIsAuditedAsIncomplete(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
+	defer server.Close()
+	base, err := config.Parse(config.Scenario{
+		Name: "checkpoint", BaseURL: server.URL, Users: 2, Mode: "arrival", ArrivalRate: 1,
+		Duration: "10s", WindowDuration: "2s", MaxRPS: 10, Timeout: "2s", P95LimitMS: 1000, MaxErrorRate: .1,
+		MinSamplesPerStep: 1, Steps: []config.Step{{Name: "read", Method: http.MethodGet, Path: "/"}},
+	}, config.Options{Authorized: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	options := arrivalcampaign.Options{Observation: 10 * time.Second, Recovery: 10 * time.Second, Repeats: 2}
+	var checkpoint arrivalcampaign.Result
+	_, err = arrivalcampaign.WithRunnerProgress(context.Background(), base, options, func(_ context.Context, phaseBase config.Validated) report.Result {
+		run := report.Result{
+			SchemaVersion: report.CurrentSchemaVersion, Name: phaseBase.Scenario.Name,
+			Target: phaseBase.Base.Scheme + "://" + phaseBase.Base.Host, StartedAt: time.Now().UTC().Format(time.RFC3339), Outcome: "PASS",
+			Config: report.RunConfig{Mode: "arrival", ArrivalRate: phaseBase.Scenario.ArrivalRate, Users: phaseBase.Scenario.Users,
+				Duration: phaseBase.Scenario.Duration, WorkloadFingerprint: phaseBase.WorkloadFingerprint, MaxRPS: phaseBase.Scenario.MaxRPS,
+				P95LimitMS: phaseBase.Scenario.P95LimitMS, MaxErrorRate: phaseBase.Scenario.MaxErrorRate,
+				MinSamplesPerStep: phaseBase.Scenario.MinSamplesPerStep, RequestTimeout: phaseBase.Timeout.String(), WindowDuration: phaseBase.Window.String()},
+		}
+		return run
+	}, func(snapshot arrivalcampaign.Result) error {
+		if snapshot.ExecutionState == "RUNNING" && snapshot.PendingTrial != nil && len(snapshot.PendingTrial.Phases) > 0 {
+			checkpoint = snapshot
+		}
+		return nil
+	})
+	if err != nil || checkpoint.ExecutionState != "RUNNING" || checkpoint.PendingTrial == nil {
+		t.Fatalf("campaign did not produce an in-progress checkpoint: checkpoint=%+v err=%v", checkpoint, err)
+	}
+	assessment, err := EvaluateJourneyCampaign(checkpoint, JourneyStartGoal{PeakStartsPerSecond: 1})
+	if err != nil || assessment.State != "INSUFFICIENT_EVIDENCE" {
+		t.Fatalf("in-progress artifact was not retained as incomplete evidence: assessment=%+v err=%v", assessment, err)
+	}
+	duplicate := checkpoint
+	duplicate.Trials = append([]arrivalcampaign.Trial(nil), checkpoint.Trials...)
+	duplicate.Trials = append(duplicate.Trials, arrivalcampaign.Trial{Number: 1, RunID: checkpoint.PendingTrial.RunID})
+	duplicatePending := *checkpoint.PendingTrial
+	duplicatePending.Number = 2
+	duplicate.PendingTrial = &duplicatePending
+	if _, err := EvaluateJourneyCampaign(duplicate, JourneyStartGoal{PeakStartsPerSecond: 1}); err == nil || !strings.Contains(err.Error(), "distinct run IDs") {
+		t.Fatalf("pending trial reused a previous trial ID: %v", err)
+	}
+	malformed := checkpoint
+	pending := *checkpoint.PendingTrial
+	pending.RunID = strings.Repeat("z", 32)
+	malformed.PendingTrial = &pending
+	if _, err := EvaluateJourneyCampaign(malformed, JourneyStartGoal{PeakStartsPerSecond: 1}); err == nil || !strings.Contains(err.Error(), "malformed") {
+		t.Fatalf("malformed pending trial ID was accepted: %v", err)
 	}
 }
 

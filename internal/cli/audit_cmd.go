@@ -63,6 +63,9 @@ func auditCmd(args []string, stdout, stderr io.Writer) int {
 	audit := assessment.Audit
 	fmt.Fprintln(stdout, "--- DAMOCLINE | CAMPAIGN EVIDENCE AUDIT (OFFLINE) ---")
 	fmt.Fprintf(stdout, "Observed campaign outcome: %s\n", audit.ObservedOutcome)
+	if audit.ExecutionState != "" {
+		fmt.Fprintf(stdout, "Campaign execution state: %s\n", audit.ExecutionState)
+	}
 	fmt.Fprintf(stdout, "Audited evidence verdict: %s\n", audit.State)
 	fmt.Fprintf(stdout, "Recomputed measurement quality: %s\n", audit.MeasurementQuality)
 	fmt.Fprintf(stdout, "Required phases reviewed: %d\n", audit.RequiredPhases)

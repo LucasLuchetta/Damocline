@@ -46,8 +46,9 @@ func TestCooldownSeparatesArrivalTrialsAndPersistsRunIDs(t *testing.T) {
 	base := validatedArrival(t)
 	cooldown := 25 * time.Millisecond
 	var trialStarts []time.Time
+	var snapshots []Result
 	calls := 0
-	result, err := WithRunner(context.Background(), base, Options{
+	result, err := WithRunnerProgress(context.Background(), base, Options{
 		Observation: 10 * time.Second, Recovery: 10 * time.Second, Repeats: 2, Cooldown: cooldown,
 	}, func(_ context.Context, v config.Validated) report.Result {
 		calls++
@@ -55,10 +56,28 @@ func TestCooldownSeparatesArrivalTrialsAndPersistsRunIDs(t *testing.T) {
 			trialStarts = append(trialStarts, time.Now())
 		}
 		return syntheticArrivalPhase(v, "PASS")
+	}, func(snapshot Result) error {
+		snapshots = append(snapshots, snapshot)
+		return nil
 	})
 	if err != nil || result.Outcome != "PASS" || result.Cooldown != cooldown.String() || len(result.Trials) != 2 ||
 		result.Trials[0].RunID == "" || result.Trials[0].RunID == result.Trials[1].RunID || len(trialStarts) != 2 || trialStarts[1].Sub(trialStarts[0]) < cooldown {
 		t.Fatalf("arrival cooldown or independent trial identity was not preserved: starts=%v result=%+v err=%v", trialStarts, result, err)
+	}
+	if len(snapshots) < 7 || snapshots[len(snapshots)-1].ExecutionState != "COMPLETED" {
+		t.Fatalf("arrival campaign did not persist its final state: %+v", snapshots)
+	}
+	foundPendingPhase := false
+	for _, snapshot := range snapshots[:len(snapshots)-1] {
+		if snapshot.ExecutionState != "RUNNING" || snapshot.Outcome != "INCONCLUSIVE" || snapshot.PendingTrial == nil || snapshot.PendingTrial.Outcome != "IN_PROGRESS" {
+			t.Fatalf("arrival checkpoint overstated completion: %+v", snapshot)
+		}
+		if len(snapshot.PendingTrial.Phases) > 0 {
+			foundPendingPhase = true
+		}
+	}
+	if !foundPendingPhase {
+		t.Fatal("arrival checkpoints did not retain completed phase evidence")
 	}
 }
 

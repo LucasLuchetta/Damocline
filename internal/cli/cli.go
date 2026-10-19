@@ -493,6 +493,12 @@ func campaignCmd(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "configuration error: %v\n", err)
 		return 2
 	}
+	if !*dry {
+		if err := rejectCampaignOutputAlias(*filename, *out); err != nil {
+			fmt.Fprintf(stderr, "invalid campaign output: %v\n", err)
+			return 2
+		}
+	}
 	validated, err := config.Parse(scenario, config.Options{Authorized: *authorized || *dry, AllowWrites: *writes, AllowInsecureHTTP: *insecure})
 	if err != nil {
 		fmt.Fprintf(stderr, "configuration error: %v\n", err)
@@ -524,7 +530,9 @@ func campaignCmd(args []string, stdout, stderr io.Writer) int {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	result, err := campaign.Run(ctx, validated, options)
+	result, err := campaign.RunWithProgress(ctx, validated, options, func(snapshot campaign.Result) error {
+		return report.WriteAnyJSON(*out, snapshot)
+	})
 	if err != nil {
 		fmt.Fprintf(stderr, "campaign error: %v\n", err)
 		return 2
@@ -551,10 +559,6 @@ func campaignCmd(args []string, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stdout, "Campaign outcome: %s\n", result.Outcome)
 	fmt.Fprintln(stdout, "This is repeated observed evidence under the configured workload. It is not a universal capacity certification or infrastructure recommendation.")
 	if *out != "" {
-		if err := report.WriteAnyJSON(*out, result); err != nil {
-			fmt.Fprintf(stderr, "report error: %v\n", err)
-			return 2
-		}
 		fmt.Fprintf(stdout, "Report: %s\n", *out)
 	}
 	if result.Outcome != "PASS" {

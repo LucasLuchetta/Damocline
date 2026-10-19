@@ -73,6 +73,34 @@ func TestCampaignsRequireOutputArtifactOutsideDryRun(t *testing.T) {
 	}
 }
 
+func TestCampaignOutputCannotOverwriteScenarioFile(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		path string
+		args []string
+	}{
+		{name: "closed", path: filepath.Join("..", "..", "examples", "advanced-readonly.json"), args: []string{"campaign", "--warmup", "0s", "--observation", "10s", "--recovery", "10s", "--repeats", "2"}},
+		{name: "arrival", path: filepath.Join("..", "..", "examples", "arrival-rate-readonly.json"), args: []string{"arrival-campaign", "--observation", "10s", "--recovery", "10s", "--repeats", "2"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			before, err := os.ReadFile(tc.path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			args := append([]string{tc.args[0], "--config", tc.path}, tc.args[1:]...)
+			args = append(args, "--out", tc.path)
+			var stdout, stderr bytes.Buffer
+			if code := Run(args, &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "must not refer to the scenario configuration") {
+				t.Fatalf("campaign accepted its scenario as the output artifact: code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+			}
+			after, err := os.ReadFile(tc.path)
+			if err != nil || !bytes.Equal(before, after) {
+				t.Fatalf("scenario file changed after output alias rejection: err=%v", err)
+			}
+		})
+	}
+}
+
 func TestCampaignDryRunsShowLocalGeneratorGuardrails(t *testing.T) {
 	for _, tc := range []struct {
 		name string

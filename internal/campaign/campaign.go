@@ -15,7 +15,7 @@ import (
 	"github.com/LucasLuchetta/Damocline/internal/report"
 )
 
-const CurrentSchemaVersion = 9
+const CurrentSchemaVersion = 10
 
 const (
 	DefaultWallTimeLimit = 15 * time.Minute
@@ -134,8 +134,13 @@ type Trial struct {
 	AbortReason string  `json:"abort_reason,omitempty"`
 }
 
+// ProgressFunc durably records a campaign snapshot. The snapshot may carry a
+// pending trial whose terminal outcome is not yet known.
+type ProgressFunc func(Result) error
+
 type Result struct {
 	SchemaVersion          int                         `json:"schema_version"`
+	ExecutionState         string                      `json:"execution_state,omitempty"`
 	Scenario               string                      `json:"scenario"`
 	BaseUsers              int                         `json:"base_users"`
 	Target                 string                      `json:"target"`
@@ -154,6 +159,7 @@ type Result struct {
 	Budget                 string                      `json:"budget,omitempty"`
 	Repeats                int                         `json:"repeats"`
 	Trials                 []Trial                     `json:"trials"`
+	PendingTrial           *Trial                      `json:"pending_trial,omitempty"`
 	ObservationVariability *Variability                `json:"observation_variability,omitempty"`
 	Outcome                string                      `json:"outcome"`
 	Notes                  []string                    `json:"notes"`
@@ -307,10 +313,22 @@ func PlannedBudget(options Options) time.Duration {
 }
 
 func Run(ctx context.Context, base config.Validated, options Options) (Result, error) {
-	return WithRunner(ctx, base, options, engine.Run)
+	return RunWithProgress(ctx, base, options, nil)
 }
 
 func WithRunner(ctx context.Context, base config.Validated, options Options, runner Runner) (Result, error) {
+	return WithRunnerProgress(ctx, base, options, runner, nil)
+}
+
+// RunWithProgress executes native phases and reports durable snapshots after
+// each completed phase, so a forced process stop does not erase prior evidence.
+func RunWithProgress(ctx context.Context, base config.Validated, options Options, progress ProgressFunc) (Result, error) {
+	return WithRunnerProgress(ctx, base, options, engine.Run, progress)
+}
+
+// WithRunnerProgress is WithRunner with an optional synchronous checkpoint
+// callback. A callback error stops execution before another phase starts.
+func WithRunnerProgress(ctx context.Context, base config.Validated, options Options, runner Runner, progress ProgressFunc) (Result, error) {
 	if err := ValidateForScenario(base, options); err != nil {
 		return Result{}, err
 	}
@@ -344,6 +362,7 @@ func WithRunner(ctx context.Context, base config.Validated, options Options, run
 	cooldownDuration := options.Cooldown.String()
 	result := Result{
 		SchemaVersion:       CurrentSchemaVersion,
+		ExecutionState:      "RUNNING",
 		Scenario:            base.Scenario.Name,
 		BaseUsers:           base.Scenario.Users,
 		Target:              base.Base.Scheme + "://" + base.Base.Host,
@@ -371,12 +390,47 @@ func WithRunner(ctx context.Context, base config.Validated, options Options, run
 	if options.LongRun {
 		result.Notes = append(result.Notes, "Long-run mode was explicitly enabled for a user-declared staging environment with a bounded wall-time budget; Damocline does not verify the environment designation.")
 	}
-	for number := 1; number <= options.Repeats; number++ {
-		runID, err := newRunID()
-		if err != nil {
-			return result, fmt.Errorf("create trial run ID: %w", err)
+	checkpoint := func(trial Trial) error {
+		if progress == nil {
+			return nil
 		}
-		trial := Trial{RunID: runID, Number: number, Phases: []Phase{}, Outcome: "PASS"}
+		snapshot := result
+		snapshot.Outcome = "INCONCLUSIVE"
+		snapshot.ExecutionState = "RUNNING"
+		trial.Outcome = "IN_PROGRESS"
+		snapshot.PendingTrial = &trial
+		if err := progress(snapshot); err != nil {
+			return fmt.Errorf("persist campaign checkpoint: %w", err)
+		}
+		return nil
+	}
+	finish := func() error {
+		result.ExecutionState = "COMPLETED"
+		result.PendingTrial = nil
+		if progress != nil {
+			if err := progress(result); err != nil {
+				return fmt.Errorf("persist final campaign report: %w", err)
+			}
+		}
+		return nil
+	}
+	var pending *Trial
+	for number := 1; number <= options.Repeats; number++ {
+		var trial Trial
+		if pending != nil {
+			trial = *pending
+			trial.Outcome = "PASS"
+			pending = nil
+		} else {
+			runID, err := newRunID()
+			if err != nil {
+				return result, fmt.Errorf("create trial run ID: %w", err)
+			}
+			trial = Trial{RunID: runID, Number: number, Phases: []Phase{}, Outcome: "PASS"}
+		}
+		if err := checkpoint(trial); err != nil {
+			return result, err
+		}
 		spikeFailed := false
 		for _, phase := range PlannedTrialPhases(options, base.Scenario.Users, number) {
 			if ctx.Err() != nil {
@@ -403,6 +457,9 @@ func WithRunner(ctx context.Context, base config.Validated, options Options, run
 				stability = AssessStabilityWithPolicy(run, options.Stability)
 			}
 			trial.Phases = append(trial.Phases, Phase{Name: phase.Name, EvidenceState: state, Reason: reason, Stability: stability, Run: run})
+			if err := checkpoint(trial); err != nil {
+				return result, err
+			}
 			if ctx.Err() != nil {
 				trial.Outcome = "ABORTED"
 				trial.AbortReason = abortReason(ctx.Err(), parent.Err())
@@ -451,7 +508,21 @@ func WithRunner(ctx context.Context, base config.Validated, options Options, run
 		result.Trials = append(result.Trials, trial)
 		if trial.Outcome != "PASS" {
 			result.Outcome = trial.Outcome
+			if err := finish(); err != nil {
+				return result, err
+			}
 			return result, nil
+		}
+		if number < options.Repeats {
+			runID, err := newRunID()
+			if err != nil {
+				return result, fmt.Errorf("create trial run ID: %w", err)
+			}
+			next := Trial{RunID: runID, Number: number + 1, Phases: []Phase{}, Outcome: "IN_PROGRESS"}
+			pending = &next
+			if err := checkpoint(next); err != nil {
+				return result, err
+			}
 		}
 		if number < options.Repeats && options.Cooldown > 0 {
 			timer := time.NewTimer(options.Cooldown)
@@ -464,6 +535,9 @@ func WithRunner(ctx context.Context, base config.Validated, options Options, run
 	}
 	result.Outcome = "PASS"
 	result.ObservationVariability = summarizeObservationVariability(result.Trials)
+	if err := finish(); err != nil {
+		return result, err
+	}
 	return result, nil
 }
 

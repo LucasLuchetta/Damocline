@@ -59,6 +59,12 @@ func arrivalCampaignCmd(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "configuration error: %v\n", err)
 		return 2
 	}
+	if !*dry {
+		if err := rejectCampaignOutputAlias(*filename, *out); err != nil {
+			fmt.Fprintf(stderr, "invalid campaign output: %v\n", err)
+			return 2
+		}
+	}
 	if scenario.Mode != "arrival" {
 		fmt.Fprintln(stderr, "arrival-campaign requires mode=arrival; closed-loop workloads use campaign")
 		return 2
@@ -139,7 +145,9 @@ func arrivalCampaignCmd(args []string, stdout, stderr io.Writer) int {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	result, err := arrivalcampaign.Run(ctx, validated, options)
+	result, err := arrivalcampaign.RunWithProgress(ctx, validated, options, func(snapshot arrivalcampaign.Result) error {
+		return report.WriteAnyJSON(*out, snapshot)
+	})
 	if err != nil {
 		fmt.Fprintf(stderr, "arrival campaign error: %v\n", err)
 		return 2
@@ -171,10 +179,6 @@ func arrivalCampaignCmd(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	if *out != "" {
-		if err := report.WriteAnyJSON(*out, result); err != nil {
-			fmt.Fprintf(stderr, "report error: %v\n", err)
-			return 2
-		}
 		fmt.Fprintf(stdout, "Report: %s\n", *out)
 	}
 	if result.Outcome != "PASS" {

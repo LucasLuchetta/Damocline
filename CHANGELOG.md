@@ -8,6 +8,7 @@ This project follows a human-maintained changelog. No release exists yet.
 - Enforce the configured observation boundary for scheduler arrivals and closed-loop journey starts even when timer delivery is delayed; late open-loop slots remain explicitly reconciled as generator drops while admitted work drains.
 
 ### Added
+- Checkpoint closed-loop and open-arrival campaign JSON atomically after each completed phase, preserve a pending trial as `RUNNING`, and audit interrupted artifacts as incomplete evidence.
 - Add a bounded 0–5 minute inter-trial cooldown to both campaign modes, persist unique random trial IDs, include pauses in campaign budgets, validate schedules offline, and retain cooldown interruptions as aborted trials.
 - Require `--out` for every non-dry-run closed-loop or open-arrival campaign so failed, incomplete and passing phase evidence is retained for offline review.
 - Add an integrated loopback saturation/recovery fixture for closed-loop and open-arrival campaigns, reconciling phase SLO outcomes, planned and completed workload, unfinished journeys, and generator samples.

@@ -48,7 +48,7 @@ func auditFixtureAtUsers(users int) campaign.Result {
 	}
 	a, b := phaseRun(), phaseRun()
 	e := campaign.Result{
-		SchemaVersion: campaign.CurrentSchemaVersion, Scenario: "synthetic", Target: a.Target,
+		SchemaVersion: campaign.CurrentSchemaVersion, ExecutionState: "COMPLETED", Scenario: "synthetic", Target: a.Target,
 		BaseUsers: users, Warmup: "0s", Observation: "10s", SpikeDuration: "0s", Recovery: "10s", Cooldown: "0s",
 		Budget: "3m20s", Repeats: 2, Outcome: "PASS", Soak: "10s", StabilityPolicy: &stabilityPolicy,
 	}
@@ -77,6 +77,31 @@ func TestAuditCampaignObservationalPassDoesNotCertifyCapacity(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(a.Findings, " "), "not a validated capacity ceiling") {
 		t.Fatalf("missing explicit certification limitation: %+v", a)
+	}
+}
+
+func TestRunningCampaignCheckpointRemainsAuditableButInconclusive(t *testing.T) {
+	evidence := auditFixture()
+	pending := evidence.Trials[1]
+	pending.Phases = pending.Phases[:1]
+	pending.Outcome = "IN_PROGRESS"
+	evidence.Trials = evidence.Trials[:1]
+	evidence.PendingTrial = &pending
+	evidence.ExecutionState = "RUNNING"
+	evidence.Outcome = "INCONCLUSIVE"
+	if err := validateEvidence(evidence); err != nil {
+		t.Fatalf("valid in-progress checkpoint was rejected: %v", err)
+	}
+	audit := AuditCampaign(evidence)
+	if audit.State != "INCONCLUSIVE" || audit.ExecutionState != "RUNNING" || audit.ObservedOutcome != "INCONCLUSIVE" || audit.RequiredPhases != 3 || audit.EvidenceID != evidenceDigest(evidence) {
+		t.Fatalf("checkpoint did not preserve partial evidence without a positive verdict: %+v", audit)
+	}
+	if !strings.Contains(strings.Join(audit.Findings, " "), "final campaign and pending-trial outcomes are unknown") {
+		t.Fatalf("checkpoint limitation was not reported: %+v", audit.Findings)
+	}
+	evidence.PendingTrial.RunID = evidence.Trials[0].RunID
+	if err := validateEvidence(evidence); err == nil || !strings.Contains(err.Error(), "distinct valid run IDs") {
+		t.Fatalf("checkpoint accepted a duplicate pending trial ID: %v", err)
 	}
 }
 
