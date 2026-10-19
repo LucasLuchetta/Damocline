@@ -145,6 +145,8 @@ This project follows a human-maintained changelog. No release exists yet.
 - Safety-oriented caveats for small sample sizes, long-tail responses, shared sessions, dropped arrivals and uncontrolled comparisons.
 
 ### Fixed
+- Validate open-arrival exploration coverage against weighted-profile steps and each profile's saved observation-window evidence.
+- Mark an exact open-arrival target as tested whenever its probe is recorded, including failures or interruption before a run, so offline goal assessment can reassess the available evidence.
 - Validate campaign window coverage before load generation, bound default windows across observation/recovery/soak phases, and keep inadequate generator or measurement evidence from becoming an offline SLO-failure finding.
 - Require exact arrival rate, rate ceiling, worker count, duration, timeout, mode, transport and connection policy when matching a workload profile; do not claim offline equivalence for unresolved environment-backed request bodies.
 - Classify non-timeout response-body read failures such as truncated responses as transport failures while preserving their HTTP status and incomplete-body observations as separate counters.

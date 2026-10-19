@@ -45,6 +45,19 @@ func TestArrivalRateSearchUsesJourneyStartsAndExactTarget(t *testing.T) {
 	}
 }
 
+func TestFailedExactTargetIsStillMarkedAsTested(t *testing.T) {
+	base := arrivalScenario(t, 100, 10)
+	result, err := WithRunner(context.Background(), base, Options{
+		MinJourneysPerSecond: 1, MaxJourneysPerSecond: 2, TargetJourneysPerSecond: 1,
+		Repeats: 2, StageDuration: 10 * time.Second,
+	}, func(_ context.Context, v config.Validated) report.Result {
+		return completeRun(v, "FAIL", v.Scenario.ArrivalRate)
+	})
+	if err != nil || result.Outcome != "NO_PASSING_RATE" || !result.TargetTested || len(result.Probes) != 1 || result.Probes[0].Status != "FAIL_OBSERVED" {
+		t.Fatalf("failed exact target was not retained as a tested level: result=%+v err=%v", result, err)
+	}
+}
+
 func TestUnderdeliveryAndGeneratorBindingAreInconclusive(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -124,6 +137,50 @@ func TestMissingStepLedgerIsInsufficientEvidence(t *testing.T) {
 	})
 	if err != nil || result.Outcome != "INSUFFICIENT_EVIDENCE" || len(result.Probes) != 1 || result.Probes[0].Status != "INSUFFICIENT_EVIDENCE" {
 		t.Fatalf("missing step evidence was accepted as passing: result=%+v err=%v", result, err)
+	}
+}
+
+func TestProfileWorkflowsPassCompleteStepAndWindowCoverage(t *testing.T) {
+	base, err := config.Parse(config.Scenario{
+		Name: "profiled-arrival", BaseURL: "http://127.0.0.1:18080", Users: 4,
+		Mode: "arrival", ArrivalRate: 1, Duration: "10s", WindowDuration: "5s", MaxRPS: 10,
+		Timeout: "2s", P95LimitMS: 1000, MaxErrorRate: 0.1,
+		Profiles: []config.Profile{
+			{Name: "browse", Weight: 1, Steps: []config.Step{{Name: "browse", Path: "/browse"}}},
+			{Name: "search", Weight: 1, Steps: []config.Step{{Name: "search", Path: "/search"}}},
+		},
+	}, config.Options{Authorized: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := completeRun(base, "PASS", 1)
+	metrics := report.MetricSet{Total: 5, Success: 5, P95MS: 10}
+	run.Config.WindowDuration = "5s"
+	run.Steps = []report.StepResult{
+		{Profile: "browse", Name: "browse", Metrics: metrics},
+		{Profile: "search", Name: "search", Metrics: metrics},
+	}
+	run.Profiles = []report.ProfileResult{
+		{Name: "browse", Journeys: metrics},
+		{Name: "search", Journeys: metrics},
+	}
+	for i := 0; i < 2; i++ {
+		start := float64(i * 5)
+		window := report.WindowResult{
+			StartSeconds: start, EndSeconds: start + 5, Metrics: metrics, Journeys: metrics,
+			Steps: []report.WindowMetric{
+				{Name: "browse", Metrics: metrics},
+				{Name: "search", Metrics: metrics},
+			},
+			Profiles: []report.WindowMetric{
+				{Name: "browse", Metrics: metrics},
+				{Name: "search", Metrics: metrics},
+			},
+		}
+		run.Windows = append(run.Windows, window)
+	}
+	if issue := sampleCoverageIssue(run, base); issue != "" {
+		t.Fatalf("complete profile-based step and window evidence was rejected: %s", issue)
 	}
 }
 
@@ -208,12 +265,12 @@ func TestDeadlineDuringProbeAbortsSearch(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
 	defer cancel()
 	result, err := WithRunner(ctx, base, Options{
-		MinJourneysPerSecond: 1, MaxJourneysPerSecond: 2, Repeats: 2, StageDuration: 10 * time.Second,
+		MinJourneysPerSecond: 1, MaxJourneysPerSecond: 2, TargetJourneysPerSecond: 1, Repeats: 2, StageDuration: 10 * time.Second,
 	}, func(ctx context.Context, _ config.Validated) report.Result {
 		<-ctx.Done()
 		return report.Result{Outcome: "ABORTED"}
 	})
-	if err != nil || result.Outcome != "ABORTED" || result.FirstFailingJourneysPerSecond != nil ||
+	if err != nil || result.Outcome != "ABORTED" || result.FirstFailingJourneysPerSecond != nil || !result.TargetTested ||
 		len(result.Probes) != 1 || result.Probes[0].Status != "ABORTED" || result.Reason == "" {
 		t.Fatalf("deadline during a probe was interpreted as an application limit: result=%+v err=%v", result, err)
 	}

@@ -102,6 +102,8 @@ Set `"mode": "arrival"`, `"arrival_rate": 5`, `"users": 10`, and `"max_rps": 20`
 
 This is distinct from 10 concurrent users. It answers a different capacity question. `explore` searches closed-loop VU counts; `explore-arrival` searches scheduled journey starts per second and leaves `users` as the worker limit. The arrival search doubles and refines within explicit bounds, repeats passing levels, and classifies each probe as observed pass/fail, invalid delivery, insufficient evidence, or aborted. Its wall-time budget must reserve at least one stage plus the engine's maximum bounded drain allowance; the overall search may still abort when later probes exhaust the budget. Dropped/cancelled arrivals, inadequate request/step/profile samples, generator pressure, a binding HTTP `max_rps` ceiling, and a configured shared-cookie identity prevent an application ceiling from being inferred. These short probes do not establish sustainable capacity or translate journey starts/s into VUs or HTTP requests/s.
 
+For weighted-profile scenarios, the explorer checks each configured step and profile in the aggregate report and every observation window. A profile or step that lacks the configured minimum successful sample coverage makes that probe insufficient evidence.
+
 Preview a bounded schedule without sending traffic:
 
 ```powershell

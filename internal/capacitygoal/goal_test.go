@@ -101,6 +101,25 @@ func TestJourneyStartGoalDoesNotInterpolateAndRejectsMixedUnits(t *testing.T) {
 	}
 }
 
+func TestJourneyStartGoalAcceptsFailedExactTargetMarkerAndReassessesEvidence(t *testing.T) {
+	saved := arrivalexplorer.Result{
+		SchemaVersion: 1, Scenario: "synthetic", StageDuration: "10s", Repeats: 2,
+		WorkerLimit: 4, MinJourneysPerSecond: 1, MaxJourneysPerSecond: 3,
+		TargetJourneysPerSecond: 2, TargetTested: true,
+		Probes: []arrivalexplorer.Probe{{JourneysPerSecond: 2, Status: "FAIL_OBSERVED", Runs: []report.Result{{SchemaVersion: 3, Outcome: "FAIL"}}}},
+	}
+	assessment, err := EvaluateJourneyStarts(saved, JourneyStartGoal{PeakStartsPerSecond: 2})
+	if err != nil || assessment.State != "INSUFFICIENT_EVIDENCE" || assessment.MatchedTrials != 1 {
+		t.Fatalf("failed exact target was rejected by its marker instead of reassessed: assessment=%+v err=%v", assessment, err)
+	}
+
+	saved.Probes[0] = arrivalexplorer.Probe{JourneysPerSecond: 2, Status: "ABORTED", Reason: "deadline", Runs: []report.Result{}}
+	assessment, err = EvaluateJourneyStarts(saved, JourneyStartGoal{PeakStartsPerSecond: 2})
+	if err != nil || assessment.State != "INSUFFICIENT_EVIDENCE" || assessment.MatchedTrials != 0 {
+		t.Fatalf("interrupted exact target was rejected instead of reported as incomplete: assessment=%+v err=%v", assessment, err)
+	}
+}
+
 func TestArrivalCampaignDemandRequiresExactBaseAndConsistentArtifact(t *testing.T) {
 	saved := arrivalcampaign.Result{SchemaVersion: 1, Scenario: "synthetic", Target: "https://app.example.com", StartedAt: time.Now().UTC().Format(time.RFC3339), WorkloadFingerprint: "fingerprint", WorkerLimit: 2,
 		RequestTimeout: "2s", RequestRateCeiling: 10, P95LimitMS: 500, MaxErrorRate: .1, MinSamplesPerStep: 1,

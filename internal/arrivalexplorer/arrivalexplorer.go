@@ -143,7 +143,7 @@ func WithRunner(parent context.Context, base config.Validated, opt Options, runn
 			}
 		}
 		result.Probes = append(result.Probes, p)
-		if rate == opt.TargetJourneysPerSecond && opt.TargetJourneysPerSecond > 0 && len(p.Runs) == opt.Repeats && p.Status == "PASS_OBSERVED" {
+		if rate == opt.TargetJourneysPerSecond && opt.TargetJourneysPerSecond > 0 {
 			result.TargetTested = true
 		}
 		return p.Status
@@ -249,15 +249,22 @@ func sampleCoverageIssue(r report.Result, scenario config.Validated) string {
 	if r.Metrics.Total < minimum || r.Metrics.Success == 0 || r.Journeys.Total == 0 {
 		return "The probe lacks minimum request or completed-journey samples."
 	}
-	expectedSteps := make(map[string]bool, len(scenario.Steps))
-	expectedWindowSteps := make(map[string]bool, len(scenario.Steps))
-	for _, step := range scenario.Steps {
-		profile := step.Profile
-		if len(scenario.Scenario.Profiles) == 0 {
-			profile = ""
+	expectedSteps := make(map[string]bool)
+	expectedWindowSteps := make(map[string]bool)
+	expectedProfiles := make(map[string]bool, len(scenario.Profiles))
+	if len(scenario.Scenario.Profiles) > 0 {
+		for _, profile := range scenario.Profiles {
+			expectedProfiles[profile.Name] = false
+			for _, step := range profile.Steps {
+				expectedSteps[profile.Name+"\x00"+step.Name] = false
+				expectedWindowSteps[step.Name] = false
+			}
 		}
-		expectedSteps[profile+"\x00"+step.Name] = false
-		expectedWindowSteps[step.Name] = false
+	} else {
+		for _, step := range scenario.Steps {
+			expectedSteps["\x00"+step.Name] = false
+			expectedWindowSteps[step.Name] = false
+		}
 	}
 	for _, step := range r.Steps {
 		key := step.Profile + "\x00" + step.Name
@@ -272,12 +279,6 @@ func sampleCoverageIssue(r report.Result, scenario config.Validated) string {
 	for _, observed := range expectedSteps {
 		if !observed {
 			return "The probe is missing named-step evidence for the configured workflow."
-		}
-	}
-	expectedProfiles := make(map[string]bool, len(scenario.Profiles))
-	if len(scenario.Scenario.Profiles) > 0 {
-		for _, profile := range scenario.Profiles {
-			expectedProfiles[profile.Name] = false
 		}
 	}
 	for _, profile := range r.Profiles {
