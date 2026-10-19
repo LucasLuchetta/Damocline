@@ -15,6 +15,7 @@ import (
 
 	"github.com/LucasLuchetta/Damocline/internal/config"
 	"github.com/LucasLuchetta/Damocline/internal/reference"
+	"github.com/LucasLuchetta/Damocline/internal/report"
 )
 
 func TestSeededWeightedExampleDryRunShowsTimingPolicy(t *testing.T) {
@@ -29,6 +30,15 @@ func TestSeededWeightedExampleDryRunShowsTimingPolicy(t *testing.T) {
 		if !strings.Contains(output, expected) {
 			t.Fatalf("dry run omitted %q: %s", expected, output)
 		}
+	}
+}
+
+func TestJourneyP95DescriptionDoesNotInventLatencyWhenNoneCompleted(t *testing.T) {
+	if got := journeyP95Description(report.MetricSet{Total: 0, Cancelled: 2}); got != "unavailable (no completed journeys)" {
+		t.Fatalf("empty journey percentile was presented as a measurement: %q", got)
+	}
+	if got := journeyP95Description(report.MetricSet{Total: 3, P95MS: 125.5}); got != "125.5 ms across completed journeys" {
+		t.Fatalf("completed journey percentile was mislabeled: %q", got)
 	}
 }
 
@@ -61,7 +71,7 @@ func TestRunDisplaysRequestAndSuccessfulJourneyThroughputSeparately(t *testing.T
 	if code := Run([]string{"run", "--config", path, "--authorized"}, &stdout, &stderr); code != 0 {
 		t.Fatalf("loopback run failed: code=%d stderr=%s output=%s", code, stderr.String(), stdout.String())
 	}
-	for _, expected := range []string{"req/s", "Journey throughput:", "successful configured journeys/s", "complete,", "cancelled/incomplete", "near max_rps", "USER CAPACITY:  NOT DETERMINED"} {
+	for _, expected := range []string{"request p95:", "Journey throughput:", "successful configured journeys/s", "completed journey p95:", "complete,", "cancelled/incomplete", "request p95=", "browser rendering or full page load", "near max_rps", "USER CAPACITY:  NOT DETERMINED"} {
 		if !strings.Contains(stdout.String(), expected) {
 			t.Fatalf("run output omitted %q: %s", expected, stdout.String())
 		}
