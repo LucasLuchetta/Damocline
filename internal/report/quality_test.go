@@ -659,6 +659,23 @@ func TestQualityUsesWindowMeanInsteadOfIsolatedProcessCPUPeak(t *testing.T) {
 	}
 }
 
+func TestGeneratorEvidenceIssueUsesMeanProcessCPU(t *testing.T) {
+	r := validSyntheticQualityRun()
+	g := *r.Generator
+	g.PeakProcessRSSBytes = 4096
+	g.PeakProcessCPUUtilizationRatio = 1.2
+	g.MeanProcessCPUUtilizationRatio = 0.1
+	r.Generator = &g
+	if reason := GeneratorEvidenceIssue(r); reason != "" {
+		t.Fatalf("transient process CPU peak rejected adequate mean headroom: %s", reason)
+	}
+	g.MeanProcessCPUUtilizationRatio = GeneratorUtilizationGuard
+	r.Generator = &g
+	if reason := GeneratorEvidenceIssue(r); reason == "" || !strings.Contains(reason, "CPU") {
+		t.Fatalf("sustained process CPU guardrail not enforced: %s", reason)
+	}
+}
+
 func TestQualityRejectsCorruptedAccounting(t *testing.T) {
 	for _, mutate := range []func(*Result){
 		func(r *Result) { r.Metrics.Success++ },

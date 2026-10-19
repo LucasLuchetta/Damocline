@@ -52,7 +52,7 @@ func GeneratorEvidenceIssue(r Result) string {
 	if r.Config.MaxRPS <= 0 || r.WindowSeconds() <= 0 {
 		return "Configured request ceiling or observation duration is missing."
 	}
-	if r.Generator.GoCPUUtilizationRatio >= GeneratorUtilizationGuard || r.Generator.PeakProcessCPUUtilizationRatio >= GeneratorUtilizationGuard {
+	if r.Generator.GoCPUUtilizationRatio >= GeneratorUtilizationGuard || r.Generator.MeanProcessCPUUtilizationRatio >= GeneratorUtilizationGuard {
 		return "Generator CPU reached the project's conservative utilization guardrail."
 	}
 	if float64(r.Metrics.Total)/r.WindowSeconds() >= GeneratorUtilizationGuard*float64(r.Config.MaxRPS) {

@@ -57,7 +57,7 @@ func TestGeneratorSaturationBlocksBusinessClaim(t *testing.T) {
 
 func TestProcessGeneratorSaturationBlocksBusinessClaim(t *testing.T) {
 	ex := exploration(20)
-	ex.Probes[0].Runs[1].Generator.PeakProcessCPUUtilizationRatio = 0.95
+	ex.Probes[0].Runs[1].Generator.MeanProcessCPUUtilizationRatio = 0.95
 	a, err := Evaluate(ex, Goal{PeakUsers: 20})
 	if err != nil || a.State != "INSUFFICIENT_EVIDENCE" {
 		t.Fatalf("process-level generator saturation must block the business claim: %+v %v", a, err)
