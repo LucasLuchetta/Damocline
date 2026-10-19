@@ -845,8 +845,8 @@ func execute(parent context.Context, client *http.Client, base *url.URL, timeout
 }
 
 func jsonAssertionsMatch(assertions map[string]string, body []byte) bool {
-	var document any
-	if err := json.Unmarshal(body, &document); err != nil {
+	document, err := decodeJSONDocument(body)
+	if err != nil {
 		return false
 	}
 	for pointer, expected := range assertions {
@@ -856,6 +856,23 @@ func jsonAssertionsMatch(assertions map[string]string, body []byte) bool {
 		}
 	}
 	return true
+}
+
+func decodeJSONDocument(body []byte) (any, error) {
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.UseNumber()
+	var document any
+	if err := decoder.Decode(&document); err != nil {
+		return nil, err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return nil, errors.New("multiple JSON values")
+		}
+		return nil, err
+	}
+	return document, nil
 }
 
 func isDNSFailure(err error) bool {
@@ -972,7 +989,9 @@ func extractValues(extracts map[string]config.Extract, headers http.Header, body
 			continue
 		}
 		if document == nil {
-			if err := json.Unmarshal(body, &document); err != nil {
+			var err error
+			document, err = decodeJSONDocument(body)
+			if err != nil {
 				return nil, fmt.Errorf("decode JSON response: %w", err)
 			}
 		}
@@ -1011,6 +1030,8 @@ func jsonPointer(document any, pointer string) (string, bool) {
 		return value, true
 	case float64:
 		return strconv.FormatFloat(value, 'f', -1, 64), true
+	case json.Number:
+		return value.String(), true
 	case bool:
 		return strconv.FormatBool(value), true
 	default:

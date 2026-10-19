@@ -949,6 +949,42 @@ func TestJSONPostconditionTurnsFalseHTTP200IntoBusinessFailure(t *testing.T) {
 	}
 }
 
+func TestDependentNumericJSONWorkflowPreservesLargeIntegerExactly(t *testing.T) {
+	const id = "9007199254740993"
+	var wrongOwner atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/session":
+			_, _ = fmt.Fprint(w, `{"id":`+id+`}`)
+		case "/records":
+			if r.URL.Query().Get("owner") != id {
+				wrongOwner.Add(1)
+				_, _ = fmt.Fprint(w, `{"id":0}`)
+				return
+			}
+			_, _ = fmt.Fprint(w, `{"id":`+id+`}`)
+		default:
+			t.Errorf("unexpected path %q", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	s := config.Scenario{Name: "large numeric ID workflow", BaseURL: srv.URL, Users: 1, Duration: "1s", MaxRPS: 20, P95LimitMS: 1000, MaxErrorRate: 0,
+		Steps: []config.Step{
+			{Name: "session", Path: "/session", Extract: map[string]config.Extract{"id": {JSONPointer: "/id"}}},
+			{Name: "verify", Path: "/records?owner={{id}}", JSONAssertions: map[string]string{"/id": id}},
+		}}
+	v, err := config.Parse(s, config.Options{Authorized: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	v.Duration = 250 * time.Millisecond
+	r := Run(context.Background(), v)
+	if r.Outcome != "PASS" || wrongOwner.Load() != 0 || r.Metrics.Reasons["assertion_json_mismatch"] != 0 {
+		t.Fatalf("large numeric JSON identifier was rounded during extraction or assertion: outcome=%s wrong_owner=%d metrics=%+v", r.Outcome, wrongOwner.Load(), r.Metrics)
+	}
+}
+
 func TestFailedExtractionFailsStep(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"missing":true}`))
