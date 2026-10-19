@@ -40,6 +40,13 @@ func GeneratorEvidenceIssue(r Result) string {
 		r.SchemaVersion >= 16 && AssessQuality(r).State == QualityInvalid {
 		return "Report accounting or generator evidence is invalid."
 	}
+	return GeneratorCapacityIssue(r)
+}
+
+// GeneratorCapacityIssue screens evidence that the load generator could
+// deliver the configured workload with adequate health and headroom. It does
+// not revalidate report accounting or infer application-side saturation.
+func GeneratorCapacityIssue(r Result) string {
 	if r.Metrics.Total <= 0 || r.Generator == nil || r.Generator.Samples < 2 || !r.Generator.GoCPUValid ||
 		r.Generator.ProcessSamples < 2 || !r.Generator.ProcessCPUValid || r.Generator.PeakProcessRSSBytes == 0 {
 		return "Generator process health evidence is incomplete."

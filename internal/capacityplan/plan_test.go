@@ -8,6 +8,7 @@ import (
 
 	"github.com/LucasLuchetta/Damocline/internal/campaign"
 	"github.com/LucasLuchetta/Damocline/internal/capacitygoal"
+	"github.com/LucasLuchetta/Damocline/internal/generatorhealth"
 	"github.com/LucasLuchetta/Damocline/internal/report"
 )
 
@@ -326,13 +327,15 @@ func validStatisticalRun() report.Result {
 	}
 	return report.Result{
 		Outcome: "PASS", ObservationSeconds: 10,
-		Config:  report.RunConfig{P95LimitMS: 100, MaxErrorRate: 0.01, MinSamplesPerStep: 1, WindowDuration: "10s"},
+		Config:  report.RunConfig{P95LimitMS: 100, MaxErrorRate: 0.01, MinSamplesPerStep: 1, WindowDuration: "10s", MaxRPS: 1000},
 		Metrics: metrics, Steps: []report.StepResult{{Name: "step", Metrics: metrics}},
 		Windows: []report.WindowResult{{StartSeconds: 0, EndSeconds: 10, Metrics: metrics,
 			Journeys: metrics, Steps: []report.WindowMetric{{Name: "step", Metrics: metrics}}}},
 		SchemaVersion: report.CurrentSchemaVersion,
 		Journeys:      metrics,
-		Quality:       &report.Quality{State: report.QualityValid},
+		Generator: &generatorhealth.Summary{Samples: 4, GoCPUValid: true, ProcessSamples: 4, ProcessCPUValid: true,
+			PeakProcessRSSBytes: 1024},
+		Quality: &report.Quality{State: report.QualityValid},
 	}
 }
 

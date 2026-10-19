@@ -172,12 +172,13 @@ func TestStabilityScreenDetectsThroughputLossAndMissingCoverage(t *testing.T) {
 func TestNativeEngineCampaignRecordsStableLoopbackWindows(t *testing.T) {
 	var received atomic.Int64
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		time.Sleep(20 * time.Millisecond)
 		received.Add(1)
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer server.Close()
 	v, err := config.Parse(config.Scenario{
-		Name: "bounded local campaign", BaseURL: server.URL, Users: 1, Duration: "10s", MaxRPS: 40,
+		Name: "bounded local campaign", BaseURL: server.URL, Users: 1, Duration: "10s", MaxRPS: 100,
 		P95LimitMS: 1000, MaxErrorRate: 0.1, MinSamplesPerStep: 20,
 		Steps: []config.Step{{Name: "read", Path: "/", ExpectedStatus: []int{204}}},
 	}, config.Options{Authorized: true})
@@ -192,6 +193,16 @@ func TestNativeEngineCampaignRecordsStableLoopbackWindows(t *testing.T) {
 		if len(trial.Phases) != 1 || trial.Phases[0].Stability != "NO_LARGE_DRIFT_DETECTED" || trial.Phases[0].EvidenceState != "PASS_OBSERVED" || len(trial.Phases[0].Run.Windows) != 4 {
 			t.Fatalf("missing real engine window evidence: %+v", trial.Phases)
 		}
+	}
+	run := result.Trials[0].Phases[0].Run
+	run.Generator.MeanProcessCPUUtilizationRatio = report.GeneratorUtilizationGuard
+	if state, reason := ClassifyEvidence(run); state != "INVALID_DELIVERY" || reason == "" {
+		t.Fatalf("generator-bound native phase was accepted: %s %q", state, reason)
+	}
+	run.Generator.MeanProcessCPUUtilizationRatio = 0.1
+	run.Generator.PeakProcessCPUUtilizationRatio = 1.1
+	if state, reason := ClassifyEvidence(run); state != "PASS_OBSERVED" {
+		t.Fatalf("transient process CPU peak invalidated native evidence: %s %q", state, reason)
 	}
 }
 
