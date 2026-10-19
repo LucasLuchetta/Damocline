@@ -154,6 +154,27 @@ schedule and native run evidence; it never interpolates or treats a spike as the
 business demand target. Ordinary external run quality remains LIMITED, so this
 path does not certify sustainable capacity.
 
+An optional local calibration can gate the exact base and spike rates before
+any campaign phase starts:
+
+```powershell
+go run ./cmd/damocline arrival-campaign --config .\arrival.local.json --observation 2m --recovery 30s --repeats 2 --calibration .damocline\calibration\reference.json --authorized --out .damocline\reports\arrival-campaign.json
+```
+
+Only exact passing schema-v6-or-later workload-matrix profiles are accepted;
+rates are not interpolated. The current generator runtime, age, worker limit,
+request-rate ceiling, timeout, connection policy and declared one-step request
+shape must match. If any planned base or spike rate is not covered, the command
+stops before traffic. Dry-run applies the same gate. The fixture's short profile
+does not establish headroom for longer campaign phases, and no artifact proves
+the target endpoint identity or response behavior. Without `--calibration`, no
+preflight readiness check is performed.
+
+For a single open-arrival run, `--require-calibration` makes `--calibration`
+mandatory and blocks before traffic when the exact local generator envelope
+does not match. Both are experimental generator-delivery gates, not target
+capacity gates. Closed-loop campaigns and `explore-arrival` are not covered.
+
 Recovery must be at least 10 seconds. Observation and optional soak need at least
 three complete configured windows; when `window_duration` is omitted, the
 campaign chooses a bounded window that fits the shortest evaluated phase. An

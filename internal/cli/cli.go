@@ -15,6 +15,7 @@ import (
 
 	"github.com/LucasLuchetta/Damocline/internal/appmetrics"
 	"github.com/LucasLuchetta/Damocline/internal/arrivalexplorer"
+	"github.com/LucasLuchetta/Damocline/internal/calibration"
 	"github.com/LucasLuchetta/Damocline/internal/campaign"
 	"github.com/LucasLuchetta/Damocline/internal/capacitygoal"
 	"github.com/LucasLuchetta/Damocline/internal/config"
@@ -112,13 +113,13 @@ Usage:
   damocline goal --file capacity.json (--peak-users 20 | --peak-journeys-per-second 5) [--growth-percent 25] [--reserve-percent 20]
 	  damocline plan --campaign campaign.json --peak-users 20 [--growth-percent 25] [--reserve-percent 20]
 	damocline audit --campaign campaign.json [--campaign higher-level.json] [--peak-users 20] [--growth-percent 25] [--reserve-percent 20] [--out assessment.json]
-  damocline run --config scenario.json --authorized [--calibration reports/reference.json] [--out reports/run.json]
+  damocline run --config scenario.json --authorized [--calibration reports/reference.json --require-calibration] [--out reports/run.json]
   damocline run --config scenario.json --dry-run
   damocline explore --config scenario.json --min-users 2 --max-users 20 --stage-duration 20s --repeats 2 --authorized
   damocline explore-arrival --config arrival.json --min-journeys-per-second 2 --max-journeys-per-second 20 --authorized
 	  damocline campaign --config scenario.json --warmup 30s --observation 2m --recovery 30s --repeats 2 --authorized
 	  damocline campaign --config staging.json --observation 30m --allow-long-run --staging-confirmed --budget 70m --authorized
-	damocline arrival-campaign --config arrival.json --observation 2m --recovery 30s --repeats 2 --authorized
+  damocline arrival-campaign --config arrival.json --observation 2m --recovery 30s --repeats 2 --calibration reports/reference.json --authorized
 	  damocline arrival-campaign --config staging-arrival.json --observation 30m --allow-long-run --staging-confirmed --budget 70m --authorized
   damocline explore --config scenario.json --peak-users 10 --growth-percent 25 --reserve-percent 20 --authorized
   damocline monitor --duration 3m --interval 2s --out reports/host.json
@@ -305,6 +306,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	dry := fs.Bool("dry-run", false, "validate and display a sanitized plan without sending traffic")
 	out := fs.String("out", "", "write a JSON report (file permissions 0600)")
 	calibrationFile := fs.String("calibration", "", "attach a validated local generator calibration artifact")
+	requireCalibration := fs.Bool("require-calibration", false, "block traffic unless local calibration covers this exact generator workload")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -325,6 +327,30 @@ func run(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		fmt.Fprintf(stderr, "configuration error: %v\n", err)
 		return 2
+	}
+	if *requireCalibration && *calibrationFile == "" {
+		fmt.Fprintln(stderr, "--require-calibration requires --calibration")
+		return 2
+	}
+	if *requireCalibration {
+		if validated.Scenario.Mode != "arrival" {
+			fmt.Fprintln(stderr, "--require-calibration currently supports only exact open-arrival workloads")
+			return 2
+		}
+		record, loadErr := loadCalibration(*calibrationFile)
+		if loadErr != nil {
+			fmt.Fprintf(stderr, "calibration error: %v\n", loadErr)
+			return 2
+		}
+		envelope := calibration.AssessArrivalEnvelope(validated.Scenario, []int{validated.Scenario.ArrivalRate}, record, calibration.CurrentRuntime(), time.Now().UTC())
+		fmt.Fprintf(stdout, "Local generator preflight: %s; target identity, response behavior, and sustained headroom remain unverified.\n", envelope.Status)
+		if len(envelope.Rates) > 0 {
+			fmt.Fprintf(stdout, "  %d scheduled starts/s: %s — %s\n", envelope.Rates[0].ArrivalRate, envelope.Rates[0].Status, envelope.Rates[0].Reason)
+		}
+		if envelope.Status != "READY" {
+			fmt.Fprintln(stderr, "RUN BLOCKED: calibration does not cover this workload; no traffic was sent.")
+			return 2
+		}
 	}
 	fmt.Fprintf(stdout, "Scenario: %s | target: %s://%s | users: %d | duration: %s | max RPS: %d\n", validated.Scenario.Name, validated.Base.Scheme, validated.Base.Host, validated.Scenario.Users, validated.Duration, validated.Scenario.MaxRPS)
 	if len(validated.Scenario.Profiles) > 0 {

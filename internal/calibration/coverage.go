@@ -1,9 +1,11 @@
 package calibration
 
 import (
+	"fmt"
 	"net"
 	"net/url"
 	"runtime"
+	"sort"
 	"strings"
 	"time"
 
@@ -20,6 +22,23 @@ type Dimension struct {
 type Coverage struct {
 	Status     string      `json:"status"`
 	Dimensions []Dimension `json:"dimensions"`
+}
+
+// RateAssessment records whether a calibrated generator profile covers one
+// exact planned arrival rate. It describes generator-side fixture evidence,
+// not target capacity or sustained headroom.
+type RateAssessment struct {
+	ArrivalRate int         `json:"arrival_rate"`
+	Status      string      `json:"status"`
+	Reason      string      `json:"reason"`
+	Dimensions  []Dimension `json:"dimensions"`
+}
+
+// ArrivalEnvelope summarizes exact calibrated coverage for a bounded set of
+// planned arrival rates. A READY result is not a capacity or duration claim.
+type ArrivalEnvelope struct {
+	Status string           `json:"status"`
+	Rates  []RateAssessment `json:"rates"`
 }
 
 type Runtime struct {
@@ -174,6 +193,113 @@ func AssessScenario(s config.Scenario, rec Record, local Runtime, now time.Time)
 	add("response_shape", "UNVERIFIED", "Calibrated response sizes are recorded for local profiles, but the scenario does not prove the target's actual response-size or timing distribution.")
 	add("fixture_identity", "UNVERIFIED", "No authenticated signal proves the configured endpoint is the measured fixture server.")
 	return c
+}
+
+// AssessArrivalEnvelope checks that each planned rate has an exact healthy
+// workload-matrix profile for the declared request shape and current generator
+// runtime. The short fixture duration is used only to match profile controls;
+// this does not establish sustained headroom for the campaign's longer phases.
+func AssessArrivalEnvelope(s config.Scenario, rates []int, rec Record, local Runtime, now time.Time) ArrivalEnvelope {
+	result := ArrivalEnvelope{Status: "BLOCKED", Rates: []RateAssessment{}}
+	if len(rates) == 0 {
+		return result
+	}
+	if err := ValidateRecord(rec); err != nil || rec.SchemaVersion < 6 || rec.Status != "REFERENCE_SMOKE_PASSED" {
+		for _, rate := range rates {
+			result.Rates = append(result.Rates, RateAssessment{ArrivalRate: rate, Status: "BLOCKED",
+				Reason:     "A current passing workload-matrix calibration is unavailable.",
+				Dimensions: []Dimension{{Name: "calibration", Status: "UNVERIFIED", Reason: "A current passing workload-matrix calibration is unavailable."}}})
+		}
+		return result
+	}
+	ordered := append([]int(nil), rates...)
+	sort.Ints(ordered)
+	for i, rate := range ordered {
+		assessment := RateAssessment{ArrivalRate: rate, Status: "BLOCKED"}
+		if rate < 1 || rate > 100 || i > 0 && ordered[i-1] == rate {
+			assessment.Reason = "Planned arrival rates must be unique values within the bounded 1-100/s range."
+			assessment.Dimensions = []Dimension{{Name: "arrival_rate", Status: "OUTSIDE_REFERENCE", Reason: assessment.Reason}}
+			result.Rates = append(result.Rates, assessment)
+			continue
+		}
+		candidate := s
+		candidate.Mode = "arrival"
+		candidate.ArrivalRate = rate
+		profileDuration, profileFound := exactArrivalProfileDuration(candidate, rate, rec)
+		if profileFound {
+			candidate.Duration = profileDuration
+		}
+		coverage := AssessScenario(candidate, rec, local, now.UTC())
+		assessment.Dimensions = coverage.Dimensions
+		if !profileFound {
+			assessment.Dimensions = append(assessment.Dimensions, Dimension{Name: "exact_profile", Status: "OUTSIDE_REFERENCE", Reason: "No exact healthy matrix profile matches this rate, request ceiling, worker limit, timeout, and connection policy."})
+		}
+		blockers := requiredArrivalEnvelopeDimensions(assessment.Dimensions)
+		if len(blockers) == 0 && profileFound {
+			assessment.Status = "READY"
+			assessment.Reason = "An exact local fixture profile covers this scheduled arrival rate and declared request shape; campaign duration, target response behavior, and target identity remain unverified."
+		} else {
+			assessment.Reason = fmt.Sprintf("The local preflight does not cover all generator dimensions for %d scheduled starts/s.", rate)
+		}
+		result.Rates = append(result.Rates, assessment)
+	}
+	for _, assessment := range result.Rates {
+		if assessment.Status != "READY" {
+			return result
+		}
+	}
+	result.Status = "READY"
+	return result
+}
+
+func requiredArrivalEnvelopeDimensions(dimensions []Dimension) []Dimension {
+	required := map[string]bool{
+		"calibration_age": true, "generator_runtime": true, "workload_model": true,
+		"connection_policy": true, "arrival_rate": true, "worker_budget": true,
+		"request_rate_ceiling": true, "request_mix": true, "timing": true,
+		"declared_workload_shape": true,
+	}
+	seen := make(map[string]int, len(required))
+	blockers := make([]Dimension, 0)
+	for _, dimension := range dimensions {
+		if required[dimension.Name] {
+			seen[dimension.Name]++
+			if dimension.Status != "MATCHED" {
+				blockers = append(blockers, dimension)
+			}
+		}
+	}
+	for name := range required {
+		if seen[name] == 0 {
+			blockers = append(blockers, Dimension{Name: name, Status: "UNVERIFIED", Reason: "Required generator preflight evidence is missing."})
+		} else if seen[name] > 1 {
+			blockers = append(blockers, Dimension{Name: name, Status: "INVALID", Reason: "Required generator preflight evidence is duplicated."})
+		}
+	}
+	return blockers
+}
+
+func exactArrivalProfileDuration(s config.Scenario, rate int, rec Record) (string, bool) {
+	if rec.SchemaVersion < 6 || ValidateRecord(rec) != nil || rec.Status != "REFERENCE_SMOKE_PASSED" ||
+		AssessDeclaredWorkloadShape(s, rec).Status != "MATCHED" {
+		return "", false
+	}
+	connectionPolicy := s.ConnectionPolicy
+	if connectionPolicy == "" {
+		connectionPolicy = "reuse"
+	}
+	timeout := s.Timeout
+	if timeout == "" {
+		timeout = "8s"
+	}
+	for _, profile := range rec.Fixture.WorkloadProfiles {
+		if profile.ArrivalRate == rate && profile.MaxRPS == s.MaxRPS && profile.Users == s.Users &&
+			profile.Timeout == timeout && profile.ConnectionPolicy == connectionPolicy &&
+			profile.Mode == "arrival" && profile.TransportScheme == "http" {
+			return profile.Duration, true
+		}
+	}
+	return "", false
 }
 
 // AssessDeclaredWorkloadShape compares the sanitized declared request/session

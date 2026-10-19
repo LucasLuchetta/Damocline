@@ -84,6 +84,48 @@ func TestMatrixRateCeilingRequiresExactCalibratedPair(t *testing.T) {
 	}
 }
 
+func TestArrivalEnvelopeRequiresExactHealthyMatrixAndRuntime(t *testing.T) {
+	artifactFixture := passingArtifact(t)
+	record := artifactFixture.Preflight
+	local := testRuntime()
+	record.Generator.RunnerVersion = local.RunnerVersion
+	now := time.Now().UTC()
+	record.StartedAt = now.Add(-2 * time.Minute).Format(time.RFC3339Nano)
+	record.FinishedAt = now.Add(-time.Minute).Format(time.RFC3339Nano)
+	scenario := config.Scenario{Name: "Synthetic reference workload", BaseURL: "http://127.0.0.1", Mode: "arrival", ArrivalRate: 2, Users: 10,
+		MaxRPS: 50, Duration: "2m", Timeout: "1s", P95LimitMS: 500, MaxErrorRate: 0, Steps: []config.Step{{Name: "work", Method: "GET", Path: "/work"}}}
+	fixtureScenario := scenario
+	fixtureScenario.Duration = "5s"
+	validated, err := config.Parse(fixtureScenario, config.Options{Authorized: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record.FixtureWorkloadFingerprint = validated.WorkloadFingerprint
+	if err := ValidateRecord(record); err != nil {
+		t.Fatalf("calibration fixture invalid: %v", err)
+	}
+	if got := AssessArrivalEnvelope(scenario, []int{2, 5, 10}, record, local, now); got.Status != "READY" {
+		t.Fatalf("exact matrix profiles should cover the declared generator envelope: %+v", got)
+	}
+	if got := AssessArrivalEnvelope(scenario, []int{2, 7}, record, local, now); got.Status != "BLOCKED" {
+		t.Fatalf("unmeasured rates must not be interpolated: %+v", got)
+	}
+	wrongShape := scenario
+	wrongShape.Steps = []config.Step{{Name: "work", Method: "GET", Path: "/other"}}
+	if got := AssessArrivalEnvelope(wrongShape, []int{2}, record, local, now); got.Status != "BLOCKED" {
+		t.Fatalf("uncalibrated request shape must block: %+v", got)
+	}
+	stale := record
+	stale.FinishedAt = now.Add(-25 * time.Hour).Format(time.RFC3339Nano)
+	if got := AssessArrivalEnvelope(scenario, []int{2}, stale, local, now); got.Status != "BLOCKED" {
+		t.Fatalf("stale calibration must block: %+v", got)
+	}
+	changedRuntime := local
+	changedRuntime.GOMAXPROCS++
+	if got := AssessArrivalEnvelope(scenario, []int{2}, record, changedRuntime, now); got.Status != "BLOCKED" {
+		t.Fatalf("changed runtime must block: %+v", got)
+	}
+}
 func TestConnectionPolicyRequiresExactProfileControls(t *testing.T) {
 	a := passingArtifact(t)
 	local := testRuntime()

@@ -67,6 +67,19 @@ The run command revalidates the bounded artifact, its stage ledgers and all nine
 
 This association is an evidence improvement, **not acceptance**. Calibration schema v2 stores an opaque fingerprint for the one-step GET `/work` journey exercised by healthy stages. A matching declared workload-shape dimension proves only that the run declares the same step shape; the JSON fixture artifact is not cryptographically signed, runtime metadata does not authenticate a physical host, and a scenario file cannot prove the endpoint is the reference server or that live responses match the fixture's 4 KiB/20 ms shape. Those dimensions remain `UNVERIFIED`, as does workload-specific generator headroom, so this command cannot produce `VALID_WITHIN_ENVELOPE` or certify application capacity. Legacy schema-v1 artifacts remain readable but their workload shape is unverified. Do not treat an attached artifact as a certificate.
 
+For an opt-in pre-traffic gate on open-arrival `run`, add
+`--require-calibration`; it requires `--calibration` and accepts only exact
+passing schema-v6-or-later profile coverage for the declared rate, request
+shape, worker budget, request ceiling, timing and runtime. `arrival-campaign`
+accepts the same optional `--calibration` gate and checks every planned base
+and spike rate before starting phases. Missing, stale, malformed, runtime
+mismatched, or non-exact coverage blocks traffic. The campaign dry-run performs
+the same check. These gates assess local fixture delivery only. They do not
+verify remote host identity, target response behavior or campaign-duration
+headroom; ordinary target reports remain LIMITED. Without the campaign option,
+no calibration gate is applied. Closed-loop campaigns and arrival exploration
+remain outside this gate.
+
 ## Expanded transport-only reference matrix (G0-03 partial)
 
 Use the optional bounded fixture matrix to exercise Go HTTP transports with an **independent** client/server ledger, without contacting an application or using actual user data:
