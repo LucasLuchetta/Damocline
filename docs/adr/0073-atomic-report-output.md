@@ -22,9 +22,12 @@ temporary file when any pre-replacement step fails.
 
 ## Consequences
 
-An existing report remains intact until a complete replacement is ready. Unix
-reports use mode `0600`; Windows access is governed by the destination
-directory's inherited ACL, since Go permission bits do not configure Windows
-ACL entries. The output size cap includes the final newline. This does not
-provide versioned report history, retention or recovery from storage hardware
-that violates sync semantics; those lifecycle features remain separate work.
+An existing report remains intact until a complete replacement is ready. A
+failure to sync the Unix directory happens after rename; the new report is
+already visible, but the returned error makes uncertain crash durability
+explicit. Unix reports use mode `0600`; Windows access is governed by the
+destination directory's inherited ACL, since Go permission bits do not
+configure Windows ACL entries. The output size cap includes the final newline.
+This does not provide versioned report history, retention or recovery from
+storage hardware that violates sync semantics; those lifecycle features remain
+separate work.
