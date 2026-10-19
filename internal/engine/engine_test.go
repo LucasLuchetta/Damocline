@@ -1172,6 +1172,125 @@ func TestQueryEscapeByteLengthMatchesStandardLibrary(t *testing.T) {
 	}
 }
 
+func FuzzInterpolateBoundedNeverExceedsLimit(f *testing.F) {
+	for _, seed := range []struct {
+		template, replacement string
+		limit                 uint8
+	}{
+		{"prefix-{{token}}", "value", 12},
+		{"{{token}}{{token}}", "x", 1},
+		{"literal only", "unused", 12},
+		{"{{missing}}", "", 12},
+		{"{{token}}-{{bad-name}}", "a/b?c&d=e", 32},
+	} {
+		f.Add(seed.template, seed.replacement, seed.limit)
+	}
+	f.Fuzz(func(t *testing.T, template, replacement string, limitByte uint8) {
+		limit := int(limitByte)
+		variables := map[string]string{"token": replacement}
+		matches := variablePattern.FindAllStringSubmatchIndex(template, -1)
+		var expected strings.Builder
+		missing, oversized, offset := false, false, 0
+		for _, match := range matches {
+			literal := template[offset:match[0]]
+			name := template[match[2]:match[3]]
+			value, ok := variables[name]
+			if !ok {
+				missing = true
+				break
+			}
+			if len(literal) > limit-expected.Len() || len(value) > limit-expected.Len()-len(literal) {
+				oversized = true
+				break
+			}
+			expected.WriteString(literal)
+			expected.WriteString(value)
+			offset = match[1]
+		}
+		if !missing && !oversized {
+			tail := template[offset:]
+			if len(tail) > limit-expected.Len() {
+				oversized = true
+			} else {
+				expected.WriteString(tail)
+			}
+		}
+		got, err := interpolateBounded(template, variables, limit)
+		if missing {
+			if err == nil || !strings.Contains(err.Error(), "missing variable") || got != "" {
+				t.Fatalf("missing variable was not rejected without output: got=%q err=%v", got, err)
+			}
+			return
+		}
+		if oversized {
+			if err != errTemplateExpansionLimit || got != "" {
+				t.Fatalf("oversized expansion was not rejected without output: got=%d bytes err=%v limit=%d", len(got), err, limit)
+			}
+			return
+		}
+		if err != nil {
+			t.Fatalf("valid bounded expansion failed: %v", err)
+		}
+		if len(got) > limit {
+			t.Fatalf("successful expansion has %d bytes, limit=%d", len(got), limit)
+		}
+		if got != expected.String() {
+			t.Fatalf("expansion=%q, want=%q", got, expected.String())
+		}
+	})
+}
+
+func FuzzQueryEscapeByteLengthMatchesStandardLibrary(f *testing.F) {
+	for _, seed := range []string{"plain-token_1.~", "alpha&admin=true+percent%/value", " space ", "東京", "\x00\xff"} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, value string) {
+		got, want := queryEscapeByteLength(value), len(url.QueryEscape(value))
+		if want <= maxExpandedURLBytes {
+			if got != want {
+				t.Fatalf("escaped byte length for %q = %d, standard library=%d", value, got, want)
+			}
+		} else if got <= maxExpandedURLBytes || got > maxExpandedURLBytes+2 {
+			t.Fatalf("oversized escaped value was not stopped just beyond the cap: got=%d, standard library=%d", got, want)
+		}
+	})
+}
+
+func FuzzInterpolateURLNeverReturnsOversizedURL(f *testing.F) {
+	for _, seed := range []struct{ path, token string }{
+		{"/orders/{{token}}", "item-42"},
+		{"/?a={{token}}&b={{token}}", "space & plus+"},
+		{"/{{token}}/{{token}}", strings.Repeat("x", maxExpandedURLBytes)},
+		{"/plain/path", "unused"},
+	} {
+		f.Add(seed.path, seed.token)
+	}
+	base, err := url.Parse("http://127.0.0.1")
+	if err != nil {
+		f.Fatal(err)
+	}
+	f.Fuzz(func(t *testing.T, path, token string) {
+		if path == "" || !strings.HasPrefix(path, "/") || strings.HasPrefix(path, "//") || strings.ContainsAny(path, "\r\n\\") {
+			return // Config parsing rejects paths outside this origin-relative form.
+		}
+		templateURL, err := url.Parse(path)
+		if err != nil || templateURL.Host != "" || templateURL.Scheme != "" || templateURL.Fragment != "" {
+			return // Config parsing rejects absolute URLs and fragments.
+		}
+		got, err := interpolateURL(base, path, map[string]string{"token": token})
+		if err != nil {
+			return
+		}
+		if len(got) > maxExpandedURLBytes {
+			t.Fatalf("successful URL has %d bytes, limit=%d", len(got), maxExpandedURLBytes)
+		}
+		parsed, err := url.Parse(got)
+		if err != nil || parsed.Scheme != base.Scheme || parsed.Host != base.Host {
+			t.Fatalf("successful URL is malformed or escaped its base: URL=%q parsed=%v err=%v", got, parsed, err)
+		}
+	})
+}
+
 func TestExpandedHeaderIsBoundedBeforeDelivery(t *testing.T) {
 	var requests atomic.Int64
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
