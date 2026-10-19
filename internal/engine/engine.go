@@ -274,7 +274,6 @@ func runWithTransport(parent context.Context, v config.Validated, transport *htt
 		journeyOk := true
 		fullyCompleted := true
 		cleanupNeeded := false
-		journeyCtx := ctx
 		variables := map[string]string{}
 		if v.SyntheticDataPrefix != "" {
 			sequence := syntheticSequence.Add(1)
@@ -285,12 +284,12 @@ func runWithTransport(parent context.Context, v config.Validated, transport *htt
 				continue
 			}
 			waitStarted := time.Now()
-			if !waitToken(journeyCtx, ticker.C) {
+			if !waitToken(ctx, ticker.C) {
 				coll.add(sample{name: step.Name, cancelled: true, reason: "journey_cancelled", trace: report.HTTPTrace{RateWaitCancelledCount: 1, RateWaitMS: ms(time.Since(waitStarted))}})
 				fullyCompleted = false
 				break
 			}
-			s, extracted := execute(journeyCtx, client, v.Base, v.Timeout, step, variables, &inFlight)
+			s, extracted := execute(ctx, client, v.Base, v.Timeout, step, variables, &inFlight)
 			if step.Method != http.MethodGet && step.Method != http.MethodHead && s.trace.RequestAttemptCount > 0 {
 				cleanupNeeded = true
 			}
@@ -324,7 +323,7 @@ func runWithTransport(parent context.Context, v config.Validated, transport *htt
 			}
 			if hasNextBusinessStep && pause > 0 {
 				thinkStarted := time.Now()
-				continued := sleep(journeyCtx, pause)
+				continued := sleep(ctx, pause)
 				coll.addThinkTime(profile.Name, time.Since(thinkStarted))
 				if !continued {
 					fullyCompleted = false
