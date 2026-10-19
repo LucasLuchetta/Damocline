@@ -9,13 +9,14 @@ import (
 	"math"
 	"time"
 
+	"github.com/LucasLuchetta/Damocline/internal/calibration"
 	"github.com/LucasLuchetta/Damocline/internal/config"
 	"github.com/LucasLuchetta/Damocline/internal/engine"
 	"github.com/LucasLuchetta/Damocline/internal/generatorhealth"
 	"github.com/LucasLuchetta/Damocline/internal/report"
 )
 
-const CurrentSchemaVersion = 11
+const CurrentSchemaVersion = 12
 
 const (
 	DefaultWallTimeLimit = 15 * time.Minute
@@ -69,20 +70,23 @@ func effectiveStabilityPolicy(policy StabilityPolicy) StabilityPolicy {
 }
 
 type Options struct {
-	Warmup           time.Duration
-	Stabilization    time.Duration
-	Observation      time.Duration
-	SpikeUsers       int
-	SpikeDuration    time.Duration
-	Recovery         time.Duration
-	Soak             time.Duration
-	Cooldown         time.Duration
-	Repeats          int
-	Budget           time.Duration
-	Stability        StabilityPolicy
-	Guardrails       generatorhealth.Guardrails
-	LongRun          bool
-	StagingConfirmed bool
+	Warmup             time.Duration
+	Stabilization      time.Duration
+	Observation        time.Duration
+	SpikeUsers         int
+	SpikeDuration      time.Duration
+	Recovery           time.Duration
+	Soak               time.Duration
+	Cooldown           time.Duration
+	Repeats            int
+	Budget             time.Duration
+	Stability          StabilityPolicy
+	Guardrails         generatorhealth.Guardrails
+	LongRun            bool
+	StagingConfirmed   bool
+	RequireCalibration bool
+	Calibration        *calibration.ClosedLoopEnvelope
+	CalibrationSource  string
 }
 
 // PlannedPhase is one bounded stage in each campaign trial.
@@ -143,31 +147,34 @@ type Trial struct {
 type ProgressFunc func(Result) error
 
 type Result struct {
-	SchemaVersion          int                         `json:"schema_version"`
-	ExecutionState         string                      `json:"execution_state,omitempty"`
-	Scenario               string                      `json:"scenario"`
-	BaseUsers              int                         `json:"base_users"`
-	Target                 string                      `json:"target"`
-	StartedAt              string                      `json:"started_at"`
-	Warmup                 string                      `json:"warmup"`
-	Stabilization          string                      `json:"stabilization,omitempty"`
-	Observation            string                      `json:"observation"`
-	SpikeUsers             int                         `json:"spike_users,omitempty"`
-	SpikeDuration          string                      `json:"spike_duration,omitempty"`
-	Recovery               string                      `json:"recovery"`
-	Soak                   string                      `json:"soak,omitempty"`
-	Cooldown               string                      `json:"cooldown,omitempty"`
-	LongRun                bool                        `json:"long_run,omitempty"`
-	DeclaredEnvironment    string                      `json:"declared_environment,omitempty"`
-	StabilityPolicy        *StabilityPolicy            `json:"stability_policy,omitempty"`
-	GeneratorGuardrails    *generatorhealth.Guardrails `json:"generator_guardrails,omitempty"`
-	Budget                 string                      `json:"budget,omitempty"`
-	Repeats                int                         `json:"repeats"`
-	Trials                 []Trial                     `json:"trials"`
-	PendingTrial           *Trial                      `json:"pending_trial,omitempty"`
-	ObservationVariability *Variability                `json:"observation_variability,omitempty"`
-	Outcome                string                      `json:"outcome"`
-	Notes                  []string                    `json:"notes"`
+	SchemaVersion          int                             `json:"schema_version"`
+	ExecutionState         string                          `json:"execution_state,omitempty"`
+	Scenario               string                          `json:"scenario"`
+	BaseUsers              int                             `json:"base_users"`
+	Target                 string                          `json:"target"`
+	StartedAt              string                          `json:"started_at"`
+	Warmup                 string                          `json:"warmup"`
+	Stabilization          string                          `json:"stabilization,omitempty"`
+	Observation            string                          `json:"observation"`
+	SpikeUsers             int                             `json:"spike_users,omitempty"`
+	SpikeDuration          string                          `json:"spike_duration,omitempty"`
+	Recovery               string                          `json:"recovery"`
+	Soak                   string                          `json:"soak,omitempty"`
+	Cooldown               string                          `json:"cooldown,omitempty"`
+	LongRun                bool                            `json:"long_run,omitempty"`
+	DeclaredEnvironment    string                          `json:"declared_environment,omitempty"`
+	StabilityPolicy        *StabilityPolicy                `json:"stability_policy,omitempty"`
+	GeneratorGuardrails    *generatorhealth.Guardrails     `json:"generator_guardrails,omitempty"`
+	CalibrationRequired    bool                            `json:"calibration_required,omitempty"`
+	Calibration            *calibration.ClosedLoopEnvelope `json:"calibration,omitempty"`
+	CalibrationSource      string                          `json:"calibration_source,omitempty"`
+	Budget                 string                          `json:"budget,omitempty"`
+	Repeats                int                             `json:"repeats"`
+	Trials                 []Trial                         `json:"trials"`
+	PendingTrial           *Trial                          `json:"pending_trial,omitempty"`
+	ObservationVariability *Variability                    `json:"observation_variability,omitempty"`
+	Outcome                string                          `json:"outcome"`
+	Notes                  []string                        `json:"notes"`
 }
 
 // EffectiveStabilityPolicy returns the policy recorded in current campaign
@@ -343,6 +350,15 @@ func WithRunnerProgress(ctx context.Context, base config.Validated, options Opti
 	if options.SpikeUsers > 0 && options.SpikeUsers <= base.Scenario.Users {
 		return Result{}, fmt.Errorf("spike-users must exceed the base scenario users")
 	}
+	if options.RequireCalibration && (options.Calibration == nil || options.Calibration.Status != "READY" || options.CalibrationSource == "") {
+		return Result{}, fmt.Errorf("required closed-loop calibration does not cover every planned VU level")
+	}
+	if options.Calibration != nil && options.Calibration.Status != "BLOCKED" && options.Calibration.Status != "READY" {
+		return Result{}, fmt.Errorf("closed-loop calibration envelope has an unsupported status")
+	}
+	if options.Calibration != nil && options.Calibration.Status == "READY" {
+		return Result{}, fmt.Errorf("closed-loop calibration READY evidence requires a supported exact VU profile")
+	}
 	actorCount := base.Scenario.Users
 	if options.SpikeUsers > actorCount {
 		actorCount = options.SpikeUsers
@@ -391,6 +407,9 @@ func WithRunnerProgress(ctx context.Context, base config.Validated, options Opti
 		DeclaredEnvironment: base.Scenario.Environment,
 		StabilityPolicy:     &stabilityPolicy,
 		GeneratorGuardrails: generatorGuardrails,
+		CalibrationRequired: options.RequireCalibration,
+		Calibration:         options.Calibration,
+		CalibrationSource:   options.CalibrationSource,
 		Budget:              options.Budget.String(),
 		Repeats:             options.Repeats,
 		Trials:              []Trial{},

@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/LucasLuchetta/Damocline/internal/calibration"
 	"github.com/LucasLuchetta/Damocline/internal/config"
 	"github.com/LucasLuchetta/Damocline/internal/generatorhealth"
 	"github.com/LucasLuchetta/Damocline/internal/report"
@@ -114,6 +115,19 @@ func TestCampaignMissingFutureTrialCookieFailsBeforeRunner(t *testing.T) {
 		return report.Result{}
 	}); err == nil || calls != 0 {
 		t.Fatalf("missing future-trial cookie did not fail closed: calls=%d err=%v", calls, err)
+	}
+}
+
+func TestCampaignRequiredCalibrationBlocksBeforeRunner(t *testing.T) {
+	calls := 0
+	envelope := &calibration.ClosedLoopEnvelope{Status: "BLOCKED", Levels: []calibration.ClosedLoopAssessment{{Users: 1, Status: "BLOCKED", Reason: "no closed-loop profile"}}}
+	_, err := WithRunner(context.Background(), scenario(t), Options{Observation: 10 * time.Second, Recovery: 10 * time.Second, Repeats: 2,
+		RequireCalibration: true, Calibration: envelope, CalibrationSource: "reference.json"}, func(context.Context, config.Validated) report.Result {
+		calls++
+		return report.Result{}
+	})
+	if err == nil || calls != 0 {
+		t.Fatalf("required calibration did not block before runner: calls=%d err=%v", calls, err)
 	}
 }
 

@@ -4,6 +4,8 @@ This project follows a human-maintained changelog. No release exists yet.
 
 ## [Unreleased]
 
+- Add opt-in closed-loop campaign calibration preflight, persist exact VU-level coverage and required-policy metadata in campaign schema v12, and block before execution when requested coverage is unavailable. Arrival-mode calibration profiles do not qualify closed-loop VUs.
+
 - Add optional per-trial cookie-session rotation to closed-loop and open-arrival campaigns using `{trial}` environment-prefix expansion. Preflight all actors and workflows across repeats before traffic, retain each trial's set across its phases, and record only the safe schema-v29 scope enum; account identity, validity, and freshness remain unverified.
 
 - Add an optional per-host connection cap and schema-v28 transport acquisition diagnostics. A delayed reused-connection acquisition is surfaced as a client-side queue symptom without claiming proven pool exhaustion.

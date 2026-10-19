@@ -194,6 +194,16 @@ func TestClosedCampaignDryRunShowsCooldownBetweenTrials(t *testing.T) {
 	}
 }
 
+func TestClosedCampaignCalibrationRequirementBlocksBeforeDryRunSchedule(t *testing.T) {
+	calibrationPath := writePassingCalibration(t, nil)
+	var stdout, stderr bytes.Buffer
+	args := []string{"campaign", "--config", filepath.Join("..", "..", "examples", "advanced-readonly.json"), "--warmup", "0s", "--observation", "10s", "--recovery", "10s", "--repeats", "2", "--dry-run", "--calibration", calibrationPath, "--require-calibration"}
+	code := Run(args, &stdout, &stderr)
+	if code != 2 || !strings.Contains(stderr.String(), "does not cover every planned closed-loop VU level") || strings.Contains(stdout.String(), "Trial 1 observation") {
+		t.Fatalf("required closed-loop calibration did not block before schedule: code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+}
+
 func TestCampaignsRequireOutputArtifactOutsideDryRun(t *testing.T) {
 	for _, tc := range []struct {
 		name string
