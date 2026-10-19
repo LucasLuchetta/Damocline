@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/LucasLuchetta/Damocline/internal/campaign"
+	"github.com/LucasLuchetta/Damocline/internal/capacityplan"
 	"github.com/LucasLuchetta/Damocline/internal/report"
 )
 
@@ -73,6 +74,31 @@ func TestAuditCommandRejectsMissingCampaign(t *testing.T) {
 		t.Fatalf("missing file was accepted with exit %d", exit)
 	}
 }
+
+func TestAuditObservationSummaryOutputKeepsUnitsAndLimitationsExplicit(t *testing.T) {
+	var output bytes.Buffer
+	audit := capacityplan.CampaignAudit{
+		SpreadConsistency: "MATCHED",
+		ObservationTrials: []capacityplan.ObservationTrial{{
+			Trial: 1, Requests: 40, RequestP95MS: 125, RequestErrorRate: floatPointer(0.025),
+			CompletedJourneys: 20, JourneyP95MS: 240, JourneyErrorRate: floatPointer(0.05),
+			SuccessfulJourneysPerSec: 2,
+		}},
+		ObservationSpread: &campaign.Variability{
+			Runs: 1, P95MinMS: 125, P95MaxMS: 125, ErrorRateMin: 0.025, ErrorRateMax: 0.025,
+			ThroughputMinRPS: 4, ThroughputMaxRPS: 4,
+			SuccessfulJourneysMinPerSec: 2, SuccessfulJourneysMaxPerSec: 2,
+		},
+	}
+	writeObservationEvidence(&output, audit, "")
+	for _, want := range []string{"request-p95=125.00 ms", "request-errors=2.50%", "completed-journeys=20", "successful-journeys=2.00/s", "request-rate 4.00–4.00/s", "not a confidence interval"} {
+		if !strings.Contains(output.String(), want) {
+			t.Fatalf("observation summary omitted %q: %s", want, output.String())
+		}
+	}
+}
+
+func floatPointer(value float64) *float64 { return &value }
 
 func TestAuditCommandRequiresPeakWhenDemandOptionsAreSupplied(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "campaign.json")
