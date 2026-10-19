@@ -75,6 +75,7 @@ func auditCmd(args []string, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stdout, "Host type: %s\n", audit.HostType)
 	fmt.Fprintf(stdout, "Tested required duration: %s | decision confidence: %s\n", audit.TestedDuration, assessment.Confidence.Decision)
 	fmt.Fprintf(stdout, "Observed passing levels: %v | failing levels: %v\n", audit.PassingLevels, audit.FailingLevels)
+	writeObservationEvidence(stdout, audit, "  ")
 	if len(audit.LimitingWorkflows) > 0 {
 		fmt.Fprintf(stdout, "Workflows with observed SLO breaches: %v\n", audit.LimitingWorkflows)
 	}
@@ -150,6 +151,7 @@ func auditCampaignCollection(paths []string, goal *capacitygoal.Goal, out string
 	for _, level := range assessment.Levels {
 		audit := level.Assessment.Audit
 		fmt.Fprintf(stdout, "  %d VUs: %s | audit %s | measurement %s | evidence %s\n", level.TestedUsers, level.Outcome, audit.State, audit.MeasurementQuality, audit.EvidenceID)
+		writeObservationEvidence(stdout, audit, "    ")
 		if len(audit.LimitingWorkflows) > 0 {
 			fmt.Fprintf(stdout, "    Observed workflow breaches: %v\n", audit.LimitingWorkflows)
 		}
@@ -176,6 +178,31 @@ func auditCampaignCollection(paths []string, goal *capacitygoal.Goal, out string
 	}
 	fmt.Fprintln(stdout, "No traffic was generated; every level remains linked to its saved campaign evidence.")
 	return 0
+}
+
+func writeObservationEvidence(w io.Writer, audit capacityplan.CampaignAudit, indent string) {
+	if len(audit.ObservationTrials) == 0 {
+		return
+	}
+	fmt.Fprintf(w, "%sObservation trial detail (%s):\n", indent, audit.SpreadConsistency)
+	for _, observation := range audit.ObservationTrials {
+		fmt.Fprintf(w, "%s  Trial %d: requests=%d request-p95=%.2f ms request-errors=%s; completed-journeys=%d journey-p95=%.2f ms journey-errors=%s successful-journeys=%.2f/s\n",
+			indent, observation.Trial, observation.Requests, observation.RequestP95MS, formatObservedRate(observation.RequestErrorRate),
+			observation.CompletedJourneys, observation.JourneyP95MS, formatObservedRate(observation.JourneyErrorRate),
+			observation.SuccessfulJourneysPerSec)
+	}
+	if spread := audit.ObservationSpread; spread != nil {
+		fmt.Fprintf(w, "%s  Observed spread across %d independent observation phases: request-p95 %.2f–%.2f ms, request-errors %.2f–%.2f%%, request-rate %.2f–%.2f/s, successful-journeys %.2f–%.2f/s. Descriptive spread, not a confidence interval.\n",
+			indent, spread.Runs, spread.P95MinMS, spread.P95MaxMS, spread.ErrorRateMin*100, spread.ErrorRateMax*100,
+			spread.ThroughputMinRPS, spread.ThroughputMaxRPS, spread.SuccessfulJourneysMinPerSec, spread.SuccessfulJourneysMaxPerSec)
+	}
+}
+
+func formatObservedRate(rate *float64) string {
+	if rate == nil {
+		return "not available"
+	}
+	return fmt.Sprintf("%.2f%%", *rate*100)
 }
 
 func writeWorkflowBreaches(w io.Writer, breaches []capacityplan.WorkflowBreach, indent string) {

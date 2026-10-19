@@ -80,6 +80,7 @@ func markCampaignFailed(e *campaign.Result) {
 			break
 		}
 	}
+	_, e.ObservationVariability = recomputeObservationEvidence(*e)
 }
 
 func TestCampaignCollectionRejectsMismatchesInvalidEvidenceAndDuplicateLevels(t *testing.T) {
@@ -112,6 +113,13 @@ func TestCampaignCollectionRejectsMismatchesInvalidEvidenceAndDuplicateLevels(t 
 	}
 	if assessment.Demand == nil || assessment.Demand.State != "INSUFFICIENT_EVIDENCE" || assessment.DemandEvidenceID != "" {
 		t.Fatalf("invalid collection produced an exact-level demand conclusion: %+v", assessment)
+	}
+	first = auditFixtureAtUsers(2)
+	second = auditFixtureAtUsers(4)
+	second.ObservationVariability.P95MaxMS++
+	assessment, err = BuildCampaignCollectionAssessment([]campaign.Result{first, second}, nil)
+	if err != nil || assessment.State != "INVALID_EVIDENCE" || len(assessment.PassingLevels) != 0 || len(assessment.FailingLevels) != 0 {
+		t.Fatalf("altered per-level observation spread was aggregated: %+v %v", assessment, err)
 	}
 	if _, err := BuildCampaignCollectionAssessment([]campaign.Result{first, first}, nil); err == nil || !strings.Contains(err.Error(), "duplicate tested level") {
 		t.Fatalf("duplicate levels were accepted: %v", err)

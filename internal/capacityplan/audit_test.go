@@ -66,7 +66,35 @@ func auditFixtureAtUsers(users int) campaign.Result {
 		}
 		e.Trials = append(e.Trials, campaign.Trial{RunID: runID, Number: n, Outcome: "PASS", Phases: phases})
 	}
+	e.ObservationVariability = &campaign.Variability{
+		Runs: 2, P95MinMS: 100, P95MaxMS: 100, ErrorRateMin: 0, ErrorRateMax: 0,
+		ThroughputMinRPS: 8, ThroughputMaxRPS: 8,
+		SuccessfulJourneysMinPerSec: 8, SuccessfulJourneysMaxPerSec: 8,
+	}
 	return e
+}
+
+func TestAuditRecomputesIndependentObservationSummaries(t *testing.T) {
+	e := auditFixture()
+	a := AuditCampaign(e)
+	if a.SpreadConsistency != "MATCHED" || len(a.ObservationTrials) != 2 || a.ObservationSpread == nil || a.ObservationSpread.Runs != 2 {
+		t.Fatalf("saved observation summary was not recomputed: %+v", a)
+	}
+	first := a.ObservationTrials[0]
+	if first.Requests != 80 || first.RequestP95MS != 100 || first.CompletedJourneys != 80 || first.JourneyP95MS != 100 || first.SuccessfulJourneysPerSec != 8 {
+		t.Fatalf("observation trial metrics were not derived from saved phase report: %+v", first)
+	}
+	e.ObservationVariability.P95MaxMS = 101
+	a = AuditCampaign(e)
+	if a.State != "INVALID_EVIDENCE" || a.SpreadConsistency != "MISMATCHED" {
+		t.Fatalf("altered persisted observation summary was trusted: %+v", a)
+	}
+	e = auditFixture()
+	e.ObservationVariability = nil
+	a = AuditCampaign(e)
+	if a.State == "INVALID_EVIDENCE" || a.SpreadConsistency != "NOT_RECORDED" || len(a.ObservationTrials) != 2 {
+		t.Fatalf("missing legacy summary should retain recomputable observations: %+v", a)
+	}
 }
 
 func TestAuditCampaignObservationalPassDoesNotCertifyCapacity(t *testing.T) {
@@ -262,6 +290,7 @@ func TestAuditCampaignRejectsMissingTrialsOrInvalidDelivery(t *testing.T) {
 	e.Trials[0].Phases[0].Run.ArrivalsDropped = 1
 	e.Trials[0].Phases[0].Run.Outcome = "FAIL"
 	e.Trials[0].Phases[0].EvidenceState = "INVALID_DELIVERY"
+	_, e.ObservationVariability = recomputeObservationEvidence(e)
 	if got := AuditCampaign(e); got.State != "INCONCLUSIVE" {
 		t.Fatalf("invalid delivery became a server limit: %+v", got)
 	}
