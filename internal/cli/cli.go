@@ -104,6 +104,10 @@ Usage:
   damocline /history # select and repeat a previous saved scenario
   damocline start    # original guided wizard
   damocline report --file run.json [--compare previous.json] [--host host.json]
+	  damocline report save --file artifact.json [--dir .damocline/reports]
+	  damocline report history [--dir .damocline/reports]
+	  damocline report prune --keep 50 [--dir .damocline/reports]
+	  damocline report delete --id <exact-history-id> [--dir .damocline/reports]
 	  damocline dashboard --file run.json [--addr 127.0.0.1:8787]
   damocline goal --file capacity.json (--peak-users 20 | --peak-journeys-per-second 5) [--growth-percent 25] [--reserve-percent 20]
 	  damocline plan --campaign campaign.json --peak-users 20 [--growth-percent 25] [--reserve-percent 20]

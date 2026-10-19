@@ -29,5 +29,8 @@ explicit. Unix reports use mode `0600`; Windows access is governed by the
 destination directory's inherited ACL, since Go permission bits do not
 configure Windows ACL entries. The output size cap includes the final newline.
 This does not provide versioned report history, retention or recovery from
-storage hardware that violates sync semantics; those lifecycle features remain
-separate work.
+storage hardware that violates sync semantics. The local archive uses immutable
+timestamp/content-digest IDs and explicit list, prune and delete commands. It
+stops at a fixed report-count/byte limit rather than automatically discarding
+evidence. Archiving an arbitrary JSON file does not sanitize its contents; only
+intended local Damocline artifacts should be archived.

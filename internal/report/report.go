@@ -431,6 +431,30 @@ func (r Result) WindowSeconds() float64 {
 
 func WriteJSON(path string, r Result) error { return WriteAnyJSON(path, r) }
 
+// WriteJSONBytes writes an already serialized JSON artifact without changing
+// its bytes. It uses the same size limit and atomic replacement as WriteAnyJSON.
+func WriteJSONBytes(path string, data []byte) error {
+	if !json.Valid(data) {
+		return errors.New("report is not valid JSON")
+	}
+	if len(data) > maxReportBytes {
+		return errors.New("report exceeds the 16 MiB output limit")
+	}
+	return writeReportBytes(path, data)
+}
+
+// WriteJSONBytesExclusive writes a new JSON artifact without replacing an
+// existing destination. It is used for immutable archive entries.
+func WriteJSONBytesExclusive(path string, data []byte) error {
+	if !json.Valid(data) {
+		return errors.New("report is not valid JSON")
+	}
+	if len(data) > maxReportBytes {
+		return errors.New("report exceeds the 16 MiB output limit")
+	}
+	return writeReportBytesExclusive(path, data)
+}
+
 // WriteAnyJSON safely writes redacted report values to a restricted local file.
 func WriteAnyJSON(path string, r any) error {
 	data, err := json.MarshalIndent(r, "", "  ")
@@ -441,6 +465,18 @@ func WriteAnyJSON(path string, r any) error {
 		return errors.New("report exceeds the 16 MiB output limit")
 	}
 	data = append(data, '\n')
+	return writeReportBytes(path, data)
+}
+
+func writeReportBytes(path string, data []byte) error {
+	return writeReportTemp(path, data, false)
+}
+
+func writeReportBytesExclusive(path string, data []byte) error {
+	return writeReportTemp(path, data, true)
+}
+
+func writeReportTemp(path string, data []byte, exclusive bool) error {
 	d := filepath.Dir(path)
 	if err := os.MkdirAll(d, 0700); err != nil {
 		return fmt.Errorf("create report directory: %w", err)
@@ -466,7 +502,12 @@ func WriteAnyJSON(path string, r any) error {
 	if err := temp.Close(); err != nil {
 		return fmt.Errorf("close temporary report: %w", err)
 	}
-	if err := replaceReportFile(tempPath, path); err != nil {
+	if exclusive {
+		err = linkReportFile(tempPath, path)
+	} else {
+		err = replaceReportFile(tempPath, path)
+	}
+	if err != nil {
 		return fmt.Errorf("replace report: %w", err)
 	}
 	return nil
