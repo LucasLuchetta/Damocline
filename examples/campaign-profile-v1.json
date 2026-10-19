@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "name": "local-readonly",
+  "description": "Synthetic local-only closed-loop campaign profile",
+  "scenario": {
+    "scenario_version": 1,
+    "name": "local-fixture",
+    "environment": "development",
+    "base_url": "http://127.0.0.1:8080",
+    "users": 2,
+    "duration": "10s",
+    "ramp_up": "0s",
+    "think_time": "0s",
+    "request_timeout": "2s",
+    "max_rps": 10,
+    "p95_limit_ms": 1000,
+    "max_error_rate": 0.01,
+    "workflows": [
+      {
+        "name": "health",
+        "weight": 1,
+        "steps": [
+          { "name": "health", "method": "GET", "path": "/health" }
+        ]
+      }
+    ]
+  },
+  "options": {
+    "warmup": "0s",
+    "stabilization": "0s",
+    "observation": "10s",
+    "spike_users": 0,
+    "spike_duration": "0s",
+    "recovery": "0s",
+    "soak": "0s",
+    "cooldown": "0s",
+    "repeats": 2,
+    "budget": "20s",
+    "stability_policy": {
+      "minimum_windows": 3,
+      "minimum_samples_per_window": 20,
+      "max_p95_increase_percent": 20,
+      "max_p95_increase_ms": 5,
+      "max_throughput_drop_percent": 20
+    }
+  }
+}
