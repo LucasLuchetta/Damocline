@@ -181,6 +181,13 @@ func auditCampaignCollection(paths []string, goal *capacitygoal.Goal, out string
 }
 
 func writeObservationEvidence(w io.Writer, audit capacityplan.CampaignAudit, indent string) {
+	repeatability := audit.Repeatability
+	if repeatability.Status == "CONDITIONAL_INTERVAL" {
+		fmt.Fprintf(w, "%sRepeat pass probability: %d/%d evaluable trials passed; exact 95%% interval %.1f%%–%.1f%%, conditional on independent stationary trials. This is not capacity confidence.\n",
+			indent, repeatability.PassingTrials, repeatability.EvaluatedTrials, repeatability.Lower95*100, repeatability.Upper95*100)
+	} else if repeatability.ExcludedTrials > 0 {
+		fmt.Fprintf(w, "%sRepeat pass probability interval unavailable: %d trial(s) were not terminal PASS/FAIL outcomes.\n", indent, repeatability.ExcludedTrials)
+	}
 	if len(audit.ObservationTrials) == 0 {
 		return
 	}

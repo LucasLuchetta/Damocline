@@ -1,10 +1,35 @@
 package statistics
 
 import (
+	"math"
 	"math/rand"
 	"sort"
 	"testing"
 )
+
+func TestBinomialProportionInterval95(t *testing.T) {
+	for _, test := range []struct {
+		name              string
+		successes, trials int
+		lower, upper      float64
+	}{
+		{name: "all pass with five repeats", successes: 5, trials: 5, lower: 0.4781762498950185, upper: 1},
+		{name: "none pass with five repeats", successes: 0, trials: 5, lower: 0, upper: 0.5218237501049815},
+		{name: "one of five", successes: 1, trials: 5, lower: 0.005050763379468057, upper: 0.7164179361180896},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			lower, upper, err := BinomialProportionInterval95(test.successes, test.trials)
+			if err != nil || math.Abs(lower-test.lower) > 1e-10 || math.Abs(upper-test.upper) > 1e-10 {
+				t.Fatalf("interval=(%.15f, %.15f), err=%v; want (%.15f, %.15f)", lower, upper, err, test.lower, test.upper)
+			}
+		})
+	}
+	for _, counts := range [][2]int{{-1, 5}, {6, 5}, {0, 0}, {0, maxExactBinomialTrials + 1}} {
+		if _, _, err := BinomialProportionInterval95(counts[0], counts[1]); err == nil {
+			t.Fatalf("invalid counts (%d, %d) were accepted", counts[0], counts[1])
+		}
+	}
+}
 
 func TestPercentileRankInterval95ForP95(t *testing.T) {
 	for _, tc := range []struct {

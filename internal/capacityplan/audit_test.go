@@ -77,6 +77,9 @@ func auditFixtureAtUsers(users int) campaign.Result {
 func TestAuditRecomputesIndependentObservationSummaries(t *testing.T) {
 	e := auditFixture()
 	a := AuditCampaign(e)
+	if a.Repeatability.Status != "CONDITIONAL_INTERVAL" || a.Repeatability.EvaluatedTrials != 2 || a.Repeatability.PassingTrials != 2 || a.Repeatability.ExcludedTrials != 0 || a.Repeatability.Lower95 < 0.15 || a.Repeatability.Lower95 > 0.16 || a.Repeatability.Upper95 != 1 {
+		t.Fatalf("repeat pass uncertainty was not derived from terminal trial outcomes: %+v", a.Repeatability)
+	}
 	if a.SpreadConsistency != "MATCHED" || len(a.ObservationTrials) != 2 || a.ObservationSpread == nil || a.ObservationSpread.Runs != 2 {
 		t.Fatalf("saved observation summary was not recomputed: %+v", a)
 	}
@@ -94,6 +97,19 @@ func TestAuditRecomputesIndependentObservationSummaries(t *testing.T) {
 	a = AuditCampaign(e)
 	if a.State == "INVALID_EVIDENCE" || a.SpreadConsistency != "NOT_RECORDED" || len(a.ObservationTrials) != 2 {
 		t.Fatalf("missing legacy summary should retain recomputable observations: %+v", a)
+	}
+}
+
+func TestRepeatabilityIntervalExcludesIncompleteTrials(t *testing.T) {
+	e := auditFixture()
+	e.Trials[1].Outcome = "ABORTED"
+	repeatability := summarizeRepeatability(e.Trials)
+	if repeatability.Status != "CONDITIONAL_INTERVAL" || repeatability.EvaluatedTrials != 1 || repeatability.PassingTrials != 1 || repeatability.ExcludedTrials != 1 || repeatability.Lower95 > .03 || repeatability.Upper95 != 1 {
+		t.Fatalf("incomplete trial was counted as a pass/fail result: %+v", repeatability)
+	}
+	repeatability = summarizeRepeatability([]campaign.Trial{{Outcome: "IN_PROGRESS"}})
+	if repeatability.Status != "INSUFFICIENT_EVIDENCE" || repeatability.EvaluatedTrials != 0 || repeatability.ExcludedTrials != 1 {
+		t.Fatalf("pending trial should not receive a confidence interval: %+v", repeatability)
 	}
 }
 

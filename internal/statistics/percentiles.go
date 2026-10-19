@@ -6,6 +6,86 @@ import (
 )
 
 const maxExactRankIntervalSamples = 1_000_000
+const maxExactBinomialTrials = 10_000
+
+// BinomialProportionInterval95 returns a two-sided exact Clopper-Pearson
+// interval for a binomial success probability. Trials must be independent
+// Bernoulli observations; callers must retain and state that assumption.
+func BinomialProportionInterval95(successes, trials int) (lower, upper float64, err error) {
+	if trials < 1 || trials > maxExactBinomialTrials || successes < 0 || successes > trials {
+		return 0, 0, errors.New("successes must be between zero and the bounded positive trial count")
+	}
+	const tail = 0.025
+	if successes == 0 {
+		lower = 0
+	} else {
+		left, right := 0.0, 1.0
+		for range 64 {
+			mid := (left + right) / 2
+			if binomialUpperTail(trials, successes, mid) >= tail {
+				right = mid
+			} else {
+				left = mid
+			}
+		}
+		lower = (left + right) / 2
+	}
+	if successes == trials {
+		upper = 1
+	} else {
+		left, right := 0.0, 1.0
+		for range 64 {
+			mid := (left + right) / 2
+			if binomialCDF(trials, successes, mid) >= tail {
+				left = mid
+			} else {
+				right = mid
+			}
+		}
+		upper = (left + right) / 2
+	}
+	return lower, upper, nil
+}
+
+func binomialUpperTail(trials, successes int, p float64) float64 {
+	return binomialRangeProbability(trials, successes, trials, p)
+}
+
+func binomialCDF(trials, successes int, p float64) float64 {
+	return binomialRangeProbability(trials, 0, successes, p)
+}
+
+func binomialRangeProbability(trials, first, last int, p float64) float64 {
+	if p <= 0 {
+		if first == 0 {
+			return 1
+		}
+		return 0
+	}
+	if p >= 1 {
+		if last == trials {
+			return 1
+		}
+		return 0
+	}
+	logs := make([]float64, 0, last-first+1)
+	maxLog := math.Inf(-1)
+	for k := first; k <= last; k++ {
+		logP, _ := math.Lgamma(float64(trials + 1))
+		logK, _ := math.Lgamma(float64(k + 1))
+		logOther, _ := math.Lgamma(float64(trials - k + 1))
+		value := logP - logK - logOther + float64(k)*math.Log(p) + float64(trials-k)*math.Log1p(-p)
+		logs = append(logs, value)
+		if value > maxLog {
+			maxLog = value
+		}
+	}
+	sum := 0.0
+	for _, value := range logs {
+		sum += math.Exp(value - maxLog)
+	}
+	return math.Exp(maxLog) * sum
+}
 
 // PercentileRankInterval95 returns a conservative two-sided 95% interval for
 // the one-indexed order-statistic ranks that bound a population percentile.

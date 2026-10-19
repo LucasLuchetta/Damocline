@@ -13,6 +13,7 @@ import (
 	"github.com/LucasLuchetta/Damocline/internal/campaign"
 	"github.com/LucasLuchetta/Damocline/internal/capacitygoal"
 	"github.com/LucasLuchetta/Damocline/internal/report"
+	"github.com/LucasLuchetta/Damocline/internal/statistics"
 )
 
 // CampaignAudit is a conservative, entirely offline replay of persisted
@@ -38,6 +39,7 @@ type CampaignAudit struct {
 	ObservationTrials   []ObservationTrial    `json:"observation_trials,omitempty"`
 	ObservationSpread   *campaign.Variability `json:"recomputed_observation_spread,omitempty"`
 	SpreadConsistency   string                `json:"observation_spread_consistency"`
+	Repeatability       RepeatabilityEvidence `json:"repeatability_evidence"`
 	Unknowns            []string              `json:"known_unknowns"`
 	State               string                `json:"state"`
 	MeasurementQuality  string                `json:"measurement_quality"`
@@ -45,6 +47,20 @@ type CampaignAudit struct {
 	RequiredPhases      int                   `json:"required_phases"`
 	Findings            []string              `json:"findings"`
 	Phases              []PhaseAudit          `json:"phases"`
+}
+
+// RepeatabilityEvidence summarizes the observed fraction of terminal campaign
+// trials that passed. Its exact interval is conditional on independent,
+// identically distributed repeat trials and is not a capacity confidence.
+type RepeatabilityEvidence struct {
+	Status          string  `json:"status"`
+	EvaluatedTrials int     `json:"evaluated_trials"`
+	PassingTrials   int     `json:"passing_trials"`
+	ExcludedTrials  int     `json:"excluded_trials"`
+	Lower95         float64 `json:"pass_probability_lower_95"`
+	Upper95         float64 `json:"pass_probability_upper_95"`
+	Method          string  `json:"method"`
+	Assumption      string  `json:"assumption"`
 }
 
 // ObservationTrial exposes one completed base-load observation as descriptive
@@ -93,8 +109,9 @@ type PhaseAudit struct {
 }
 
 // Assessment binds a saved campaign audit to an optional demand calculation.
-// Confidence is deliberately qualitative until a dependence-aware method is
-// implemented and validated for the workload.
+// Decision confidence remains qualitative until dependence and representativeness
+// are validated for the workload; repeatability evidence is a separate conditional
+// interval and does not establish decision confidence.
 type Assessment struct {
 	SchemaVersion int                  `json:"schema_version"`
 	Audit         CampaignAudit        `json:"audit"`
@@ -115,7 +132,7 @@ type ConfidenceDimensions struct {
 
 func BuildAssessment(e campaign.Result, goal *capacitygoal.Goal) (Assessment, error) {
 	audit := AuditCampaign(e)
-	assessment := Assessment{SchemaVersion: 1, Audit: audit, Confidence: assessConfidence(e, audit), State: audit.State}
+	assessment := Assessment{SchemaVersion: 2, Audit: audit, Confidence: assessConfidence(e, audit), State: audit.State}
 	if goal != nil {
 		plan, err := Evaluate(e, *goal)
 		if err != nil {
@@ -227,12 +244,19 @@ func AuditCampaign(e campaign.Result) CampaignAudit {
 	}
 	a.ObservationTrials, a.ObservationSpread = recomputeObservationEvidence(e)
 	a.SpreadConsistency = observationSpreadConsistency(e, a.ObservationSpread)
+	a.Repeatability = summarizeRepeatability(e.Trials)
 	if a.SpreadConsistency == "MISMATCHED" {
 		a.State = "INVALID_EVIDENCE"
 		a.Findings = append(a.Findings, "Persisted observation variability does not match the saved independent observation phases.")
 	}
 	if inProgress {
 		a.Findings = append(a.Findings, "This is a RUNNING checkpoint. Its final campaign and pending-trial outcomes are unknown; the saved phases are retained for review only.")
+	}
+	if a.Repeatability.Status == "CONDITIONAL_INTERVAL" {
+		a.Findings = append(a.Findings, fmt.Sprintf("Across %d evaluable repeat trials, %d passed; the exact 95%% interval for the same-condition trial pass probability is %.1f%%–%.1f%%, conditional on independent stationary trials.",
+			a.Repeatability.EvaluatedTrials, a.Repeatability.PassingTrials, a.Repeatability.Lower95*100, a.Repeatability.Upper95*100))
+	} else {
+		a.Findings = append(a.Findings, "Repeat pass probability interval is unavailable because there are no evaluable terminal PASS/FAIL trials.")
 	}
 	var duration time.Duration
 	profiles := map[string]bool{}
@@ -375,6 +399,33 @@ func AuditCampaign(e campaign.Result) CampaignAudit {
 		a.Findings = append(a.Findings, "All recorded mandatory stages met their observed objectives; statistical and workload-specific certification remain separate decisions.")
 	}
 	return a
+}
+
+func summarizeRepeatability(trials []campaign.Trial) RepeatabilityEvidence {
+	evidence := RepeatabilityEvidence{
+		Status: "INSUFFICIENT_EVIDENCE", Method: "EXACT_CLOPPER_PEARSON_BINOMIAL",
+		Assumption: "INDEPENDENT_STATIONARY_REPEAT_TRIALS",
+	}
+	for _, trial := range trials {
+		switch trial.Outcome {
+		case "PASS":
+			evidence.EvaluatedTrials++
+			evidence.PassingTrials++
+		case "FAIL":
+			evidence.EvaluatedTrials++
+		default:
+			evidence.ExcludedTrials++
+		}
+	}
+	if evidence.EvaluatedTrials == 0 {
+		return evidence
+	}
+	lower, upper, err := statistics.BinomialProportionInterval95(evidence.PassingTrials, evidence.EvaluatedTrials)
+	if err != nil {
+		return evidence
+	}
+	evidence.Status, evidence.Lower95, evidence.Upper95 = "CONDITIONAL_INTERVAL", lower, upper
+	return evidence
 }
 
 func workflowBreaches(trial int, phase string, users int, profiles []report.ProfileResult, aggregate report.MetricSet, p95LimitMS, maxErrorRate float64) []WorkflowBreach {
