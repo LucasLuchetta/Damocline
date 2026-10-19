@@ -26,7 +26,7 @@ func TestAuditCommandIsOfflineAndProducesMachineReadableEvidence(t *testing.T) {
 	if exit := Run([]string{"audit", "--campaign", path, "--peak-users", "2", "--out", out}, &stdout, &stderr); exit != 0 {
 		t.Fatalf("audit command exit: %d %s", exit, stderr.String())
 	}
-	for _, expected := range []string{"INCONCLUSIVE", "LIMITED", "NOT_ESTABLISHED", "Demand target: 2", "No traffic was generated", "audit.json"} {
+	for _, expected := range []string{"INCONCLUSIVE", "LIMITED", "NOT_ESTABLISHED", "Confidence dimensions:", "NOT_ASSESSED", "Demand target: 2", "No traffic was generated", "audit.json"} {
 		if !strings.Contains(stdout.String(), expected) {
 			t.Fatalf("missing %q in output: %s", expected, stdout.String())
 		}
@@ -41,6 +41,11 @@ func TestAuditCommandIsOfflineAndProducesMachineReadableEvidence(t *testing.T) {
 			State      string `json:"state"`
 			EvidenceID string `json:"evidence_id"`
 		} `json:"audit"`
+		Confidence struct {
+			Measurement string `json:"measurement_confidence"`
+			Workload    string `json:"workload_representativeness"`
+			Decision    string `json:"decision_confidence"`
+		} `json:"confidence_dimensions"`
 		Demand *struct {
 			TargetUsers int `json:"target_users"`
 		} `json:"demand"`
@@ -50,6 +55,9 @@ func TestAuditCommandIsOfflineAndProducesMachineReadableEvidence(t *testing.T) {
 	}
 	if audit.Audit.EvidenceID == "" || audit.Demand == nil || audit.Demand.TargetUsers != 2 {
 		t.Fatalf("combined assessment is missing traceability or demand result: %+v", audit)
+	}
+	if audit.Confidence.Workload != "NOT_ASSESSED" || audit.Confidence.Decision != "NOT_ESTABLISHED" || audit.Confidence.Measurement != "LIMITED" {
+		t.Fatalf("combined assessment collapsed confidence dimensions: %+v", audit.Confidence)
 	}
 }
 

@@ -57,10 +57,11 @@ func auditCmd(args []string, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stdout, "Audited evidence verdict: %s\n", audit.State)
 	fmt.Fprintf(stdout, "Recomputed measurement quality: %s\n", audit.MeasurementQuality)
 	fmt.Fprintf(stdout, "Required phases reviewed: %d\n", audit.RequiredPhases)
+	fmt.Fprintf(stdout, "Confidence dimensions: measurement=%s | workload representativeness=%s | decision=%s\n", assessment.Confidence.Measurement, assessment.Confidence.WorkloadRepresentativeness, assessment.Confidence.Decision)
 	fmt.Fprintf(stdout, "Evidence ID: %s\n", audit.EvidenceID)
 	fmt.Fprintf(stdout, "Scenario fingerprint: %s\n", audit.ScenarioFingerprint)
 	fmt.Fprintf(stdout, "Host type: %s\n", audit.HostType)
-	fmt.Fprintf(stdout, "Tested required duration: %s | confidence: %s\n", audit.TestedDuration, audit.Confidence)
+	fmt.Fprintf(stdout, "Tested required duration: %s | decision confidence: %s\n", audit.TestedDuration, assessment.Confidence.Decision)
 	fmt.Fprintf(stdout, "Observed passing levels: %v | failing levels: %v\n", audit.PassingLevels, audit.FailingLevels)
 	if len(audit.LimitingWorkflows) > 0 {
 		fmt.Fprintf(stdout, "Workflows with observed SLO breaches: %v\n", audit.LimitingWorkflows)
@@ -80,6 +81,9 @@ func auditCmd(args []string, stdout, stderr io.Writer) int {
 	}
 	for _, finding := range audit.Findings {
 		fmt.Fprintf(stdout, "  - %s\n", finding)
+	}
+	for _, finding := range assessment.Confidence.Findings {
+		fmt.Fprintf(stdout, "  Confidence limit: %s\n", finding)
 	}
 	for _, unknown := range audit.Unknowns {
 		fmt.Fprintf(stdout, "  Unknown: %s\n", unknown)
