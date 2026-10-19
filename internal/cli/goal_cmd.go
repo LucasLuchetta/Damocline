@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 
+	"github.com/LucasLuchetta/Damocline/internal/arrivalcampaign"
 	"github.com/LucasLuchetta/Damocline/internal/arrivalexplorer"
 	"github.com/LucasLuchetta/Damocline/internal/capacitygoal"
 	"github.com/LucasLuchetta/Damocline/internal/explorer"
@@ -47,7 +48,8 @@ func goalCmd(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	var shape struct {
-		JourneyWorkerLimit *int `json:"journey_worker_limit"`
+		JourneyWorkerLimit     *int `json:"journey_worker_limit"`
+		ArrivalCampaignVersion *int `json:"arrival_campaign_schema_version"`
 	}
 	if err := json.Unmarshal(data, &shape); err != nil {
 		fmt.Fprintf(stderr, "invalid capacity report JSON: %v\n", err)
@@ -55,7 +57,31 @@ func goalCmd(args []string, stdout, stderr io.Writer) int {
 	}
 
 	fmt.Fprintln(stdout, "\n--- DAMOCLINE | CAPACITY GOAL (OFFLINE) ---")
-	if shape.JourneyWorkerLimit != nil {
+	if shape.ArrivalCampaignVersion != nil {
+		if *peakUsers != 0 {
+			fmt.Fprintln(stderr, "arrival campaign reports require --peak-journeys-per-second; VUs cannot be substituted")
+			return 2
+		}
+		var saved arrivalcampaign.Result
+		if err := json.Unmarshal(data, &saved); err != nil {
+			fmt.Fprintf(stderr, "invalid arrival campaign report JSON: %v\n", err)
+			return 2
+		}
+		assessment, err := capacitygoal.EvaluateJourneyCampaign(saved, capacitygoal.JourneyStartGoal{PeakStartsPerSecond: *peakStarts, GrowthPercent: *growth, ReservePercent: *reserve})
+		if err != nil {
+			fmt.Fprintf(stderr, "cannot assess arrival campaign: %v\n", err)
+			return 2
+		}
+		fmt.Fprintf(stdout, "Expected peak: %d scheduled journey starts/s\n", assessment.PeakStartsPerSecond)
+		fmt.Fprintf(stdout, "Planned growth: %.1f%% | Reserve: %.1f%%\n", assessment.GrowthPercent, assessment.ReservePercent)
+		fmt.Fprintf(stdout, "DEMAND TO VALIDATE: %d scheduled journey starts/s\n", assessment.TargetStartsPerSecond)
+		fmt.Fprintln(stdout, "Units: scheduled journey starts/s; VUs, admitted journeys, completed journeys, and HTTP requests/s are separate.")
+		fmt.Fprintf(stdout, "EVIDENCE STATUS: %s\n", assessment.State)
+		if assessment.MatchedStartsPerSecond != nil {
+			fmt.Fprintf(stdout, "Exact campaign target: %d scheduled starts/s; %d passing trial(s)\n", *assessment.MatchedStartsPerSecond, assessment.MatchedTrials)
+		}
+		printGoalNextSteps(stdout, assessment.Findings, assessment.Next)
+	} else if shape.JourneyWorkerLimit != nil {
 		if *peakUsers != 0 {
 			fmt.Fprintln(stderr, "arrival exploration reports require --peak-journeys-per-second; VUs cannot be substituted")
 			return 2

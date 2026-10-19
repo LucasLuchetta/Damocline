@@ -79,6 +79,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return exploreArrival(args[1:], stdout, stderr)
 	case "campaign":
 		return campaignCmd(args[1:], stdout, stderr)
+	case "arrival-campaign":
+		return arrivalCampaignCmd(args[1:], stdout, stderr)
 	case "monitor":
 		return monitor(args[1:], stdout, stderr)
 	case "metrics":
@@ -110,6 +112,7 @@ Usage:
   damocline explore --config scenario.json --min-users 2 --max-users 20 --stage-duration 20s --repeats 2 --authorized
   damocline explore-arrival --config arrival.json --min-journeys-per-second 2 --max-journeys-per-second 20 --authorized
 	  damocline campaign --config scenario.json --warmup 30s --observation 2m --recovery 30s --repeats 2 --authorized
+	damocline arrival-campaign --config arrival.json --observation 2m --recovery 30s --repeats 2 --authorized
   damocline explore --config scenario.json --peak-users 10 --growth-percent 25 --reserve-percent 20 --authorized
   damocline monitor --duration 3m --interval 2s --out reports/host.json
 	  damocline metrics --endpoint https://app.example.com/metrics --authorized [--out reports/app-metrics.json]

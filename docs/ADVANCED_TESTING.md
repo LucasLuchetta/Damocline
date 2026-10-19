@@ -128,6 +128,25 @@ passes remain `INSUFFICIENT_EVIDENCE` for a positive demand finding. A
 short-trial pass is never sustainable capacity. Journey starts/s cannot be
 substituted with VUs, admitted/completed journeys, or HTTP requests/s.
 
+For repeated open-arrival evidence at a declared demand rate, use the distinct
+`arrival-campaign` command. The scenario `arrival_rate` is the base scheduled
+journey starts/s; `users` remains the journey-worker limit.
+
+```powershell
+.\damocline.exe arrival-campaign --config .\arrival.local.json --warmup 30s --observation 2m --spike-journeys-per-second 10 --spike-duration 20s --recovery 30s --soak 1m --repeats 2 --peak-journeys-per-second 5 --growth-percent 25 --reserve-percent 20 --authorized --out reports\arrival-campaign.json
+.\damocline.exe goal --file reports\arrival-campaign.json --peak-journeys-per-second 5 --growth-percent 25 --reserve-percent 20
+```
+
+Growth and reserve are successive multipliers; this example calculates an exact
+base target of 8 scheduled starts/s. The campaign preserves that rate through
+warm-up, observation, recovery and final soak, with an optional higher-rate
+spike. Required observation and soak phases use configured SLO windows plus the
+coarse drift screen. The whole campaign, including bounded phase drains, cannot
+exceed 15 minutes. Offline assessment verifies the exact base target, saved phase
+schedule and native run evidence; it never interpolates or treats a spike as the
+business demand target. Ordinary external run quality remains LIMITED, so this
+path does not certify sustainable capacity.
+
 ## 7. Repeated phased campaign
 
 Use a campaign when a short exploratory probe is insufficient. Each trial runs warm-up, an evaluated observation window, and a recovery window. Warm-up establishes workload state but cannot make a campaign pass; both observation and recovery must pass in every repeat.

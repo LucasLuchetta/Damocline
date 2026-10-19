@@ -1,0 +1,334 @@
+// Package arrivalcampaign runs repeated, bounded phases at open-loop
+// scheduled journey-start rates. Rates remain distinct from VUs and requests/s.
+package arrivalcampaign
+
+import (
+	"context"
+	"fmt"
+	"math"
+	"time"
+
+	"github.com/LucasLuchetta/Damocline/internal/campaign"
+	"github.com/LucasLuchetta/Damocline/internal/config"
+	"github.com/LucasLuchetta/Damocline/internal/engine"
+	"github.com/LucasLuchetta/Damocline/internal/report"
+)
+
+const CurrentSchemaVersion = 1
+const maximumCampaignDuration = 15 * time.Minute
+const maximumPhaseDrain = 30 * time.Second
+const generatorUtilizationGuard = 0.90
+
+type Options struct {
+	Warmup         time.Duration
+	Observation    time.Duration
+	SpikeRate      int
+	SpikeDuration  time.Duration
+	Recovery       time.Duration
+	Soak           time.Duration
+	Repeats        int
+	Budget         time.Duration
+	PeakRate       int
+	GrowthPercent  float64
+	ReservePercent float64
+}
+
+type PlannedPhase struct {
+	Name     string
+	Duration time.Duration
+	Rate     int
+	Required bool
+}
+
+func PlannedPhases(options Options, baseRate int, trial int) []PlannedPhase {
+	phases := make([]PlannedPhase, 0, 5)
+	if options.Warmup > 0 {
+		phases = append(phases, PlannedPhase{Name: "warmup", Duration: options.Warmup, Rate: baseRate})
+	}
+	phases = append(phases, PlannedPhase{Name: "observation", Duration: options.Observation, Rate: baseRate, Required: true})
+	if options.SpikeDuration > 0 {
+		phases = append(phases, PlannedPhase{Name: "spike", Duration: options.SpikeDuration, Rate: options.SpikeRate, Required: true})
+	}
+	phases = append(phases, PlannedPhase{Name: "recovery", Duration: options.Recovery, Rate: baseRate, Required: true})
+	if options.Soak > 0 && trial == options.Repeats {
+		phases = append(phases, PlannedPhase{Name: "soak", Duration: options.Soak, Rate: baseRate, Required: true})
+	}
+	return phases
+}
+
+type Phase struct {
+	Name          string        `json:"name"`
+	EvidenceState string        `json:"evidence_state"`
+	Reason        string        `json:"reason,omitempty"`
+	Stability     string        `json:"stability,omitempty"`
+	Run           report.Result `json:"run"`
+}
+
+type Trial struct {
+	Number      int     `json:"number"`
+	Phases      []Phase `json:"phases"`
+	Outcome     string  `json:"outcome"`
+	AbortReason string  `json:"abort_reason,omitempty"`
+}
+
+type Result struct {
+	SchemaVersion        int      `json:"arrival_campaign_schema_version"`
+	Scenario             string   `json:"scenario"`
+	Target               string   `json:"target"`
+	StartedAt            string   `json:"started_at"`
+	WorkerLimit          int      `json:"journey_worker_limit"`
+	WorkloadFingerprint  string   `json:"workload_fingerprint"`
+	RequestTimeout       string   `json:"request_timeout"`
+	RequestRateCeiling   int      `json:"max_rps"`
+	P95LimitMS           float64  `json:"p95_limit_ms"`
+	MaxErrorRate         float64  `json:"max_error_rate"`
+	MinSamplesPerStep    int      `json:"min_samples_per_step"`
+	WindowDuration       string   `json:"window_duration"`
+	BaseStartsPerSecond  int      `json:"base_scheduled_journey_starts_per_second"`
+	PeakStartsPerSecond  int      `json:"peak_scheduled_journey_starts_per_second,omitempty"`
+	GrowthPercent        float64  `json:"growth_percent,omitempty"`
+	ReservePercent       float64  `json:"reserve_percent,omitempty"`
+	Warmup               string   `json:"warmup"`
+	Observation          string   `json:"observation"`
+	SpikeStartsPerSecond int      `json:"spike_scheduled_journey_starts_per_second,omitempty"`
+	SpikeDuration        string   `json:"spike_duration,omitempty"`
+	Recovery             string   `json:"recovery"`
+	Soak                 string   `json:"soak,omitempty"`
+	Budget               string   `json:"budget"`
+	Repeats              int      `json:"repeats"`
+	Trials               []Trial  `json:"trials"`
+	Outcome              string   `json:"outcome"`
+	Notes                []string `json:"notes"`
+}
+
+type Runner func(context.Context, config.Validated) report.Result
+
+func RequiredStartsPerSecond(peak int, growth, reserve float64) (int, error) {
+	if peak < 1 || peak > 100 || math.IsNaN(growth) || math.IsInf(growth, 0) || growth < 0 || growth > 1000 ||
+		math.IsNaN(reserve) || math.IsInf(reserve, 0) || reserve < 0 || reserve > 1000 {
+		return 0, fmt.Errorf("peak journey starts/s must be 1-100 and growth/reserve must be finite values from 0 to 1000")
+	}
+	value := math.Ceil(float64(peak) * (1 + growth/100) * (1 + reserve/100))
+	if value > 100 {
+		return 0, fmt.Errorf("calculated journey-start demand exceeds the 100 starts/s safety ceiling")
+	}
+	return int(value), nil
+}
+
+func Validate(base config.Validated, options Options) error {
+	scenario := base.Scenario
+	if scenario.Mode != "arrival" {
+		return fmt.Errorf("arrival campaign requires mode=arrival; closed-loop workloads use campaign")
+	}
+	if scenario.ArrivalRate < 1 || scenario.ArrivalRate > 100 || scenario.Users < 1 || scenario.Users > 50 {
+		return fmt.Errorf("arrival campaign base rate must be 1-100 starts/s and worker limit 1-50")
+	}
+	if options.PeakRate > 0 {
+		target, err := RequiredStartsPerSecond(options.PeakRate, options.GrowthPercent, options.ReservePercent)
+		if err != nil {
+			return err
+		}
+		if target != scenario.ArrivalRate {
+			return fmt.Errorf("scenario arrival_rate %d/s must equal the calculated demand target %d/s", scenario.ArrivalRate, target)
+		}
+	} else if options.GrowthPercent != 0 || options.ReservePercent != 0 {
+		return fmt.Errorf("growth and reserve require a positive peak journey-start demand")
+	}
+	if options.Warmup < 0 || options.Warmup > 3*time.Minute || options.Recovery < 0 || options.Recovery > 3*time.Minute {
+		return fmt.Errorf("warmup and recovery must be 0-3m")
+	}
+	if options.Observation < 10*time.Second || options.Observation > 10*time.Minute {
+		return fmt.Errorf("observation must be 10s-10m")
+	}
+	if (options.SpikeRate == 0) != (options.SpikeDuration == 0) || options.SpikeRate < 0 || options.SpikeRate > 100 ||
+		(options.SpikeDuration > 0 && (options.SpikeDuration < 10*time.Second || options.SpikeDuration > 3*time.Minute)) {
+		return fmt.Errorf("spike starts/s and spike-duration must be set together; rate is 1-100 and duration is 10s-3m")
+	}
+	if options.SpikeRate > 0 && options.SpikeRate <= scenario.ArrivalRate {
+		return fmt.Errorf("spike journey-start rate must exceed the base rate")
+	}
+	if options.Soak < 0 || options.Soak > 3*time.Minute || (options.Soak > 0 && options.Soak < 10*time.Second) {
+		return fmt.Errorf("soak must be 10s-3m when enabled")
+	}
+	if options.Repeats < 2 || options.Repeats > 5 {
+		return fmt.Errorf("repeats must be 2-5")
+	}
+	steps := 0
+	if len(scenario.Profiles) > 0 {
+		for _, profile := range scenario.Profiles {
+			steps = max(steps, len(profile.Steps))
+		}
+	} else {
+		steps = len(scenario.Steps)
+	}
+	if steps < 1 || max(scenario.ArrivalRate, options.SpikeRate)*steps > scenario.MaxRPS {
+		return fmt.Errorf("base or spike starts/s multiplied by the longest journey exceeds max_rps")
+	}
+	phases := 2
+	if options.Warmup > 0 {
+		phases++
+	}
+	if options.SpikeDuration > 0 {
+		phases++
+	}
+	total := time.Duration(options.Repeats)*(options.Warmup+options.Observation+options.SpikeDuration+options.Recovery) + options.Soak
+	withDrain := total + time.Duration(options.Repeats*phases+boolInt(options.Soak > 0))*maximumPhaseDrain
+	if total > maximumCampaignDuration || withDrain > maximumCampaignDuration || options.Budget != 0 && (options.Budget < withDrain || options.Budget > maximumCampaignDuration) {
+		return fmt.Errorf("campaign phases and bounded drains must fit the 15m wall-time safety budget")
+	}
+	return nil
+}
+
+func boolInt(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
+}
+
+func PlannedBudget(options Options) time.Duration {
+	requested := options.Budget
+	phases := 2 + boolInt(options.Warmup > 0) + boolInt(options.SpikeDuration > 0)
+	minimum := time.Duration(options.Repeats)*(options.Warmup+options.Observation+options.SpikeDuration+options.Recovery) + options.Soak
+	withDrain := minimum +
+		time.Duration(options.Repeats*phases+boolInt(options.Soak > 0))*maximumPhaseDrain
+	if requested > withDrain {
+		return requested
+	}
+	return withDrain
+}
+
+func Run(ctx context.Context, base config.Validated, options Options) (Result, error) {
+	return WithRunner(ctx, base, options, engine.Run)
+}
+
+func WithRunner(parent context.Context, base config.Validated, options Options, runner Runner) (Result, error) {
+	if err := Validate(base, options); err != nil {
+		return Result{}, err
+	}
+	options.Budget = PlannedBudget(options)
+	ctx, cancel := context.WithTimeout(parent, options.Budget)
+	defer cancel()
+	result := Result{
+		SchemaVersion: CurrentSchemaVersion, Scenario: base.Scenario.Name, Target: base.Base.Scheme + "://" + base.Base.Host,
+		WorkloadFingerprint: base.WorkloadFingerprint, RequestTimeout: base.Scenario.Timeout, RequestRateCeiling: base.Scenario.MaxRPS,
+		P95LimitMS: base.Scenario.P95LimitMS, MaxErrorRate: base.Scenario.MaxErrorRate, MinSamplesPerStep: base.Scenario.MinSamplesPerStep,
+		WindowDuration: base.Scenario.WindowDuration, Budget: PlannedBudget(options).String(),
+		StartedAt: time.Now().UTC().Format(time.RFC3339), WorkerLimit: base.Scenario.Users, BaseStartsPerSecond: base.Scenario.ArrivalRate,
+		PeakStartsPerSecond: options.PeakRate, GrowthPercent: options.GrowthPercent, ReservePercent: options.ReservePercent,
+		Warmup: options.Warmup.String(), Observation: options.Observation.String(), SpikeStartsPerSecond: options.SpikeRate,
+		SpikeDuration: options.SpikeDuration.String(), Recovery: options.Recovery.String(), Soak: options.Soak.String(),
+		Repeats: options.Repeats, Trials: []Trial{}, Outcome: "INCONCLUSIVE",
+		Notes: []string{
+			"All phase rates are scheduled open-loop journey starts/s. They are not VUs, scheduler admissions, completed journeys/s, or HTTP requests/s.",
+			"Every observation phase is a bounded repeated load stage with configured SLO windows. Passing phases do not establish universal or long-term sustainable capacity.",
+		},
+	}
+	for number := 1; number <= options.Repeats; number++ {
+		trial := Trial{Number: number, Phases: []Phase{}, Outcome: "PASS"}
+		for _, phase := range PlannedPhases(options, base.Scenario.ArrivalRate, number) {
+			if ctx.Err() != nil {
+				trial.Outcome = "ABORTED"
+				trial.AbortReason = abortReason(ctx.Err(), parent.Err())
+				break
+			}
+			validated := base
+			validated.Scenario.ArrivalRate = phase.Rate
+			validated.Scenario.Duration = phase.Duration.String()
+			validated.Scenario.RampUp = "0s"
+			validated.Duration = phase.Duration
+			validated.RampUp = 0
+			if phase.Name != "warmup" && validated.Window == 0 {
+				validated.Window = min(30*time.Second, phase.Duration/4)
+			}
+			if phase.Name != "warmup" {
+				if validated.Scenario.WindowDuration == "" {
+					validated.Scenario.WindowDuration = validated.Window.String()
+				}
+				if phase.Name == "observation" {
+					result.WindowDuration = validated.Scenario.WindowDuration
+				}
+			}
+			run := runner(ctx, validated)
+			state, reason := ClassifyEvidence(run)
+			stability := ""
+			if phase.Name == "observation" || phase.Name == "soak" {
+				stability = campaign.AssessStability(run)
+			}
+			trial.Phases = append(trial.Phases, Phase{Name: phase.Name, EvidenceState: state, Reason: reason, Stability: stability, Run: run})
+			if ctx.Err() != nil {
+				trial.Outcome = "ABORTED"
+				trial.AbortReason = abortReason(ctx.Err(), parent.Err())
+				break
+			}
+			if state == "INVALID_DELIVERY" || state == "INSUFFICIENT_EVIDENCE" {
+				trial.Outcome = "INCONCLUSIVE"
+				break
+			}
+			if (phase.Name == "observation" || phase.Name == "soak") && state == "PASS_OBSERVED" && stability != "NO_LARGE_DRIFT_DETECTED" {
+				trial.Outcome = "INCONCLUSIVE"
+				break
+			}
+			if (phase.Name == "observation" || phase.Name == "soak") && state == "FAIL_OBSERVED" {
+				trial.Outcome = "FAIL"
+				break
+			}
+			if phase.Required && run.Outcome != "PASS" {
+				trial.Outcome = "FAIL"
+				break
+			}
+			if run.Outcome == "ABORTED" || run.Outcome == "INCONCLUSIVE" {
+				trial.Outcome = run.Outcome
+				if run.Outcome == "ABORTED" {
+					trial.AbortReason = "The native phase run was aborted."
+				}
+				break
+			}
+		}
+		result.Trials = append(result.Trials, trial)
+		if trial.Outcome != "PASS" {
+			if trial.Outcome == "FAIL" {
+				result.Outcome = "FAIL"
+			} else {
+				result.Outcome = trial.Outcome
+			}
+			return result, nil
+		}
+	}
+	result.Outcome = "PASS"
+	return result, nil
+}
+
+func abortReason(err, parentErr error) string {
+	if parentErr == nil && err == context.DeadlineExceeded {
+		return "The arrival campaign wall-time budget expired."
+	}
+	return "The arrival campaign was interrupted by its caller."
+}
+
+func ClassifyEvidence(run report.Result) (string, string) {
+	if run.Outcome == "ABORTED" {
+		return "ABORTED", "The native arrival phase was aborted."
+	}
+	if run.Quality != nil && run.Quality.State == report.QualityInvalid || run.SchemaVersion >= 16 && report.AssessQuality(run).State == report.QualityInvalid {
+		return "INVALID_DELIVERY", "Report accounting or generator evidence is invalid."
+	}
+	if run.ArrivalsDropped > 0 || run.ArrivalsDroppedLate > 0 || run.ArrivalsDroppedBusy > 0 ||
+		run.ArrivalsCancelledBeforeAdmission != nil && *run.ArrivalsCancelledBeforeAdmission > 0 || run.Metrics.Cancelled > 0 || run.Journeys.Cancelled > 0 {
+		return "INVALID_DELIVERY", "Scheduled arrivals, requests, or journeys were dropped or cancelled."
+	}
+	if run.Outcome == "INCONCLUSIVE" {
+		return "INSUFFICIENT_EVIDENCE", "The native arrival phase did not establish a conclusive SLO result."
+	}
+	if run.Metrics.Total <= 0 || run.Config.MaxRPS <= 0 || run.WindowSeconds() <= 0 || run.Generator == nil ||
+		run.Generator.Samples < 2 || !run.Generator.GoCPUValid || run.Generator.ProcessSamples < 2 || !run.Generator.ProcessCPUValid {
+		return "INSUFFICIENT_EVIDENCE", "Arrival delivery or generator health evidence is incomplete."
+	}
+	if run.Generator.GoCPUUtilizationRatio >= generatorUtilizationGuard || run.Generator.MeanProcessCPUUtilizationRatio >= generatorUtilizationGuard ||
+		float64(run.Metrics.Total)/run.WindowSeconds() >= generatorUtilizationGuard*float64(run.Config.MaxRPS) {
+		return "INVALID_DELIVERY", "Generator CPU or the configured client request ceiling may limit the offered arrival rate."
+	}
+	return campaign.ClassifyEvidence(run)
+}
+
+func AssessStability(run report.Result) string { return campaign.AssessStability(run) }

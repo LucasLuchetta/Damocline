@@ -97,7 +97,7 @@ Completed journey latency includes rate-token waits between steps, network/respo
 
 ## What is not yet measured
 
-- No predeclared long soak protocol for checking whether SLOs held throughout a production-representative steady state.
+- The new arrival campaign can preserve bounded observation windows and an optional final soak, but it has not been validated against production-representative sustained workloads or independent application/dependency evidence.
 - No uncertainty interval for latency percentiles or dependence-aware variability analysis across independent runs.
 - No latency estimate for incomplete journeys; they are counted as cancelled, and an otherwise passing run becomes inconclusive. Journey percentiles describe completed journeys only.
 - No fitted queueing or Universal Scalability Law model. Do not extrapolate beyond tested levels.

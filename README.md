@@ -17,6 +17,8 @@ The name evokes the **Sword of Damocles**: apparently stable systems can have li
 > [!IMPORTANT]
 > **Experimental advanced HTTP engine:** native closed-loop and arrival-rate scheduling, repeated virtual-user capacity exploration, independent cookie sessions, Linux CPU/RAM sampling, and UTC report correlation are available. Manual temporary browser login is experimental. Automatic login replay, full-browser load tests, per-container telemetry, and universal generator-ceiling certification are not implemented. A passing test is **not** a universal maximum-users claim.
 
+The CLI also provides a bounded repeated `arrival-campaign` for open-loop journey-start rates. It preserves scheduled starts/s as a separate unit from worker limits, completed journeys/s, and HTTP requests/s; current external run quality still does not certify sustainable capacity.
+
 ## The problem
 
 Developers rarely want only a requests-per-second chart. They want to answer:

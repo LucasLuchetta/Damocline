@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/LucasLuchetta/Damocline/internal/arrivalcampaign"
 	"github.com/LucasLuchetta/Damocline/internal/arrivalexplorer"
 	"github.com/LucasLuchetta/Damocline/internal/config"
 	"github.com/LucasLuchetta/Damocline/internal/explorer"
@@ -84,6 +85,21 @@ func TestJourneyStartGoalDoesNotInterpolateAndRejectsMixedUnits(t *testing.T) {
 		if _, err := EvaluateJourneyStarts(saved, goal); err == nil {
 			t.Fatalf("invalid scheduled-start goal accepted: %+v", goal)
 		}
+	}
+}
+
+func TestArrivalCampaignDemandRequiresExactBaseAndConsistentArtifact(t *testing.T) {
+	saved := arrivalcampaign.Result{SchemaVersion: 1, Scenario: "synthetic", WorkloadFingerprint: "fingerprint", WorkerLimit: 2,
+		RequestTimeout: "2s", RequestRateCeiling: 10, P95LimitMS: 500, MaxErrorRate: .1, MinSamplesPerStep: 1,
+		BaseStartsPerSecond: 3, Warmup: "0s", Observation: "30s", Recovery: "10s", Budget: "4m", Repeats: 2,
+		Trials: []arrivalcampaign.Trial{{Number: 1, Outcome: "PASS", Phases: []arrivalcampaign.Phase{{Name: "observation"}, {Name: "recovery"}}}}, Outcome: "PASS"}
+	assessment, err := EvaluateJourneyCampaign(saved, JourneyStartGoal{PeakStartsPerSecond: 2})
+	if err != nil || assessment.State != "TARGET_NOT_DIRECTLY_TESTED" {
+		t.Fatalf("campaign interpolated an untested exact rate: %+v err=%v", assessment, err)
+	}
+	saved.BaseStartsPerSecond = 2
+	if _, err := EvaluateJourneyCampaign(saved, JourneyStartGoal{PeakStartsPerSecond: 2}); err == nil {
+		t.Fatal("campaign with absent native phase evidence was accepted")
 	}
 }
 func exploration(user int) explorer.Result {
