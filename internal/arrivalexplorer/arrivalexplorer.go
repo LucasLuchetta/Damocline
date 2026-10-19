@@ -143,7 +143,7 @@ func WithRunner(parent context.Context, base config.Validated, opt Options, runn
 			}
 		}
 		result.Probes = append(result.Probes, p)
-		if rate == opt.TargetJourneysPerSecond && opt.TargetJourneysPerSecond > 0 && len(p.Runs) > 0 {
+		if rate == opt.TargetJourneysPerSecond && opt.TargetJourneysPerSecond > 0 && len(p.Runs) == opt.Repeats && p.Status == "PASS_OBSERVED" {
 			result.TargetTested = true
 		}
 		return p.Status

@@ -47,6 +47,20 @@ func TestArrivalExploreDryRunLabelsJourneyStartRates(t *testing.T) {
 	}
 }
 
+func TestArrivalDemandGoalDryRunCalculatesExactScheduledStartRate(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	path := filepath.Join("..", "..", "examples", "arrival-rate-readonly.json")
+	code := Run([]string{"explore-arrival", "--config", path, "--min-journeys-per-second", "2", "--max-journeys-per-second", "10", "--peak-journeys-per-second", "5", "--growth-percent", "25", "--reserve-percent", "20", "--authorized", "--dry-run"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("arrival demand dry run failed: code=%d stderr=%s", code, stderr.String())
+	}
+	for _, expected := range []string{"Business demand: peak 5 starts/s", "required exact target 8 starts/s", "scheduled journey starts 2-10/s", "DRY RUN: no traffic generated"} {
+		if !strings.Contains(stdout.String(), expected) {
+			t.Fatalf("arrival demand dry run omitted %q: %s", expected, stdout.String())
+		}
+	}
+}
+
 func TestArrivalExploreRejectsClosedLoopScenario(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	path := filepath.Join("..", "..", "examples", "advanced-readonly.json")

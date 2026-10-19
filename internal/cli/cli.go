@@ -102,7 +102,7 @@ Usage:
   damocline start    # original guided wizard
   damocline report --file run.json [--compare previous.json] [--host host.json]
 	  damocline dashboard --file run.json [--addr 127.0.0.1:8787]
-  damocline goal --file capacity.json --peak-users 20 [--growth-percent 25] [--reserve-percent 20]
+  damocline goal --file capacity.json (--peak-users 20 | --peak-journeys-per-second 5) [--growth-percent 25] [--reserve-percent 20]
 	  damocline plan --campaign campaign.json --peak-users 20 [--growth-percent 25] [--reserve-percent 20]
 	damocline audit --campaign campaign.json [--campaign higher-level.json] [--peak-users 20] [--growth-percent 25] [--reserve-percent 20] [--out assessment.json]
   damocline run --config scenario.json --authorized [--calibration reports/reference.json] [--out reports/run.json]
@@ -139,6 +139,9 @@ func exploreArrival(args []string, stdout, stderr io.Writer) int {
 	minRate := fs.Int("min-journeys-per-second", 2, "first scheduled journey-start rate")
 	maxRate := fs.Int("max-journeys-per-second", 20, "maximum scheduled journey-start rate")
 	targetRate := fs.Int("target-journeys-per-second", 0, "optional exact business demand rate to probe")
+	peakDemand := fs.Int("peak-journeys-per-second", 0, "expected peak scheduled journey-start demand/s")
+	growth := fs.Float64("growth-percent", 0, "projected demand growth (percent)")
+	reserve := fs.Float64("reserve-percent", 0, "additional reserve on projected demand (percent)")
 	repeats := fs.Int("repeats", 2, "confirmation runs for each passing rate (2-4)")
 	stage := fs.Duration("stage-duration", 20*time.Second, "duration for each repeated probe (10s-3m)")
 	budget := fs.Duration("budget", 10*time.Minute, "maximum exploration wall time (up to 15m)")
@@ -162,6 +165,25 @@ func exploreArrival(args []string, stdout, stderr io.Writer) int {
 	if scenario.Mode != "arrival" {
 		fmt.Fprintln(stderr, "explore-arrival requires mode=arrival; closed-loop scenarios use damocline explore")
 		return 2
+	}
+	if *peakDemand < 0 || ((*growth != 0 || *reserve != 0) && *peakDemand == 0) {
+		fmt.Fprintln(stderr, "--growth-percent and --reserve-percent require a positive --peak-journeys-per-second")
+		return 2
+	}
+	goalRequested := *peakDemand > 0
+	if goalRequested {
+		required, err := capacitygoal.EvaluatedJourneyStarts(capacitygoal.JourneyStartGoal{
+			PeakStartsPerSecond: *peakDemand, GrowthPercent: *growth, ReservePercent: *reserve,
+		})
+		if err != nil {
+			fmt.Fprintf(stderr, "invalid journey-start demand goal: %v\n", err)
+			return 2
+		}
+		if *targetRate > 0 && *targetRate != required {
+			fmt.Fprintln(stderr, "--target-journeys-per-second conflicts with the calculated peak, growth, and reserve target")
+			return 2
+		}
+		*targetRate = required
 	}
 	options := arrivalexplorer.Options{
 		MinJourneysPerSecond: *minRate, MaxJourneysPerSecond: *maxRate,
@@ -189,6 +211,10 @@ func exploreArrival(args []string, stdout, stderr io.Writer) int {
 		} else {
 			fmt.Fprintf(stdout, "Exact scheduled journey-start target: %d/s (tested only when reached through the bounded search).\n", *targetRate)
 		}
+	}
+	if goalRequested {
+		fmt.Fprintf(stdout, "Business demand: peak %d starts/s, growth %.1f%%, reserve %.1f%%; required exact target %d starts/s.\n",
+			*peakDemand, *growth, *reserve, *targetRate)
 	}
 	if *dry {
 		fmt.Fprintln(stdout, "DRY RUN: no traffic generated. Rates are scheduled journey starts/s; request/s and completed journeys/s are separate measured quantities.")
@@ -233,6 +259,19 @@ func exploreArrival(args []string, stdout, stderr io.Writer) int {
 	}
 	for _, note := range result.Notes {
 		fmt.Fprintf(stdout, "Note: %s\n", note)
+	}
+	if goalRequested {
+		assessment, assessErr := capacitygoal.EvaluateJourneyStarts(result, capacitygoal.JourneyStartGoal{
+			PeakStartsPerSecond: *peakDemand, GrowthPercent: *growth, ReservePercent: *reserve,
+		})
+		if assessErr != nil {
+			fmt.Fprintf(stderr, "arrival demand assessment error: %v\n", assessErr)
+		} else {
+			fmt.Fprintf(stdout, "BUSINESS GOAL: %s | required %d scheduled starts/s.\n", assessment.State, assessment.TargetStartsPerSecond)
+			for _, finding := range assessment.Findings {
+				fmt.Fprintf(stdout, "  - %s\n", finding)
+			}
+		}
 	}
 	if *out != "" {
 		if err := report.WriteAnyJSON(*out, result); err != nil {

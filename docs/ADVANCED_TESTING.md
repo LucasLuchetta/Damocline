@@ -105,6 +105,29 @@ Preview a bounded schedule without sending traffic:
 
 For an actual run, first replace the reserved documentation origin and routes with an explicitly authorized target, then omit `--dry-run` and retain a low ceiling. Every JSON result records attempted journey-start levels and each underlying run separately.
 
+You can state the business demand in the same unit and have the explorer insert
+that exact calculated rate into its bounded search:
+
+```powershell
+.\damocline.exe explore-arrival --config .\myapp.local.json --min-journeys-per-second 2 --max-journeys-per-second 10 --peak-journeys-per-second 5 --growth-percent 25 --reserve-percent 20 --authorized --out reports\arrival.json
+```
+
+The example calculates `ceil(5 × 1.25 × 1.20) = 8` scheduled journey
+starts/s. If the target is above the configured ceiling, it is recorded as not
+directly testable; the search ceiling is not raised automatically. Assess a
+saved artifact later without generating traffic:
+
+```powershell
+.\damocline.exe goal --file reports\arrival.json --peak-journeys-per-second 5 --growth-percent 25 --reserve-percent 20
+```
+
+`goal` requires a direct probe at the exact calculated rate and recomputes
+evidence from the native reports. Nearby rates are not interpolated. Current
+ordinary runs have `LIMITED` measurement quality, so even repeated observed
+passes remain `INSUFFICIENT_EVIDENCE` for a positive demand finding. A
+short-trial pass is never sustainable capacity. Journey starts/s cannot be
+substituted with VUs, admitted/completed journeys, or HTTP requests/s.
+
 ## 7. Repeated phased campaign
 
 Use a campaign when a short exploratory probe is insufficient. Each trial runs warm-up, an evaluated observation window, and a recovery window. Warm-up establishes workload state but cannot make a campaign pass; both observation and recovery must pass in every repeat.

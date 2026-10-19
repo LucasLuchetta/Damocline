@@ -5,6 +5,7 @@ This project follows a human-maintained changelog. No release exists yet.
 ## [Unreleased]
 
 ### Added
+- Calculate an optional peak, growth, and reserve demand in scheduled journey starts/s during `explore-arrival`, and add an offline `goal` assessment that requires the exact recorded rate and keeps LIMITED short-trial evidence inconclusive.
 - Add bounded `explore-arrival` journey-start-rate exploration, separate from VU exploration, with repeated passing probes, optional exact target, preserved native run evidence, campaign-aligned evidence classifications, and inconclusive handling for underdelivery or generator/client limits.
 - Add a reserved-origin read-only arrival-mode example and document the distinct units and schema-v1 exploration artifact.
 - Plot aggregate request p95/p99 across saved observation windows in the loopback-only report dashboard, and show request/journey outcome counts per window plus clearly labeled run-wide dropped-start and generator summaries.
