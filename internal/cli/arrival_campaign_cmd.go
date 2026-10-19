@@ -119,12 +119,15 @@ func arrivalCampaignCmd(args []string, stdout, stderr io.Writer) int {
 	}
 	if scenario.WindowDuration == "" {
 		shortest := min(*observation, *recovery)
+		if *stabilization > 0 {
+			shortest = min(shortest, *stabilization)
+		}
 		if *soak > 0 {
 			shortest = min(shortest, *soak)
 		}
 		validated.Window = min(30*time.Second, shortest/4)
 		if options.LongRun {
-			longestEvaluated := max(*observation, *soak)
+			longestEvaluated := max(*stabilization, max(*observation, *soak))
 			minimumWindow := (longestEvaluated + arrivalcampaign.MaxCampaignWindows - 1) / arrivalcampaign.MaxCampaignWindows
 			validated.Window = max(validated.Window, minimumWindow)
 		}
