@@ -392,6 +392,34 @@ func TestRejectPathTraversal(t *testing.T) {
 		t.Fatal("allowed traversal")
 	}
 }
+
+func TestPathTemplateLimitBoundsPerRequestURLParsing(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		path    string
+		wantErr bool
+	}{
+		{name: "at limit", path: "/" + strings.Repeat("a", maxPathTemplateBytes-1)},
+		{name: "over limit", path: "/" + strings.Repeat("a", maxPathTemplateBytes), wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := good()
+			s.Steps[0].Path = tc.path
+			_, err := Parse(s, Options{Authorized: true})
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("Parse error = %v, wantErr %v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestBaseURLLimitBoundsResolvedRequestOrigin(t *testing.T) {
+	s := good()
+	s.BaseURL = "http://" + strings.Repeat("a", maxBaseURLBytes)
+	if _, err := Parse(s, Options{Authorized: true}); err == nil || !strings.Contains(err.Error(), "base_url exceeds") {
+		t.Fatalf("oversized base_url error = %v", err)
+	}
+}
 func TestRejectHighRPS(t *testing.T) {
 	s := good()
 	s.MaxRPS = 101

@@ -658,6 +658,10 @@ func TestSupportedReportSchemaGoldensRoundTrip(t *testing.T) {
 				if got.Config.MaxConnectionsPerHost != 1 {
 					t.Fatal("schema-v28 per-host connection limit was not preserved")
 				}
+			case 29:
+				if got.Metrics.RequestConstructionFailures != 1 || got.Steps[0].Metrics.RequestConstructionFailures != 1 {
+					t.Fatal("schema-v29 local request rejection counts were not preserved")
+				}
 			}
 		})
 	}

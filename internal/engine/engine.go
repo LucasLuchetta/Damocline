@@ -29,9 +29,17 @@ import (
 	"github.com/LucasLuchetta/Damocline/internal/scheduler"
 )
 
-const maxResponseBytes = 2 << 20
+const (
+	maxResponseBytes       = 2 << 20
+	maxExpandedURLBytes    = 16 << 10
+	maxExpandedHeaderBytes = 8 << 10
+	maxExpandedHeadersSize = 64 << 10
+	maxExpandedBodyBytes   = 64 << 10
+)
 
 var variablePattern = regexp.MustCompile(`\{\{([a-z][a-z0-9_]{0,63})\}\}`)
+
+var errTemplateExpansionLimit = errors.New("expanded request template exceeds limit")
 
 type sample struct {
 	name               string
@@ -43,6 +51,7 @@ type sample struct {
 	assertionFailure   bool
 	tlsFailure         bool
 	success, cancelled bool
+	requestRejected    bool
 	reason             string
 }
 type collector struct {
@@ -177,6 +186,10 @@ func (c *collector) add(s sample) {
 		c.aggregate.RecordResponseBody(s.responseBodyState, s.responseBodyBytes)
 		c.steps[s.name].RecordResponseBody(s.responseBodyState, s.responseBodyBytes)
 	}
+	if s.requestRejected {
+		c.aggregate.RequestConstructionFailures++
+		c.steps[s.name].RequestConstructionFailures++
+	}
 	c.stepTraces[s.name].Record(s.trace)
 	if c.window <= 0 {
 		return
@@ -197,6 +210,10 @@ func (c *collector) add(s sample) {
 	if s.responseBodyState != "" {
 		window.aggregate.RecordResponseBody(s.responseBodyState, s.responseBodyBytes)
 		window.steps[s.name].RecordResponseBody(s.responseBodyState, s.responseBodyBytes)
+	}
+	if s.requestRejected {
+		window.aggregate.RequestConstructionFailures++
+		window.steps[s.name].RequestConstructionFailures++
 	}
 }
 
@@ -782,20 +799,44 @@ func execute(parent context.Context, client *http.Client, base *url.URL, timeout
 	defer cancel()
 	requestURL, err := interpolateURL(base, s.PathTemplate, variables)
 	if err != nil {
-		return sample{name: s.Name, reason: "variable_interpolation"}, nil
+		if errors.Is(err, errTemplateExpansionLimit) {
+			return sample{name: s.Name, reason: "request_expansion_limit", requestRejected: true}, nil
+		}
+		return sample{name: s.Name, reason: "variable_interpolation", requestRejected: true}, nil
+	}
+	if len(requestURL) > maxExpandedURLBytes {
+		return sample{name: s.Name, reason: "request_expansion_limit", requestRejected: true}, nil
 	}
 	var body io.Reader
 	if len(s.Body) > 0 {
-		body = bytes.NewReader([]byte(interpolate(string(s.Body), variables)))
+		expanded, err := interpolateBounded(string(s.Body), variables, maxExpandedBodyBytes)
+		if errors.Is(err, errTemplateExpansionLimit) {
+			return sample{name: s.Name, reason: "request_expansion_limit", requestRejected: true}, nil
+		}
+		if err != nil {
+			return sample{name: s.Name, reason: "variable_interpolation", requestRejected: true}, nil
+		}
+		body = bytes.NewReader([]byte(expanded))
 	}
 	req, err := http.NewRequestWithContext(ctx, s.Method, requestURL, body)
 	if err != nil {
-		return sample{name: s.Name, reason: "request_build"}, nil
+		return sample{name: s.Name, reason: "request_build", requestRejected: true}, nil
 	}
+	var headerBytes int
 	for k, v := range s.ResolvedHeaders {
-		value := interpolate(v, variables)
+		value, err := interpolateBounded(v, variables, maxExpandedHeaderBytes)
+		if errors.Is(err, errTemplateExpansionLimit) {
+			return sample{name: s.Name, reason: "request_expansion_limit", requestRejected: true}, nil
+		}
+		if err != nil {
+			return sample{name: s.Name, reason: "variable_interpolation", requestRejected: true}, nil
+		}
+		headerBytes += len(k) + len(value) + 4
+		if len(value) > maxExpandedHeaderBytes || headerBytes > maxExpandedHeadersSize {
+			return sample{name: s.Name, reason: "request_expansion_limit", requestRejected: true}, nil
+		}
 		if strings.ContainsAny(value, "\r\n") {
-			return sample{name: s.Name, reason: "variable_interpolation"}, nil
+			return sample{name: s.Name, reason: "variable_interpolation", requestRejected: true}, nil
 		}
 		req.Header.Set(k, value)
 	}
@@ -1077,33 +1118,68 @@ func ms(d time.Duration) float64 { return float64(d) / float64(time.Millisecond)
 func interpolateURL(base *url.URL, pathTemplate string, variables map[string]string) (string, error) {
 	pathOnly, query, hasQuery := strings.Cut(pathTemplate, "?")
 	segments := strings.Split(pathOnly, "/")
+	var pathBuilder strings.Builder
+	pathBuilder.Grow(min(len(pathOnly), maxExpandedURLBytes))
+	pathBytes := 0
 	for i, segment := range segments {
-		if !strings.HasPrefix(segment, "{{") || !strings.HasSuffix(segment, "}}") {
-			continue
+		if i > 0 {
+			if pathBytes == maxExpandedURLBytes {
+				return "", errTemplateExpansionLimit
+			}
+			pathBuilder.WriteByte('/')
+			pathBytes++
 		}
-		name := strings.TrimSuffix(strings.TrimPrefix(segment, "{{"), "}}")
-		value, ok := variables[name]
-		if !ok {
-			return "", fmt.Errorf("missing variable %q", name)
+		resolvedSegment := segment
+		if strings.HasPrefix(segment, "{{") && strings.HasSuffix(segment, "}}") {
+			name := strings.TrimSuffix(strings.TrimPrefix(segment, "{{"), "}}")
+			value, ok := variables[name]
+			if !ok {
+				return "", fmt.Errorf("missing variable %q", name)
+			}
+			resolvedSegment = url.PathEscape(value)
 		}
-		segments[i] = url.PathEscape(value)
+		if len(resolvedSegment) > maxExpandedURLBytes-pathBytes {
+			return "", errTemplateExpansionLimit
+		}
+		pathBuilder.WriteString(resolvedSegment)
+		pathBytes += len(resolvedSegment)
 	}
-	resolvedPath := strings.Join(segments, "/")
+	resolvedPath := pathBuilder.String()
 	if hasQuery {
 		if strings.Contains(query, "{{") {
 			values, err := url.ParseQuery(query)
 			if err != nil {
 				return "", fmt.Errorf("parse query template: %w", err)
 			}
+			encodedQueryBytes := 0
+			pairs := 0
 			for key, items := range values {
 				if strings.Contains(key, "{{") || strings.Contains(key, "}}") {
 					return "", fmt.Errorf("query templates are supported only in parameter values")
 				}
+				keyBytes := queryEscapeByteLength(key)
+				if keyBytes > maxExpandedURLBytes {
+					return "", errTemplateExpansionLimit
+				}
 				for i, item := range items {
-					values[key][i], err = interpolateChecked(item, variables)
+					separators := 1 // '='
+					if pairs > 0 {
+						separators++ // '&'
+					}
+					remaining := maxExpandedURLBytes - encodedQueryBytes - keyBytes - separators
+					if remaining < 0 {
+						return "", errTemplateExpansionLimit
+					}
+					values[key][i], err = interpolateBounded(item, variables, remaining)
 					if err != nil {
 						return "", err
 					}
+					valueBytes := queryEscapeByteLength(values[key][i])
+					if valueBytes > remaining {
+						return "", errTemplateExpansionLimit
+					}
+					encodedQueryBytes += keyBytes + valueBytes + separators
+					pairs++
 				}
 			}
 			query = values.Encode()
@@ -1114,31 +1190,67 @@ func interpolateURL(base *url.URL, pathTemplate string, variables map[string]str
 	if err != nil {
 		return "", err
 	}
-	return base.ResolveReference(parsed).String(), nil
-}
-
-func interpolateChecked(value string, variables map[string]string) (string, error) {
-	var missing string
-	result := variablePattern.ReplaceAllStringFunc(value, func(match string) string {
-		name := strings.TrimSuffix(strings.TrimPrefix(match, "{{"), "}}")
-		resolved, ok := variables[name]
-		if !ok {
-			missing = name
-			return match
-		}
-		return resolved
-	})
-	if missing != "" {
-		return "", fmt.Errorf("missing variable %q", missing)
+	resolved := base.ResolveReference(parsed).String()
+	if len(resolved) > maxExpandedURLBytes {
+		return "", errTemplateExpansionLimit
 	}
-	return result, nil
+	return resolved, nil
 }
 
-func interpolate(value string, variables map[string]string) string {
-	return variablePattern.ReplaceAllStringFunc(value, func(match string) string {
-		name := strings.TrimSuffix(strings.TrimPrefix(match, "{{"), "}}")
-		return variables[name]
-	})
+func queryEscapeByteLength(value string) int {
+	length := 0
+	for i := 0; i < len(value); i++ {
+		c := value[i]
+		switch {
+		case c == ' ':
+			length++
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9', c == '-', c == '_', c == '.', c == '~':
+			length++
+		default:
+			length += 3
+		}
+		if length > maxExpandedURLBytes {
+			return length
+		}
+	}
+	return length
+}
+
+func interpolateBounded(value string, variables map[string]string, limit int) (string, error) {
+	if limit < 0 {
+		return "", errTemplateExpansionLimit
+	}
+	matches := variablePattern.FindAllStringSubmatchIndex(value, -1)
+	if len(matches) == 0 {
+		if len(value) > limit {
+			return "", errTemplateExpansionLimit
+		}
+		return value, nil
+	}
+	var result strings.Builder
+	result.Grow(min(len(value), limit))
+	written, offset := 0, 0
+	for _, match := range matches {
+		literal := value[offset:match[0]]
+		name := value[match[2]:match[3]]
+		replacement, ok := variables[name]
+		if !ok {
+			return "", fmt.Errorf("missing variable %q", name)
+		}
+		if len(literal) > limit-written || len(replacement) > limit-written-len(literal) {
+			return "", errTemplateExpansionLimit
+		}
+		result.WriteString(literal)
+		result.WriteString(replacement)
+		written += len(literal) + len(replacement)
+		offset = match[1]
+	}
+	tail := value[offset:]
+	if len(tail) > limit-written {
+		return "", errTemplateExpansionLimit
+	}
+	result.WriteString(tail)
+	return result.String(), nil
 }
 
 func extractValues(extracts map[string]config.Extract, headers http.Header, body []byte) (map[string]string, error) {

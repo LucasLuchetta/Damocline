@@ -138,6 +138,8 @@ var variablePattern = regexp.MustCompile(`\{\{([a-z][a-z0-9_]{0,63})\}\}`)
 var variableNamePattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
 
 const maxScenarioBytes = 1 << 20
+const maxPathTemplateBytes = 16 << 10
+const maxBaseURLBytes = 4 << 10
 
 const CurrentScenarioVersion = 1
 
@@ -316,6 +318,9 @@ func Parse(s Scenario, o Options) (Validated, error) {
 	if s.MaxErrorRate < 0 || s.MaxErrorRate > 1 {
 		return v, errors.New("max_error_rate must be between 0 and 1")
 	}
+	if len(s.BaseURL) > maxBaseURLBytes {
+		return v, errors.New("base_url exceeds 4 KiB")
+	}
 	u, err := url.Parse(s.BaseURL)
 	if err != nil || u == nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Path != "" {
 		return v, errors.New("base_url must be an HTTP(S) origin without credentials, paths, or query")
@@ -471,6 +476,9 @@ func Parse(s Scenario, o Options) (Validated, error) {
 			}
 			if step.BodyEnv != "" && !regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`).MatchString(step.BodyEnv) {
 				return v, fmt.Errorf("invalid body_env in %q", step.Name)
+			}
+			if len(step.Path) > maxPathTemplateBytes {
+				return v, fmt.Errorf("step %q path template exceeds 16 KiB", step.Name)
 			}
 			if step.Path == "" || !strings.HasPrefix(step.Path, "/") || strings.HasPrefix(step.Path, "//") || strings.ContainsAny(step.Path, "\r\n\\") {
 				return v, fmt.Errorf("step %q path must be a relative-to-origin absolute path", step.Name)

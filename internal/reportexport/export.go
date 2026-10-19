@@ -112,24 +112,25 @@ type Run struct {
 }
 
 type Metrics struct {
-	Total             int     `json:"total"`
-	Success           int     `json:"success"`
-	Failures          int     `json:"failures"`
-	Cancelled         int     `json:"cancelled"`
-	P50MS             float64 `json:"p50_ms"`
-	MeanMS            float64 `json:"mean_ms"`
-	P95MS             float64 `json:"p95_ms"`
-	P99MS             float64 `json:"p99_ms"`
-	Status1xx         int     `json:"status_1xx"`
-	Status2xx         int     `json:"status_2xx"`
-	Status3xx         int     `json:"status_3xx"`
-	Status4xx         int     `json:"status_4xx"`
-	Status5xx         int     `json:"status_5xx"`
-	Timeouts          int     `json:"timeouts"`
-	DNSFailures       int     `json:"dns_failures"`
-	ConnectFailures   int     `json:"connection_failures"`
-	TLSFailures       int     `json:"tls_failures"`
-	TransportFailures int     `json:"transport_failures"`
+	Total                       int     `json:"total"`
+	Success                     int     `json:"success"`
+	Failures                    int     `json:"failures"`
+	Cancelled                   int     `json:"cancelled"`
+	RequestConstructionFailures int     `json:"request_construction_failures,omitempty"`
+	P50MS                       float64 `json:"p50_ms"`
+	MeanMS                      float64 `json:"mean_ms"`
+	P95MS                       float64 `json:"p95_ms"`
+	P99MS                       float64 `json:"p99_ms"`
+	Status1xx                   int     `json:"status_1xx"`
+	Status2xx                   int     `json:"status_2xx"`
+	Status3xx                   int     `json:"status_3xx"`
+	Status4xx                   int     `json:"status_4xx"`
+	Status5xx                   int     `json:"status_5xx"`
+	Timeouts                    int     `json:"timeouts"`
+	DNSFailures                 int     `json:"dns_failures"`
+	ConnectFailures             int     `json:"connection_failures"`
+	TLSFailures                 int     `json:"tls_failures"`
+	TransportFailures           int     `json:"transport_failures"`
 }
 
 type Step struct {
@@ -358,7 +359,7 @@ func redactRun(r report.Result) *Run {
 }
 
 func safeMetrics(m report.MetricSet) Metrics {
-	return Metrics{Total: m.Total, Success: m.Success, Failures: m.Failures, Cancelled: m.Cancelled,
+	return Metrics{Total: m.Total, Success: m.Success, Failures: m.Failures, Cancelled: m.Cancelled, RequestConstructionFailures: m.RequestConstructionFailures,
 		P50MS: m.P50MS, MeanMS: m.MeanMS, P95MS: m.P95MS, P99MS: m.P99MS,
 		Status1xx: m.HTTP.Status1xx, Status2xx: m.HTTP.Status2xx, Status3xx: m.HTTP.Status3xx,
 		Status4xx: m.HTTP.Status4xx, Status5xx: m.HTTP.Status5xx, Timeouts: m.HTTP.NetworkTimeouts,

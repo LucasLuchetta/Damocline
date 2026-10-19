@@ -4,6 +4,8 @@ This project follows a human-maintained changelog. No release exists yet.
 
 ## [Unreleased]
 
+- Bound base origins, path templates, and expanded HTTP request URLs, headers, and bodies; stop expansion at intermediate/output limits, record local rejections in schema v29, and invalidate delivery attribution when a generated request never reaches the target.
+
 - Add an optional per-host connection cap and schema-v28 transport acquisition diagnostics. A delayed reused-connection acquisition is surfaced as a client-side queue symptom without claiming proven pool exhaustion.
 
 - Add explicit scenario version 1 with named workflows and a non-overwriting `migrate-scenario` command that converts legacy flat steps or weighted profiles while preserving the source file.
