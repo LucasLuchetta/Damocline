@@ -138,7 +138,7 @@ func makePhaseView(name, state, reason string, run report.Result, load string) r
 		errorRate = fmt.Sprintf("%.2f%%", 100*float64(run.Metrics.Failures)/float64(run.Metrics.Total))
 	}
 	return reportui.PhaseView{Name: name, EvidenceState: state, Reason: reason, Load: load, ErrorRate: errorRate, Run: run,
-		Metrics: reportui.MetricCharts(run.ApplicationMetrics)}
+		Metrics: reportui.PhaseMetricCharts(run)}
 }
 
 func validateCampaignRuns(trials []reportui.TrialView) error {

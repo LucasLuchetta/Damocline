@@ -83,12 +83,15 @@ func TestCampaignHandlerRendersSeparatePhaseEvidenceAndUnits(t *testing.T) {
 		StartedAt: start.Format(time.RFC3339Nano), FinishedAt: start.Add(10 * time.Second).Format(time.RFC3339Nano), Note: "test",
 		Samples: []appmetrics.TimedSample{{StartedAt: start.Add(time.Second).Format(time.RFC3339Nano), FinishedAt: start.Add(time.Second).Format(time.RFC3339Nano), Samples: []appmetrics.Sample{{Name: "workers_busy", Value: 2}}}},
 	}
+	phaseRun := report.Result{StartedAt: start.Format(time.RFC3339Nano), Outcome: "PASS", ObservationSeconds: 10, ApplicationMetrics: timeline,
+		Config: report.RunConfig{Mode: "arrival", ArrivalRate: 5}, Metrics: report.MetricSet{Total: 12, P95MS: 30},
+		Windows: []report.WindowResult{{StartSeconds: 0, EndSeconds: 2, Metrics: report.MetricSet{Total: 12, P95MS: 30}}}}
 	h := CampaignHandler(CampaignView{Kind: "Open-arrival capacity", Unit: "scheduled journey starts/s", Scenario: "Synthetic", Target: "http://127.0.0.1", StartedAt: start.Format(time.RFC3339), Outcome: "INCONCLUSIVE", Pending: true,
-		Trials: []TrialView{{Number: 1, Outcome: "IN_PROGRESS", Pending: true, Phases: []PhaseView{{Name: "observation", EvidenceState: "INSUFFICIENT_EVIDENCE", Load: "5 scheduled journey starts/s", Run: report.Result{Outcome: "PASS", ObservationSeconds: 10, Config: report.RunConfig{Mode: "arrival", ArrivalRate: 5}, Metrics: report.MetricSet{Total: 12, P95MS: 30}}, Metrics: MetricCharts(timeline)}}}}})
+		Trials: []TrialView{{Number: 1, Outcome: "IN_PROGRESS", Pending: true, Phases: []PhaseView{{Name: "observation", EvidenceState: "INSUFFICIENT_EVIDENCE", Load: "5 scheduled journey starts/s", ErrorRate: "not available", Run: phaseRun, Metrics: PhaseMetricCharts(phaseRun)}}}}})
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/", nil))
 	body := w.Body.String()
-	for _, expected := range []string{"Open-arrival capacity", "scheduled journey starts/s", "checkpoint in progress", "5 scheduled journey starts/s", "workers_busy", "Application metric: workers_busy", "12 HTTP requests", "No interpolation"} {
+	for _, expected := range []string{"Open-arrival capacity", "scheduled journey starts/s", "checkpoint in progress", "5 scheduled journey starts/s", "workers_busy", "Application metric: workers_busy", "12 HTTP requests", "No interpolation", "Request p95 scale", "Request p95 window center", `fill="#d92d20"`} {
 		if w.Code != http.StatusOK || !strings.Contains(body, expected) {
 			t.Fatalf("campaign dashboard omitted evidence %q: %d %s", expected, w.Code, body)
 		}
@@ -106,6 +109,26 @@ func TestMetricChartsKeepExtremeFiniteValuesInsideThePlot(t *testing.T) {
 	charts := MetricCharts(timeline)
 	if len(charts) != 1 || len(charts[0].Points) != 2 || charts[0].Points[0].Y != "140.0" || charts[0].Points[1].Y != "30.0" {
 		t.Fatalf("finite extreme values produced invalid chart coordinates: %+v", charts)
+	}
+}
+
+func TestPhaseMetricChartsShareUTCAxisWithHTTPWindowP95(t *testing.T) {
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	timeline := &appmetrics.Timeline{StartedAt: start.Add(100 * time.Millisecond).Format(time.RFC3339Nano), FinishedAt: start.Add(2100 * time.Millisecond).Format(time.RFC3339Nano),
+		Samples: []appmetrics.TimedSample{
+			{FinishedAt: start.Add(time.Second).Format(time.RFC3339Nano), Samples: []appmetrics.Sample{{Name: "queue_depth", Value: 10}}},
+			{FinishedAt: start.Add(2 * time.Second).Format(time.RFC3339Nano), Samples: []appmetrics.Sample{{Name: "queue_depth", Value: 20}}},
+		},
+	}
+	charts := PhaseMetricCharts(report.Result{StartedAt: start.Format(time.RFC3339Nano), ApplicationMetrics: timeline, Windows: []report.WindowResult{
+		{StartSeconds: 0, EndSeconds: 1, Metrics: report.MetricSet{Total: 10, P95MS: 100}},
+		{StartSeconds: 1, EndSeconds: 2, Metrics: report.MetricSet{Total: 10, P95MS: 200}},
+	}})
+	if len(charts) != 1 || !charts[0].HasRequests || len(charts[0].RequestPoints) != 2 {
+		t.Fatalf("request windows were not aligned with application samples: %+v", charts)
+	}
+	if charts[0].Points[0].X != "292.5" || charts[0].RequestPoints[0].X != "155.0" || charts[0].RequestPoints[1].X != "430.0" || charts[0].StartLabel != "00:00:00.100Z" {
+		t.Fatalf("observations did not use the shared UTC axis: %+v", charts[0])
 	}
 }
 

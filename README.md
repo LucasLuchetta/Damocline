@@ -101,6 +101,12 @@ It distinguishes **meeting your p95/error objectives** from **proving user capac
 
 See [Understand your results](docs/REPORT_EXPLAINER.md) for interpretation, sample-size and comparison warnings. The command never sends traffic.
 
+Saved run and campaign artifacts can be inspected with the loopback-only
+`dashboard --file` view. For each phase it overlays HTTP-window p95 at each
+window's UTC midpoint with timestamped external metric observations on a shared
+UTC axis. The two series use independent value scales; points are not
+interpolated and alignment does not establish causality or correct clock skew.
+
 ## Check a customer's demand goal (offline preview)
 
 For a guided one-command capacity campaign, add an explicit demand goal to
