@@ -30,7 +30,10 @@ func ResolveSessions(prefix string, users int) ([]string, error) {
 		if len(v) > 8192 || strings.ContainsAny(v, "\r\n") {
 			return nil, fmt.Errorf("invalid cookie in %s", name)
 		}
-		canonical := normalizeCookieSet(v)
+		canonical, err := normalizeCookieSet(v)
+		if err != nil {
+			return nil, fmt.Errorf("invalid cookie in %s: %w", name, err)
+		}
 		if seen[canonical] {
 			return nil, fmt.Errorf("duplicate session cookie in %s; independent identities are required", name)
 		}
@@ -40,18 +43,32 @@ func ResolveSessions(prefix string, users int) ([]string, error) {
 	return sessions, nil
 }
 
-func normalizeCookieSet(value string) string {
+func normalizeCookieSet(value string) (string, error) {
 	pairs := strings.Split(value, ";")
 	canonical := make([]string, 0, len(pairs))
+	names := make(map[string]bool, len(pairs))
 	for _, pair := range pairs {
 		pair = strings.TrimSpace(pair)
-		parts := strings.SplitN(pair, "=", 2)
-		if len(parts) == 2 {
-			canonical = append(canonical, strings.TrimSpace(parts[0])+"="+strings.TrimSpace(parts[1]))
-		} else if pair != "" {
-			canonical = append(canonical, pair)
+		if pair == "" {
+			continue
 		}
+		parts := strings.SplitN(pair, "=", 2)
+		if len(parts) != 2 {
+			return "", fmt.Errorf("cookie entries must use name=value form")
+		}
+		name, value := strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])
+		if name == "" || strings.ContainsAny(name, "\t\r\n =;") {
+			return "", fmt.Errorf("cookie name is invalid")
+		}
+		if names[name] {
+			return "", fmt.Errorf("cookie set contains a duplicate name")
+		}
+		names[name] = true
+		canonical = append(canonical, name+"="+value)
+	}
+	if len(canonical) == 0 {
+		return "", fmt.Errorf("cookie set is empty")
 	}
 	sort.Strings(canonical)
-	return strings.Join(canonical, ";")
+	return strings.Join(canonical, ";"), nil
 }

@@ -396,6 +396,17 @@ func TestSeparateSessionsRequiredAndUnique(t *testing.T) {
 	}
 }
 
+func TestSessionCookiesRequireWellFormedUniquePairs(t *testing.T) {
+	for _, value := range []string{"session-only", "=missing-name", "sid=one; sid=two", " ; "} {
+		t.Run(value, func(t *testing.T) {
+			t.Setenv("DAMOCLINE_COOKIE_1", value)
+			if _, err := ResolveSessions("DAMOCLINE_COOKIE_", 1); err == nil {
+				t.Fatalf("malformed cookie set %q was accepted", value)
+			}
+		})
+	}
+}
+
 func TestWorkflowSessionsAreDistinctCompleteAndFingerprintSafe(t *testing.T) {
 	for actor := 1; actor <= 2; actor++ {
 		t.Setenv("DAMO_BROWSE_"+string(rune('0'+actor)), "sid=browse"+string(rune('0'+actor))+"; theme=light")

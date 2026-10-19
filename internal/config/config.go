@@ -600,7 +600,10 @@ func Parse(s Scenario, o Options) (Validated, error) {
 			return v, fmt.Errorf("workflow %q session configuration: %w", profile, err)
 		}
 		for actor, cookie := range resolved {
-			canonical := normalizeCookieSet(cookie)
+			canonical, err := normalizeCookieSet(cookie)
+			if err != nil {
+				return v, fmt.Errorf("workflow %q has an invalid session for actor %d: %w", profile, actor+1, err)
+			}
 			if previous, exists := seenProfileSessions[canonical]; exists {
 				return v, fmt.Errorf("workflow session sets for %q and %q must be distinct for actor %d", previous, profile, actor+1)
 			}
