@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/LucasLuchetta/Damocline/internal/appmetrics"
 	"github.com/LucasLuchetta/Damocline/internal/campaign"
 	"github.com/LucasLuchetta/Damocline/internal/capacitygoal"
 	"github.com/LucasLuchetta/Damocline/internal/generatorhealth"
@@ -349,6 +350,9 @@ func validateEvidence(evidence campaign.Result) error {
 	if evidence.SchemaVersion < 1 || evidence.SchemaVersion > campaign.CurrentSchemaVersion || evidence.Scenario == "" || evidence.BaseUsers < 1 || evidence.Repeats < 2 || evidence.Repeats > 5 || len(evidence.Trials) == 0 || len(evidence.Trials) > evidence.Repeats {
 		return errors.New("expected a complete supported repeated campaign")
 	}
+	if err := validateApplicationMetrics(evidence); err != nil {
+		return err
+	}
 	if evidence.SchemaVersion >= 5 {
 		if err := campaign.ValidateStabilityPolicy(evidence.EffectiveStabilityPolicy()); err != nil {
 			return fmt.Errorf("invalid persisted stability policy: %w", err)
@@ -416,6 +420,33 @@ func validateEvidence(evidence campaign.Result) error {
 		}
 		if !foundObservation || !foundRecovery {
 			return errors.New("a trial is missing observation or recovery evidence")
+		}
+	}
+	return nil
+}
+
+func validateApplicationMetrics(evidence campaign.Result) error {
+	totalBytes := 0
+	for _, trial := range evidence.Trials {
+		for _, phase := range trial.Phases {
+			run := phase.Run
+			if run.ApplicationMetrics == nil {
+				continue
+			}
+			if run.SchemaVersion < 25 {
+				return errors.New("application-metrics timeline is not supported by its run-report schema")
+			}
+			if err := appmetrics.ValidateTimeline(*run.ApplicationMetrics); err != nil {
+				return fmt.Errorf("invalid application-metrics timeline in %s phase: %w", phase.Name, err)
+			}
+			sampleBytes, err := appmetrics.SerializedSamplesBytes(*run.ApplicationMetrics)
+			if err != nil {
+				return fmt.Errorf("cannot measure application-metrics timeline in %s phase: %w", phase.Name, err)
+			}
+			totalBytes += sampleBytes
+			if totalBytes > appmetrics.MaxTimelineBytes {
+				return fmt.Errorf("campaign application-metrics timelines exceed %d bytes", appmetrics.MaxTimelineBytes)
+			}
 		}
 	}
 	return nil

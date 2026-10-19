@@ -10,6 +10,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/LucasLuchetta/Damocline/internal/appmetrics"
 	"github.com/LucasLuchetta/Damocline/internal/calibration"
 	"github.com/LucasLuchetta/Damocline/internal/generatorhealth"
 	"github.com/LucasLuchetta/Damocline/internal/statistics"
@@ -20,8 +21,9 @@ import (
 // reviewed and supported. Version 20 adds DNS and connection failure details
 // to HTTP diagnostics, v21 adds seeded think-time provenance, v22 adds
 // completed journeys to observation windows, v23 records generator resource
-// guardrails, and v24 identifies explicit cleanup steps.
-const CurrentSchemaVersion = 24
+// guardrails, v24 identifies explicit cleanup steps, and v25 may attach a
+// bounded, timestamped application-metrics timeline collected during a run.
+const CurrentSchemaVersion = 25
 
 type MetricSet struct {
 	Total                 int                     `json:"total"`
@@ -392,6 +394,7 @@ type Result struct {
 	ThinkTimeObservations            int                          `json:"think_time_observations,omitempty"`
 	Warnings                         []string                     `json:"warnings,omitempty"`
 	Generator                        *generatorhealth.Summary     `json:"generator,omitempty"`
+	ApplicationMetrics               *appmetrics.Timeline         `json:"application_metrics,omitempty"`
 	Calibration                      *CalibrationEvidence         `json:"calibration,omitempty"`
 	ReferenceEvidence                *ControlledReferenceEvidence `json:"controlled_reference_evidence,omitempty"`
 	Quality                          *Quality                     `json:"data_quality,omitempty"`

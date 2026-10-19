@@ -113,13 +113,13 @@ Usage:
   damocline goal --file capacity.json (--peak-users 20 | --peak-journeys-per-second 5) [--growth-percent 25] [--reserve-percent 20]
 	  damocline plan --campaign campaign.json --peak-users 20 [--growth-percent 25] [--reserve-percent 20]
 	damocline audit --campaign campaign.json [--campaign higher-level.json] [--peak-users 20] [--growth-percent 25] [--reserve-percent 20] [--out assessment.json]
-  damocline run --config scenario.json --authorized [--calibration reports/reference.json --require-calibration] [--out reports/run.json]
+  damocline run --config scenario.json --authorized [--calibration reports/reference.json --require-calibration] [--app-metrics-endpoint https://app.example.com/metrics --app-metrics-interval 10s] [--out reports/run.json]
   damocline run --config scenario.json --dry-run
   damocline explore --config scenario.json --min-users 2 --max-users 20 --stage-duration 20s --repeats 2 --authorized
   damocline explore-arrival --config arrival.json --min-journeys-per-second 2 --max-journeys-per-second 20 --authorized
-	  damocline campaign --config scenario.json --warmup 30s --observation 2m --recovery 30s --repeats 2 --authorized
+	  damocline campaign --config scenario.json --warmup 30s --observation 2m --recovery 30s --repeats 2 --app-metrics-endpoint https://app.example.com/metrics --authorized
 	  damocline campaign --config staging.json --observation 30m --allow-long-run --staging-confirmed --budget 70m --authorized
-  damocline arrival-campaign --config arrival.json --observation 2m --recovery 30s --repeats 2 --calibration reports/reference.json --authorized
+	  damocline arrival-campaign --config arrival.json --observation 2m --recovery 30s --repeats 2 --calibration reports/reference.json --app-metrics-endpoint https://app.example.com/metrics --authorized
 	  damocline arrival-campaign --config staging-arrival.json --observation 30m --allow-long-run --staging-confirmed --budget 70m --authorized
   damocline explore --config scenario.json --peak-users 10 --growth-percent 25 --reserve-percent 20 --authorized
   damocline monitor --duration 3m --interval 2s --out reports/host.json
@@ -307,11 +307,17 @@ func run(args []string, stdout, stderr io.Writer) int {
 	out := fs.String("out", "", "write a JSON report (file permissions 0600)")
 	calibrationFile := fs.String("calibration", "", "attach a validated local generator calibration artifact")
 	requireCalibration := fs.Bool("require-calibration", false, "block traffic unless local calibration covers this exact generator workload")
+	applicationMetricsEndpoint := fs.String("app-metrics-endpoint", "", "optionally sample an authorized Prometheus-text endpoint during this run")
+	applicationMetricsInterval := fs.Duration("app-metrics-interval", 10*time.Second, "application-metrics sampling interval (1s-1m)")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 	if len(fs.Args()) > 0 {
 		fmt.Fprintln(stderr, "unexpected positional arguments")
+		return 2
+	}
+	if err := validateApplicationMetrics(*applicationMetricsEndpoint, *applicationMetricsInterval); err != nil {
+		fmt.Fprintf(stderr, "application metrics configuration error: %v\n", err)
 		return 2
 	}
 	if *filename == "" {
@@ -382,13 +388,21 @@ func run(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	if *dry {
+		if *applicationMetricsEndpoint != "" {
+			fmt.Fprintf(stdout, "Application metrics endpoint validated; dry run will not scrape it (interval %s).\n", *applicationMetricsInterval)
+		}
 		fmt.Fprintln(stdout, "DRY RUN: no requests were sent.")
 		return 0
 	}
 	fmt.Fprintln(stdout, "Running bounded HTTP workload (no redirects followed)...")
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	result := engine.Run(ctx, validated)
+	runner := phaseRunner(engine.Run)
+	if *applicationMetricsEndpoint != "" {
+		fmt.Fprintf(stdout, "Sampling application metrics from the explicitly configured endpoint every %s; scrapes are additional traffic outside max_rps.\n", *applicationMetricsInterval)
+		runner = withApplicationMetrics(*applicationMetricsEndpoint, *applicationMetricsInterval, appmetrics.NewBudget(appmetrics.MaxTimelineSamples), runner)
+	}
+	result := runner(ctx, validated)
 	if *calibrationFile != "" {
 		if calibrationErr := attachCalibration(&result, validated.Scenario, *calibrationFile, time.Now().UTC()); calibrationErr != nil {
 			result.Warnings = append(result.Warnings, "The requested local generator calibration could not be validated and was not attached.")
@@ -441,6 +455,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	for _, w := range result.Warnings {
 		fmt.Fprintf(stdout, "WARNING: %s\n", w)
 	}
+	printApplicationMetricsSummary(stdout, result.ApplicationMetrics)
 	fmt.Fprintln(stdout, "Note: PASS means thresholds passed in this run, not a validated sustainable capacity ceiling.")
 	insights.Write(stdout, result, nil, nil)
 	if *out != "" {
@@ -491,11 +506,17 @@ func campaignCmd(args []string, stdout, stderr io.Writer) int {
 	writes := fs.Bool("allow-writes", false, "explicitly opt in to HTTP mutation methods")
 	insecure := fs.Bool("allow-insecure-http", false, "permit intentional plaintext HTTP to a non-loopback host")
 	out := fs.String("out", "", "JSON campaign report output path")
+	applicationMetricsEndpoint := fs.String("app-metrics-endpoint", "", "optionally sample an authorized Prometheus-text endpoint during every phase")
+	applicationMetricsInterval := fs.Duration("app-metrics-interval", 10*time.Second, "application-metrics sampling interval (1s-1m)")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 	if *filename == "" || len(fs.Args()) != 0 {
 		fmt.Fprintln(stderr, "--config is required and positional arguments are not accepted")
+		return 2
+	}
+	if err := validateApplicationMetrics(*applicationMetricsEndpoint, *applicationMetricsInterval); err != nil {
+		fmt.Fprintf(stderr, "application metrics configuration error: %v\n", err)
 		return 2
 	}
 	if !*dry && *out == "" {
@@ -547,6 +568,9 @@ func campaignCmd(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "Generator abort guardrails: CPU %.1f%% | RSS %.1f MiB | %d consecutive samples. These limits apply to the local generator, not the target application.\n", guardrails.MaxProcessCPUPercent, float64(guardrails.MaxProcessRSSBytes)/(1024*1024), guardrails.ConsecutiveSamples)
 	}
 	if *dry {
+		if *applicationMetricsEndpoint != "" {
+			fmt.Fprintf(stdout, "Application metrics endpoint validated; dry run will not scrape it (interval %s).\n", *applicationMetricsInterval)
+		}
 		for trial := 1; trial <= options.Repeats; trial++ {
 			for _, phase := range campaign.PlannedTrialPhases(options, validated.Scenario.Users, trial) {
 				fmt.Fprintf(stdout, "  Trial %d %s: %s at %d VUs\n", trial, phase.Name, phase.Duration, phase.Users)
@@ -560,7 +584,12 @@ func campaignCmd(args []string, stdout, stderr io.Writer) int {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	result, err := campaign.RunWithProgress(ctx, validated, options, func(snapshot campaign.Result) error {
+	runner := phaseRunner(engine.Run)
+	if *applicationMetricsEndpoint != "" {
+		fmt.Fprintf(stdout, "Sampling application metrics from the explicitly configured endpoint every %s; scrapes are additional traffic outside max_rps.\n", *applicationMetricsInterval)
+		runner = withApplicationMetrics(*applicationMetricsEndpoint, *applicationMetricsInterval, appmetrics.NewBudget(appmetrics.MaxTimelineSamples), runner)
+	}
+	result, err := campaign.WithRunnerProgress(ctx, validated, options, campaign.Runner(runner), func(snapshot campaign.Result) error {
 		return report.WriteAnyJSON(*out, snapshot)
 	})
 	if err != nil {
@@ -577,6 +606,7 @@ func campaignCmd(args []string, stdout, stderr io.Writer) int {
 			if phase.Stability != "" {
 				fmt.Fprintf(stdout, "    %s drift screen: %s\n", phase.Name, phase.Stability)
 			}
+			printApplicationMetricsSummary(stdout, phase.Run.ApplicationMetrics)
 			if phase.EvidenceState == "INVALID_DELIVERY" || phase.EvidenceState == "INSUFFICIENT_EVIDENCE" {
 				fmt.Fprintf(stdout, "    %s\n", phase.Reason)
 			}

@@ -161,6 +161,15 @@ the existing journey and observation-window gates, and counts toward the
 15-minute campaign limit. This short soak is not a long-duration stability
 test or a sustainable-capacity certification.
 
+To retain external application metrics beside each phase, campaigns and single
+runs accept `--app-metrics-endpoint URL --app-metrics-interval 10s`. The
+timestamped samples are available in the phase's run report for manual
+alignment. Scrapes add traffic outside Damocline's load counters and rate
+governor; labels are discarded, credentials in URL query strings are rejected,
+and the observations do not identify a bottleneck. See
+[advanced testing](docs/ADVANCED_TESTING.md#9-collect-application-metrics-explicitly)
+for bounds and limitations.
+
 The campaign drift screen is configurable with bounded `--stability-*` options
 for minimum windows and samples, p95 increase, and throughput loss. Defaults
 retain the existing coarse 3-window, 20-sample, 20%/5 ms p95, and 20% throughput

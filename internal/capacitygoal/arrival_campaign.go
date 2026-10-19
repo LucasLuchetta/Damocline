@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/LucasLuchetta/Damocline/internal/appmetrics"
 	"github.com/LucasLuchetta/Damocline/internal/arrivalcampaign"
 	"github.com/LucasLuchetta/Damocline/internal/campaign"
 	"github.com/LucasLuchetta/Damocline/internal/generatorhealth"
@@ -114,6 +115,7 @@ func EvaluateJourneyCampaign(saved arrivalcampaign.Result, goal JourneyStartGoal
 	seenStarted := map[string]bool{}
 	observedSLOFailure := false
 	var baselineConfig []byte
+	totalMetricBytes := 0
 	for index, trial := range saved.Trials {
 		if trial.Number != index+1 || len(trial.Phases) > len(arrivalcampaign.PlannedPhases(options, saved.BaseStartsPerSecond, trial.Number)) || len(trial.Phases) == 0 && trial.Outcome != "ABORTED" {
 			return JourneyStartAssessment{}, errors.New("campaign trial numbering or phase count is invalid")
@@ -129,6 +131,22 @@ func EvaluateJourneyCampaign(saved arrivalcampaign.Result, goal JourneyStartGoal
 		for phaseIndex, phase := range trial.Phases {
 			expected := planned[phaseIndex]
 			run := phase.Run
+			if run.ApplicationMetrics != nil {
+				if run.SchemaVersion < 25 {
+					return JourneyStartAssessment{}, errors.New("application-metrics timeline is not supported by its run-report schema")
+				}
+				if err := appmetrics.ValidateTimeline(*run.ApplicationMetrics); err != nil {
+					return JourneyStartAssessment{}, fmt.Errorf("invalid application-metrics timeline in %s phase: %w", phase.Name, err)
+				}
+				sampleBytes, err := appmetrics.SerializedSamplesBytes(*run.ApplicationMetrics)
+				if err != nil {
+					return JourneyStartAssessment{}, fmt.Errorf("cannot measure application-metrics timeline in %s phase: %w", phase.Name, err)
+				}
+				totalMetricBytes += sampleBytes
+				if totalMetricBytes > appmetrics.MaxTimelineBytes {
+					return JourneyStartAssessment{}, fmt.Errorf("campaign application-metrics timelines exceed %d bytes", appmetrics.MaxTimelineBytes)
+				}
+			}
 			if phase.Name != expected.Name || run.SchemaVersion != report.CurrentSchemaVersion || run.Name != saved.Scenario || run.Target != saved.Target || run.Config.Mode != "arrival" ||
 				run.Config.ArrivalRate != expected.Rate || run.Config.Users != saved.WorkerLimit || run.Config.Duration != expected.Duration.String() ||
 				run.Config.WorkloadFingerprint != saved.WorkloadFingerprint || run.Config.MaxRPS != saved.RequestRateCeiling ||

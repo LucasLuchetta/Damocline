@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/LucasLuchetta/Damocline/internal/appmetrics"
 	"github.com/LucasLuchetta/Damocline/internal/arrivalcampaign"
 	"github.com/LucasLuchetta/Damocline/internal/arrivalexplorer"
 	"github.com/LucasLuchetta/Damocline/internal/config"
@@ -184,6 +185,17 @@ func TestArrivalCampaignCheckpointIsAuditedAsIncomplete(t *testing.T) {
 	assessment, err := EvaluateJourneyCampaign(checkpoint, JourneyStartGoal{PeakStartsPerSecond: 1})
 	if err != nil || assessment.State != "INSUFFICIENT_EVIDENCE" {
 		t.Fatalf("in-progress artifact was not retained as incomplete evidence: assessment=%+v err=%v", assessment, err)
+	}
+	malformedMetrics := checkpoint
+	pendingWithMetrics := *checkpoint.PendingTrial
+	pendingWithMetrics.Phases = append([]arrivalcampaign.Phase(nil), pendingWithMetrics.Phases...)
+	stamp := time.Now().UTC().Format(time.RFC3339Nano)
+	invalidTimeline := appmetrics.Timeline{SchemaVersion: appmetrics.TimelineSchemaVersion, Source: "http://127.0.0.1", Interval: "10s",
+		StartedAt: stamp, FinishedAt: stamp, Note: "test", Samples: []appmetrics.TimedSample{{StartedAt: stamp, FinishedAt: stamp, DurationMS: -1}}}
+	pendingWithMetrics.Phases[0].Run.ApplicationMetrics = &invalidTimeline
+	malformedMetrics.PendingTrial = &pendingWithMetrics
+	if _, err := EvaluateJourneyCampaign(malformedMetrics, JourneyStartGoal{PeakStartsPerSecond: 1}); err == nil || !strings.Contains(err.Error(), "invalid application-metrics timeline") {
+		t.Fatalf("offline arrival-campaign audit accepted malformed timeline evidence: %v", err)
 	}
 	duplicate := checkpoint
 	duplicate.Trials = append([]arrivalcampaign.Trial(nil), checkpoint.Trials...)
