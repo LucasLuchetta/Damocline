@@ -36,3 +36,5 @@ func replaceReportFile(source, destination string) error {
 	}
 	return nil
 }
+
+func syncReportDirectory(string) error { return nil }

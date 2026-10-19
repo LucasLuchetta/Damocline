@@ -12,6 +12,12 @@ import (
 
 // reportCmd explains saved measurements locally, with no network requests.
 func reportCmd(args []string, stdout, stderr io.Writer) int {
+	if len(args) > 0 {
+		switch args[0] {
+		case "history", "save", "delete", "prune":
+			return reportHistoryCmd(args[0], args[1:], stdout, stderr)
+		}
+	}
 	fs := flag.NewFlagSet("report", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	path := fs.String("file", "", "Damocline HTTP run report JSON")
