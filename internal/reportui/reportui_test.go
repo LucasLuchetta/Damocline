@@ -1,11 +1,14 @@
 package reportui
 
 import (
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/LucasLuchetta/Damocline/internal/appmetrics"
 	"github.com/LucasLuchetta/Damocline/internal/calibration"
 	"github.com/LucasLuchetta/Damocline/internal/generatorhealth"
 	"github.com/LucasLuchetta/Damocline/internal/report"
@@ -48,6 +51,61 @@ func TestHandlerRendersReport(t *testing.T) {
 		if !strings.Contains(w.Body.String(), expected) {
 			t.Fatalf("report view omitted timeline evidence %q: %s", expected, w.Body.String())
 		}
+	}
+}
+
+func TestHandlerPlotsApplicationMetricsAsObservedPoints(t *testing.T) {
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	timeline := &appmetrics.Timeline{SchemaVersion: 1, Source: "http://127.0.0.1", Interval: "5s",
+		StartedAt: start.Format(time.RFC3339Nano), FinishedAt: start.Add(10 * time.Second).Format(time.RFC3339Nano), Note: "test",
+		Samples: []appmetrics.TimedSample{
+			{StartedAt: start.Add(time.Second).Format(time.RFC3339Nano), FinishedAt: start.Add(time.Second).Format(time.RFC3339Nano), Samples: []appmetrics.Sample{{Name: "queue_depth", Value: 3}}},
+			{StartedAt: start.Add(9 * time.Second).Format(time.RFC3339Nano), FinishedAt: start.Add(9 * time.Second).Format(time.RFC3339Nano), Samples: []appmetrics.Sample{{Name: "queue_depth", Value: 7}}},
+		},
+	}
+	h := Handler(report.Result{Name: "Metric report", ApplicationMetrics: timeline})
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/", nil))
+	body := w.Body.String()
+	for _, expected := range []string{"Application-metric timeline", "queue_depth", `cx="100.0" cy="140.0"`, `cx="540.0" cy="30.0"`, "without Prometheus labels", "not mapped to Damocline capacity"} {
+		if w.Code != http.StatusOK || !strings.Contains(body, expected) {
+			t.Fatalf("report view omitted observed metric evidence %q: %d %s", expected, w.Code, body)
+		}
+	}
+	if strings.Contains(body, `polyline fill="none"`) {
+		t.Fatal("sparse application observations were connected by an invented interpolation")
+	}
+}
+
+func TestCampaignHandlerRendersSeparatePhaseEvidenceAndUnits(t *testing.T) {
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	timeline := &appmetrics.Timeline{SchemaVersion: 1, Source: "http://127.0.0.1", Interval: "5s",
+		StartedAt: start.Format(time.RFC3339Nano), FinishedAt: start.Add(10 * time.Second).Format(time.RFC3339Nano), Note: "test",
+		Samples: []appmetrics.TimedSample{{StartedAt: start.Add(time.Second).Format(time.RFC3339Nano), FinishedAt: start.Add(time.Second).Format(time.RFC3339Nano), Samples: []appmetrics.Sample{{Name: "workers_busy", Value: 2}}}},
+	}
+	h := CampaignHandler(CampaignView{Kind: "Open-arrival capacity", Unit: "scheduled journey starts/s", Scenario: "Synthetic", Target: "http://127.0.0.1", StartedAt: start.Format(time.RFC3339), Outcome: "INCONCLUSIVE", Pending: true,
+		Trials: []TrialView{{Number: 1, Outcome: "IN_PROGRESS", Pending: true, Phases: []PhaseView{{Name: "observation", EvidenceState: "INSUFFICIENT_EVIDENCE", Load: "5 scheduled journey starts/s", Run: report.Result{Outcome: "PASS", ObservationSeconds: 10, Config: report.RunConfig{Mode: "arrival", ArrivalRate: 5}, Metrics: report.MetricSet{Total: 12, P95MS: 30}}, Metrics: MetricCharts(timeline)}}}}})
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/", nil))
+	body := w.Body.String()
+	for _, expected := range []string{"Open-arrival capacity", "scheduled journey starts/s", "checkpoint in progress", "5 scheduled journey starts/s", "workers_busy", "Application metric: workers_busy", "12 HTTP requests", "No interpolation"} {
+		if w.Code != http.StatusOK || !strings.Contains(body, expected) {
+			t.Fatalf("campaign dashboard omitted evidence %q: %d %s", expected, w.Code, body)
+		}
+	}
+}
+
+func TestMetricChartsKeepExtremeFiniteValuesInsideThePlot(t *testing.T) {
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	timeline := &appmetrics.Timeline{StartedAt: start.Format(time.RFC3339Nano), FinishedAt: start.Add(time.Second).Format(time.RFC3339Nano),
+		Samples: []appmetrics.TimedSample{
+			{FinishedAt: start.Format(time.RFC3339Nano), Samples: []appmetrics.Sample{{Name: "extreme", Value: -math.MaxFloat64}}},
+			{FinishedAt: start.Add(time.Second).Format(time.RFC3339Nano), Samples: []appmetrics.Sample{{Name: "extreme", Value: math.MaxFloat64}}},
+		},
+	}
+	charts := MetricCharts(timeline)
+	if len(charts) != 1 || len(charts[0].Points) != 2 || charts[0].Points[0].Y != "140.0" || charts[0].Points[1].Y != "30.0" {
+		t.Fatalf("finite extreme values produced invalid chart coordinates: %+v", charts)
 	}
 }
 

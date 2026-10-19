@@ -306,10 +306,10 @@ For local Docker container snapshots, run `damocline docker --authorized --out r
 ## 10. Inspect a saved report locally
 
 ```powershell
-.\damocline.exe dashboard --file reports\run.json
+.\damocline.exe dashboard --file reports\campaign.json
 ```
 
-The dashboard binds only to `127.0.0.1` (or `localhost`/`::1`), reads one existing report, and displays the saved outcome, request metrics, steps, and observation windows. When the report has observation windows, it draws aggregate request p95/p99 by window and lists request and journey success/failure counts. Dropped starts and generator resource peaks are shown only as run-wide context because the report does not retain them per window. It makes no load requests and does not expose the report to the network.
+The dashboard binds only to `127.0.0.1` (or `localhost`/`::1`) and reads one bounded, locally saved run or campaign report. Run views display request metrics, steps and observation windows. Campaign views retain each trial and phase, show per-window HTTP and journey outcomes, and identify incomplete checkpoints without assigning a final result. Both views plot collected Prometheus-text samples as separate observations against their UTC collection times; sparse points are not connected or interpolated. Metric values are not mapped to SLOs or interpreted as causes. Dropped starts and generator peaks remain run-wide context because reports do not retain those series per window. The dashboard makes no load requests and exposes no non-loopback listener.
 
 ## 8. Limitations and quality checks
 

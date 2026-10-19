@@ -170,6 +170,17 @@ and the observations do not identify a bottleneck. See
 [advanced testing](docs/ADVANCED_TESTING.md#9-collect-application-metrics-explicitly)
 for bounds and limitations.
 
+Open a saved run or campaign without generating traffic:
+
+```powershell
+.\damocline.exe dashboard --file reports\campaign.json
+```
+
+Campaign views keep each trial and phase separate, show HTTP window outcomes,
+and plot timestamped application-metric observations as points without
+interpolation or causal interpretation. The local dashboard accepts only
+loopback bind addresses.
+
 The campaign drift screen is configurable with bounded `--stability-*` options
 for minimum windows and samples, p95 increase, and throughput loss. Defaults
 retain the existing coarse 3-window, 20-sample, 20%/5 ms p95, and 20% throughput

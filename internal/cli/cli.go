@@ -109,7 +109,7 @@ Usage:
 	  damocline report history [--dir .damocline/reports]
 	  damocline report prune --keep 50 [--dir .damocline/reports]
 	  damocline report delete --id <exact-history-id> [--dir .damocline/reports]
-	  damocline dashboard --file run.json [--addr 127.0.0.1:8787]
+	  damocline dashboard --file run-or-campaign.json [--addr 127.0.0.1:8787]
   damocline goal --file capacity.json (--peak-users 20 | --peak-journeys-per-second 5) [--growth-percent 25] [--reserve-percent 20]
 	  damocline plan --campaign campaign.json --peak-users 20 [--growth-percent 25] [--reserve-percent 20]
 	damocline audit --campaign campaign.json [--campaign higher-level.json] [--peak-users 20] [--growth-percent 25] [--reserve-percent 20] [--out assessment.json]
@@ -636,19 +636,19 @@ func dashboardCmd(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	if *path == "" || len(fs.Args()) != 0 {
-		fmt.Fprintln(stderr, "usage: damocline dashboard --file run.json [--addr 127.0.0.1:8787]")
+		fmt.Fprintln(stderr, "usage: damocline dashboard --file run-or-campaign.json [--addr 127.0.0.1:8787]")
 		return 2
 	}
 	if err := reportui.ListenAddress(*address); err != nil {
 		fmt.Fprintf(stderr, "invalid dashboard address: %v\n", err)
 		return 2
 	}
-	result, err := insights.ReadRun(*path)
+	handler, err := loadDashboardHandler(*path)
 	if err != nil {
-		fmt.Fprintf(stderr, "cannot read run: %v\n", err)
+		fmt.Fprintf(stderr, "cannot read dashboard artifact: %v\n", err)
 		return 2
 	}
-	server := &http.Server{Addr: *address, Handler: reportui.Handler(result), ReadHeaderTimeout: 5 * time.Second}
+	server := &http.Server{Addr: *address, Handler: handler, ReadHeaderTimeout: 5 * time.Second}
 	fmt.Fprintf(stdout, "Local dashboard: http://%s/ (Ctrl+C to stop)\n", *address)
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		fmt.Fprintf(stderr, "dashboard error: %v\n", err)

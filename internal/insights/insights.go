@@ -41,32 +41,41 @@ func ReadRun(path string) (report.Result, error) {
 	if err := readJSON(path, &r); err != nil {
 		return r, err
 	}
+	if err := ValidateRunReport(r); err != nil {
+		return report.Result{}, err
+	}
+	return r, nil
+}
+
+// ValidateRunReport checks an already decoded run report using the same
+// schema and evidence rules as ReadRun.
+func ValidateRunReport(r report.Result) error {
 	if r.SchemaVersion < 1 || r.SchemaVersion > report.CurrentSchemaVersion || r.Name == "" || r.Metrics.Total < 0 || r.Metrics.Success < 0 || r.Metrics.Failures < 0 || r.Metrics.Success+r.Metrics.Failures != r.Metrics.Total || r.Config.Users < 1 || r.ElapsedSeconds <= 0 || (r.SchemaVersion >= 4 && r.ObservationSeconds <= 0) || (r.SchemaVersion >= 11 && !validFingerprint(r.Config.WorkloadFingerprint)) || (r.SchemaVersion >= 14 && r.Config.ConnectionPolicy != "reuse" && r.Config.ConnectionPolicy != "new_per_request") {
-		return report.Result{}, errors.New("not a valid Damocline HTTP run report")
+		return errors.New("not a valid Damocline HTTP run report")
 	}
 	if (r.SchemaVersion >= 16 && (r.ArrivalsCancelledBeforeAdmission == nil || *r.ArrivalsCancelledBeforeAdmission < 0)) ||
 		(r.SchemaVersion < 16 && r.ArrivalsCancelledBeforeAdmission != nil) {
-		return report.Result{}, errors.New("report arrival-cancellation evidence does not match its schema")
+		return errors.New("report arrival-cancellation evidence does not match its schema")
 	}
 	if (r.SchemaVersion >= 17 && (r.ArrivalsAdmitted == nil || *r.ArrivalsAdmitted < 0)) ||
 		(r.SchemaVersion < 17 && r.ArrivalsAdmitted != nil) {
-		return report.Result{}, errors.New("report admitted-arrival evidence does not match its schema")
+		return errors.New("report admitted-arrival evidence does not match its schema")
 	}
 	if !report.HasValidFailureClassification(r) {
-		return report.Result{}, errors.New("report HTTP failure-classification evidence does not match its schema")
+		return errors.New("report HTTP failure-classification evidence does not match its schema")
 	}
 	if !validThinkTimeProvenance(r) {
-		return report.Result{}, errors.New("report think-time provenance does not match its schema")
+		return errors.New("report think-time provenance does not match its schema")
 	}
 	if r.SchemaVersion < 25 && r.ApplicationMetrics != nil {
-		return report.Result{}, errors.New("report application-metrics evidence does not match its schema")
+		return errors.New("report application-metrics evidence does not match its schema")
 	}
 	if r.ApplicationMetrics != nil {
 		if err := appmetrics.ValidateTimeline(*r.ApplicationMetrics); err != nil {
-			return report.Result{}, fmt.Errorf("invalid application-metrics evidence: %w", err)
+			return fmt.Errorf("invalid application-metrics evidence: %w", err)
 		}
 	}
-	return r, nil
+	return nil
 }
 
 func validThinkTimeProvenance(r report.Result) bool {
