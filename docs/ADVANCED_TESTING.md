@@ -40,6 +40,8 @@ Scenario fields:
 | `think_time_range` | Optional `{ "min": "10ms", "max": "40ms" }` uniform between-step pause; maximum 30s. Use instead of `think_time` at the same level. |
 | `think_time_samples` | Optional list of 2–32 durations between 0 and 30s, such as `["100ms", "100ms", "500ms"]`; repeated values carry higher relative frequency. Use instead of fixed or uniform timing at the same level. |
 | `workload_seed` | Optional positive integer for reproducible timing choices; defaults to 1 when a variable policy is used. |
+| `connection_policy` | `reuse` (default) or `new_per_request`; controls keep-alive behavior. |
+| `max_connections_per_host` | Optional generator-side connection cap per target host, from 1 to 100. Omitted or zero values use a worker-scaled default. A lower cap can constrain delivered concurrency; inspect schema-v28 acquisition-wait evidence. Explicit caps are outside the current fixed calibration matrix. |
 | `per_vu_cookie_env_prefix` | Optional scenario-level prefix for distinct actor cookies shared across that actor's workflows. |
 | `profiles` | Optional replacement for `steps`: 2-10 named weighted workflows, each with `name`, `weight`, `steps`, an optional `per_vu_cookie_env_prefix` for an independent per-actor workflow identity, and an optional fixed, uniform, or discrete timing override. |
 | `extract` | Optional map of response values to capture using exactly one `json_pointer` or `header` selector. |

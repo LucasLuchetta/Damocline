@@ -145,6 +145,13 @@ func TestConnectionPolicyRequiresExactProfileControls(t *testing.T) {
 	if got := AssessDeclaredWorkloadShape(scenario, a.Preflight); got.Status != "MATCHED" {
 		t.Fatalf("exact new-connection workload fingerprint should match: %+v", got)
 	}
+	scenario.MaxConnectionsPerHost = 1
+	if got := AssessDeclaredWorkloadShape(scenario, a.Preflight); got.Status != "OUTSIDE_REFERENCE" {
+		t.Fatalf("explicit connection cap must not inherit default-pool calibration: %+v", got)
+	}
+	if exactProfileControlsMatch(a.Preflight.Fixture.WorkloadProfiles, scenario, scenario.ConnectionPolicy) {
+		t.Fatal("explicit connection cap inherited a fixed profile control tuple")
+	}
 	scenario.Duration = "5s"
 	coverage = AssessScenario(scenario, a.Preflight, local, now)
 	for _, dimension := range coverage.Dimensions {
@@ -172,6 +179,10 @@ func TestExactReferenceSoakRetainsControlledReuseCoverage(t *testing.T) {
 	}
 	if exactReferenceSoakControlsMatch(scenario, "new_per_request") {
 		t.Fatal("the 30-second soak must not imply new-per-request calibration")
+	}
+	scenario.MaxConnectionsPerHost = 10
+	if exactReferenceSoakControlsMatch(scenario, "reuse") {
+		t.Fatal("an explicit connection cap must not inherit default-pool soak evidence")
 	}
 	scenario.MaxRPS = 100
 	if exactReferenceSoakControlsMatch(scenario, "reuse") {

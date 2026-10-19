@@ -36,6 +36,7 @@ type Scenario struct {
 	WorkloadSeed           uint64          `json:"workload_seed,omitempty"`
 	Timeout                string          `json:"request_timeout"`
 	ConnectionPolicy       string          `json:"connection_policy,omitempty"`
+	MaxConnectionsPerHost  int             `json:"max_connections_per_host,omitempty"`
 	MaxRPS                 int             `json:"max_rps"`
 	P95LimitMS             float64         `json:"p95_limit_ms"`
 	MaxErrorRate           float64         `json:"max_error_rate"`
@@ -283,6 +284,9 @@ func Parse(s Scenario, o Options) (Validated, error) {
 	}
 	if s.ConnectionPolicy != "reuse" && s.ConnectionPolicy != "new_per_request" {
 		return v, errors.New("connection_policy must be reuse or new_per_request")
+	}
+	if s.MaxConnectionsPerHost < 0 || s.MaxConnectionsPerHost > 100 {
+		return v, errors.New("max_connections_per_host must be 0 (default) or 1..100")
 	}
 	if s.Mode == "arrival" {
 		if s.ArrivalRate < 1 || s.ArrivalRate > 100 {

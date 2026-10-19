@@ -34,6 +34,15 @@ func DetectSignals(r Result) []Signal {
 	if r.ArrivalsDroppedLate > 0 {
 		add("CLIENT_SCHEDULER_LATE", "client", "Planned arrivals missed their start deadlines; intended load was not delivered.")
 	}
+	if r.SchemaVersion >= 28 {
+		var waitCount int
+		for _, step := range r.Steps {
+			waitCount += step.HTTPTrace.ConnectionWaitCount
+		}
+		if waitCount > 0 {
+			add("CLIENT_CONNECTION_ACQUISITION_WAIT", "client_transport", "At least one reused-connection acquisition exceeded 10 ms; client-side transport queueing is possible, but pool exhaustion is not proven.")
+		}
+	}
 	if r.ArrivalsCancelledBeforeAdmission != nil && *r.ArrivalsCancelledBeforeAdmission > 0 {
 		add("CLIENT_ARRIVALS_CANCELLED", "run_control", "Due arrivals were not admitted because the run was externally cancelled before its schedule ended.")
 	}

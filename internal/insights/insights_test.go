@@ -658,6 +658,10 @@ func TestSupportedReportSchemaGoldensRoundTrip(t *testing.T) {
 				if got.Config.Profiles[0].AuthenticationContext != "per_actor_workflow_cookie" || got.Config.Profiles[1].AuthenticationContext != "isolated_workflow_cookie_jar" {
 					t.Fatal("schema-v27 workflow authentication contexts were not preserved")
 				}
+			case 28:
+				if got.Config.MaxConnectionsPerHost != 1 {
+					t.Fatal("schema-v28 per-host connection limit was not preserved")
+				}
 			}
 		})
 	}

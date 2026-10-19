@@ -18,15 +18,15 @@ func TestRedactedRunExportOmitsUncontrolledStringsAndPreservesEvidence(t *testin
 	start := "2026-04-03T12:30:00.123456789Z"
 	count := int64(8)
 	run := report.Result{
-		SchemaVersion: 27, Name: secret, Target: "https://user:token@" + secret + "/private/route?customer=731", Outcome: "PASS",
+		SchemaVersion: 28, Name: secret, Target: "https://user:token@" + secret + "/private/route?customer=731", Outcome: "PASS",
 		StartedAt: start, ElapsedSeconds: 8.5, ObservationSeconds: 8,
 		Config: report.RunConfig{WorkloadRevision: secret, ApplicationRevision: secret, WorkloadFingerprint: secret,
 			Environment: secret, ProfileMixReference: secret, Users: 4, Duration: "8s", RequestTimeout: "1s",
 			ConnectionPolicy: "reuse", MaxRPS: 50, P95LimitMS: 250, MaxErrorRate: .01, Mode: "arrival", ArrivalRate: 8,
-			WindowDuration: secret, ProfileSelection: "per_journey_start", SeparateSessions: true, Profiles: []report.ProfileConfig{{Name: "private-workflow", Weight: 2, AuthenticationContext: "per_actor_workflow_cookie"}}},
+			WindowDuration: secret, ProfileSelection: "per_journey_start", SeparateSessions: true, MaxConnectionsPerHost: 4, Profiles: []report.ProfileConfig{{Name: "private-workflow", Weight: 2, AuthenticationContext: "per_actor_workflow_cookie"}}},
 		Metrics:  report.MetricSet{Total: 8, Success: 7, Failures: 1, P95MS: 240, Reasons: map[string]int{secret: 1}},
 		Journeys: report.MetricSet{Total: 4, Success: 3, Failures: 1, P95MS: 400},
-		Steps:    []report.StepResult{{Profile: "private-workflow", Name: "private-step", Method: "GET", Path: "/private/customer-731", Metrics: report.MetricSet{Total: 8, Success: 7, Failures: 1}}},
+		Steps:    []report.StepResult{{Profile: "private-workflow", Name: "private-step", Method: "GET", Path: "/private/customer-731", Metrics: report.MetricSet{Total: 8, Success: 7, Failures: 1}, HTTPTrace: report.HTTPTrace{ConnectionAcquireCount: 8, ConnectionAcquireMS: 56, ConnectionReusedCount: 6, ConnectionWaitCount: 2, ConnectionWaitMS: 35}}},
 		Profiles: []report.ProfileResult{{Name: "private-workflow", Weight: 2, SelectedStarts: 8, ActorsObserved: 4, Journeys: report.MetricSet{Total: 4, Success: 3, Failures: 1}}},
 		Windows: []report.WindowResult{{StartSeconds: 0, EndSeconds: 8, Metrics: report.MetricSet{Total: 8, Success: 7, Failures: 1, P95MS: 240},
 			Journeys: report.MetricSet{Total: 4, Success: 3, Failures: 1, P95MS: 400},
@@ -65,6 +65,9 @@ func TestRedactedRunExportOmitsUncontrolledStringsAndPreservesEvidence(t *testin
 	}
 	if exported.Run.Profiles[0].AuthenticationContext != "per_actor_workflow_cookie" {
 		t.Fatalf("safe workflow authentication-context enum was not preserved: %+v", exported.Run.Profiles[0])
+	}
+	if exported.Workload.MaxConnectionsPerHost != 4 || exported.Run.MaxConnectionsPerHost != 4 || exported.Run.Steps[0].ConnectionWaitCount != 2 || exported.Run.Steps[0].ConnectionWaitMS != 35 {
+		t.Fatalf("safe client connection diagnostics were not preserved: workload=%+v step=%+v", exported.Workload, exported.Run.Steps[0])
 	}
 	if exported.Run.ApplicationMetrics == nil || len(exported.Run.ApplicationMetrics.Samples) != 1 || exported.Run.ApplicationMetrics.Samples[0].MetricCount != 1 || exported.Run.ApplicationMetrics.Samples[0].ElapsedMS != 1076.543 {
 		t.Fatalf("application metric timing was not safely retained: %+v", exported.Run.ApplicationMetrics)

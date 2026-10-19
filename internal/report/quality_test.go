@@ -941,10 +941,12 @@ func TestQualityRejectsInconsistentHTTPTraceCountsAndTotals(t *testing.T) {
 	base := Result{SchemaVersion: 7, Metrics: MetricSet{Total: 1, Success: 1}, Journeys: MetricSet{Total: 1, Success: 1}, Outcome: "PASS", ElapsedSeconds: 1, ObservationSeconds: 1, Config: RunConfig{Users: 1, MaxRPS: 10}, IterationsStarted: 1, IterationsCompleted: 1}
 	base.Steps = []StepResult{{Metrics: MetricSet{Total: 1, Success: 1}, HTTPTrace: HTTPTrace{RequestAttemptCount: 1, RateWaitCount: 1, CompleteCount: 1, WriteCount: 1, FirstByteCount: 1, BodyCount: 1}}}
 	for name, mutate := range map[string]func(*HTTPTrace){
-		"negative phase count":          func(t *HTTPTrace) { t.DNSCount = -1 },
-		"non-finite duration":           func(t *HTTPTrace) { t.CompleteMS = math.NaN() },
-		"missing rate wait":             func(t *HTTPTrace) { t.RateWaitCount = 0 },
-		"body count exceeds first byte": func(t *HTTPTrace) { t.BodyCount = 2 },
+		"negative phase count":           func(t *HTTPTrace) { t.DNSCount = -1 },
+		"non-finite duration":            func(t *HTTPTrace) { t.CompleteMS = math.NaN() },
+		"negative connection wait count": func(t *HTTPTrace) { t.ConnectionWaitCount = -1 },
+		"wait without reused connection": func(t *HTTPTrace) { t.ConnectionWaitCount = 1 },
+		"missing rate wait":              func(t *HTTPTrace) { t.RateWaitCount = 0 },
+		"body count exceeds first byte":  func(t *HTTPTrace) { t.BodyCount = 2 },
 	} {
 		r := base
 		r.Steps = append([]StepResult(nil), base.Steps...)

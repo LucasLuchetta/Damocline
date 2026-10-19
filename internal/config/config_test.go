@@ -475,6 +475,36 @@ func TestConnectionPolicyIsBoundedAndFingerprintable(t *testing.T) {
 		t.Fatal("unsupported connection policy was accepted")
 	}
 }
+
+func TestPerHostConnectionLimitIsBoundedAndFingerprintable(t *testing.T) {
+	base, err := Parse(good(), Options{Authorized: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	limitedScenario := good()
+	limitedScenario.MaxConnectionsPerHost = 1
+	limited, err := Parse(limitedScenario, Options{Authorized: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if limited.WorkloadFingerprint == base.WorkloadFingerprint {
+		t.Fatal("per-host connection limit did not change workload fingerprint")
+	}
+	explicitDefaultScenario := good()
+	explicitDefaultScenario.MaxConnectionsPerHost = 0
+	explicitDefault, err := Parse(explicitDefaultScenario, Options{Authorized: true})
+	if err != nil || explicitDefault.WorkloadFingerprint != base.WorkloadFingerprint {
+		t.Fatalf("zero-valued connection limit should retain the worker-scaled default: validated=%+v err=%v", explicitDefault, err)
+	}
+	for _, value := range []int{-1, 101} {
+		invalid := good()
+		invalid.MaxConnectionsPerHost = value
+		if _, err := Parse(invalid, Options{Authorized: true}); err == nil {
+			t.Fatalf("unsupported per-host connection limit %d was accepted", value)
+		}
+	}
+}
+
 func TestHeadersUseEnv(t *testing.T) {
 	t.Setenv("TEST_DAMOCLINE_COOKIE", "session=fake")
 	s := good()

@@ -114,6 +114,41 @@ func TestHTTPTraceMeasuresLoopbackPhasesAndConnectionReuse(t *testing.T) {
 	}
 }
 
+func TestConnectionPoolQueueWaitIsMeasuredAndReported(t *testing.T) {
+	var received atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		received.Add(1)
+		time.Sleep(80 * time.Millisecond)
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer server.Close()
+	raw := config.Scenario{Name: "bounded transport queue fixture", BaseURL: server.URL, Users: 2, Duration: "1s", MaxRPS: 20, P95LimitMS: 1000, Timeout: "500ms", MaxConnectionsPerHost: 1, Steps: []config.Step{{Name: "work", Path: "/work"}}}
+	v, err := config.Parse(raw, config.Options{Authorized: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	v.Duration = 350 * time.Millisecond
+	r := Run(context.Background(), v)
+	if len(r.Steps) != 1 || r.Steps[0].HTTPTrace.ConnectionWaitCount == 0 || r.Steps[0].HTTPTrace.ConnectionWaitMS < 10 {
+		t.Fatalf("limited transport did not retain a reused-connection wait: %+v", r.Steps)
+	}
+	if r.Config.MaxConnectionsPerHost != 1 || received.Load() != int64(r.Metrics.Total) || r.Metrics.Total < 2 {
+		t.Fatalf("configured client cap or independent request ledger did not reconcile: report=%+v received=%d", r, received.Load())
+	}
+	found := false
+	for _, signal := range r.Signals {
+		if signal.Code == "CLIENT_CONNECTION_ACQUISITION_WAIT" && signal.Origin == "client_transport" {
+			found = true
+			if strings.Contains(signal.Evidence, "pool exhausted") {
+				t.Fatal("connection acquisition wait was overstated as proven pool exhaustion")
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("connection queue symptom was not reported: %+v", r.Signals)
+	}
+}
+
 func TestHTTPTraceReconcilesFailedWriteAndTransportError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		<-r.Context().Done()
