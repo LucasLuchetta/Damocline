@@ -183,7 +183,7 @@ func EvaluateJourneyCampaign(saved arrivalcampaign.Result, goal JourneyStartGoal
 				return JourneyStartAssessment{}, errors.New("native phase window configuration disagrees with campaign manifest")
 			}
 			stability := ""
-			if expected.Name == "observation" || expected.Name == "soak" {
+			if expected.Name == "stabilization" || expected.Name == "observation" || expected.Name == "soak" {
 				stability = campaign.AssessStability(run)
 			}
 			if phase.EvidenceState != state || phase.Stability != stability {
@@ -209,9 +209,9 @@ func EvaluateJourneyCampaign(saved arrivalcampaign.Result, goal JourneyStartGoal
 				return JourneyStartAssessment{}, errors.New("required phase did not pass its native outcome")
 			}
 			if expected.Required && (state != "PASS_OBSERVED" || run.Outcome != "PASS" ||
-				(expected.Name == "observation" || expected.Name == "soak") && stability != "NO_LARGE_DRIFT_DETECTED" ||
+				(expected.Name == "stabilization" || expected.Name == "observation" || expected.Name == "soak") && stability != "NO_LARGE_DRIFT_DETECTED" ||
 				report.AssessQuality(run).State != report.QualityValid || campaignSLOBreach(run) ||
-				campaignCoverageIssue(run, expected.Name == "observation" || expected.Name == "soak") != "" || campaignGeneratorIssue(run) != "") {
+				campaignCoverageIssue(run, expected.Name == "stabilization" || expected.Name == "observation" || expected.Name == "soak") != "" || campaignGeneratorIssue(run) != "") {
 				phasePass = false
 			}
 		}
@@ -276,6 +276,17 @@ func savedOptions(saved arrivalcampaign.Result) (arrivalcampaign.Options, error)
 	if err != nil {
 		return arrivalcampaign.Options{}, err
 	}
+	stabilization := time.Duration(0)
+	if saved.SchemaVersion >= 7 {
+		if saved.Stabilization != "" {
+			stabilization, err = parse(saved.Stabilization, true)
+		}
+		if err != nil {
+			return arrivalcampaign.Options{}, err
+		}
+	} else if saved.Stabilization != "" {
+		return arrivalcampaign.Options{}, errors.New("stabilization is unsupported by this campaign schema")
+	}
 	observation, err := parse(saved.Observation, false)
 	if err != nil {
 		return arrivalcampaign.Options{}, err
@@ -300,7 +311,7 @@ func savedOptions(saved arrivalcampaign.Result) (arrivalcampaign.Options, error)
 	if err != nil {
 		return arrivalcampaign.Options{}, err
 	}
-	options := arrivalcampaign.Options{Warmup: warmup, Observation: observation, SpikeRate: saved.SpikeStartsPerSecond, SpikeDuration: spikeDuration, Recovery: recovery, Soak: soak, Cooldown: cooldown, Repeats: saved.Repeats, Budget: budget, LongRun: saved.LongRun, StagingConfirmed: saved.LongRun}
+	options := arrivalcampaign.Options{Warmup: warmup, Stabilization: stabilization, Observation: observation, SpikeRate: saved.SpikeStartsPerSecond, SpikeDuration: spikeDuration, Recovery: recovery, Soak: soak, Cooldown: cooldown, Repeats: saved.Repeats, Budget: budget, LongRun: saved.LongRun, StagingConfirmed: saved.LongRun}
 	if saved.SchemaVersion >= 3 && saved.GeneratorGuardrails != nil {
 		options.Guardrails = *saved.GeneratorGuardrails
 	}
@@ -329,14 +340,14 @@ func arrivalCampaignRunGuardrailsMatch(saved arrivalcampaign.Result, run report.
 }
 
 func validateSavedOptions(saved arrivalcampaign.Result, options arrivalcampaign.Options) error {
-	phaseLimit, soakLimit, wallTimeLimit := 10*time.Minute, 3*time.Minute, 15*time.Minute
+	phaseLimit, soakLimit, stabilizationLimit, wallTimeLimit := 10*time.Minute, 3*time.Minute, 3*time.Minute, 15*time.Minute
 	if saved.LongRun {
-		phaseLimit, soakLimit, wallTimeLimit = arrivalcampaign.LongRunPhaseLimit, arrivalcampaign.LongRunPhaseLimit, arrivalcampaign.LongRunWallTimeLimit
+		phaseLimit, soakLimit, stabilizationLimit, wallTimeLimit = arrivalcampaign.LongRunPhaseLimit, arrivalcampaign.LongRunPhaseLimit, arrivalcampaign.LongRunPhaseLimit, arrivalcampaign.LongRunWallTimeLimit
 		if saved.DeclaredEnvironment != "staging" {
 			return errors.New("long-run campaign is missing its declared staging environment")
 		}
 	}
-	if options.Warmup < 0 || options.Warmup > 3*time.Minute || options.Recovery < 10*time.Second || options.Recovery > 3*time.Minute ||
+	if options.Warmup < 0 || options.Warmup > 3*time.Minute || options.Stabilization < 0 || options.Stabilization > stabilizationLimit || options.Stabilization > 0 && options.Stabilization < 10*time.Second || options.Recovery < 10*time.Second || options.Recovery > 3*time.Minute ||
 		options.Observation < 10*time.Second || options.Observation > phaseLimit || options.Repeats < 2 || options.Repeats > 5 ||
 		options.SpikeRate < 0 || options.SpikeRate > 100 || (options.SpikeRate == 0) != (options.SpikeDuration == 0) ||
 		options.SpikeRate > 0 && (options.SpikeRate <= saved.BaseStartsPerSecond || options.SpikeDuration < 10*time.Second || options.SpikeDuration > 3*time.Minute) ||
@@ -351,13 +362,16 @@ func validateSavedOptions(saved arrivalcampaign.Result, options arrivalcampaign.
 		return errors.New("saved campaign rate exceeds its request ceiling")
 	}
 	phases := 2
+	if options.Stabilization > 0 {
+		phases++
+	}
 	if options.Warmup > 0 {
 		phases++
 	}
 	if options.SpikeDuration > 0 {
 		phases++
 	}
-	total := time.Duration(options.Repeats)*(options.Warmup+options.Observation+options.SpikeDuration+options.Recovery) + options.Soak + time.Duration(options.Repeats-1)*options.Cooldown
+	total := time.Duration(options.Repeats)*(options.Warmup+options.Stabilization+options.Observation+options.SpikeDuration+options.Recovery) + options.Soak + time.Duration(options.Repeats-1)*options.Cooldown
 	soakDrain := 0
 	if options.Soak > 0 {
 		soakDrain = 1
@@ -377,7 +391,7 @@ func validateCampaignWindowDuration(declared string, options arrivalcampaign.Opt
 	if err != nil || duration < time.Second || duration > time.Minute {
 		return errors.New("campaign window duration is invalid")
 	}
-	for _, phase := range []time.Duration{options.Observation, options.Soak} {
+	for _, phase := range []time.Duration{options.Stabilization, options.Observation, options.Soak} {
 		if phase > 0 && phase/duration < 3 {
 			return errors.New("campaign observation or soak does not contain at least three configured windows")
 		}

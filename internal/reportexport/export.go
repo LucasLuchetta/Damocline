@@ -458,7 +458,7 @@ func safeConnectionPolicy(v string) string {
 }
 func safePhase(v string) string {
 	switch v {
-	case "warmup", "observation", "spike", "recovery", "soak":
+	case "warmup", "stabilization", "observation", "spike", "recovery", "soak":
 		return v
 	default:
 		return "phase"

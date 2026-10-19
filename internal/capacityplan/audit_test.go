@@ -49,7 +49,7 @@ func auditFixtureAtUsers(users int) campaign.Result {
 	a, b := phaseRun(), phaseRun()
 	e := campaign.Result{
 		SchemaVersion: campaign.CurrentSchemaVersion, ExecutionState: "COMPLETED", Scenario: "synthetic", Target: a.Target,
-		BaseUsers: users, Warmup: "0s", Observation: "10s", SpikeDuration: "0s", Recovery: "10s", Cooldown: "0s",
+		BaseUsers: users, Warmup: "0s", Stabilization: "0s", Observation: "10s", SpikeDuration: "0s", Recovery: "10s", Cooldown: "0s",
 		Budget: "3m20s", Repeats: 2, Outcome: "PASS", Soak: "10s", StabilityPolicy: &stabilityPolicy,
 	}
 	for n := 1; n <= 2; n++ {
@@ -108,6 +108,7 @@ func TestRunningCampaignCheckpointRemainsAuditableButInconclusive(t *testing.T) 
 func TestSchemaEightRequiresRecoveryAfterObservedSpikeFailure(t *testing.T) {
 	evidence := auditFixture()
 	evidence.SchemaVersion = 8
+	evidence.Stabilization = ""
 	evidence.Cooldown = ""
 	evidence.Outcome = "FAIL"
 	evidence.SpikeUsers = 4

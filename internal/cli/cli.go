@@ -528,6 +528,7 @@ func campaignCmd(args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	filename := fs.String("config", "", "scenario JSON")
 	warmup := fs.Duration("warmup", 30*time.Second, "warm-up duration (0s-3m)")
+	stabilization := fs.Duration("stabilization", 0, "optional bounded active stability screen before observation (10s-3m; long-run up to 30m)")
 	observation := fs.Duration("observation", 2*time.Minute, "steady observation duration (10s-10m)")
 	spikeUsers := fs.Int("spike-users", 0, "optional peak virtual users above the base scenario")
 	spikeDuration := fs.Duration("spike-duration", 0, "optional spike duration (10s-3m)")
@@ -576,7 +577,7 @@ func campaignCmd(args []string, stdout, stderr io.Writer) int {
 	if guardrails.Enabled() {
 		guardrails.ConsecutiveSamples = *guardrailSamples
 	}
-	options := campaign.Options{Warmup: *warmup, Observation: *observation, SpikeUsers: *spikeUsers, SpikeDuration: *spikeDuration, Recovery: *recovery, Soak: *soak, Cooldown: *cooldown, Repeats: *repeats, Budget: *budget,
+	options := campaign.Options{Warmup: *warmup, Stabilization: *stabilization, Observation: *observation, SpikeUsers: *spikeUsers, SpikeDuration: *spikeDuration, Recovery: *recovery, Soak: *soak, Cooldown: *cooldown, Repeats: *repeats, Budget: *budget,
 		Guardrails: guardrails,
 		LongRun:    *longRun, StagingConfirmed: *stagingConfirmed,
 		Stability: campaign.StabilityPolicy{MinimumWindows: *minWindows, MinimumSamplesPerWindow: *minSamples, MaxP95IncreasePercent: *maxP95IncreasePercent, MaxP95IncreaseMS: *maxP95IncreaseMS, MaxThroughputDropPercent: *maxThroughputDropPercent}}
@@ -604,7 +605,7 @@ func campaignCmd(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "invalid campaign: %v\n", err)
 		return 2
 	}
-	fmt.Fprintf(stdout, "Campaign: %s | %s://%s | warm-up %s | observation %s | spike %d VUs for %s | recovery %s | final soak %s | repeats %d | cooldown %s | wall-time cap %s\n", validated.Scenario.Name, validated.Base.Scheme, validated.Base.Host, options.Warmup, options.Observation, options.SpikeUsers, options.SpikeDuration, options.Recovery, options.Soak, options.Repeats, options.Cooldown, campaign.PlannedBudget(options))
+	fmt.Fprintf(stdout, "Campaign: %s | %s://%s | warm-up %s | stabilization %s | observation %s | spike %d VUs for %s | recovery %s | final soak %s | repeats %d | cooldown %s | wall-time cap %s\n", validated.Scenario.Name, validated.Base.Scheme, validated.Base.Host, options.Warmup, options.Stabilization, options.Observation, options.SpikeUsers, options.SpikeDuration, options.Recovery, options.Soak, options.Repeats, options.Cooldown, campaign.PlannedBudget(options))
 	fmt.Fprintf(stdout, "Drift screen: >=%d windows, >=%d samples/window, p95 increase >%.1f%% and >%.1fms, throughput decrease >%.1f%%\n", options.Stability.MinimumWindows, options.Stability.MinimumSamplesPerWindow, options.Stability.MaxP95IncreasePercent, options.Stability.MaxP95IncreaseMS, options.Stability.MaxThroughputDropPercent)
 	if options.LongRun {
 		fmt.Fprintln(stdout, "LONG-RUN MODE: explicit opt-in; environment declared staging (user-provided, not independently verified).")
@@ -624,7 +625,7 @@ func campaignCmd(args []string, stdout, stderr io.Writer) int {
 		if options.Cooldown > 0 {
 			fmt.Fprintf(stdout, "  Cool-down between independent trials: %s\n", options.Cooldown)
 		}
-		fmt.Fprintln(stdout, "DRY RUN: no traffic generated. Warm-up is excluded from the conclusion; observation, recovery, and any final soak must pass.")
+		fmt.Fprintln(stdout, "DRY RUN: no traffic generated. Warm-up is excluded from the conclusion; stabilization must pass its drift screen before observation, and required observation, recovery, spike, and final soak phases must pass.")
 		return 0
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

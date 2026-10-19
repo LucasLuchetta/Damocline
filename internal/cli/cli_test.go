@@ -49,6 +49,25 @@ func TestArrivalCampaignDryRunShowsOpenArrivalSchedule(t *testing.T) {
 	}
 }
 
+func TestCampaignDryRunsIncludeConfiguredStabilization(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "closed", args: []string{"campaign", "--config", filepath.Join("..", "..", "examples", "advanced-readonly.json"), "--warmup", "0s", "--stabilization", "10s", "--observation", "10s", "--recovery", "10s", "--repeats", "2", "--dry-run"}, want: "Trial 1 stabilization: 10s at 2 VUs"},
+		{name: "arrival", args: []string{"arrival-campaign", "--config", filepath.Join("..", "..", "examples", "arrival-rate-readonly.json"), "--warmup", "0s", "--stabilization", "10s", "--observation", "10s", "--recovery", "10s", "--repeats", "2", "--dry-run"}, want: "Trial 1 stabilization: 10s at 2 scheduled starts/s"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			if code := Run(tc.args, &stdout, &stderr); code != 0 || !strings.Contains(stdout.String(), tc.want) {
+				t.Fatalf("stabilization dry-run mismatch: code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+			}
+		})
+	}
+}
+
 func TestRunRequireCalibrationBlocksBeforeTrafficAndRequiresArtifact(t *testing.T) {
 	path := writePassingCalibration(t, nil)
 	scenario := config.Scenario{Name: "synthetic", BaseURL: "http://127.0.0.1", Mode: "arrival", Users: 10,

@@ -37,6 +37,44 @@ func TestCampaignSeparatesWarmupObservationAndRecovery(t *testing.T) {
 	}
 }
 
+func TestStabilizationRunsBeforeObservationAndDriftStopsCampaign(t *testing.T) {
+	options := Options{Warmup: 10 * time.Second, Stabilization: 10 * time.Second, Observation: 10 * time.Second, Recovery: 10 * time.Second, Repeats: 2}
+	var phases []string
+	result, err := WithRunner(context.Background(), scenario(t), options, func(_ context.Context, v config.Validated) report.Result {
+		phases = append(phases, v.Duration.String())
+		run := stableResult(v)
+		if len(phases) == 2 {
+			run.Windows[3].Metrics.P95MS = 150
+		}
+		return run
+	})
+	if err != nil || result.Outcome != "INCONCLUSIVE" || len(phases) != 2 || phases[0] != "10s" || phases[1] != "10s" ||
+		len(result.Trials[0].Phases) != 2 || result.Trials[0].Phases[1].Name != "stabilization" || result.Trials[0].Phases[1].Stability != "NON_STATIONARY" {
+		t.Fatalf("stabilization did not gate observation: phases=%v result=%+v err=%v", phases, result, err)
+	}
+}
+
+func TestStabilizationAddsPhaseDrainToBudget(t *testing.T) {
+	options := Options{Stabilization: 10 * time.Second, Observation: 10 * time.Second, Recovery: 10 * time.Second, Repeats: 2}
+	if got, want := PlannedBudget(options), 4*time.Minute; got != want {
+		t.Fatalf("stabilization drain missing from budget: got %s want %s", got, want)
+	}
+}
+
+func TestStabilizationCancellationDoesNotStartObservation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	calls := 0
+	result, err := WithRunner(ctx, scenario(t), Options{Stabilization: 10 * time.Second, Observation: 10 * time.Second, Recovery: 10 * time.Second, Repeats: 2}, func(ctx context.Context, v config.Validated) report.Result {
+		calls++
+		cancel()
+		<-ctx.Done()
+		return report.Result{Outcome: "ABORTED", Config: report.RunConfig{Users: v.Scenario.Users, Duration: v.Duration.String()}, Target: v.Base.Scheme + "://" + v.Base.Host}
+	})
+	if err != nil || result.Outcome != "ABORTED" || calls != 1 || len(result.Trials) != 1 || len(result.Trials[0].Phases) != 1 || result.Trials[0].Phases[0].Name != "stabilization" {
+		t.Fatalf("stabilization cancellation did not stop before observation: calls=%d result=%+v err=%v", calls, result, err)
+	}
+}
+
 func TestCooldownSeparatesTrialsAndPersistsDistinctRunIDs(t *testing.T) {
 	cooldown := 25 * time.Millisecond
 	var trialStarts []time.Time

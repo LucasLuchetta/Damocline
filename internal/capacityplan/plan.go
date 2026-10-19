@@ -518,10 +518,10 @@ func validatePartialStageEvidence(evidence campaign.Result) error {
 			}
 			state, _ := campaign.ClassifyEvidence(phase.Run)
 			stability := ""
-			if phase.Name == "observation" || phase.Name == "soak" {
+			if phase.Name == "stabilization" || phase.Name == "observation" || phase.Name == "soak" {
 				stability = campaign.AssessStabilityWithPolicy(phase.Run, evidence.EffectiveStabilityPolicy())
 			}
-			if phase.EvidenceState != state || (phase.Name == "observation" || phase.Name == "soak") && phase.Stability != stability {
+			if phase.EvidenceState != state || (phase.Name == "stabilization" || phase.Name == "observation" || phase.Name == "soak") && phase.Stability != stability {
 				return fmt.Errorf("trial %d has stale or altered %s phase evidence", trial.Number, phase.Name)
 			}
 			observedFailure := want.Required && (phase.Run.Outcome == "FAIL" || state == "FAIL_OBSERVED")
@@ -531,7 +531,7 @@ func validatePartialStageEvidence(evidence campaign.Result) error {
 				}
 				observedFailure = false
 			}
-			if observedFailure || phase.Run.Outcome == "ABORTED" || phase.Run.Outcome == "INCONCLUSIVE" || state == "INVALID_DELIVERY" || state == "INSUFFICIENT_EVIDENCE" || (phase.Name == "observation" || phase.Name == "soak") && stability != "NO_LARGE_DRIFT_DETECTED" {
+			if observedFailure || phase.Run.Outcome == "ABORTED" || phase.Run.Outcome == "INCONCLUSIVE" || state == "INVALID_DELIVERY" || state == "INSUFFICIENT_EVIDENCE" || (phase.Name == "stabilization" || phase.Name == "observation" || phase.Name == "soak") && stability != "NO_LARGE_DRIFT_DETECTED" {
 				if phaseIndex != len(trial.Phases)-1 {
 					return errors.New("terminal phase evidence is followed by additional phases")
 				}
@@ -620,15 +620,24 @@ func validateStageEvidence(evidence campaign.Result) error {
 	}
 	observation, err := parsePhaseDuration("observation", evidence.Observation)
 	longRun := evidence.SchemaVersion >= 6 && evidence.LongRun
-	observationLimit, soakLimit, wallTimeLimit := 10*time.Minute, 3*time.Minute, 15*time.Minute
+	observationLimit, soakLimit, stabilizationLimit, wallTimeLimit := 10*time.Minute, 3*time.Minute, 3*time.Minute, 15*time.Minute
 	if longRun {
-		observationLimit, soakLimit, wallTimeLimit = campaign.LongRunPhaseLimit, campaign.LongRunPhaseLimit, campaign.LongRunWallTimeLimit
+		observationLimit, soakLimit, stabilizationLimit, wallTimeLimit = campaign.LongRunPhaseLimit, campaign.LongRunPhaseLimit, campaign.LongRunPhaseLimit, campaign.LongRunWallTimeLimit
 		if evidence.DeclaredEnvironment != "staging" {
 			return errors.New("long-run campaign is missing its declared staging environment")
 		}
 	}
 	if err != nil || observation < 10*time.Second || observation > observationLimit {
 		return errors.New("invalid observation duration")
+	}
+	stabilization := time.Duration(0)
+	if evidence.SchemaVersion >= 11 {
+		stabilization, err = parsePhaseDuration("stabilization", evidence.Stabilization)
+	} else if evidence.Stabilization != "" {
+		return errors.New("stabilization is unsupported by this campaign schema")
+	}
+	if err != nil || stabilization > stabilizationLimit || stabilization > 0 && stabilization < 10*time.Second {
+		return errors.New("invalid stabilization duration")
 	}
 	spike, err := parsePhaseDuration("spike", evidence.SpikeDuration)
 	if err != nil || spike > 3*time.Minute || (spike > 0 && spike < 10*time.Second) || (spike > 0) != (evidence.SpikeUsers > 0) || evidence.SpikeUsers > 50 {
@@ -660,7 +669,7 @@ func validateStageEvidence(evidence campaign.Result) error {
 	} else if evidence.SchemaVersion < 4 {
 		budget = campaign.PlannedBudget(campaign.Options{Warmup: warmup, Observation: observation, SpikeUsers: evidence.SpikeUsers, SpikeDuration: spike, Recovery: recovery, Repeats: evidence.Repeats})
 	}
-	if err != nil || budget == 0 || budget > wallTimeLimit || budget < time.Duration(evidence.Repeats)*(warmup+observation+spike+recovery)+soak || evidence.Target == "" || evidence.BaseUsers > 50 {
+	if err != nil || budget == 0 || budget > wallTimeLimit || budget < time.Duration(evidence.Repeats)*(warmup+stabilization+observation+spike+recovery)+soak || evidence.Target == "" || evidence.BaseUsers > 50 {
 		return errors.New("invalid campaign wall-time budget")
 	}
 	if spike > 0 {
@@ -668,7 +677,7 @@ func validateStageEvidence(evidence campaign.Result) error {
 			return errors.New("spike load does not exceed base load")
 		}
 	}
-	options := campaign.Options{Warmup: warmup, Observation: observation, SpikeUsers: evidence.SpikeUsers, SpikeDuration: spike, Recovery: recovery, Soak: soak, Cooldown: cooldown, Repeats: evidence.Repeats, LongRun: longRun, StagingConfirmed: longRun}
+	options := campaign.Options{Warmup: warmup, Stabilization: stabilization, Observation: observation, SpikeUsers: evidence.SpikeUsers, SpikeDuration: spike, Recovery: recovery, Soak: soak, Cooldown: cooldown, Repeats: evidence.Repeats, LongRun: longRun, StagingConfirmed: longRun}
 	if evidence.SchemaVersion >= 7 && evidence.GeneratorGuardrails != nil {
 		options.Guardrails = *evidence.GeneratorGuardrails
 	}
@@ -698,7 +707,7 @@ func validateStageEvidence(evidence campaign.Result) error {
 			if phase.EvidenceState != state || phase.EvidenceState == "INVALID_DELIVERY" || (phase.Name != "warmup" && phase.EvidenceState != "PASS_OBSERVED") {
 				return fmt.Errorf("trial %d has inconsistent %s phase classification", i+1, want.Name)
 			}
-			if (phase.Name == "observation" || phase.Name == "soak") && (phase.Stability != "NO_LARGE_DRIFT_DETECTED" || phase.Stability != campaign.AssessStabilityWithPolicy(phase.Run, evidence.EffectiveStabilityPolicy())) {
+			if (phase.Name == "stabilization" || phase.Name == "observation" || phase.Name == "soak") && (phase.Stability != "NO_LARGE_DRIFT_DETECTED" || phase.Stability != campaign.AssessStabilityWithPolicy(phase.Run, evidence.EffectiveStabilityPolicy())) {
 				return fmt.Errorf("trial %d lacks reproducible stable-window evidence", i+1)
 			}
 		}

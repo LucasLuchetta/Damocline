@@ -330,6 +330,20 @@ func campaignLevelSchedule(e campaign.Result) (campaign.Options, []campaign.Plan
 	if err != nil {
 		return campaign.Options{}, nil, errors.New("invalid campaign observation schedule")
 	}
+	stabilization := time.Duration(0)
+	if e.SchemaVersion >= 11 {
+		if e.Stabilization != "" {
+			stabilization, err = time.ParseDuration(e.Stabilization)
+		}
+	} else if e.Stabilization != "" {
+		return campaign.Options{}, nil, errors.New("stabilization is unsupported by this campaign schema")
+	}
+	if err != nil {
+		return campaign.Options{}, nil, errors.New("invalid campaign stabilization schedule")
+	}
+	if stabilization < 0 || stabilization > campaign.LongRunPhaseLimit || stabilization > 0 && stabilization < 10*time.Second {
+		return campaign.Options{}, nil, errors.New("campaign stabilization is outside its bounded range")
+	}
 	spike, err := time.ParseDuration(e.SpikeDuration)
 	if err != nil {
 		return campaign.Options{}, nil, errors.New("invalid campaign spike schedule")
@@ -361,7 +375,7 @@ func campaignLevelSchedule(e campaign.Result) (campaign.Options, []campaign.Plan
 	if err != nil {
 		return campaign.Options{}, nil, errors.New("invalid campaign budget")
 	}
-	options := campaign.Options{Warmup: warmup, Observation: observation, SpikeUsers: e.SpikeUsers,
+	options := campaign.Options{Warmup: warmup, Stabilization: stabilization, Observation: observation, SpikeUsers: e.SpikeUsers,
 		SpikeDuration: spike, Recovery: recovery, Soak: soak, Cooldown: cooldown, Repeats: e.Repeats, Budget: budget,
 		Stability: e.EffectiveStabilityPolicy(), LongRun: e.LongRun, StagingConfirmed: e.LongRun}
 	if e.SchemaVersion >= 7 && e.GeneratorGuardrails != nil {

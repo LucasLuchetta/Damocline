@@ -4,6 +4,8 @@ This project follows a human-maintained changelog. No release exists yet.
 
 ## [Unreleased]
 
+- Add an optional bounded `--stabilization` stage before campaign observation in closed-loop and open-arrival modes; persist schema v11/v7 evidence, screen it with the saved drift policy, budget its drain, and validate it during offline audit.
+
 - Add explicit synthetic-ID-scoped cleanup steps that run after business assertion failures and within the reserved drain window after external cancellation; identify cleanup steps in run report schema v24.
 - Add opt-in exact local generator calibration gates to `run` and `arrival-campaign`; block before traffic when calibration is missing, stale, runtime-mismatched, or outside the exact workload matrix, while preserving unknown target identity and sustained headroom.
 - Restrict calibrated `explore-arrival` searches to exact compatible matrix rates, cap the effective ceiling at the highest covered rate, retain requested/effective bounds and qualified rates in schema v2, and validate the qualified set offline.

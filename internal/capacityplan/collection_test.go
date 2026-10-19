@@ -13,7 +13,7 @@ func TestCampaignLevelScheduleValidatesDeclaredLongRunEnvelope(t *testing.T) {
 	policy := campaign.DefaultStabilityPolicy()
 	evidence := campaign.Result{
 		SchemaVersion: campaign.CurrentSchemaVersion, Scenario: "synthetic", Target: "https://app.example.com", BaseUsers: 10,
-		Warmup: "0s", Observation: "30m", SpikeDuration: "0s", Recovery: "45s", Cooldown: "0s", Budget: "70m", Repeats: 2,
+		Warmup: "0s", Stabilization: "0s", Observation: "30m", SpikeDuration: "0s", Recovery: "45s", Cooldown: "0s", Budget: "70m", Repeats: 2,
 		LongRun: true, DeclaredEnvironment: "staging", StabilityPolicy: &policy,
 	}
 	options, phases, err := campaignLevelSchedule(evidence)

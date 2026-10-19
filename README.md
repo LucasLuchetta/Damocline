@@ -173,6 +173,14 @@ the existing journey and observation-window gates, and counts toward the
 15-minute campaign limit. This short soak is not a long-duration stability
 test or a sustainable-capacity certification.
 
+Campaigns can also use `--stabilization 30s` to require a bounded stability
+screen at the base workload before each trial's decision-bearing observation.
+It runs once, does not automatically retry or wait indefinitely, and an
+incomplete or drifting screen stops the trial without starting observation.
+The default maximum is 3 minutes; explicitly enabled staging long-run mode
+allows up to 30 minutes. A passing coarse screen is not proof of stationarity,
+memory-leak absence, or sustainable capacity.
+
 To retain external application metrics beside each phase, campaigns and single
 runs accept `--app-metrics-endpoint URL --app-metrics-interval 10s`. The
 timestamped samples are available in the phase's run report for manual
