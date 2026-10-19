@@ -18,7 +18,7 @@ func replaceReportFile(source, destination string) error {
 	}
 	if err := directory.Sync(); err != nil {
 		directory.Close()
-		return fmt.Errorf("sync report directory: %w", err)
+		return fmt.Errorf("report replacement succeeded, but syncing its directory failed: %w", err)
 	}
 	if err := directory.Close(); err != nil {
 		return fmt.Errorf("close report directory: %w", err)
