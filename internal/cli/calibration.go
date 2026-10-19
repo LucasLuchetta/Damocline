@@ -10,6 +10,8 @@ import (
 	"github.com/LucasLuchetta/Damocline/internal/report"
 )
 
+var currentCalibrationRuntime = calibration.CurrentRuntime
+
 func attachCalibration(result *report.Result, scenario config.Scenario, path string, now time.Time) error {
 	record, err := loadCalibration(path)
 	if err != nil {
@@ -28,7 +30,7 @@ func selectCalibratedArrivalRates(scenario config.Scenario, minRate, maxRate, ta
 	for rate := minRate; rate <= maxRate; rate++ {
 		rates = append(rates, rate)
 	}
-	envelope := calibration.AssessArrivalEnvelope(scenario, rates, record, calibration.CurrentRuntime(), now.UTC())
+	envelope := calibration.AssessArrivalEnvelope(scenario, rates, record, currentCalibrationRuntime(), now.UTC())
 	ready := make([]int, 0, len(envelope.Rates))
 	for _, rate := range envelope.Rates {
 		if rate.Status == "READY" {
@@ -74,7 +76,7 @@ func loadCalibration(path string) (calibration.Record, error) {
 }
 
 func attachCalibrationRecord(result *report.Result, scenario config.Scenario, record calibration.Record, now time.Time) {
-	coverage := calibration.AssessScenario(scenario, record, calibration.CurrentRuntime(), now.UTC())
+	coverage := calibration.AssessScenario(scenario, record, currentCalibrationRuntime(), now.UTC())
 	coverage.Dimensions = append(
 		coverage.Dimensions,
 		report.AssessObservedResponseSize(*result, int64(record.Fixture.HealthyResponseBytes)),

@@ -250,7 +250,7 @@ func assessArrivalCampaignEnvelope(scenario config.Scenario, options arrivalcamp
 	if options.SpikeDuration > 0 {
 		rates = append(rates, options.SpikeRate)
 	}
-	return calibration.AssessArrivalEnvelope(scenario, rates, record, calibration.CurrentRuntime(), now)
+	return calibration.AssessArrivalEnvelope(scenario, rates, record, currentCalibrationRuntime(), now)
 }
 
 func printArrivalCampaignEnvelope(stdout io.Writer, envelope calibration.ArrivalEnvelope, options arrivalcampaign.Options) {

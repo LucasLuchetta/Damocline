@@ -17,6 +17,14 @@ func writePassingCalibration(t *testing.T, mutate func(*[]int64)) string {
 	t.Helper()
 	now := time.Now().UTC().Truncate(time.Second)
 	rt := calibration.CurrentRuntime()
+	if !rt.CPUCapacityKnown {
+		rt.CPUCapacityCores = 1
+		rt.CPUCapacitySource = "test_fixture_runtime_capacity"
+		rt.CPUCapacityKnown = true
+	}
+	previousRuntime := currentCalibrationRuntime
+	currentCalibrationRuntime = func() calibration.Runtime { return rt }
+	t.Cleanup(func() { currentCalibrationRuntime = previousRuntime })
 	gen := calibration.Generator{OS: rt.OS, Arch: rt.Arch, LogicalCPUs: rt.LogicalCPUs, GOMAXPROCS: rt.GOMAXPROCS,
 		CPUCapacityCores: rt.CPUCapacityCores, CPUCapacitySource: rt.CPUCapacitySource, CPUCapacityKnown: rt.CPUCapacityKnown,
 		GoVersion: rt.GoVersion, RunnerVersion: rt.RunnerVersion}

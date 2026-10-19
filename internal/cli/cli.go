@@ -393,7 +393,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stderr, "calibration error: %v\n", loadErr)
 			return 2
 		}
-		envelope := calibration.AssessArrivalEnvelope(validated.Scenario, []int{validated.Scenario.ArrivalRate}, record, calibration.CurrentRuntime(), time.Now().UTC())
+		envelope := calibration.AssessArrivalEnvelope(validated.Scenario, []int{validated.Scenario.ArrivalRate}, record, currentCalibrationRuntime(), time.Now().UTC())
 		fmt.Fprintf(stdout, "Local generator preflight: %s; target identity, response behavior, and sustained headroom remain unverified.\n", envelope.Status)
 		if len(envelope.Rates) > 0 {
 			fmt.Fprintf(stdout, "  %d scheduled starts/s: %s — %s\n", envelope.Rates[0].ArrivalRate, envelope.Rates[0].Status, envelope.Rates[0].Reason)
