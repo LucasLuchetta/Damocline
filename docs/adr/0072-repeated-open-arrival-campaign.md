@@ -24,6 +24,11 @@ match and the complete schedule for a positive result. Apply the existing
 authorization and write controls. Keep arrivals distinct from VUs, scheduler
 admissions, completed journeys/s and HTTP requests/s.
 
+Reject phase/window combinations that cannot produce three complete observation
+windows before sending traffic. An offline SLO-miss finding requires a
+reproducible configured-objective breach plus valid report quality, workload
+delivery and generator headroom; a campaign `FAIL` label alone is insufficient.
+
 ## Consequences
 
 This provides repeated sustained observations for the declared open-arrival

@@ -54,8 +54,20 @@ func TestWithRunnerRejectsCalculatedDemandMismatch(t *testing.T) {
 
 func TestValidateRequiresBudgetToCoverBoundedPhaseDrains(t *testing.T) {
 	base := validatedArrival(t)
-	options := Options{Observation: 10*time.Second, Recovery: 10*time.Second, Repeats: 2, Budget: 50*time.Second}
-	if err := Validate(base, options); err == nil { t.Fatal("explicit budget smaller than bounded phase drains was accepted") }
+	options := Options{Observation: 10 * time.Second, Recovery: 10 * time.Second, Repeats: 2, Budget: 50 * time.Second}
+	if err := Validate(base, options); err == nil {
+		t.Fatal("explicit budget smaller than bounded phase drains was accepted")
+	}
+}
+
+func TestValidateRejectsObservationWindowsTooWideForPhases(t *testing.T) {
+	base := validatedArrival(t)
+	base.Scenario.WindowDuration = "5s"
+	base.Window = 5 * time.Second
+	options := Options{Observation: 10 * time.Second, Recovery: 10 * time.Second, Repeats: 2}
+	if err := Validate(base, options); err == nil {
+		t.Fatal("campaign with fewer than three observation windows was accepted")
+	}
 }
 
 func TestWithRunnerPreservesTrialAndPhaseSchedule(t *testing.T) {
@@ -98,6 +110,30 @@ func TestWithRunnerCreatesWindowScheduleWhenBaseHasNone(t *testing.T) {
 	})
 	if err != nil || seen != 1 {
 		t.Fatalf("runner calls=%d err=%v", seen, err)
+	}
+}
+
+func TestRunUsesNativeEngineAgainstBoundedLoopbackPhases(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
+	defer server.Close()
+	base, err := config.Parse(config.Scenario{Name: "arrival-campaign-native-loopback", BaseURL: server.URL, Users: 2,
+		Mode: "arrival", ArrivalRate: 10, Duration: "10s", WindowDuration: "2.5s", MaxRPS: 20,
+		Timeout: "2s", P95LimitMS: 5000, MaxErrorRate: .1, MinSamplesPerStep: 1,
+		Steps: []config.Step{{Name: "read", Method: http.MethodGet, Path: "/", ExpectedStatus: []int{http.StatusOK}}}}, config.Options{Authorized: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := Run(context.Background(), base, Options{Observation: 10 * time.Second, Recovery: 10 * time.Second, Repeats: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Trials) == 0 || result.Trials[0].Phases[0].Name != "observation" {
+		t.Fatalf("native campaign lost its first phase: %+v", result)
+	}
+	phase := result.Trials[0].Phases[0].Run
+	if phase.SchemaVersion != report.CurrentSchemaVersion || phase.Config.Mode != "arrival" || phase.Config.ArrivalRate != 10 ||
+		phase.Config.Users != 2 || phase.Config.WindowDuration != "2.5s" || phase.ArrivalsScheduled < 90 || phase.ArrivalsDropped != 0 || len(phase.Windows) != 4 {
+		t.Fatalf("native loopback phase did not preserve requested arrivals and window evidence: %+v", phase)
 	}
 }
 

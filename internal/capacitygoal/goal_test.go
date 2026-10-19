@@ -89,7 +89,7 @@ func TestJourneyStartGoalDoesNotInterpolateAndRejectsMixedUnits(t *testing.T) {
 }
 
 func TestArrivalCampaignDemandRequiresExactBaseAndConsistentArtifact(t *testing.T) {
-	saved := arrivalcampaign.Result{SchemaVersion: 1, Scenario: "synthetic", WorkloadFingerprint: "fingerprint", WorkerLimit: 2,
+	saved := arrivalcampaign.Result{SchemaVersion: 1, Scenario: "synthetic", Target: "https://app.example.com", StartedAt: time.Now().UTC().Format(time.RFC3339), WorkloadFingerprint: "fingerprint", WorkerLimit: 2,
 		RequestTimeout: "2s", RequestRateCeiling: 10, P95LimitMS: 500, MaxErrorRate: .1, MinSamplesPerStep: 1,
 		BaseStartsPerSecond: 3, Warmup: "0s", Observation: "30s", Recovery: "10s", Budget: "4m", Repeats: 2,
 		Trials: []arrivalcampaign.Trial{{Number: 1, Outcome: "PASS", Phases: []arrivalcampaign.Phase{{Name: "observation"}, {Name: "recovery"}}}}, Outcome: "PASS"}
@@ -100,6 +100,14 @@ func TestArrivalCampaignDemandRequiresExactBaseAndConsistentArtifact(t *testing.
 	saved.BaseStartsPerSecond = 2
 	if _, err := EvaluateJourneyCampaign(saved, JourneyStartGoal{PeakStartsPerSecond: 2}); err == nil {
 		t.Fatal("campaign with absent native phase evidence was accepted")
+	}
+}
+
+func TestArrivalCampaignFailureIsNotSLOMissWithoutValidGeneratorEvidence(t *testing.T) {
+	run := report.Result{Outcome: "FAIL", Config: report.RunConfig{P95LimitMS: 100, MaxErrorRate: .1},
+		Metrics: report.MetricSet{Total: 100, Success: 90, Failures: 10, P95MS: 500}}
+	if campaignHasAdequateSLOFailure(run, "FAIL_OBSERVED", true) {
+		t.Fatal("a failing native outcome without valid measurement and generator evidence was called an application SLO miss")
 	}
 }
 func exploration(user int) explorer.Result {

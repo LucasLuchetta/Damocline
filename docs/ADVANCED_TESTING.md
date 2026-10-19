@@ -147,6 +147,15 @@ schedule and native run evidence; it never interpolates or treats a spike as the
 business demand target. Ordinary external run quality remains LIMITED, so this
 path does not certify sustainable capacity.
 
+Recovery must be at least 10 seconds. Observation and optional soak need at least
+three complete configured windows; when `window_duration` is omitted, the
+campaign chooses a bounded window that fits the shortest evaluated phase. An
+explicit window that cannot provide the required coverage is rejected before
+traffic begins. A failed campaign phase is reported as an SLO miss only when its
+saved report independently reproduces the violation with valid measurement,
+delivery and generator evidence; otherwise the offline goal remains
+insufficient evidence.
+
 ## 7. Repeated phased campaign
 
 Use a campaign when a short exploratory probe is insufficient. Each trial runs warm-up, an evaluated observation window, and a recovery window. Warm-up establishes workload state but cannot make a campaign pass; both observation and recovery must pass in every repeat.

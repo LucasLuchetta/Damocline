@@ -24,7 +24,7 @@ func arrivalCampaignCmd(args []string, stdout, stderr io.Writer) int {
 	observation := fs.Duration("observation", 2*time.Minute, "steady observation duration (10s-10m)")
 	spikeRate := fs.Int("spike-journeys-per-second", 0, "optional higher scheduled journey-start rate")
 	spikeDuration := fs.Duration("spike-duration", 0, "optional spike duration (10s-3m)")
-	recovery := fs.Duration("recovery", 30*time.Second, "recovery duration (0s-3m)")
+	recovery := fs.Duration("recovery", 30*time.Second, "recovery duration (10s-3m)")
 	soak := fs.Duration("soak", 0, "optional final soak duration (10s-3m)")
 	repeats := fs.Int("repeats", 2, "independent trials (2-5)")
 	budget := fs.Duration("budget", 0, "maximum wall-time cap, including bounded drains (up to 15m)")
@@ -70,9 +70,6 @@ func arrivalCampaignCmd(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "invalid arrival campaign: %v\n", err)
 		return 2
 	}
-	if scenario.WindowDuration == "" {
-		scenario.WindowDuration = min(30*time.Second, *observation/4).String()
-	}
 	validated, err := config.Parse(scenario, config.Options{Authorized: *authorized || *dry, AllowWrites: *writes, AllowInsecureHTTP: *insecure})
 	if err != nil {
 		fmt.Fprintf(stderr, "configuration error: %v\n", err)
@@ -81,6 +78,14 @@ func arrivalCampaignCmd(args []string, stdout, stderr io.Writer) int {
 	if err := arrivalcampaign.Validate(validated, options); err != nil {
 		fmt.Fprintf(stderr, "invalid arrival campaign: %v\n", err)
 		return 2
+	}
+	if scenario.WindowDuration == "" {
+		shortest := min(*observation, *recovery)
+		if *soak > 0 {
+			shortest = min(shortest, *soak)
+		}
+		validated.Window = min(30*time.Second, shortest/4)
+		validated.Scenario.WindowDuration = validated.Window.String()
 	}
 	fmt.Fprintf(stdout, "Arrival campaign: %s | %s://%s | base %d scheduled starts/s | worker limit %d | observation %s | repeats %d | wall-time cap %s\n",
 		validated.Scenario.Name, validated.Base.Scheme, validated.Base.Host, validated.Scenario.ArrivalRate, validated.Scenario.Users, options.Observation, options.Repeats, arrivalcampaign.PlannedBudget(options))

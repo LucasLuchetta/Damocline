@@ -134,8 +134,8 @@ func Validate(base config.Validated, options Options) error {
 	} else if options.GrowthPercent != 0 || options.ReservePercent != 0 {
 		return fmt.Errorf("growth and reserve require a positive peak journey-start demand")
 	}
-	if options.Warmup < 0 || options.Warmup > 3*time.Minute || options.Recovery < 0 || options.Recovery > 3*time.Minute {
-		return fmt.Errorf("warmup and recovery must be 0-3m")
+	if options.Warmup < 0 || options.Warmup > 3*time.Minute || options.Recovery < 10*time.Second || options.Recovery > 3*time.Minute {
+		return fmt.Errorf("warmup must be 0-3m and recovery must be 10s-3m")
 	}
 	if options.Observation < 10*time.Second || options.Observation > 10*time.Minute {
 		return fmt.Errorf("observation must be 10s-10m")
@@ -163,6 +163,29 @@ func Validate(base config.Validated, options Options) error {
 	}
 	if steps < 1 || max(scenario.ArrivalRate, options.SpikeRate)*steps > scenario.MaxRPS {
 		return fmt.Errorf("base or spike starts/s multiplied by the longest journey exceeds max_rps")
+	}
+	window := base.Window
+	if scenario.WindowDuration != "" {
+		parsed, err := time.ParseDuration(scenario.WindowDuration)
+		if err != nil || parsed < time.Second || parsed > time.Minute {
+			return fmt.Errorf("window_duration must be between 1s and 1m")
+		}
+		window = parsed
+	}
+	if window == 0 {
+		shortest := min(options.Observation, options.Recovery)
+		if options.Soak > 0 {
+			shortest = min(shortest, options.Soak)
+		}
+		window = min(30*time.Second, shortest/4)
+	}
+	for _, duration := range []time.Duration{options.Observation, options.Soak} {
+		if duration > 0 && duration/window < 1 {
+			return fmt.Errorf("configured observation window must not exceed an evaluated phase duration")
+		}
+	}
+	if options.Observation/window < 3 || options.Soak > 0 && options.Soak/window < 3 {
+		return fmt.Errorf("observation and soak require at least three complete configured windows")
 	}
 	phases := 2
 	if options.Warmup > 0 {
@@ -238,15 +261,18 @@ func WithRunner(parent context.Context, base config.Validated, options Options, 
 			validated.Scenario.RampUp = "0s"
 			validated.Duration = phase.Duration
 			validated.RampUp = 0
-			if phase.Name != "warmup" && validated.Window == 0 {
-				validated.Window = min(30*time.Second, phase.Duration/4)
+			if phase.Name != "warmup" {
+				if validated.Window == 0 {
+					validated.Window = min(30*time.Second, phase.Duration/4)
+				}
+				if validated.Window > phase.Duration {
+					validated.Window = phase.Duration
+				}
 			}
 			if phase.Name != "warmup" {
-				if validated.Scenario.WindowDuration == "" {
-					validated.Scenario.WindowDuration = validated.Window.String()
-				}
+				validated.Scenario.WindowDuration = validated.Window.String()
 				if phase.Name == "observation" {
-					result.WindowDuration = validated.Scenario.WindowDuration
+					result.WindowDuration = validated.Window.String()
 				}
 			}
 			run := runner(ctx, validated)

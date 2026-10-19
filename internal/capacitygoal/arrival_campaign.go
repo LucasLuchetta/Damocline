@@ -1,6 +1,8 @@
 package capacitygoal
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -17,7 +19,7 @@ func EvaluateJourneyCampaign(saved arrivalcampaign.Result, goal JourneyStartGoal
 	if err != nil {
 		return JourneyStartAssessment{}, err
 	}
-	if saved.SchemaVersion != arrivalcampaign.CurrentSchemaVersion || saved.Scenario == "" || saved.WorkloadFingerprint == "" ||
+	if saved.SchemaVersion != arrivalcampaign.CurrentSchemaVersion || saved.Scenario == "" || saved.Target == "" || saved.WorkloadFingerprint == "" ||
 		saved.WorkerLimit < 1 || saved.WorkerLimit > 50 || saved.BaseStartsPerSecond < 1 || saved.BaseStartsPerSecond > 100 ||
 		saved.RequestRateCeiling < 1 || saved.RequestTimeout == "" || saved.P95LimitMS <= 0 || saved.MaxErrorRate < 0 || saved.MaxErrorRate >= 1 ||
 		saved.MinSamplesPerStep < 1 || saved.Repeats < 2 || saved.Repeats > 5 || len(saved.Trials) == 0 {
@@ -32,6 +34,10 @@ func EvaluateJourneyCampaign(saved arrivalcampaign.Result, goal JourneyStartGoal
 	options, err := savedOptions(saved)
 	if err != nil {
 		return JourneyStartAssessment{}, err
+	}
+	campaignStartedAt, err := time.Parse(time.RFC3339, saved.StartedAt)
+	if err != nil {
+		return JourneyStartAssessment{}, errors.New("campaign start timestamp is invalid")
 	}
 	assessment := JourneyStartAssessment{PeakStartsPerSecond: goal.PeakStartsPerSecond, TargetStartsPerSecond: target,
 		GrowthPercent: goal.GrowthPercent, ReservePercent: goal.ReservePercent, State: "INSUFFICIENT_EVIDENCE",
@@ -55,6 +61,8 @@ func EvaluateJourneyCampaign(saved arrivalcampaign.Result, goal JourneyStartGoal
 		return JourneyStartAssessment{}, errors.New("campaign outcome is unknown")
 	}
 	seenStarted := map[string]bool{}
+	observedSLOFailure := false
+	var baselineConfig []byte
 	for index, trial := range saved.Trials {
 		if trial.Number != index+1 || len(trial.Phases) > len(arrivalcampaign.PlannedPhases(options, saved.BaseStartsPerSecond, trial.Number)) || len(trial.Phases) == 0 {
 			return JourneyStartAssessment{}, errors.New("campaign trial numbering or phase count is invalid")
@@ -64,7 +72,7 @@ func EvaluateJourneyCampaign(saved arrivalcampaign.Result, goal JourneyStartGoal
 		for phaseIndex, phase := range trial.Phases {
 			expected := planned[phaseIndex]
 			run := phase.Run
-			if phase.Name != expected.Name || run.SchemaVersion != report.CurrentSchemaVersion || run.Config.Mode != "arrival" ||
+			if phase.Name != expected.Name || run.SchemaVersion != report.CurrentSchemaVersion || run.Name != saved.Scenario || run.Target != saved.Target || run.Config.Mode != "arrival" ||
 				run.Config.ArrivalRate != expected.Rate || run.Config.Users != saved.WorkerLimit || run.Config.Duration != expected.Duration.String() ||
 				run.Config.WorkloadFingerprint != saved.WorkloadFingerprint || run.Config.MaxRPS != saved.RequestRateCeiling ||
 				run.Config.P95LimitMS != saved.P95LimitMS || run.Config.MaxErrorRate != saved.MaxErrorRate || run.Config.MinSamplesPerStep != saved.MinSamplesPerStep ||
@@ -72,8 +80,28 @@ func EvaluateJourneyCampaign(saved arrivalcampaign.Result, goal JourneyStartGoal
 				return JourneyStartAssessment{}, errors.New("native phase controls disagree with the campaign manifest or timestamps are duplicated")
 			}
 			seenStarted[run.StartedAt] = true
+			runStartedAt, timeErr := time.Parse(time.RFC3339, run.StartedAt)
+			if timeErr != nil || runStartedAt.Before(campaignStartedAt.Add(-time.Second)) {
+				return JourneyStartAssessment{}, errors.New("native phase timestamp precedes the campaign or is invalid")
+			}
+			configBytes, marshalErr := comparableCampaignConfig(run.Config)
+			if marshalErr != nil {
+				return JourneyStartAssessment{}, errors.New("native phase controls cannot be compared")
+			}
+			if baselineConfig == nil {
+				baselineConfig = configBytes
+			} else if !bytes.Equal(baselineConfig, configBytes) {
+				return JourneyStartAssessment{}, errors.New("campaign phases do not share the same workload and environment controls")
+			}
 			state, _ := arrivalcampaign.ClassifyEvidence(run)
-			if run.Config.WindowDuration != saved.WindowDuration {
+			phaseWindow, windowErr := time.ParseDuration(saved.WindowDuration)
+			if windowErr != nil {
+				return JourneyStartAssessment{}, errors.New("campaign observation window is invalid")
+			}
+			if phaseWindow > expected.Duration {
+				phaseWindow = expected.Duration
+			}
+			if run.Config.WindowDuration != phaseWindow.String() {
 				return JourneyStartAssessment{}, errors.New("native phase window configuration disagrees with campaign manifest")
 			}
 			stability := ""
@@ -83,18 +111,24 @@ func EvaluateJourneyCampaign(saved arrivalcampaign.Result, goal JourneyStartGoal
 			if phase.EvidenceState != state || phase.Stability != stability {
 				return JourneyStartAssessment{}, errors.New("saved phase evidence labels disagree with native report data")
 			}
+			if expected.Required && campaignHasAdequateSLOFailure(run, state, expected.Name == "observation" || expected.Name == "soak") {
+				observedSLOFailure = true
+			}
 			if state == "INSUFFICIENT_EVIDENCE" || state == "INVALID_DELIVERY" {
 				if trial.Outcome != "INCONCLUSIVE" {
 					return JourneyStartAssessment{}, errors.New("trial outcome hides incomplete or invalid phase evidence")
 				}
 			}
-			if state == "FAIL_OBSERVED" && trial.Outcome != "FAIL" && trial.Outcome != "INCONCLUSIVE" {
+			if expected.Required && state == "FAIL_OBSERVED" && trial.Outcome != "FAIL" && trial.Outcome != "INCONCLUSIVE" {
 				return JourneyStartAssessment{}, errors.New("trial outcome hides a required phase SLO failure")
 			}
 			if expected.Required && run.Outcome != "PASS" && state == "PASS_OBSERVED" {
 				return JourneyStartAssessment{}, errors.New("required phase did not pass its native outcome")
 			}
-			if state != "PASS_OBSERVED" || expected.Required && run.Outcome != "PASS" || (expected.Name == "observation" || expected.Name == "soak") && stability != "NO_LARGE_DRIFT_DETECTED" || report.AssessQuality(run).State != report.QualityValid || campaignSLOBreach(run) || campaignCoverageIssue(run) != "" || campaignGeneratorIssue(run) != "" {
+			if expected.Required && (state != "PASS_OBSERVED" || run.Outcome != "PASS" ||
+				(expected.Name == "observation" || expected.Name == "soak") && stability != "NO_LARGE_DRIFT_DETECTED" ||
+				report.AssessQuality(run).State != report.QualityValid || campaignSLOBreach(run) ||
+				campaignCoverageIssue(run, expected.Name == "observation" || expected.Name == "soak") != "" || campaignGeneratorIssue(run) != "") {
 				phasePass = false
 			}
 		}
@@ -132,11 +166,20 @@ func EvaluateJourneyCampaign(saved arrivalcampaign.Result, goal JourneyStartGoal
 		assessment.Findings = append(assessment.Findings, fmt.Sprintf("All %d trials passed their required phases at exactly %d scheduled journey starts/s, under the saved workload, generator limits, SLOs, and observation schedule.", len(saved.Trials), target))
 		return assessment, nil
 	}
-	if saved.Outcome == "FAIL" {
+	if saved.Outcome == "FAIL" && observedSLOFailure {
 		assessment.State = "SLO_MISSED_AT_TESTED_TARGET"
 		assessment.Findings = append(assessment.Findings, "A required campaign phase failed at the exact target with saved native run evidence. This identifies an observed SLO miss, not its root cause.")
+	} else if saved.Outcome == "FAIL" {
+		assessment.Findings = append(assessment.Findings, "The campaign ended with a failing phase, but the saved evidence does not establish a valid target SLO miss with adequate delivery, measurement quality and generator headroom.")
 	}
 	return assessment, nil
+}
+
+func comparableCampaignConfig(config report.RunConfig) ([]byte, error) {
+	config.Duration = ""
+	config.ArrivalRate = 0
+	config.WindowDuration = ""
+	return json.Marshal(config)
 }
 
 func savedOptions(saved arrivalcampaign.Result) (arrivalcampaign.Options, error) {
@@ -227,7 +270,7 @@ func validateCampaignWindowDuration(declared string, options arrivalcampaign.Opt
 	return nil
 }
 
-func campaignCoverageIssue(run report.Result) string {
+func campaignCoverageIssue(run report.Result, requireStableWindows bool) string {
 	minimum := run.Config.MinSamplesPerStep
 	if minimum < 1 || run.Metrics.Total < minimum || run.Metrics.Success == 0 || run.Journeys.Total == 0 || len(run.Steps) == 0 {
 		return "aggregate request, journey, or named-step sample coverage is incomplete"
@@ -246,7 +289,7 @@ func campaignCoverageIssue(run report.Result) string {
 		return "configured workflow profile evidence is incomplete"
 	}
 	if run.Config.WindowDuration != "" {
-		if len(run.Windows) < 3 {
+		if requireStableWindows && len(run.Windows) < 3 {
 			return "configured observation windows are incomplete"
 		}
 		for _, window := range run.Windows {
@@ -280,6 +323,11 @@ func campaignGeneratorIssue(run report.Result) string {
 		return "generator or client request-rate guardrail may limit offered load"
 	}
 	return ""
+}
+
+func campaignHasAdequateSLOFailure(run report.Result, state string, stableWindows bool) bool {
+	return state == "FAIL_OBSERVED" && report.AssessQuality(run).State == report.QualityValid &&
+		campaignSLOBreach(run) && campaignCoverageIssue(run, stableWindows) == "" && campaignGeneratorIssue(run) == ""
 }
 
 func campaignSLOBreach(run report.Result) bool {

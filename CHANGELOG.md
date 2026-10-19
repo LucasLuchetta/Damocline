@@ -131,6 +131,7 @@ This project follows a human-maintained changelog. No release exists yet.
 - Safety-oriented caveats for small sample sizes, long-tail responses, shared sessions, dropped arrivals and uncontrolled comparisons.
 
 ### Fixed
+- Validate campaign window coverage before load generation, bound default windows across observation/recovery/soak phases, and keep inadequate generator or measurement evidence from becoming an offline SLO-failure finding.
 - Require exact arrival rate, rate ceiling, worker count, duration, timeout, mode, transport and connection policy when matching a workload profile; do not claim offline equivalence for unresolved environment-backed request bodies.
 - Classify non-timeout response-body read failures such as truncated responses as transport failures while preserving their HTTP status and incomplete-body observations as separate counters.
 - Count only successfully completed response-body reads in `body_count`; truncated and timed-out body reads are represented exclusively by `body_incomplete_count`, preserving phase-counter conservation and quality validation.
