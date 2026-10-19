@@ -5,6 +5,7 @@ This project follows a human-maintained changelog. No release exists yet.
 ## [Unreleased]
 
 ### Added
+- Add an integrated loopback saturation/recovery fixture for closed-loop and open-arrival campaigns, reconciling phase SLO outcomes, planned and completed workload, unfinished journeys, and generator samples.
 - Preserve the recovery probe after an observed spike SLO failure in closed-loop and open-arrival campaigns, keep the trial outcome FAIL, and require that evidence during offline audit.
 - Add optional consecutive-sample CPU and RSS abort guardrails for the local generator to closed-loop and open-arrival campaigns; persist the policy and trigger observation in run and campaign evidence and validate it during offline assessment.
 - Add an explicit staging long-run mode to closed-loop and open-arrival campaigns: 30-minute observation/soak phases, a required operator-supplied budget capped at two hours, retained JSON output, and a 120-window limit. Existing default run and campaign ceilings remain unchanged.
