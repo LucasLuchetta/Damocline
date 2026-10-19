@@ -24,27 +24,29 @@ import (
 // guardrails, v24 identifies explicit cleanup steps, v25 may attach a bounded
 // application-metrics timeline, v26 records per-journey weighted-profile
 // selection semantics and per-profile start/actor ledgers, v27 records
-// per-workflow cookie-session scope names, and v28 records
-// configured connection limits and observed connection-acquisition waits.
-const CurrentSchemaVersion = 28
+// per-workflow cookie-session scope names, v28 records configured connection
+// limits and observed connection-acquisition waits, and v29 records local
+// request-construction rejections caused by bounded template expansion.
+const CurrentSchemaVersion = 29
 
 type MetricSet struct {
-	Total                 int                     `json:"total"`
-	Success               int                     `json:"success"`
-	Failures              int                     `json:"failures"`
-	Cancelled             int                     `json:"cancelled"`
-	P50MS                 float64                 `json:"p50_ms"`
-	MeanMS                float64                 `json:"mean_ms"`
-	P95MS                 float64                 `json:"p95_ms"`
-	P95IID95LowerMS       float64                 `json:"p95_iid_95_lower_ms,omitempty"`
-	P95IID95UpperMS       float64                 `json:"p95_iid_95_upper_ms,omitempty"`
-	P95IID95Approximation bool                    `json:"p95_iid_95_approximation,omitempty"`
-	P99MS                 float64                 `json:"p99_ms"`
-	Reasons               map[string]int          `json:"failure_reasons,omitempty"`
-	HTTP                  HTTPDiagnostics         `json:"http_diagnostics,omitempty"`
-	ResponseBody          ResponseBodyDiagnostics `json:"response_body,omitzero"`
-	durations             []time.Duration
-	totalDuration         time.Duration
+	Total                       int                     `json:"total"`
+	Success                     int                     `json:"success"`
+	Failures                    int                     `json:"failures"`
+	Cancelled                   int                     `json:"cancelled"`
+	RequestConstructionFailures int                     `json:"request_construction_failures,omitempty"`
+	P50MS                       float64                 `json:"p50_ms"`
+	MeanMS                      float64                 `json:"mean_ms"`
+	P95MS                       float64                 `json:"p95_ms"`
+	P95IID95LowerMS             float64                 `json:"p95_iid_95_lower_ms,omitempty"`
+	P95IID95UpperMS             float64                 `json:"p95_iid_95_upper_ms,omitempty"`
+	P95IID95Approximation       bool                    `json:"p95_iid_95_approximation,omitempty"`
+	P99MS                       float64                 `json:"p99_ms"`
+	Reasons                     map[string]int          `json:"failure_reasons,omitempty"`
+	HTTP                        HTTPDiagnostics         `json:"http_diagnostics,omitempty"`
+	ResponseBody                ResponseBodyDiagnostics `json:"response_body,omitzero"`
+	durations                   []time.Duration
+	totalDuration               time.Duration
 }
 
 // ResponseBodyDiagnostics summarizes body-read outcomes without preserving body data.

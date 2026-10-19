@@ -584,6 +584,13 @@ func TestNativeEngineCampaignRecordsStableLoopbackWindows(t *testing.T) {
 	if state, reason := ClassifyEvidence(run); state != "INVALID_DELIVERY" || reason == "" {
 		t.Fatalf("client-rate-bound native phase was accepted: %s %q", state, reason)
 	}
+	run.Metrics.Total = 100
+	run.Metrics.RequestConstructionFailures = 1
+	run.Metrics.Failures = 1
+	run.Metrics.Success = 99
+	if state, reason := ClassifyEvidence(run); state != "INVALID_DELIVERY" || reason == "" {
+		t.Fatalf("locally rejected request was interpreted as target evidence: %s %q", state, reason)
+	}
 }
 
 func TestCampaignSeparatesInvalidDeliveryFromObservedFailure(t *testing.T) {

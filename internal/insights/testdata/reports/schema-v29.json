@@ -1,0 +1,17 @@
+{
+  "schema_version": 29,
+  "name": "Synthetic bounded-template fixture",
+  "target": "http://127.0.0.1",
+  "started_at": "2026-10-19T00:00:00Z",
+  "elapsed_seconds": 1,
+  "observation_seconds": 1,
+  "iterations_started": 1,
+  "iterations_completed": 1,
+  "arrivals_scheduled": 1,
+  "arrivals_admitted": 1,
+  "arrivals_cancelled_before_admission": 0,
+  "config": {"users": 1, "duration": "1s", "request_timeout": "1s", "connection_policy": "reuse", "workload_fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "max_rps": 10, "p95_limit_ms": 100, "max_error_rate": 0.1, "mode": "closed", "profile_selection": ""},
+  "metrics": {"total": 1, "success": 0, "failures": 1, "cancelled": 0, "request_construction_failures": 1, "failure_reasons": {"request_expansion_limit": 1}, "http_diagnostics": {"failure_classification_version": 1}},
+  "journeys": {"total": 1, "success": 0, "failures": 1, "cancelled": 0},
+  "steps": [{"name": "write", "method": "POST", "path": "/write", "metrics": {"total": 1, "success": 0, "failures": 1, "cancelled": 0, "request_construction_failures": 1, "failure_reasons": {"request_expansion_limit": 1}, "http_diagnostics": {"failure_classification_version": 1}}}]
+}

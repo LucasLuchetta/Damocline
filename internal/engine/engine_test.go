@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1068,6 +1069,126 @@ func TestExtractedQueryValueIsEscapedAndCannotChangeRequestStructure(t *testing.
 	r := Run(context.Background(), v)
 	if r.Outcome != "PASS" || gotID != extracted || r.Steps[1].Metrics.Success == 0 {
 		t.Fatalf("query value did not survive a safe encoded round trip: id=%q result=%+v", gotID, r)
+	}
+}
+
+func TestExpandedRequestBodyIsBoundedAndRejectedBeforeDelivery(t *testing.T) {
+	var sessions, writes atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/session":
+			sessions.Add(1)
+			_, _ = fmt.Fprintf(w, `{"token":%q}`, strings.Repeat("x", 8192))
+		case "/write":
+			_, _ = r.Body.Read(make([]byte, 1))
+			writes.Add(1)
+		}
+	}))
+	defer srv.Close()
+
+	body := strings.Repeat("{{token}}", 7000)
+	raw := config.Scenario{Name: "bounded body", BaseURL: srv.URL, Users: 2, Duration: "1s", MaxRPS: 20, P95LimitMS: 2000, MaxErrorRate: 0,
+		Steps: []config.Step{
+			{Name: "session", Path: "/session", Extract: map[string]config.Extract{"token": {JSONPointer: "/token"}}},
+			{Name: "write", Method: http.MethodPost, Path: "/write", BodyEnv: "DAMOCLINE_TEMPLATE_TEST_BODY"},
+		}}
+	t.Setenv("DAMOCLINE_TEMPLATE_TEST_BODY", body)
+	v, err := config.Parse(raw, config.Options{Authorized: true, AllowWrites: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	v.Duration = 250 * time.Millisecond
+	v.Window = 100 * time.Millisecond
+	r := Run(context.Background(), v)
+	if sessions.Load() == 0 || writes.Load() != 0 {
+		t.Fatalf("oversized expanded request reached fixture: sessions=%d writes=%d", sessions.Load(), writes.Load())
+	}
+	if r.Metrics.RequestConstructionFailures == 0 || r.Steps[1].Metrics.RequestConstructionFailures == 0 ||
+		int64(r.Metrics.HTTP.StatusCodes[http.StatusNotFound]) != writes.Load() || r.Quality == nil || r.Quality.State != report.QualityInvalid {
+		t.Fatalf("local rejection was not recorded distinctly: metrics=%+v quality=%+v", r.Metrics, r.Quality)
+	}
+	if got := report.GeneratorCapacityIssue(r); got == "" {
+		t.Fatal("local request rejection should invalidate delivery attribution")
+	}
+	windowRejected := 0
+	for _, window := range r.Windows {
+		windowRejected += window.Metrics.RequestConstructionFailures
+	}
+	if windowRejected > r.Metrics.RequestConstructionFailures {
+		t.Fatalf("window rejection counts exceed the run total: windows=%d total=%d", windowRejected, r.Metrics.RequestConstructionFailures)
+	}
+}
+
+func TestCollectorRecordsRequestConstructionRejectionInObservationWindow(t *testing.T) {
+	v := config.Validated{
+		Steps:    []config.PreparedStep{{Step: config.Step{Name: "write"}}},
+		Duration: time.Second,
+		Window:   time.Second,
+	}
+	c := newCollector(v, time.Now())
+	c.add(sample{name: "write", reason: "request_expansion_limit", requestRejected: true})
+
+	if c.aggregate.RequestConstructionFailures != 1 || c.steps["write"].RequestConstructionFailures != 1 ||
+		len(c.windows) != 1 || c.windows[0].aggregate.RequestConstructionFailures != 1 ||
+		c.windows[0].steps["write"].RequestConstructionFailures != 1 {
+		t.Fatalf("local request rejection did not reconcile across observed ledgers: aggregate=%+v step=%+v windows=%+v",
+			c.aggregate, c.steps["write"], c.windows)
+	}
+}
+
+func TestInterpolateBoundedHonorsExactLimitAndRejectsWithoutExpanding(t *testing.T) {
+	if got, err := interpolateBounded("prefix-{{token}}", map[string]string{"token": "12345"}, 12); err != nil || got != "prefix-12345" {
+		t.Fatalf("exact-limit expansion got %q, err=%v", got, err)
+	}
+	if _, err := interpolateBounded(strings.Repeat("{{token}}", 7000), map[string]string{"token": strings.Repeat("x", 8192)}, maxExpandedBodyBytes); err != errTemplateExpansionLimit {
+		t.Fatalf("large expansion should stop at the output bound, got err=%v", err)
+	}
+}
+
+func TestInterpolateURLBoundsRepeatedPathAndQueryValues(t *testing.T) {
+	base, err := url.Parse("http://127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	variables := map[string]string{"token": strings.Repeat("x", 8192)}
+	if resolved, err := interpolateURL(base, "/?id={{token}}", variables); err != nil || len(resolved) > maxExpandedURLBytes {
+		t.Fatalf("single bounded query value should fit, length=%d err=%v", len(resolved), err)
+	}
+	for _, path := range []string{
+		"/{{token}}/{{token}}/{{token}}",
+		"/?a={{token}}&b={{token}}&c={{token}}",
+	} {
+		if _, err := interpolateURL(base, path, variables); err != errTemplateExpansionLimit {
+			t.Fatalf("oversized expanded path/query should be rejected before assembly, path=%q err=%v", path, err)
+		}
+	}
+}
+
+func TestQueryEscapeByteLengthMatchesStandardLibrary(t *testing.T) {
+	for _, value := range []string{"plain-token_1.~", "alpha&admin=true+percent%/value", " space ", "東京"} {
+		if got, want := queryEscapeByteLength(value), len(url.QueryEscape(value)); got != want {
+			t.Errorf("query escaped length for %q = %d, want %d", value, got, want)
+		}
+	}
+}
+
+func TestExpandedHeaderIsBoundedBeforeDelivery(t *testing.T) {
+	var requests atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		if r.URL.Path == "/session" {
+			_, _ = fmt.Fprintf(w, `{"token":%q}`, strings.Repeat("h", 8192))
+		}
+	}))
+	defer srv.Close()
+	v := scenario(t, srv.URL, []config.Step{
+		{Name: "session", Path: "/session", Extract: map[string]config.Extract{"token": {JSONPointer: "/token"}}},
+		{Name: "header", Path: "/header", Headers: map[string]string{"X-Expanded": "{{token}}!"}},
+	})
+	v.Duration = 200 * time.Millisecond
+	r := Run(context.Background(), v)
+	if requests.Load() == 0 || r.Metrics.RequestConstructionFailures == 0 || r.Steps[1].Metrics.RequestConstructionFailures == 0 {
+		t.Fatalf("oversized expanded header was not rejected: requests=%d metrics=%+v", requests.Load(), r.Metrics)
 	}
 }
 

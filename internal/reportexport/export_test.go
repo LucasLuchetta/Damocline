@@ -19,19 +19,19 @@ func TestRedactedRunExportOmitsUncontrolledStringsAndPreservesEvidence(t *testin
 	start := "2001-02-03T12:30:00.123456789Z"
 	count := int64(8)
 	run := report.Result{
-		SchemaVersion: 28, Name: secret, Target: "https://user:token@" + secret + "/private/route?customer=731", Outcome: "PASS",
+		SchemaVersion: report.CurrentSchemaVersion, Name: secret, Target: "https://user:token@" + secret + "/private/route?customer=731", Outcome: "PASS",
 		StartedAt: start, ElapsedSeconds: 8.5, ObservationSeconds: 8,
 		Config: report.RunConfig{WorkloadRevision: secret, ApplicationRevision: secret, WorkloadFingerprint: secret,
 			Environment: secret, ProfileMixReference: secret, Users: 4, Duration: "8s", RequestTimeout: "1s",
 			ConnectionPolicy: "reuse", MaxRPS: 50, P95LimitMS: 250, MaxErrorRate: .01, Mode: "arrival", ArrivalRate: 8,
 			WindowDuration: secret, ProfileSelection: "per_journey_start", ProfileSessionScopes: []string{"private-workflow"}, SeparateSessions: true, MaxConnectionsPerHost: 4, Profiles: []report.ProfileConfig{{Name: "private-workflow", Weight: 2}}},
-		Metrics:  report.MetricSet{Total: 8, Success: 7, Failures: 1, P95MS: 240, Reasons: map[string]int{secret: 1}},
+		Metrics:  report.MetricSet{Total: 8, Success: 7, Failures: 1, RequestConstructionFailures: 1, P95MS: 240, Reasons: map[string]int{secret: 1}},
 		Journeys: report.MetricSet{Total: 4, Success: 3, Failures: 1, P95MS: 400},
-		Steps:    []report.StepResult{{Profile: "private-workflow", Name: "private-step", Method: "GET", Path: "/private/customer-731", Metrics: report.MetricSet{Total: 8, Success: 7, Failures: 1}, HTTPTrace: report.HTTPTrace{ConnectionAcquireCount: 8, ConnectionAcquireMS: 56, ConnectionReusedCount: 6, ConnectionWaitCount: 2, ConnectionWaitMS: 35}}},
+		Steps:    []report.StepResult{{Profile: "private-workflow", Name: "private-step", Method: "GET", Path: "/private/customer-731", Metrics: report.MetricSet{Total: 8, Success: 7, Failures: 1, RequestConstructionFailures: 1}, HTTPTrace: report.HTTPTrace{ConnectionAcquireCount: 8, ConnectionAcquireMS: 56, ConnectionReusedCount: 6, ConnectionWaitCount: 2, ConnectionWaitMS: 35}}},
 		Profiles: []report.ProfileResult{{Name: "private-workflow", Weight: 2, SelectedStarts: 8, ActorsObserved: 4, Journeys: report.MetricSet{Total: 4, Success: 3, Failures: 1}}},
-		Windows: []report.WindowResult{{StartSeconds: 0, EndSeconds: 8, Metrics: report.MetricSet{Total: 8, Success: 7, Failures: 1, P95MS: 240},
+		Windows: []report.WindowResult{{StartSeconds: 0, EndSeconds: 8, Metrics: report.MetricSet{Total: 8, Success: 7, Failures: 1, RequestConstructionFailures: 1, P95MS: 240},
 			Journeys: report.MetricSet{Total: 4, Success: 3, Failures: 1, P95MS: 400},
-			Steps:    []report.WindowMetric{{Name: "private-step", Metrics: report.MetricSet{Total: 8, Success: 7, Failures: 1}}},
+			Steps:    []report.WindowMetric{{Name: "private-step", Metrics: report.MetricSet{Total: 8, Success: 7, Failures: 1, RequestConstructionFailures: 1}}},
 			Profiles: []report.WindowMetric{{Name: "private-workflow", Metrics: report.MetricSet{Total: 4, Success: 3, Failures: 1}}}}},
 		ArrivalsScheduled: 8, ArrivalsAdmitted: &count, IterationsStarted: 8, IterationsCompleted: 4, ArrivalsDropped: 0,
 		Warnings: []string{secret}, Note: secret,
@@ -55,7 +55,7 @@ func TestRedactedRunExportOmitsUncontrolledStringsAndPreservesEvidence(t *testin
 	if exported.Format != Format || exported.Kind != "run" || exported.Workload.Mode != "arrival" || exported.Workload.JourneyStartsPS != 8 {
 		t.Fatalf("safe workload facts were not preserved: %+v", exported)
 	}
-	if exported.Run == nil || exported.Run.Metrics.Total != 8 || exported.Run.Metrics.P95MS != 240 || len(exported.Run.Windows) != 1 || len(exported.Run.Steps) != 1 {
+	if exported.Run == nil || exported.Run.Metrics.Total != 8 || exported.Run.Metrics.P95MS != 240 || exported.Run.Metrics.RequestConstructionFailures != 1 || len(exported.Run.Windows) != 1 || len(exported.Run.Steps) != 1 {
 		t.Fatalf("run evidence was not preserved: %+v", exported.Run)
 	}
 	if exported.Run.Steps[0].ID != "step_001" || exported.Run.Windows[0].Steps[0].ID != "step_001" || exported.Run.Profiles[0].ID != "workflow_001" {

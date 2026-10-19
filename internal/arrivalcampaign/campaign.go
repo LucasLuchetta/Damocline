@@ -536,6 +536,9 @@ func ClassifyEvidence(run report.Result) (string, string) {
 	if run.Quality != nil && run.Quality.State == report.QualityInvalid || run.SchemaVersion >= 16 && report.AssessQuality(run).State == report.QualityInvalid {
 		return "INVALID_DELIVERY", "Report accounting or generator evidence is invalid."
 	}
+	if run.Metrics.RequestConstructionFailures > 0 {
+		return "INVALID_DELIVERY", "One or more generated requests were rejected locally before delivery."
+	}
 	if run.ArrivalsDropped > 0 || run.ArrivalsDroppedLate > 0 || run.ArrivalsDroppedBusy > 0 ||
 		run.ArrivalsCancelledBeforeAdmission != nil && *run.ArrivalsCancelledBeforeAdmission > 0 || run.Metrics.Cancelled > 0 || run.Journeys.Cancelled > 0 {
 		return "INVALID_DELIVERY", "Scheduled arrivals, requests, or journeys were dropped or cancelled."

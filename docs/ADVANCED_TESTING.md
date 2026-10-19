@@ -53,7 +53,7 @@ Legacy scenario files may use either top-level `steps` or `profiles`, never both
 [`examples/seeded-weighted-readonly.json`](../examples/seeded-weighted-readonly.json) shows three two-step workflows with a scenario timing range, a discrete-sample profile override, and a fixed-pause override. Replace its documentation origin and routes with authorized read-only endpoints before running it. The seed recreates configured pause decisions under the same actor/arrival schedule; actual elapsed timing and achieved throughput can still vary.
 Every profile using variable timing needs at least two steps, because the pause occurs only between steps.
 
-Scenario JSON files are limited to 1 MiB including trailing whitespace. Generated JSON report artifacts are limited to 16 MiB; the writer rejects larger output before creating or replacing the file. These byte caps complement the bounded VU, rate, duration, step, and response-body limits.
+Scenario JSON files are limited to 1 MiB including trailing whitespace, base origins to 4 KiB, and each configured path/query template to 16 KiB. Generated JSON report artifacts are limited to 16 MiB; the writer rejects larger output before creating or replacing the file. These byte caps complement the bounded VU, rate, duration, step, and response-body limits.
 
 Optionally declare `profile_mix_basis` as `sanitized_analytics` or `business_estimate` and provide a short safe `profile_mix_reference` identifier. The default basis is `assumption`. This metadata is self-reported provenance, not proof that the mix is representative; do not put domains, paths, credentials, customer identifiers, or raw events in the reference.
 

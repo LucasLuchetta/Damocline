@@ -48,6 +48,9 @@ func GeneratorEvidenceIssue(r Result) string {
 // deliver the configured workload with adequate health and headroom. It does
 // not revalidate report accounting or infer application-side saturation.
 func GeneratorCapacityIssue(r Result) string {
+	if r.Metrics.RequestConstructionFailures > 0 {
+		return "One or more generated requests were rejected locally before delivery."
+	}
 	if r.Metrics.Total <= 0 || r.Generator == nil || r.Generator.Samples < 2 || !r.Generator.GoCPUValid ||
 		r.Generator.ProcessSamples < 2 || !r.Generator.ProcessCPUValid || r.Generator.PeakProcessRSSBytes == 0 {
 		return "Generator process health evidence is incomplete."
@@ -80,6 +83,9 @@ func AssessQuality(r Result) *Quality {
 		q.Findings = append(q.Findings, reason)
 	}
 	limit := func(reason string) { q.Findings = append(q.Findings, reason) }
+	if r.Metrics.RequestConstructionFailures > 0 {
+		invalidate("One or more generated requests were rejected locally before delivery.")
+	}
 	if r.SchemaVersion >= 20 && !validFailureClassificationEvidence(r) {
 		invalidate("HTTP failure-classification evidence is missing or inconsistent for schema 20.")
 	}
@@ -123,6 +129,47 @@ func AssessQuality(r Result) *Quality {
 	if r.Metrics.Total < 0 || r.Metrics.Success < 0 || r.Metrics.Failures < 0 ||
 		r.Metrics.Cancelled < 0 || r.Metrics.Success > r.Metrics.Total || r.Metrics.Failures != r.Metrics.Total-r.Metrics.Success {
 		invalidate("Request aggregate accounting is inconsistent.")
+	}
+	validateConstruction := func(metrics MetricSet) {
+		if metrics.RequestConstructionFailures < 0 || metrics.RequestConstructionFailures > metrics.Failures ||
+			metrics.RequestConstructionFailures > metrics.Total {
+			invalidate("Request-construction rejection accounting is inconsistent.")
+		}
+		if r.SchemaVersion < 29 && metrics.RequestConstructionFailures != 0 {
+			invalidate("Pre-v29 reports cannot carry request-construction rejection counts.")
+		}
+	}
+	validateConstruction(r.Metrics)
+	stepConstruction := 0
+	for _, step := range r.Steps {
+		validateConstruction(step.Metrics)
+		stepConstruction += step.Metrics.RequestConstructionFailures
+	}
+	if len(r.Steps) > 0 && stepConstruction != r.Metrics.RequestConstructionFailures {
+		invalidate("Request-construction rejection counts do not reconcile with steps.")
+	}
+	for _, window := range r.Windows {
+		validateConstruction(window.Metrics)
+		if window.Metrics.RequestConstructionFailures > r.Metrics.RequestConstructionFailures {
+			invalidate("Window request-construction rejections exceed the run total.")
+		}
+		windowSteps := 0
+		for _, step := range window.Steps {
+			validateConstruction(step.Metrics)
+			windowSteps += step.Metrics.RequestConstructionFailures
+		}
+		if len(window.Steps) > 0 && windowSteps != window.Metrics.RequestConstructionFailures {
+			invalidate("Window request-construction rejection counts do not reconcile with steps.")
+		}
+	}
+	windowConstruction := 0
+	windowConstructionUpperBound := r.Metrics.RequestConstructionFailures
+	for _, window := range r.Windows {
+		windowConstruction += window.Metrics.RequestConstructionFailures
+		windowConstructionUpperBound -= window.Metrics.RequestConstructionFailures
+	}
+	if windowConstructionUpperBound < 0 {
+		invalidate("Observation-window request-construction rejections exceed the run total.")
 	}
 	if r.Journeys.Total < 0 || r.Journeys.Success < 0 || r.Journeys.Failures < 0 ||
 		r.Journeys.Cancelled < 0 || r.Journeys.Success > r.Journeys.Total || r.Journeys.Failures != r.Journeys.Total-r.Journeys.Success {
@@ -437,12 +484,13 @@ func AssessQuality(r Result) *Quality {
 	// complete. A missing ledger is LIMITED (not invented), while a present
 	// contradictory ledger is INVALID. All subtraction avoids integer overflow.
 	if len(r.Steps) > 0 {
-		var total, success, failures, cancelled int
+		var total, success, failures, cancelled, constructionFailures int
 		for _, step := range r.Steps {
 			m := step.Metrics
-			if m.Total < 0 || m.Success < 0 || m.Failures < 0 || m.Cancelled < 0 ||
+			if m.Total < 0 || m.Success < 0 || m.Failures < 0 || m.Cancelled < 0 || m.RequestConstructionFailures < 0 ||
 				m.Total > r.Metrics.Total-total || m.Success > r.Metrics.Success-success ||
-				m.Failures > r.Metrics.Failures-failures || m.Cancelled > r.Metrics.Cancelled-cancelled {
+				m.Failures > r.Metrics.Failures-failures || m.Cancelled > r.Metrics.Cancelled-cancelled ||
+				m.RequestConstructionFailures > r.Metrics.RequestConstructionFailures-constructionFailures {
 				invalidate("Named-step ledger exceeds aggregate request counters.")
 				break
 			}
@@ -450,9 +498,10 @@ func AssessQuality(r Result) *Quality {
 			success += m.Success
 			failures += m.Failures
 			cancelled += m.Cancelled
+			constructionFailures += m.RequestConstructionFailures
 		}
 		if total != r.Metrics.Total || success != r.Metrics.Success ||
-			failures != r.Metrics.Failures || cancelled != r.Metrics.Cancelled {
+			failures != r.Metrics.Failures || cancelled != r.Metrics.Cancelled || constructionFailures != r.Metrics.RequestConstructionFailures {
 			invalidate("Named-step ledger does not reconcile with aggregate requests.")
 		}
 	} else if r.Metrics.Total > 0 {
@@ -855,7 +904,7 @@ func validWindowNamedMetrics(r Result, window WindowResult) bool {
 	for _, profile := range r.Config.Profiles {
 		profileNames[profile.Name] = true
 	}
-	var stepTotal, stepSuccess, stepFailures, stepCancelled int
+	var stepTotal, stepSuccess, stepFailures, stepCancelled, stepConstructionFailures int
 	var stepHTTP HTTPDiagnostics
 	var stepBodies ResponseBodyDiagnostics
 	for _, named := range window.Steps {
@@ -867,14 +916,18 @@ func validWindowNamedMetrics(r Result, window WindowResult) bool {
 			!addHTTPDiagnostics(&stepHTTP, named.Metrics.HTTP) || !addResponseBodyDiagnostics(&stepBodies, named.Metrics.ResponseBody) {
 			return false
 		}
+		if named.Metrics.RequestConstructionFailures > window.Metrics.RequestConstructionFailures-stepConstructionFailures {
+			return false
+		}
 		stepTotal += named.Metrics.Total
 		stepSuccess += named.Metrics.Success
 		stepFailures += named.Metrics.Failures
 		stepCancelled += named.Metrics.Cancelled
+		stepConstructionFailures += named.Metrics.RequestConstructionFailures
 		delete(stepNames, named.Name)
 	}
 	if len(stepNames) != 0 || stepTotal != window.Metrics.Total || stepSuccess != window.Metrics.Success ||
-		stepFailures != window.Metrics.Failures || stepCancelled != window.Metrics.Cancelled ||
+		stepFailures != window.Metrics.Failures || stepCancelled != window.Metrics.Cancelled || stepConstructionFailures != window.Metrics.RequestConstructionFailures ||
 		!equalHTTPDiagnostics(stepHTTP, window.Metrics.HTTP) || !equalResponseBodyDiagnostics(stepBodies, window.Metrics.ResponseBody) {
 		return false
 	}
