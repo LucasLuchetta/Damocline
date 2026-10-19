@@ -127,14 +127,44 @@ func TestArrivalEnvelopeRequiresExactHealthyMatrixAndRuntime(t *testing.T) {
 	}
 }
 
-func TestClosedLoopEnvelopeNeverTreatsArrivalProfilesAsVUs(t *testing.T) {
-	record := passingArtifact(t).Preflight
-	got := AssessClosedLoopEnvelope([]int{2, 5, 2}, record, testRuntime(), time.Now().UTC())
-	if got.Status != "BLOCKED" || len(got.Levels) != 3 || got.Levels[0].Status != "BLOCKED" || got.Levels[2].Status != "BLOCKED" {
-		t.Fatalf("arrival matrix or duplicate VU levels were accepted: %+v", got)
+func TestClosedLoopEnvelopeRequiresExactVersionedVUProfile(t *testing.T) {
+	a := passingArtifact(t)
+	record := a.Preflight
+	local := testRuntime()
+	record.Generator.RunnerVersion = local.RunnerVersion
+	now := time.Now().UTC()
+	record.StartedAt = now.Add(-2 * time.Minute).Format(time.RFC3339Nano)
+	record.FinishedAt = now.Add(-time.Minute).Format(time.RFC3339Nano)
+	scenario := config.Scenario{Name: "synthetic", BaseURL: "http://127.0.0.1", Users: 5, Duration: "2s", Mode: "closed", MaxRPS: 100, Timeout: "1s", ConnectionPolicy: "reuse", RampUp: "0s", ThinkTime: "0s", P95LimitMS: 500, MaxErrorRate: 0.1, Steps: []config.Step{{Name: "work", Method: "GET", Path: "/work"}}}
+	got := AssessClosedLoopEnvelope(scenario, []int{5}, record, local, now)
+	if got.Status != "READY" || got.Levels[0].Status != "READY" {
+		t.Fatalf("exact closed-loop profile should match: %+v", got)
 	}
-	if got.Levels[0].Dimensions[0].Name != "workload_model" {
-		t.Fatalf("missing closed-loop model reason: %+v", got.Levels[0])
+	if got := AssessClosedLoopEnvelope(scenario, []int{6}, record, local, now); got.Status != "BLOCKED" {
+		t.Fatalf("unmeasured VU level was interpolated: %+v", got)
+	}
+	changed := scenario
+	changed.MaxRPS = 19
+	if got := AssessClosedLoopEnvelope(changed, []int{5}, record, local, now); got.Status != "BLOCKED" {
+		t.Fatalf("different request cap borrowed a VU profile: %+v", got)
+	}
+	changed = scenario
+	changed.RampUp = "1s"
+	if got := AssessClosedLoopEnvelope(changed, []int{5}, record, local, now); got.Status != "BLOCKED" {
+		t.Fatalf("ramp-up change borrowed a VU profile: %+v", got)
+	}
+	stale := record
+	stale.FinishedAt = now.Add(-25 * time.Hour).Format(time.RFC3339Nano)
+	if got := AssessClosedLoopEnvelope(scenario, []int{5}, stale, local, now); got.Status != "BLOCKED" {
+		t.Fatalf("stale closed-loop calibration remained usable: %+v", got)
+	}
+	legacy := record
+	legacy.SchemaVersion = 8
+	legacy.Fixture.WorkloadProfiles = referenceWorkloadProfilesV8()
+	legacy.WorkloadObservations = passingObservationsForProfiles(referenceWorkloadProfilesV8())
+	refreshArtifactFingerprint(t, &legacy)
+	if got := AssessClosedLoopEnvelope(scenario, []int{5}, legacy, local, now); got.Status != "BLOCKED" {
+		t.Fatalf("schema-v8 arrival profiles qualified VUs: %+v", got)
 	}
 }
 

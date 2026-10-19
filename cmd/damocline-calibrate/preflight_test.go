@@ -47,12 +47,23 @@ func passingWorkloadObservations() []preflightWorkloadObservation {
 	for _, profile := range profiles {
 		duration, _ := time.ParseDuration(profile.Duration)
 		planned := int64(profile.ArrivalRate) * int64(duration/time.Second)
+		if profile.Mode == "closed" {
+			planned = int64(profile.Users)
+		}
 		requestBytes := int64(profile.RequestBodyBytes) * planned
 		responseBytes := int64(profile.ResponseBodyBytes) * planned
-		tcpConnections, _ := calibration.ExpectedReferenceTCPConnections(profile, planned)
+		connectionCount := planned
+		if profile.Mode == "closed" {
+			connectionCount = 1
+		}
+		tcpConnections, _ := calibration.ExpectedReferenceTCPConnections(profile, connectionCount)
 		tlsHandshakes, _ := calibration.ExpectedReferenceTLSHandshakes(profile, planned)
+		scheduled, admitted := int64(0), int64(0)
+		if profile.Mode == "arrival" {
+			scheduled, admitted = planned, planned
+		}
 		observations = append(observations, preflightWorkloadObservation{
-			ProfileID: profile.ID, Scheduled: planned, Admitted: planned,
+			ProfileID: profile.ID, Mode: profile.Mode, ArrivalAccountingApplicable: profile.Mode == "arrival", Scheduled: scheduled, Admitted: admitted,
 			Started: planned, Completed: planned, Outcome: "PASS",
 			ClientCompleteBodyObservations: planned,
 			ClientTLSHandshakes:            tlsHandshakes,
@@ -84,7 +95,8 @@ func TestPreflightRoundTripVersionAndEvidence(t *testing.T) {
 		g, f, stages := testPreflightInputs(tc.extended, tc.repeats)
 		f.WorkloadProfiles = preflightWorkloadProfilesForTest()
 		start := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
-		rec, err := newPreflightRecord(start, start.Add(time.Minute), g, f, stages, "REFERENCE_SMOKE_PASSED", passingWorkloadObservations())
+		observations := passingWorkloadObservations()
+		rec, err := newPreflightRecord(start, start.Add(time.Minute), g, f, stages, "REFERENCE_SMOKE_PASSED", observations)
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -80,17 +80,37 @@ func passingCalibrationWorkloadObservations() []calibration.WorkloadObservation 
 	for _, profile := range profiles {
 		duration, _ := time.ParseDuration(profile.Duration)
 		planned := int64(profile.ArrivalRate) * int64(duration/time.Second)
+		closedLoop := profile.Mode == "closed"
+		if closedLoop {
+			planned = int64(profile.Users)
+		}
 		responseBytes := int64(profile.ResponseBodyBytes) * planned
-		tcpConnections, _ := calibration.ExpectedReferenceTCPConnections(profile, planned)
-		tlsHandshakes, _ := calibration.ExpectedReferenceTLSHandshakes(profile, planned)
+		measurementCount := planned
+		if closedLoop {
+			measurementCount = 1
+		}
+		tcpConnections, _ := calibration.ExpectedReferenceTCPConnections(profile, measurementCount)
+		tlsHandshakes, _ := calibration.ExpectedReferenceTLSHandshakes(profile, max(int64(1), planned))
 		observations = append(observations, calibration.WorkloadObservation{
-			ProfileID: profile.ID, Scheduled: planned, Admitted: planned, Started: planned, Completed: planned, Outcome: "PASS",
+			ProfileID: profile.ID, Mode: profile.Mode, ArrivalAccountingApplicable: profile.Mode == "arrival", Started: planned, Completed: planned, Outcome: "PASS",
 			ClientCompleteBodyObservations: planned, ClientResponseMinBytes: int64(profile.ResponseBodyBytes),
 			ClientTLSHandshakes:    tlsHandshakes,
 			ClientResponseMaxBytes: int64(profile.ResponseBodyBytes), ClientResponseTotalBytes: responseBytes,
 			ServerReceived: planned, ServerCompleted: planned, ServerTCPConnections: tcpConnections,
 			ServerRequestBodyBytes: int64(profile.RequestBodyBytes) * planned, ServerResponseBodyBytes: responseBytes,
 		})
+		if closedLoop {
+			last := &observations[len(observations)-1]
+			last.Scheduled = 0
+			last.Admitted = 0
+			last.Dropped = 0
+			last.ArrivalAccountingApplicable = false
+			last.ServerTCPConnections = 1
+		} else {
+			last := &observations[len(observations)-1]
+			last.Scheduled = planned
+			last.Admitted = planned
+		}
 	}
 	return observations
 }

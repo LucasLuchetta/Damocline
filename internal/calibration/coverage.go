@@ -41,9 +41,8 @@ type ArrivalEnvelope struct {
 	Rates  []RateAssessment `json:"rates"`
 }
 
-// ClosedLoopAssessment records the exact VU levels a closed-loop campaign
-// would run. Current calibration fixtures contain arrival-mode profiles only,
-// so they cannot qualify closed-loop generator capacity.
+// ClosedLoopAssessment records the exact VU levels and generator controls a
+// closed-loop campaign would run. It does not qualify target capacity.
 type ClosedLoopAssessment struct {
 	Users      int         `json:"users"`
 	Status     string      `json:"status"`
@@ -56,11 +55,12 @@ type ClosedLoopEnvelope struct {
 	Levels []ClosedLoopAssessment `json:"levels"`
 }
 
-// AssessClosedLoopEnvelope checks each distinct planned VU level. Arrival
-// profiles are deliberately not treated as evidence for closed-loop users.
-func AssessClosedLoopEnvelope(users []int, rec Record, local Runtime, now time.Time) ClosedLoopEnvelope {
+// AssessClosedLoopEnvelope checks each distinct planned VU level against exact
+// closed-loop profiles. Arrival profiles never stand in for virtual users.
+func AssessClosedLoopEnvelope(s config.Scenario, users []int, rec Record, local Runtime, now time.Time) ClosedLoopEnvelope {
 	result := ClosedLoopEnvelope{Status: "BLOCKED", Levels: []ClosedLoopAssessment{}}
 	seen := map[int]bool{}
+	validRecord := ValidateRecord(rec) == nil && rec.SchemaVersion >= 9 && rec.Status == "REFERENCE_SMOKE_PASSED"
 	for _, count := range users {
 		assessment := ClosedLoopAssessment{Users: count, Status: "BLOCKED"}
 		switch {
@@ -72,11 +72,18 @@ func AssessClosedLoopEnvelope(users []int, rec Record, local Runtime, now time.T
 			assessment.Dimensions = []Dimension{{Name: "users", Status: "INVALID", Reason: assessment.Reason}}
 		default:
 			seen[count] = true
-			assessment.Reason = "No closed-loop VU calibration profiles are present; arrival-mode profiles do not qualify this workload model."
-			assessment.Dimensions = []Dimension{{Name: "workload_model", Status: "OUTSIDE_REFERENCE", Reason: assessment.Reason}}
-			if err := ValidateRecord(rec); err != nil || rec.Status != "REFERENCE_SMOKE_PASSED" {
-				assessment.Dimensions = []Dimension{{Name: "calibration", Status: "UNVERIFIED", Reason: "A validated passing calibration record is unavailable."}}
-				assessment.Reason = "A validated passing calibration record is unavailable."
+			assessment.Dimensions = assessClosedLoopLevel(s, count, rec, local, now, validRecord)
+			blockers := make([]Dimension, 0)
+			for _, dimension := range assessment.Dimensions {
+				if dimension.Status != "MATCHED" {
+					blockers = append(blockers, dimension)
+				}
+			}
+			if len(blockers) == 0 {
+				assessment.Status = "READY"
+				assessment.Reason = "An exact local closed-loop profile covers this VU level, declared one-step workload, runtime controls, and generator identity fields. It does not establish target identity, longer campaign phase headroom, or application capacity."
+			} else {
+				assessment.Reason = "The closed-loop calibration artifact does not cover every required generator dimension for this VU level."
 			}
 		}
 		result.Levels = append(result.Levels, assessment)
@@ -92,6 +99,79 @@ func AssessClosedLoopEnvelope(users []int, rec Record, local Runtime, now time.T
 		}
 	}
 	return result
+}
+
+func assessClosedLoopLevel(s config.Scenario, users int, rec Record, local Runtime, now time.Time, validRecord bool) []Dimension {
+	if !validRecord {
+		return []Dimension{{Name: "calibration", Status: "UNVERIFIED", Reason: "A validated passing schema-v9 closed-loop calibration record is unavailable."}}
+	}
+	var dimensions []Dimension
+	add := func(name, status, reason string) {
+		dimensions = append(dimensions, Dimension{Name: name, Status: status, Reason: reason})
+	}
+	finished, err := time.Parse(time.RFC3339Nano, rec.FinishedAt)
+	if err != nil || now.Before(finished.Add(-5*time.Minute)) || now.Sub(finished) > 24*time.Hour {
+		add("calibration_age", "OUTSIDE_REFERENCE", "Calibration is future-dated or older than the 24-hour review threshold.")
+	} else {
+		add("calibration_age", "MATCHED", "Calibration is within the 24-hour review threshold.")
+	}
+	g := rec.Generator
+	if g.OS != local.OS || g.Arch != local.Arch || g.GoVersion != local.GoVersion || g.LogicalCPUs != local.LogicalCPUs || g.GOMAXPROCS != local.GOMAXPROCS || g.CPUCapacityCores != local.CPUCapacityCores || g.CPUCapacitySource != local.CPUCapacitySource || g.CPUCapacityKnown != local.CPUCapacityKnown {
+		add("generator_runtime", "OUTSIDE_REFERENCE", "Current generator OS, architecture, Go version, runner or CPU configuration differs from the calibration.")
+	} else if !g.CPUCapacityKnown || !local.CPUCapacityKnown {
+		add("generator_runtime", "UNVERIFIED", "CPU quota or effective capacity could not be verified for both calibration and current generator.")
+	} else if g.RunnerVersion == "source-development" || local.RunnerVersion == "source-development" {
+		add("generator_runtime", "UNVERIFIED", "Runtime metadata matches but the exact runner source revision is unavailable.")
+	} else if g.RunnerVersion != local.RunnerVersion {
+		add("generator_runtime", "OUTSIDE_REFERENCE", "Current generator runner revision differs from the calibration.")
+	} else {
+		add("generator_runtime", "MATCHED", "Runtime metadata matches; physical host identity is not attested.")
+	}
+	mode := s.Mode
+	if mode == "" {
+		mode = "closed"
+	}
+	if mode != "closed" || s.ArrivalRate != 0 {
+		add("workload_model", "OUTSIDE_REFERENCE", "The calibration covers closed-loop virtual users, not independent arrival-mode starts.")
+	} else {
+		add("workload_model", "MATCHED", "The scenario uses closed-loop virtual users.")
+	}
+	connection := s.ConnectionPolicy
+	if connection == "" {
+		connection = "reuse"
+	}
+	timeout := s.Timeout
+	if timeout == "" {
+		timeout = "8s"
+	}
+	ramp := s.RampUp
+	if ramp == "" {
+		ramp = "0s"
+	}
+	think := s.ThinkTime
+	if think == "" {
+		think = "0s"
+	}
+	if s.MaxConnectionsPerHost != 0 || ramp != "0s" || think != "0s" || s.ThinkTimeRange != nil || len(s.ThinkTimeSamples) > 0 {
+		add("timing_controls", "OUTSIDE_REFERENCE", "Closed-loop profiles cover zero ramp-up, fixed zero think time, and the default connection pool only.")
+	} else {
+		add("timing_controls", "MATCHED", "Ramp-up, think-time and connection-cap controls match the closed-loop fixture.")
+	}
+	shape := AssessDeclaredWorkloadShape(s, rec)
+	add(shape.Name, shape.Status, shape.Reason)
+	profileFound := false
+	for _, profile := range rec.Fixture.WorkloadProfiles {
+		if profile.Mode == "closed" && profile.TransportScheme == "http" && profile.Users == users && profile.MaxRPS == 100 && s.MaxRPS == profile.MaxRPS && profile.Timeout == timeout && profile.ConnectionPolicy == connection && profile.Duration == "2s" && profile.RampUp == "0s" && profile.ThinkTime == "0s" && profile.Fingerprint == WorkloadProfileFingerprint(profile) {
+			profileFound = true
+			break
+		}
+	}
+	if profileFound {
+		add("exact_profile", "MATCHED", "The exact VU level, request ceiling, timeout, duration and connection policy were measured in closed-loop mode.")
+	} else {
+		add("exact_profile", "OUTSIDE_REFERENCE", "No closed-loop profile matches this exact VU level and control tuple; VU levels are not interpolated.")
+	}
+	return dimensions
 }
 
 type Runtime struct {
@@ -470,6 +550,26 @@ func assessMatrixWorkloadShape(s config.Scenario, rec Record) Dimension {
 		dimension.Reason = "The calibrated matrix covers unasserted GET and POST steps without custom headers or dynamic dependencies."
 		return dimension
 	}
+	if s.Mode == "closed" {
+		profiles := rec.Fixture.WorkloadProfiles
+		for _, profile := range profiles {
+			if profile.Mode != "closed" || profile.Method != method || profile.Path != step.Path || profile.ConnectionPolicy != func() string {
+				if s.ConnectionPolicy == "" {
+					return "reuse"
+				}
+				return s.ConnectionPolicy
+			}() {
+				continue
+			}
+			if profile.RequestBodyBytes == 0 && step.BodyEnv == "" && profile.Fingerprint == WorkloadProfileFingerprint(profile) {
+				dimension.Status = "MATCHED"
+				dimension.Reason = "The declared closed-loop request shape matches an exactly measured local VU profile; response behavior and target identity remain unverified."
+				return dimension
+			}
+		}
+		dimension.Reason = "No closed-loop profile exactly matches the declared request shape."
+		return dimension
+	}
 
 	connectionPolicy := s.ConnectionPolicy
 	if connectionPolicy == "" {
@@ -486,9 +586,13 @@ func assessMatrixWorkloadShape(s config.Scenario, rec Record) Dimension {
 		transportScheme = declaredURL.Scheme
 	}
 	step.Method = method
+	arrivalRate := s.ArrivalRate
+	if arrivalRate < 1 {
+		arrivalRate = 2
+	}
 	normalized := config.Scenario{
 		Name: "Synthetic workload profile comparison", BaseURL: "http://127.0.0.1",
-		Users: s.Users, Duration: s.Duration, Mode: "arrival", ArrivalRate: s.ArrivalRate,
+		Users: s.Users, Duration: s.Duration, Mode: "arrival", ArrivalRate: arrivalRate,
 		MaxRPS: s.MaxRPS, Timeout: s.Timeout, ConnectionPolicy: connectionPolicy,
 		P95LimitMS: 500, MaxErrorRate: 1, Steps: []config.Step{step},
 	}

@@ -4,6 +4,8 @@ This project follows a human-maintained changelog. No release exists yet.
 
 ## [Unreleased]
 
+- Advance calibration evidence to schema v9 with exact 1/2/5/10/20/50-VU closed-loop profiles, and acceptance manifest v5 with per-profile iteration and independent server-ledger reconciliation. Exact closed-loop campaign preflight can now pass for matching short local generator profiles; other VU levels and controls remain blocked.
+
 - Add versioned private local campaign profiles with migration, explicit replacement/deletion, repeatable run controls, fresh execution opt-ins, and automatic complete campaign reports under `.damocline/reports/`.
 
 - Add opt-in closed-loop campaign calibration preflight, persist exact VU-level coverage and required-policy metadata in campaign schema v12, and block before execution when requested coverage is unavailable. Arrival-mode calibration profiles do not qualify closed-loop VUs.

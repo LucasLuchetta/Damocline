@@ -17,7 +17,7 @@ import (
 
 // The preflight record is embedded in the existing calibration JSON. It
 // identifies the tested loopback fixture, never a customer target or session.
-const SchemaVersion = 8
+const SchemaVersion = 9
 const minimumSupportedSchemaVersion = 1
 
 // Healthy response latency bounds are the fixed coarse guardrail used by the
@@ -77,12 +77,16 @@ type WorkloadProfile struct {
 	Duration          string `json:"duration"`
 	Timeout           string `json:"timeout"`
 	ConnectionPolicy  string `json:"connection_policy"`
+	RampUp            string `json:"ramp_up,omitempty"`
+	ThinkTime         string `json:"think_time,omitempty"`
 }
 
 // WorkloadObservation records client and independent server counters for one
 // calibrated workload profile. It contains no request or response content.
 type WorkloadObservation struct {
 	ProfileID                      string `json:"profile_id"`
+	Mode                           string `json:"mode,omitempty"`
+	ArrivalAccountingApplicable    bool   `json:"arrival_accounting_applicable,omitempty"`
 	Scheduled                      int64  `json:"scheduled"`
 	Admitted                       int64  `json:"admitted"`
 	Started                        int64  `json:"started"`
@@ -132,10 +136,29 @@ const WorkloadMatrixArrivalRate = 10
 func WorkloadMatrixArrivalRates() []int { return []int{2, 5, 10} }
 
 func ReferenceWorkloadProfiles() []WorkloadProfile {
+	profiles := referenceWorkloadProfilesV8()
+	profiles = append(profiles, closedLoopWorkloadProfiles()...)
+	return profiles
+}
+
+func referenceWorkloadProfilesV8() []WorkloadProfile {
 	profiles := referenceWorkloadProfilesV5()
 	tlsShapes := []WorkloadProfile{{ID: "https-get-4k-response-shape", Mode: "arrival", TransportScheme: "https", Method: "GET", Path: "/matrix/https-4k", ResponseBodyBytes: ReferenceHealthyResponseBytes,
 		MaxRPS: 50, Users: 10, Duration: "5s", Timeout: "1s", ConnectionPolicy: "reuse"}}
 	profiles = append(profiles, workloadProfilesForPolicy(tlsShapes, "reuse", "5s", "")...)
+	return profiles
+}
+
+func ClosedLoopVirtualUserLevels() []int { return []int{1, 2, 5, 10, 20, 50} }
+
+func closedLoopWorkloadProfiles() []WorkloadProfile {
+	profiles := make([]WorkloadProfile, 0, len(ClosedLoopVirtualUserLevels()))
+	for _, users := range ClosedLoopVirtualUserLevels() {
+		profile := WorkloadProfile{ID: fmt.Sprintf("closed-get-4k-vu-%d", users), Mode: "closed", TransportScheme: "http", Method: "GET", Path: "/work",
+			ResponseBodyBytes: ReferenceHealthyResponseBytes, MaxRPS: 100, Users: users, Duration: "2s", Timeout: "1s", ConnectionPolicy: "reuse", RampUp: "0s", ThinkTime: "0s"}
+		profile.Fingerprint = WorkloadProfileFingerprint(profile)
+		profiles = append(profiles, profile)
+	}
 	return profiles
 }
 
@@ -302,8 +325,8 @@ func NewRecord(start, end time.Time, generator Generator, fixture Fixture, stage
 	if err != nil {
 		return Record{}, fmt.Errorf("construct reference workload fingerprint: %w", err)
 	}
-	// Records without profile observations retain the schema-v2 shape. Schema
-	// v3 requires its original fixed profile matrix; v4 requires the expanded one.
+	// Records without profile observations retain the schema-v2 shape. Later
+	// schemas require their exact versioned workload profile matrix.
 	schemaVersion := 2
 	var observations []WorkloadObservation
 	if len(workloadObservations) > 0 {
@@ -460,6 +483,8 @@ func validateWorkloadMatrix(rec Record) error {
 		expectedProfiles = referenceWorkloadProfilesV4()
 	} else if rec.SchemaVersion >= 5 && rec.SchemaVersion <= 7 {
 		expectedProfiles = referenceWorkloadProfilesV5()
+	} else if rec.SchemaVersion == 8 {
+		expectedProfiles = referenceWorkloadProfilesV8()
 	}
 	profilesMatch := len(rec.Fixture.WorkloadProfiles) == len(expectedProfiles)
 	if profilesMatch {
@@ -481,6 +506,10 @@ func validateWorkloadMatrix(rec Record) error {
 			return errors.New("invalid workload profile duration")
 		}
 		planned := int64(profile.ArrivalRate) * int64(duration/time.Second)
+		closedLoop := profile.Mode == "closed"
+		if rec.SchemaVersion < 9 && closedLoop {
+			return errors.New("historical calibration contains unsupported closed-loop profiles")
+		}
 		expectedRequestBytes := int64(profile.RequestBodyBytes) * planned
 		expectedResponseBytes := int64(profile.ResponseBodyBytes) * planned
 		countersAreBounded := observation.Scheduled >= 0 && observation.Admitted >= 0 &&
@@ -494,33 +523,38 @@ func validateWorkloadMatrix(rec Record) error {
 			observation.ServerResponseBodyBytes >= 0
 		if observation.ProfileID != profile.ID || !workloadFingerprintPattern.MatchString(profile.Fingerprint) ||
 			profile.Fingerprint != WorkloadProfileFingerprint(profile) || !countersAreBounded ||
-			observation.Scheduled != planned || observation.Scheduled != observation.Admitted+observation.Dropped ||
-			observation.Admitted != observation.Started || observation.Started < observation.Completed ||
+			(!closedLoop && (observation.Scheduled != planned || observation.Scheduled != observation.Admitted+observation.Dropped || observation.Admitted != observation.Started || observation.ArrivalAccountingApplicable != (rec.SchemaVersion >= 9 && profile.Mode == "arrival"))) ||
+			(closedLoop && (profile.ArrivalRate != 0 || profile.MaxRPS < 1 || profile.RampUp != "0s" || profile.ThinkTime != "0s" || observation.ArrivalAccountingApplicable || observation.Scheduled != 0 || observation.Admitted != 0 || observation.Dropped != 0 || observation.Mode != "closed" || observation.Started < int64(profile.Users))) ||
+			observation.Started < observation.Completed ||
 			observation.Completed > observation.ServerCompleted || observation.ServerCompleted > observation.ServerReceived ||
 			observation.ClientCompleteBodyObservations > observation.Completed ||
 			observation.ClientResponseTotalBytes != int64(profile.ResponseBodyBytes)*observation.ClientCompleteBodyObservations ||
-			observation.ServerRequestBodyBytes > expectedRequestBytes || observation.ServerResponseBodyBytes > expectedResponseBytes ||
+			(!closedLoop && (observation.ServerRequestBodyBytes > expectedRequestBytes || observation.ServerResponseBodyBytes > expectedResponseBytes)) ||
+			(rec.SchemaVersion >= 9 && observation.Mode != profile.Mode) ||
 			(observation.Outcome != "PASS" && observation.Outcome != "FAIL" && observation.Outcome != "INCONCLUSIVE" && observation.Outcome != "ABORTED") {
-			return errors.New("invalid workload profile observation counters")
+			return fmt.Errorf("invalid workload profile observation counters for %s: mode=%s scheduled=%d admitted=%d started=%d completed=%d dropped=%d server=%d/%d tcp=%d bodies=%d response_bytes=%d request_bytes=%d", profile.ID, observation.Mode, observation.Scheduled, observation.Admitted, observation.Started, observation.Completed, observation.Dropped, observation.ServerReceived, observation.ServerCompleted, observation.ServerTCPConnections, observation.ClientCompleteBodyObservations, observation.ClientResponseTotalBytes, observation.ServerRequestBodyBytes)
 		}
 		if rec.Status == "REFERENCE_SMOKE_PASSED" &&
-			(observation.Outcome != "PASS" || observation.Dropped != 0 || observation.Started != planned ||
-				observation.Completed != planned || observation.ClientCompleteBodyObservations != planned ||
+			(observation.Outcome != "PASS" || observation.Dropped != 0 || (!closedLoop && observation.Started != planned) || observation.Completed != observation.Started || observation.ClientCompleteBodyObservations != observation.Completed ||
 				observation.ClientResponseMinBytes != int64(profile.ResponseBodyBytes) ||
 				observation.ClientResponseMaxBytes != int64(profile.ResponseBodyBytes) ||
-				observation.ClientResponseTotalBytes != expectedResponseBytes ||
-				observation.ServerReceived != planned || observation.ServerCompleted != planned ||
-				observation.ServerRequestBodyBytes != expectedRequestBytes ||
-				observation.ServerResponseBodyBytes != expectedResponseBytes) {
+				observation.ClientResponseTotalBytes != int64(profile.ResponseBodyBytes)*observation.Completed ||
+				observation.ServerReceived != observation.Completed || observation.ServerCompleted != observation.Completed ||
+				observation.ServerRequestBodyBytes != int64(profile.RequestBodyBytes)*observation.Completed ||
+				observation.ServerResponseBodyBytes != int64(profile.ResponseBodyBytes)*observation.Completed) {
 			return errors.New("passing calibration has incomplete workload profile evidence")
 		}
 		if rec.SchemaVersion >= 6 && rec.Status == "REFERENCE_SMOKE_PASSED" {
 			expectedConnections, supported := ExpectedReferenceTCPConnections(profile, planned)
+			if closedLoop {
+				supported = observation.ServerTCPConnections > 0 && observation.ServerTCPConnections <= observation.ServerReceived
+				expectedConnections = observation.ServerTCPConnections
+			}
 			if !supported || observation.ServerTCPConnections != expectedConnections {
 				return errors.New("passing calibration has inconsistent profile TCP connection counts")
 			}
 		}
-		if rec.SchemaVersion >= 8 && rec.Status == "REFERENCE_SMOKE_PASSED" {
+		if rec.SchemaVersion >= 8 && rec.Status == "REFERENCE_SMOKE_PASSED" && !closedLoop {
 			expectedHandshakes, supported := ExpectedReferenceTLSHandshakes(profile, planned)
 			if !supported || observation.ClientTLSHandshakes != expectedHandshakes {
 				return errors.New("passing calibration has inconsistent profile TLS handshake counts")

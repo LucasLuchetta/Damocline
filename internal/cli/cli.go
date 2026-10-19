@@ -691,11 +691,11 @@ func campaignCmd(args []string, stdout, stderr io.Writer) int {
 		if options.SpikeUsers > 0 {
 			levels = append(levels, options.SpikeUsers)
 		}
-		envelope := calibration.AssessClosedLoopEnvelope(levels, record, currentCalibrationRuntime(), time.Now().UTC())
+		envelope := calibration.AssessClosedLoopEnvelope(validated.Scenario, levels, record, currentCalibrationRuntime(), time.Now().UTC())
 		options.Calibration = &envelope
 		options.CalibrationSource = *calibrationFile
 		options.RequireCalibration = *requireCalibration
-		fmt.Fprintf(stdout, "Closed-loop generator preflight: %s across %d planned VU levels. The current arrival-mode matrix cannot certify VU capacity.\n", envelope.Status, len(envelope.Levels))
+		fmt.Fprintf(stdout, "Closed-loop generator preflight: %s across %d planned VU levels. Local generator coverage does not establish target identity, longer campaign headroom, or application capacity.\n", envelope.Status, len(envelope.Levels))
 		if *requireCalibration && envelope.Status != "READY" {
 			fmt.Fprintln(stderr, "required calibration does not cover every planned closed-loop VU level")
 			return 2
