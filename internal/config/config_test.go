@@ -468,6 +468,22 @@ func TestQueryTemplateRequiresAnEarlierExtractedValue(t *testing.T) {
 	}
 }
 
+func TestJSONAssertionValidationIsBoundedAndRequiresValidPointer(t *testing.T) {
+	s := good()
+	s.Steps[0].JSONAssertions = map[string]string{"/state": "ready"}
+	if _, err := Parse(s, Options{Authorized: true}); err != nil {
+		t.Fatalf("valid JSON postcondition rejected: %v", err)
+	}
+	s.Steps[0].JSONAssertions = map[string]string{"/state~2name": "ready"}
+	if _, err := Parse(s, Options{Authorized: true}); err == nil {
+		t.Fatal("invalid JSON pointer escape accepted")
+	}
+	s.Steps[0].JSONAssertions = map[string]string{"/state": strings.Repeat("x", 257)}
+	if _, err := Parse(s, Options{Authorized: true}); err == nil {
+		t.Fatal("oversized JSON assertion accepted")
+	}
+}
+
 func TestWindowDurationValidation(t *testing.T) {
 	s := good()
 	s.WindowDuration = "500ms"

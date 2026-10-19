@@ -25,6 +25,7 @@ type fingerprintStep struct {
 	Headers        map[string]string  `json:"headers,omitempty"`
 	ExpectedStatus []int              `json:"expected_status,omitempty"`
 	MustContain    string             `json:"must_contain,omitempty"`
+	JSONAssertions map[string]string  `json:"json_assertions,omitempty"`
 	BodyEnv        string             `json:"body_env,omitempty"`
 	BodyLength     int                `json:"body_length,omitempty"`
 	Extract        map[string]Extract `json:"extract,omitempty"`
@@ -87,7 +88,8 @@ func WorkloadFingerprint(v Validated) string {
 			p.Steps = append(p.Steps, fingerprintStep{
 				Name: step.Step.Name, Method: method, Path: step.PathTemplate,
 				Headers: headers, ExpectedStatus: statuses, MustContain: step.Step.MustContain,
-				BodyEnv: step.Step.BodyEnv, BodyLength: len(step.Body), Extract: step.Step.Extract,
+				JSONAssertions: step.Step.JSONAssertions,
+				BodyEnv:        step.Step.BodyEnv, BodyLength: len(step.Body), Extract: step.Step.Extract,
 			})
 		}
 		input.Profiles = append(input.Profiles, p)

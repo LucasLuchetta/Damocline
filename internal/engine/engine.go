@@ -830,6 +830,11 @@ func execute(parent context.Context, client *http.Client, base *url.URL, timeout
 		observed.assertionFailure = true
 		return observed, nil
 	}
+	if len(s.JSONAssertions) > 0 && !jsonAssertionsMatch(s.JSONAssertions, data) {
+		observed := responseSample("assertion_json_mismatch")
+		observed.assertionFailure = true
+		return observed, nil
+	}
 	extracted, err := extractValues(s.Extract, res.Header, data)
 	if err != nil {
 		return responseSample("extraction_failed"), nil
@@ -837,6 +842,20 @@ func execute(parent context.Context, client *http.Client, base *url.URL, timeout
 	observed := responseSample("")
 	observed.success = true
 	return observed, extracted
+}
+
+func jsonAssertionsMatch(assertions map[string]string, body []byte) bool {
+	var document any
+	if err := json.Unmarshal(body, &document); err != nil {
+		return false
+	}
+	for pointer, expected := range assertions {
+		actual, ok := jsonPointer(document, pointer)
+		if !ok || actual != expected {
+			return false
+		}
+	}
+	return true
 }
 
 func isDNSFailure(err error) bool {

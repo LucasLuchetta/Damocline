@@ -837,6 +837,43 @@ func TestExtractedQueryValueIsEscapedAndCannotChangeRequestStructure(t *testing.
 	}
 }
 
+func TestJSONPostconditionTurnsFalseHTTP200IntoBusinessFailure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"order":{"state":"pending","id":"synthetic-42"}}`))
+	}))
+	defer srv.Close()
+	for _, tc := range []struct {
+		name     string
+		expected string
+		outcome  string
+	}{
+		{name: "matching business state", expected: "pending", outcome: "PASS"},
+		{name: "HTTP 200 with wrong business state", expected: "committed", outcome: "FAIL"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := config.Scenario{Name: "business postcondition", BaseURL: srv.URL, Users: 1, Duration: "1s", MaxRPS: 20, P95LimitMS: 1000, MaxErrorRate: 0,
+				Steps: []config.Step{{Name: "confirm", Path: "/orders/42", ExpectedStatus: []int{200}, JSONAssertions: map[string]string{"/order/state": tc.expected}}}}
+			v, err := config.Parse(s, config.Options{Authorized: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			v.Duration = 250 * time.Millisecond
+			r := Run(context.Background(), v)
+			if r.Outcome != tc.outcome {
+				t.Fatalf("JSON postcondition outcome=%s, want %s: %+v", r.Outcome, tc.outcome, r)
+			}
+			if tc.outcome == "FAIL" && (r.Metrics.Reasons["assertion_json_mismatch"] == 0 || r.Metrics.HTTP.AssertionFailures == 0) {
+				t.Fatalf("JSON assertion failure was not diagnosed: %+v", r.Metrics)
+			}
+			encoded, err := json.Marshal(r)
+			if err != nil || strings.Contains(string(encoded), tc.expected) {
+				t.Fatalf("assertion values leaked into run report: %s err=%v", encoded, err)
+			}
+		})
+	}
+}
+
 func TestFailedExtractionFailsStep(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"missing":true}`))

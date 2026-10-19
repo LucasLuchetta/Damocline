@@ -43,6 +43,7 @@ Scenario fields:
 | `per_vu_cookie_env_prefix` | Optional prefix for independent session cookies. |
 | `profiles` | Optional replacement for `steps`: 2-10 named weighted workflows, each with `name`, `weight`, `steps`, and an optional fixed, uniform, or discrete timing override. |
 | `extract` | Optional map of response values to capture using exactly one `json_pointer` or `header` selector. |
+| `json_assertions` | Optional map of JSON Pointer paths to expected scalar values; a mismatch fails the request even when HTTP status is successful. |
 | `window_duration` | Optional 1s-60s request-metric window. Every sampled window must meet the request p95 and error SLOs. |
 
 Use either top-level `steps` or `profiles`, never both. [`examples/weighted-profiles-readonly.json`](../examples/weighted-profiles-readonly.json) shows a three-profile read-only mix. Profile weights describe the planned mix. In closed mode, configure at least one VU per profile; in arrival mode, inspect actual profile starts in the report. HTTP redirects are not followed. A redirect to login is a failure unless explicitly listed as expected (not recommended for an authenticated page test).
@@ -54,7 +55,11 @@ Scenario JSON files are limited to 1 MiB including trailing whitespace. Generate
 
 Optionally declare `profile_mix_basis` as `sanitized_analytics` or `business_estimate` and provide a short safe `profile_mix_reference` identifier. The default basis is `assumption`. This metadata is self-reported provenance, not proof that the mix is representative; do not put domains, paths, credentials, customer identifiers, or raw events in the reference.
 
-A later step may use a value extracted by an earlier one in the same journey. Path variables must occupy a whole path segment, which prevents a response value from changing origin or query semantics. Header and body templates use `{{variable_name}}`. Extracted values are not placed in report output.
+A later step may use a value extracted by an earlier one in the same journey. Path variables must occupy a whole path segment; query templates may occur in parameter values and are escaped as query components. Both remain relative to the configured origin. Header and body templates use `{{variable_name}}`. Extracted values and JSON assertion values are not placed in report output.
+
+For structured business outcomes, a step can declare, for example, `"json_assertions": {"/order/state": "ready"}`. The response must contain that scalar value at the JSON Pointer for the step to pass. Keep expected values synthetic and local. Assertion definitions change the workload fingerprint so runs with different business criteria are not treated as the same workload.
+
+[`examples/dependent-business-readonly.json`](../examples/dependent-business-readonly.json) combines a same-journey JSON extraction, an escaped query value, and a business-state assertion. Its origin and API paths are documentation placeholders; replace them only with an authorized staging target.
 
 ## 3. Independent test users
 

@@ -1,0 +1,34 @@
+{
+  "name": "dependent-order-read",
+  "environment": "staging",
+  "base_url": "https://app.example.com",
+  "users": 2,
+  "mode": "closed",
+  "duration": "30s",
+  "ramp_up": "5s",
+  "think_time": "250ms",
+  "request_timeout": "5s",
+  "max_rps": 10,
+  "p95_limit_ms": 800,
+  "max_error_rate": 0.01,
+  "steps": [
+    {
+      "name": "session-context",
+      "method": "GET",
+      "path": "/api/session-context",
+      "expected_status": [200],
+      "extract": {
+        "owner_id": { "json_pointer": "/user/id" }
+      }
+    },
+    {
+      "name": "ready-orders",
+      "method": "GET",
+      "path": "/api/orders?owner={{owner_id}}",
+      "expected_status": [200],
+      "json_assertions": {
+        "/state": "ready"
+      }
+    }
+  ]
+}

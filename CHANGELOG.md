@@ -5,6 +5,7 @@ This project follows a human-maintained changelog. No release exists yet.
 ## [Unreleased]
 
 ### Added
+- Support bounded JSON Pointer scalar postconditions on each workflow step, classify false HTTP-200 business outcomes as failures, include assertions in workload fingerprints, and keep assertion values out of reports.
 - Allow same-journey extracted values in query parameter values with query-component escaping, malformed-template rejection, and loopback coverage proving special characters cannot add parameters or change the request path.
 - Preserve probe-level reasons in exploration schema v2 and CLI output; current-schema accounting failures, invalid quality, dropped arrivals and cancelled HTTP/business journeys stop a VU level as INCONCLUSIVE instead of counting it as application PASS/FAIL. Share conservative generator evidence checks between exploration and exact business-goal assessment so generator-bound failures cannot form an application-capacity bracket.
 - Add optional final campaign soak (`--soak`, 10s–3m) after all independent trials; include its drain allowance in the 15-minute wall-time cap, persist schema-v4 stage evidence, validate it offline, and screen full journey/window SLOs and coarse drift. This remains bounded local campaign evidence, not a capacity certification.
