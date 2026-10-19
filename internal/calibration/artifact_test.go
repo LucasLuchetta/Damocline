@@ -77,12 +77,20 @@ func passingWorkloadObservations() []WorkloadObservation {
 	for _, profile := range profiles {
 		duration, _ := time.ParseDuration(profile.Duration)
 		planned := int64(profile.ArrivalRate) * int64(duration/time.Second)
+		closedLoop := profile.Mode == "closed"
+		if closedLoop {
+			planned = int64(profile.Users)
+		}
 		requestBytes := int64(profile.RequestBodyBytes) * planned
 		responseBytes := int64(profile.ResponseBodyBytes) * planned
-		tcpConnections, _ := ExpectedReferenceTCPConnections(profile, planned)
+		measurementCount := planned
+		if closedLoop {
+			measurementCount = 1
+		}
+		tcpConnections, _ := ExpectedReferenceTCPConnections(profile, measurementCount)
 		tlsHandshakes, _ := ExpectedReferenceTLSHandshakes(profile, planned)
 		observations = append(observations, WorkloadObservation{
-			ProfileID: profile.ID, Scheduled: planned, Admitted: planned, Started: planned,
+			ProfileID: profile.ID, Mode: profile.Mode, ArrivalAccountingApplicable: profile.Mode == "arrival", Started: planned,
 			Completed: planned, Outcome: "PASS", ClientCompleteBodyObservations: planned,
 			ClientTLSHandshakes:    tlsHandshakes,
 			ClientResponseMinBytes: int64(profile.ResponseBodyBytes),
@@ -91,6 +99,18 @@ func passingWorkloadObservations() []WorkloadObservation {
 			ServerTCPConnections:   tcpConnections,
 			ServerRequestBodyBytes: requestBytes, ServerResponseBodyBytes: responseBytes,
 		})
+		if closedLoop {
+			last := &observations[len(observations)-1]
+			last.Scheduled = 0
+			last.Admitted = 0
+			last.Dropped = 0
+			last.ArrivalAccountingApplicable = false
+			last.ServerTCPConnections = 1
+		} else {
+			last := &observations[len(observations)-1]
+			last.Scheduled = planned
+			last.Admitted = planned
+		}
 	}
 	return observations
 }
@@ -127,11 +147,14 @@ func TestSchemaSixRejectsAlteredOrMissingWorkloadEvidence(t *testing.T) {
 
 func TestReferenceMatrixCoversOnlyExactShapeAndRatePairs(t *testing.T) {
 	profiles := ReferenceWorkloadProfiles()
-	if len(profiles) != 33 {
-		t.Fatalf("got %d workload profiles, want 30 HTTP and 3 HTTPS exact shape/rate pairs", len(profiles))
+	if len(profiles) != 39 {
+		t.Fatalf("got %d workload profiles, want 30 HTTP/3 HTTPS arrival pairs plus 6 closed-loop VU levels", len(profiles))
 	}
 	seen := make(map[string]bool, len(profiles))
 	for _, profile := range profiles {
+		if profile.Mode == "closed" {
+			continue
+		}
 		key := fmt.Sprintf("%s|%s|%d", profile.Path, profile.ConnectionPolicy, profile.ArrivalRate)
 		if seen[key] {
 			t.Fatalf("duplicate exact workload pair %s", key)
@@ -155,6 +178,38 @@ func TestReferenceMatrixCoversOnlyExactShapeAndRatePairs(t *testing.T) {
 		if !seen[fmt.Sprintf("/matrix/https-4k|reuse|%d", rate)] {
 			t.Fatalf("missing exact trusted HTTPS profile at %d arrivals/s", rate)
 		}
+	}
+	closedLevels := map[int]bool{}
+	for _, profile := range profiles {
+		if profile.Mode == "closed" {
+			closedLevels[profile.Users] = true
+			if profile.ArrivalRate != 0 || profile.MaxRPS != 100 || profile.Duration != "2s" {
+				t.Fatalf("invalid closed-loop calibration controls: %+v", profile)
+			}
+		}
+	}
+	if len(closedLevels) != len(ClosedLoopVirtualUserLevels()) {
+		t.Fatalf("closed-loop VU levels=%v", closedLevels)
+	}
+}
+
+func TestClosedLoopObservationRequiresModeAndNoArrivalCounters(t *testing.T) {
+	record := passingArtifact(t).Preflight
+	index := len(record.Fixture.WorkloadProfiles) - 1
+	if record.WorkloadObservations[index].Mode != "closed" || ValidateRecord(record) != nil {
+		t.Fatal("valid closed-loop profile evidence did not validate")
+	}
+	missingMode := record
+	missingMode.WorkloadObservations = append([]WorkloadObservation(nil), record.WorkloadObservations...)
+	missingMode.WorkloadObservations[index].Mode = ""
+	if ValidateRecord(missingMode) == nil {
+		t.Fatal("closed-loop observation with missing mode was accepted")
+	}
+	fakeArrival := record
+	fakeArrival.WorkloadObservations = append([]WorkloadObservation(nil), record.WorkloadObservations...)
+	fakeArrival.WorkloadObservations[index].Scheduled = 1
+	if ValidateRecord(fakeArrival) == nil {
+		t.Fatal("arrival counters were accepted as closed-loop evidence")
 	}
 }
 

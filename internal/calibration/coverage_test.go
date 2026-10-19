@@ -8,6 +8,43 @@ import (
 	"github.com/LucasLuchetta/Damocline/internal/config"
 )
 
+func TestValidateClosedLoopEnvelopeMatchesExactPlanAndDimensionStates(t *testing.T) {
+	matched := Dimension{Name: "exact_profile", Status: "MATCHED", Reason: "exact tested tuple"}
+	ready := ClosedLoopEnvelope{Status: "READY", Levels: []ClosedLoopAssessment{{
+		Users: 2, Status: "READY", Reason: "exact local profile", Dimensions: []Dimension{matched},
+	}}}
+	if err := ValidateClosedLoopEnvelope(ready, []int{2}); err != nil {
+		t.Fatalf("consistent exact READY envelope rejected: %v", err)
+	}
+	mixed := ClosedLoopEnvelope{Status: "BLOCKED", Levels: []ClosedLoopAssessment{
+		{Users: 2, Status: "READY", Reason: "exact local profile", Dimensions: []Dimension{matched}},
+		{Users: 4, Status: "BLOCKED", Reason: "no exact profile", Dimensions: []Dimension{{Name: "exact_profile", Status: "OUTSIDE_REFERENCE", Reason: "not measured"}}},
+	}}
+	if err := ValidateClosedLoopEnvelope(mixed, []int{2, 4}); err != nil {
+		t.Fatalf("valid mixed base/spike coverage was rejected: %v", err)
+	}
+	missingSpike := mixed
+	missingSpike.Levels = missingSpike.Levels[:1]
+	if err := ValidateClosedLoopEnvelope(missingSpike, []int{2, 4}); err == nil {
+		t.Fatal("envelope missing a planned spike level was accepted")
+	}
+	for name, mutate := range map[string]func(*ClosedLoopEnvelope){
+		"wrong planned VU level": func(e *ClosedLoopEnvelope) { e.Levels[0].Users = 3 },
+		"READY with blocker":     func(e *ClosedLoopEnvelope) { e.Levels[0].Dimensions[0].Status = "OUTSIDE_REFERENCE" },
+		"duplicate dimension": func(e *ClosedLoopEnvelope) {
+			e.Levels[0].Dimensions = append(e.Levels[0].Dimensions, e.Levels[0].Dimensions[0])
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			envelope := ready
+			mutate(&envelope)
+			if err := ValidateClosedLoopEnvelope(envelope, []int{2}); err == nil {
+				t.Fatal("malformed closed-loop calibration envelope was accepted")
+			}
+		})
+	}
+}
+
 func TestAssessmentMatchesOnlyDeclaredFixtureDimensionsAndKeepsUnknowns(t *testing.T) {
 	a := passingArtifact(t)
 	local := testRuntime()
@@ -126,6 +163,48 @@ func TestArrivalEnvelopeRequiresExactHealthyMatrixAndRuntime(t *testing.T) {
 		t.Fatalf("changed runtime must block: %+v", got)
 	}
 }
+
+func TestClosedLoopEnvelopeRequiresExactVersionedVUProfile(t *testing.T) {
+	a := passingArtifact(t)
+	record := a.Preflight
+	local := testRuntime()
+	record.Generator.RunnerVersion = local.RunnerVersion
+	now := time.Now().UTC()
+	record.StartedAt = now.Add(-2 * time.Minute).Format(time.RFC3339Nano)
+	record.FinishedAt = now.Add(-time.Minute).Format(time.RFC3339Nano)
+	scenario := config.Scenario{Name: "synthetic", BaseURL: "http://127.0.0.1", Users: 5, Duration: "2s", Mode: "closed", MaxRPS: 100, Timeout: "1s", ConnectionPolicy: "reuse", RampUp: "0s", ThinkTime: "0s", P95LimitMS: 500, MaxErrorRate: 0.1, Steps: []config.Step{{Name: "work", Method: "GET", Path: "/work"}}}
+	got := AssessClosedLoopEnvelope(scenario, []int{5}, record, local, now)
+	if got.Status != "READY" || got.Levels[0].Status != "READY" {
+		t.Fatalf("exact closed-loop profile should match: %+v", got)
+	}
+	if got := AssessClosedLoopEnvelope(scenario, []int{6}, record, local, now); got.Status != "BLOCKED" {
+		t.Fatalf("unmeasured VU level was interpolated: %+v", got)
+	}
+	changed := scenario
+	changed.MaxRPS = 19
+	if got := AssessClosedLoopEnvelope(changed, []int{5}, record, local, now); got.Status != "BLOCKED" {
+		t.Fatalf("different request cap borrowed a VU profile: %+v", got)
+	}
+	changed = scenario
+	changed.RampUp = "1s"
+	if got := AssessClosedLoopEnvelope(changed, []int{5}, record, local, now); got.Status != "BLOCKED" {
+		t.Fatalf("ramp-up change borrowed a VU profile: %+v", got)
+	}
+	stale := record
+	stale.FinishedAt = now.Add(-25 * time.Hour).Format(time.RFC3339Nano)
+	if got := AssessClosedLoopEnvelope(scenario, []int{5}, stale, local, now); got.Status != "BLOCKED" {
+		t.Fatalf("stale closed-loop calibration remained usable: %+v", got)
+	}
+	legacy := record
+	legacy.SchemaVersion = 8
+	legacy.Fixture.WorkloadProfiles = referenceWorkloadProfilesV8()
+	legacy.WorkloadObservations = passingObservationsForProfiles(referenceWorkloadProfilesV8())
+	refreshArtifactFingerprint(t, &legacy)
+	if got := AssessClosedLoopEnvelope(scenario, []int{5}, legacy, local, now); got.Status != "BLOCKED" {
+		t.Fatalf("schema-v8 arrival profiles qualified VUs: %+v", got)
+	}
+}
+
 func TestConnectionPolicyRequiresExactProfileControls(t *testing.T) {
 	a := passingArtifact(t)
 	local := testRuntime()

@@ -129,9 +129,10 @@ func main() {
 }
 
 func runFixture() error {
+	profiles := referenceWorkloadProfiles()
 	h, err := reference.New(reference.Config{
 		Delay: 20 * time.Millisecond, ResponseBytes: calibration.ReferenceHealthyResponseBytes,
-		MaxConcurrent: 10, MaxRequests: 10000, Profiles: referenceWorkloadProfiles(),
+		MaxConcurrent: 50, MaxRequests: 10000, Profiles: profiles,
 	})
 	if err != nil {
 		return err
@@ -463,16 +464,11 @@ func runMatrix(path string, repeats int, extended bool) error {
 	if err := cmd.Wait(); err != nil {
 		return fmt.Errorf("reference fixture failed: %w: %s", err, stderr.String())
 	}
-	var workloadPlanned int64
-	for _, profile := range workloadProfiles {
-		duration, err := time.ParseDuration(profile.Duration)
-		if err != nil || duration <= 0 || duration%time.Second != 0 {
-			result.Checks = append(result.Checks, fmt.Sprintf("workload profile %s has invalid duration %q", profile.ID, profile.Duration))
-			continue
-		}
-		workloadPlanned += int64(profile.ArrivalRate) * int64(duration/time.Second)
+	var workloadRequests int64
+	for _, run := range result.WorkloadRuns {
+		workloadRequests += int64(run.Metrics.Total)
 	}
-	result.Checks = append(result.Checks, check(result.Runs, result.Server, rates, workloadPlanned)...)
+	result.Checks = append(result.Checks, check(result.Runs, result.Server, rates, workloadRequests)...)
 	result.Checks = append(result.Checks, checkSoak(result.SoakRun)...)
 	result.Checks = append(result.Checks, checkOverload(result.OverloadRun, result.OverloadServer)...)
 	result.Checks = append(result.Checks, checkFailures(result.FailureRun, result.FailureServer)...)
@@ -675,16 +671,26 @@ func checkOverload(run report.Result, server reference.Snapshot) []string {
 
 func referenceWorkloadProfiles() []reference.WorkloadProfile {
 	profiles := calibration.ReferenceWorkloadProfiles()
-	result := make([]reference.WorkloadProfile, 0, len(profiles)/len(calibration.WorkloadMatrixArrivalRates()))
+	result := make([]reference.WorkloadProfile, 0, 17)
 	seen := make(map[string]bool)
 	for _, profile := range profiles {
-		if profile.Path == "/work" || seen[profile.Path] {
+		if profile.Mode == "closed" {
 			continue
 		}
-		seen[profile.Path] = true
-		id := strings.TrimSuffix(profile.ID, fmt.Sprintf("-r%d", profile.ArrivalRate))
+		key := profile.ID
+		id := profile.ID
+		counterID := profile.ID
+		if profile.Mode == "arrival" {
+			key = profile.Path + "|" + profile.Method + fmt.Sprintf("|%d|%d", profile.RequestBodyBytes, profile.ResponseBodyBytes)
+			id = profile.Path
+			counterID = id + fmt.Sprintf("-%d-%d", profile.RequestBodyBytes, profile.ResponseBodyBytes)
+		}
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
 		result = append(result, reference.WorkloadProfile{
-			ID: id, Method: profile.Method, Path: profile.Path,
+			ID: key, CounterID: counterID, Method: profile.Method, Path: id,
 			RequestBodyBytes: profile.RequestBodyBytes, ResponseBodyBytes: profile.ResponseBodyBytes,
 		})
 	}
@@ -707,11 +713,27 @@ func calibratedWorkloadScenario(baseURL string, profile calibration.WorkloadProf
 				}
 			}()
 		}
+		var restoreRateLimit func()
+		if profile.Mode == "closed" {
+			previous, existed := os.LookupEnv("DAMOCLINE_RATE_LIMIT")
+			if err := os.Setenv("DAMOCLINE_RATE_LIMIT", strconv.Itoa(profile.MaxRPS)); err != nil {
+				return config.Validated{}, fmt.Errorf("set closed-loop request ceiling: %w", err)
+			}
+			restoreRateLimit = func() {
+				if existed {
+					_ = os.Setenv("DAMOCLINE_RATE_LIMIT", previous)
+				} else {
+					_ = os.Unsetenv("DAMOCLINE_RATE_LIMIT")
+				}
+			}
+			defer restoreRateLimit()
+		}
+		closedMaxRPS := profile.MaxRPS
 		scenario := config.Scenario{
 			Name: "Local calibrated workload profile", BaseURL: baseURL,
-			Users: profile.Users, Duration: profile.Duration, Mode: "arrival",
-			ArrivalRate: profile.ArrivalRate, MaxRPS: profile.MaxRPS, Timeout: profile.Timeout,
-			ConnectionPolicy: profile.ConnectionPolicy, P95LimitMS: 500, MaxErrorRate: 0,
+			Users: profile.Users, Duration: profile.Duration, Mode: profile.Mode,
+			ArrivalRate: profile.ArrivalRate, MaxRPS: closedMaxRPS, Timeout: profile.Timeout,
+			ConnectionPolicy: profile.ConnectionPolicy, RampUp: profile.RampUp, ThinkTime: profile.ThinkTime, P95LimitMS: 2000, MaxErrorRate: 0,
 			Steps: []config.Step{{Name: profile.ID, Method: profile.Method, Path: profile.Path}},
 		}
 		if profile.RequestBodyBytes > 0 {
@@ -723,25 +745,35 @@ func calibratedWorkloadScenario(baseURL string, profile calibration.WorkloadProf
 }
 
 func workloadProfileObservation(profile calibration.WorkloadProfile, run report.Result, before, after reference.Snapshot) calibration.WorkloadObservation {
+	counterID := referenceCounterID(profile)
 	admitted := int64(-1)
 	if run.ArrivalsAdmitted != nil {
 		admitted = *run.ArrivalsAdmitted
 	}
 	body := run.Metrics.ResponseBody
+	scheduled := run.ArrivalsScheduled
+	if profile.Mode == "closed" {
+		admitted = 0
+		scheduled = 0
+	}
 	return calibration.WorkloadObservation{
-		ProfileID: profile.ID, Scheduled: run.ArrivalsScheduled, Admitted: admitted,
+		ProfileID: profile.ID, Mode: profile.Mode, ArrivalAccountingApplicable: profile.Mode == "arrival", Scheduled: scheduled, Admitted: max(int64(0), admitted),
 		Started: run.IterationsStarted, Completed: run.IterationsCompleted,
 		Dropped: run.ArrivalsDropped, Outcome: run.Outcome,
 		ClientCompleteBodyObservations: body.CompleteObservations,
 		ClientTLSHandshakes:            totalTLSHandshakes(run),
 		ClientResponseMinBytes:         body.MinBytes, ClientResponseMaxBytes: body.MaxBytes,
 		ClientResponseTotalBytes: body.TotalBytes,
-		ServerReceived:           after.Received - before.Received,
-		ServerCompleted:          after.Completed - before.Completed,
-		ServerTCPConnections:     after.ProfileTCPConnections[profile.Path] - before.ProfileTCPConnections[profile.Path],
-		ServerRequestBodyBytes:   after.RequestBodyBytes - before.RequestBodyBytes,
-		ServerResponseBodyBytes:  after.ResponseBodyBytes - before.ResponseBodyBytes,
+		ServerReceived:           after.ProfileReceived[counterID] - before.ProfileReceived[counterID],
+		ServerCompleted:          after.ProfileCompleted[counterID] - before.ProfileCompleted[counterID],
+		ServerTCPConnections:     after.ProfileTCPConnections[counterID] - before.ProfileTCPConnections[counterID],
+		ServerRequestBodyBytes:   after.ProfileRequestBytes[counterID] - before.ProfileRequestBytes[counterID],
+		ServerResponseBodyBytes:  after.ProfileResponseBytes[counterID] - before.ProfileResponseBytes[counterID],
 	}
+}
+
+func referenceCounterID(profile calibration.WorkloadProfile) string {
+	return profile.Path + fmt.Sprintf("-%d-%d", profile.RequestBodyBytes, profile.ResponseBodyBytes)
 }
 
 func totalTLSHandshakes(run report.Result) int64 {
@@ -755,33 +787,56 @@ func totalTLSHandshakes(run report.Result) int64 {
 func checkWorkloadProfile(profile calibration.WorkloadProfile, run report.Result, observation calibration.WorkloadObservation) []string {
 	duration, _ := time.ParseDuration(profile.Duration)
 	planned := int64(profile.ArrivalRate) * int64(duration/time.Second)
-	expectedRequestBytes := int64(profile.RequestBodyBytes) * planned
-	expectedResponseBytes := int64(profile.ResponseBodyBytes) * planned
+	closedLoop := profile.Mode == "closed"
+	measurementCount := planned
+	if closedLoop {
+		measurementCount = 1
+	}
 	arrivalsMatch := run.ArrivalsScheduled == planned && run.ArrivalsAdmitted != nil &&
 		*run.ArrivalsAdmitted == planned && run.IterationsStarted == planned &&
 		run.IterationsCompleted == planned && run.ArrivalsDropped == 0 && run.SchedulerLagSamples == planned
-	requestMetricsMatch := run.Metrics.Total == int(planned) && run.Metrics.Success == int(planned) &&
+	completed := planned
+	if closedLoop {
+		completed = run.IterationsCompleted
+		arrivalsMatch = run.ArrivalsScheduled == run.IterationsStarted && run.ArrivalsAdmitted != nil && *run.ArrivalsAdmitted == 0 && run.ArrivalsDropped == 0 &&
+			run.IterationsStarted >= int64(profile.Users) && run.IterationsCompleted == run.IterationsStarted && run.SchedulerLagSamples == 0 &&
+			observation.Mode == "closed" && !observation.ArrivalAccountingApplicable && observation.Scheduled == 0 && observation.Admitted == 0 && observation.Dropped == 0
+	} else if observation.Mode != "arrival" || !observation.ArrivalAccountingApplicable {
+		arrivalsMatch = false
+	}
+	quality := run.Quality
+	requestMetricsMatch := run.Metrics.Total == int(completed) && run.Metrics.Success == int(completed) &&
 		run.Metrics.Failures == 0 && len(run.Steps) == 1 && run.Steps[0].Method == profile.Method &&
-		run.Steps[0].Path == profile.Path && run.Steps[0].Metrics.Success == int(planned) &&
+		run.Steps[0].Path == profile.Path && run.Steps[0].Metrics.Success == int(completed) &&
 		run.Config.Mode == profile.Mode && run.Config.ArrivalRate == profile.ArrivalRate &&
 		run.Config.MaxRPS == profile.MaxRPS && run.Config.Users == profile.Users &&
 		run.Config.Duration == profile.Duration && run.Config.RequestTimeout == profile.Timeout &&
 		run.Config.ConnectionPolicy == profile.ConnectionPolicy
+	if closedLoop {
+		requestMetricsMatch = run.Metrics.Total == int(completed) && run.Metrics.Success == int(completed) && run.Metrics.Failures == 0 &&
+			len(run.Steps) == 1 && run.Steps[0].Method == profile.Method && run.Steps[0].Path == profile.Path && run.Steps[0].Metrics.Success == int(completed) &&
+			run.Config.Mode == "closed" && run.Config.ArrivalRate == 0 && run.Config.MaxRPS == profile.MaxRPS && run.Config.Users == profile.Users &&
+			run.Config.Duration == profile.Duration && run.Config.RequestTimeout == profile.Timeout && run.Config.ConnectionPolicy == profile.ConnectionPolicy &&
+			run.Config.RampUp == profile.RampUp && run.Config.ThinkTime == profile.ThinkTime
+	}
 	body := run.Metrics.ResponseBody
-	responseMetricsMatch := body.CompleteObservations == planned && body.IncompleteObservations == 0 &&
+	responseMetricsMatch := body.CompleteObservations == completed && body.IncompleteObservations == 0 &&
 		body.OversizedObservations == 0 && body.MinBytes == int64(profile.ResponseBodyBytes) &&
-		body.MaxBytes == int64(profile.ResponseBodyBytes) && body.TotalBytes == expectedResponseBytes
-	serverLedgerMatches := observation.ServerReceived == planned && observation.ServerCompleted == planned &&
-		observation.ServerRequestBodyBytes == expectedRequestBytes && observation.ServerResponseBodyBytes == expectedResponseBytes
-	expectedTCPConnections, hasExpectedTCPConnections := calibration.ExpectedReferenceTCPConnections(profile, planned)
+		body.MaxBytes == int64(profile.ResponseBodyBytes) && body.TotalBytes == int64(profile.ResponseBodyBytes)*completed
+	serverLedgerMatches := observation.ServerReceived == completed && observation.ServerCompleted == completed &&
+		observation.ServerRequestBodyBytes == int64(profile.RequestBodyBytes)*completed && observation.ServerResponseBodyBytes == int64(profile.ResponseBodyBytes)*completed
+	expectedTCPConnections, hasExpectedTCPConnections := calibration.ExpectedReferenceTCPConnections(profile, measurementCount)
 	tcpConnectionLedgerMatches := hasExpectedTCPConnections && observation.ServerTCPConnections == expectedTCPConnections
-	expectedTLSHandshakes, hasExpectedTLSHandshakes := calibration.ExpectedReferenceTLSHandshakes(profile, planned)
+	if closedLoop {
+		tcpConnectionLedgerMatches = observation.ServerTCPConnections > 0 && observation.ServerTCPConnections <= observation.ServerReceived
+	}
+	expectedTLSHandshakes, hasExpectedTLSHandshakes := calibration.ExpectedReferenceTLSHandshakes(profile, max(int64(1), completed))
 	tlsHandshakeLedgerMatches := hasExpectedTLSHandshakes && observation.ClientTLSHandshakes == expectedTLSHandshakes
 	var issues []string
-	if !hasRecognizedMeasurementQuality(run.Quality) {
+	if !hasRecognizedMeasurementQuality(quality) {
 		state := "missing"
-		if run.Quality != nil {
-			state = run.Quality.State
+		if quality != nil {
+			state = quality.State
 		}
 		issues = append(issues, fmt.Sprintf("workload profile %s measurement quality: expected VALID_WITHIN_ENVELOPE or LIMITED, got %s", profile.ID, state))
 	}

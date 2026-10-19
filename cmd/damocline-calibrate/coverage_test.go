@@ -22,7 +22,17 @@ func validCoverageCalibration(t *testing.T, extended bool) assessment {
 	g, f, stages := testPreflightInputs(extended, 1)
 	f.WorkloadProfiles = calibration.ReferenceWorkloadProfiles()
 	start := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
-	p, err := newPreflightRecord(start, start.Add(time.Minute), g, f, stages, "REFERENCE_SMOKE_PASSED", passingWorkloadObservations())
+	observations := passingWorkloadObservations()
+	for index, profile := range f.WorkloadProfiles {
+		if profile.Mode != "closed" {
+			continue
+		}
+		users := int64(profile.Users)
+		observations[index] = calibration.WorkloadObservation{ProfileID: profile.ID, Mode: "closed", Started: users, Completed: users, Outcome: "PASS",
+			ClientCompleteBodyObservations: users, ClientResponseMinBytes: 4096, ClientResponseMaxBytes: 4096, ClientResponseTotalBytes: users * 4096,
+			ServerReceived: users, ServerCompleted: users, ServerTCPConnections: 1, ServerResponseBodyBytes: users * 4096}
+	}
+	p, err := newPreflightRecord(start, start.Add(time.Minute), g, f, stages, "REFERENCE_SMOKE_PASSED", observations)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,6 +121,9 @@ func TestEveryCalibratedShapeMatchesOnlyItsExactRatePairs(t *testing.T) {
 	cal := validCoverageCalibration(t, false)
 	profiles := calibration.ReferenceWorkloadProfiles()
 	for _, profile := range profiles {
+		if profile.Mode == "closed" {
+			continue
+		}
 		scenario := referenceShapedScenario()
 		scenario.ArrivalRate = profile.ArrivalRate
 		scenario.MaxRPS = profile.MaxRPS

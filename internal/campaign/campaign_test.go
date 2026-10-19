@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/LucasLuchetta/Damocline/internal/calibration"
 	"github.com/LucasLuchetta/Damocline/internal/config"
 	"github.com/LucasLuchetta/Damocline/internal/generatorhealth"
 	"github.com/LucasLuchetta/Damocline/internal/report"
@@ -34,6 +35,56 @@ func TestCampaignSeparatesWarmupObservationAndRecovery(t *testing.T) {
 	})
 	if err != nil || result.Outcome != "PASS" || len(result.Trials) != 2 || len(durations) != 6 || result.ObservationVariability == nil || result.ObservationVariability.Runs != 2 || result.ObservationVariability.SuccessfulJourneysMinPerSec != 8 || result.ObservationVariability.SuccessfulJourneysMaxPerSec != 8 {
 		t.Fatalf("unexpected campaign: %+v err=%v durations=%v", result, err, durations)
+	}
+}
+
+func TestCampaignRequiredCalibrationBlocksBeforeRunner(t *testing.T) {
+	calls := 0
+	envelope := &calibration.ClosedLoopEnvelope{Status: "BLOCKED", Levels: []calibration.ClosedLoopAssessment{{
+		Users: 1, Status: "BLOCKED", Reason: "no closed-loop profile",
+		Dimensions: []calibration.Dimension{{Name: "exact_profile", Status: "OUTSIDE_REFERENCE", Reason: "no exact profile"}},
+	}}}
+	_, err := WithRunner(context.Background(), scenario(t), Options{Observation: 10 * time.Second, Recovery: 10 * time.Second, Repeats: 2,
+		RequireCalibration: true, Calibration: envelope, CalibrationSource: "reference.json"}, func(context.Context, config.Validated) report.Result {
+		calls++
+		return report.Result{}
+	})
+	if err == nil || calls != 0 {
+		t.Fatalf("required calibration did not block before runner: calls=%d err=%v", calls, err)
+	}
+}
+
+func TestCampaignRunsWithConsistentExactReadyCalibration(t *testing.T) {
+	envelope := &calibration.ClosedLoopEnvelope{Status: "READY", Levels: []calibration.ClosedLoopAssessment{{
+		Users: 1, Status: "READY", Reason: "exact local profile", Dimensions: []calibration.Dimension{{Name: "exact_profile", Status: "MATCHED", Reason: "exact tested tuple"}},
+	}}}
+	runs := 0
+	result, err := WithRunner(context.Background(), scenario(t), Options{
+		Observation: 10 * time.Second, Recovery: 10 * time.Second, Repeats: 2,
+		RequireCalibration: true, Calibration: envelope, CalibrationSource: "reference.json",
+	}, func(_ context.Context, v config.Validated) report.Result {
+		runs++
+		return stableResult(v)
+	})
+	if err != nil || result.Outcome != "PASS" || runs != 4 || result.Calibration == nil || !result.CalibrationRequired {
+		t.Fatalf("consistent exact calibration did not authorize the bounded campaign: runs=%d outcome=%s result=%+v err=%v", runs, result.Outcome, result, err)
+	}
+}
+
+func TestCampaignCalibrationMustCoverTheExactBaseAndSpikeLevels(t *testing.T) {
+	envelope := &calibration.ClosedLoopEnvelope{Status: "READY", Levels: []calibration.ClosedLoopAssessment{{
+		Users: 1, Status: "READY", Reason: "exact local profile", Dimensions: []calibration.Dimension{{Name: "exact_profile", Status: "MATCHED", Reason: "exact tested tuple"}},
+	}}}
+	calls := 0
+	_, err := WithRunner(context.Background(), scenario(t), Options{
+		Observation: 10 * time.Second, Recovery: 10 * time.Second, Repeats: 2, SpikeUsers: 2, SpikeDuration: 10 * time.Second,
+		RequireCalibration: true, Calibration: envelope, CalibrationSource: "reference.json",
+	}, func(context.Context, config.Validated) report.Result {
+		calls++
+		return stableResult(scenario(t))
+	})
+	if err == nil || calls != 0 {
+		t.Fatalf("base-only calibration incorrectly covered the planned spike: calls=%d err=%v", calls, err)
 	}
 }
 

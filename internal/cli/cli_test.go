@@ -157,6 +157,34 @@ func TestClosedCampaignDryRunShowsCooldownBetweenTrials(t *testing.T) {
 	}
 }
 
+func TestClosedCampaignCalibrationRequirementBlocksBeforeDryRunSchedule(t *testing.T) {
+	calibrationPath := writePassingCalibration(t, nil)
+	var stdout, stderr bytes.Buffer
+	args := []string{"campaign", "--config", filepath.Join("..", "..", "examples", "advanced-readonly.json"), "--warmup", "0s", "--observation", "10s", "--recovery", "10s", "--repeats", "2", "--dry-run", "--calibration", calibrationPath, "--require-calibration"}
+	code := Run(args, &stdout, &stderr)
+	if code != 2 || !strings.Contains(stderr.String(), "does not cover every planned closed-loop VU level") || strings.Contains(stdout.String(), "Trial 1 observation") {
+		t.Fatalf("required closed-loop calibration did not block before schedule: code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+}
+
+func TestClosedCampaignCalibrationExactVUProfilePassesDryRunGate(t *testing.T) {
+	path := writePassingCalibration(t, nil)
+	scenario := config.Scenario{Name: "synthetic closed", BaseURL: "http://127.0.0.1", Mode: "closed", Users: 5, Duration: "2s", RampUp: "0s", ThinkTime: "0s", Timeout: "1s", MaxRPS: 100, ConnectionPolicy: "reuse", P95LimitMS: 500, MaxErrorRate: 0.1, Steps: []config.Step{{Name: "work", Method: "GET", Path: "/work"}}}
+	data, err := json.Marshal(scenario)
+	if err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(t.TempDir(), "scenario.json")
+	if err := os.WriteFile(configPath, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	args := []string{"campaign", "--config", configPath, "--warmup", "0s", "--observation", "10s", "--recovery", "10s", "--repeats", "2", "--dry-run", "--calibration", path, "--require-calibration"}
+	if code := Run(args, &stdout, &stderr); code != 0 || !strings.Contains(stdout.String(), "Closed-loop generator preflight: READY") {
+		t.Fatalf("exact VU profile should pass the traffic-free calibration gate: code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+}
+
 func TestCampaignsRequireOutputArtifactOutsideDryRun(t *testing.T) {
 	for _, tc := range []struct {
 		name string

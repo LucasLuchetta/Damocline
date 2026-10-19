@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/LucasLuchetta/Damocline/internal/appmetrics"
+	"github.com/LucasLuchetta/Damocline/internal/calibration"
 	"github.com/LucasLuchetta/Damocline/internal/campaign"
 	"github.com/LucasLuchetta/Damocline/internal/capacitygoal"
 	"github.com/LucasLuchetta/Damocline/internal/generatorhealth"
@@ -363,6 +364,27 @@ func validateEvidence(evidence campaign.Result) error {
 		if err := campaign.ValidateStabilityPolicy(evidence.EffectiveStabilityPolicy()); err != nil {
 			return fmt.Errorf("invalid persisted stability policy: %w", err)
 		}
+	}
+	if evidence.SchemaVersion >= 12 {
+		if (evidence.Calibration == nil) != (evidence.CalibrationSource == "") {
+			return errors.New("closed-loop calibration metadata is incomplete")
+		}
+		if evidence.Calibration != nil {
+			plannedUsers := []int{evidence.BaseUsers}
+			if evidence.SpikeUsers > 0 {
+				plannedUsers = append(plannedUsers, evidence.SpikeUsers)
+			}
+			if err := calibration.ValidateClosedLoopEnvelope(*evidence.Calibration, plannedUsers); err != nil {
+				return fmt.Errorf("closed-loop calibration envelope is malformed: %w", err)
+			}
+			if evidence.CalibrationRequired && evidence.Calibration.Status != "READY" {
+				return errors.New("required closed-loop calibration evidence is blocked")
+			}
+		} else if evidence.CalibrationRequired {
+			return errors.New("required closed-loop calibration evidence is missing")
+		}
+	} else if evidence.CalibrationRequired || evidence.Calibration != nil || evidence.CalibrationSource != "" {
+		return errors.New("closed-loop calibration metadata is unsupported by this campaign schema")
 	}
 	if evidence.SchemaVersion < 6 && evidence.LongRun {
 		return errors.New("long-run declaration is unsupported by this campaign schema")

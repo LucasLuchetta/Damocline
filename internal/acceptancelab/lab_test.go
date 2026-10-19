@@ -193,7 +193,7 @@ func TestHealthyStageMatrixRequiresExactRequestedRates(t *testing.T) {
 func TestCalibrationLedgersReconcileIndependently(t *testing.T) {
 	document := syntheticCalibration()
 	if !aggregateServerLedgerMatches(document) || !profileLedgersMatch(document.Preflight.Fixture.WorkloadProfiles, document.WorkloadObservations) || !workloadRunsMatch(document.Preflight.Fixture.WorkloadProfiles, document.WorkloadRuns) || !soakMatches(document.SoakRun) {
-		t.Fatal("complete synthetic lab fixture should satisfy the explicitly described ledger equations")
+		t.Fatalf("complete synthetic lab fixture failed a ledger: aggregate=%t profiles=%t runs=%t soak=%t", aggregateServerLedgerMatches(document), profileLedgersMatch(document.Preflight.Fixture.WorkloadProfiles, document.WorkloadObservations), workloadRunsMatch(document.Preflight.Fixture.WorkloadProfiles, document.WorkloadRuns), soakMatches(document.SoakRun))
 	}
 	document.Server.ResponseBodyBytes++
 	if aggregateServerLedgerMatches(document) {
@@ -366,7 +366,7 @@ func syntheticCalibration() calibrationDocument {
 	var document calibrationDocument
 	document.SchemaVersion = 1
 	document.Status = "REFERENCE_SMOKE_PASSED"
-	document.Preflight.SchemaVersion = 8
+	document.Preflight.SchemaVersion = 9
 	document.Preflight.ScenarioFingerprint = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	runtimeInfo := verifiedTestRuntime()
 	document.Preflight.Generator = calibration.Generator{
@@ -408,7 +408,7 @@ func syntheticCalibration() calibrationDocument {
 				planned := int64(rate * seconds)
 				tcpConnections, _ := calibration.ExpectedReferenceTCPConnections(calibration.WorkloadProfile{ConnectionPolicy: profile.ConnectionPolicy}, planned)
 				document.WorkloadObservations = append(document.WorkloadObservations, workloadObservation{
-					ProfileID: profile.ID, Scheduled: planned, Admitted: planned, Started: planned, Completed: planned,
+					ProfileID: profile.ID, Mode: "arrival", ArrivalAccountingApplicable: true, Scheduled: planned, Admitted: planned, Started: planned, Completed: planned,
 					Outcome: "PASS", ClientCompleteBodyObservations: planned,
 					ClientResponseMinBytes: int64(profile.ResponseBodyBytes), ClientResponseMaxBytes: int64(profile.ResponseBodyBytes), ClientResponseTotalBytes: planned * int64(profile.ResponseBodyBytes),
 					ServerReceived: planned, ServerCompleted: planned, ServerTCPConnections: tcpConnections,
@@ -434,7 +434,7 @@ func syntheticCalibration() calibrationDocument {
 		document.Preflight.Fixture.WorkloadProfiles = append(document.Preflight.Fixture.WorkloadProfiles, profile)
 		planned := int64(rate * 5)
 		document.WorkloadObservations = append(document.WorkloadObservations, workloadObservation{
-			ProfileID: profile.ID, Scheduled: planned, Admitted: planned, Started: planned, Completed: planned,
+			ProfileID: profile.ID, Mode: "arrival", ArrivalAccountingApplicable: true, Scheduled: planned, Admitted: planned, Started: planned, Completed: planned,
 			Outcome: "PASS", ClientCompleteBodyObservations: planned, ClientTLSHandshakes: 1,
 			ClientResponseMinBytes: 4096, ClientResponseMaxBytes: 4096, ClientResponseTotalBytes: planned * 4096,
 			ServerReceived: planned, ServerCompleted: planned, ServerTCPConnections: 1, ServerResponseBodyBytes: planned * 4096,
@@ -446,6 +446,26 @@ func syntheticCalibration() calibrationDocument {
 			ArrivalsScheduled: planned, ArrivalsAdmitted: intPointer64(planned), IterationsStarted: planned, IterationsCompleted: planned, Outcome: "PASS",
 			Metrics: metric, Config: report.RunConfig{Users: 10, Duration: "5s", RequestTimeout: "1s", ConnectionPolicy: "reuse", MaxRPS: 50, Mode: "arrival", ArrivalRate: rate},
 			Steps: []report.StepResult{{Method: "GET", Path: profile.Path, Metrics: metric, HTTPTrace: report.HTTPTrace{TLSCount: 1}}},
+		})
+	}
+	for _, users := range []int{1, 2, 5, 10, 20, 50} {
+		maxRPS := 100
+		profile := calibratedProfile{ID: fmt.Sprintf("closed-get-4k-vu-%d", users), Mode: "closed", TransportScheme: "http", Method: "GET", Path: "/work",
+			ResponseBodyBytes: 4096, MaxRPS: maxRPS, Users: users, Duration: "2s", Timeout: "1s", ConnectionPolicy: "reuse", RampUp: "0s", ThinkTime: "0s"}
+		document.Preflight.Fixture.WorkloadProfiles = append(document.Preflight.Fixture.WorkloadProfiles, profile)
+		iterations := int64(users)
+		document.WorkloadObservations = append(document.WorkloadObservations, workloadObservation{
+			ProfileID: profile.ID, Mode: "closed", Started: iterations, Completed: iterations, Outcome: "PASS", ClientCompleteBodyObservations: iterations,
+			ClientResponseMinBytes: 4096, ClientResponseMaxBytes: 4096, ClientResponseTotalBytes: iterations * 4096,
+			ServerReceived: iterations, ServerCompleted: iterations, ServerTCPConnections: 1, ServerResponseBodyBytes: iterations * 4096,
+		})
+		metric := report.MetricSet{Total: int(iterations), Success: int(iterations), P95MS: 21,
+			HTTP:         report.HTTPDiagnostics{StatusCodes: map[int]int{200: int(iterations)}, Status2xx: int(iterations)},
+			ResponseBody: report.ResponseBodyDiagnostics{CompleteObservations: iterations, MinBytes: 4096, MaxBytes: 4096, TotalBytes: iterations * 4096}}
+		document.WorkloadRuns = append(document.WorkloadRuns, report.Result{
+			ArrivalsScheduled: iterations, IterationsStarted: iterations, IterationsCompleted: iterations, ArrivalsAdmitted: intPointer64(0), Outcome: "PASS", Metrics: metric,
+			Config: report.RunConfig{Users: users, Duration: "2s", RequestTimeout: "1s", ConnectionPolicy: "reuse", MaxRPS: maxRPS, Mode: "closed", RampUp: "0s", ThinkTime: "0s"},
+			Steps:  []report.StepResult{{Method: "GET", Path: "/work", Metrics: metric}},
 		})
 	}
 	for _, rate := range document.Preflight.Fixture.HealthyRates {
@@ -463,7 +483,7 @@ func syntheticCalibration() calibrationDocument {
 	}
 	var profileRequests, profileRequestBytes, profileResponseBytes int64
 	for _, observation := range document.WorkloadObservations {
-		profileRequests += observation.Scheduled
+		profileRequests += observation.Completed
 		profileRequestBytes += observation.ServerRequestBodyBytes
 		profileResponseBytes += observation.ServerResponseBodyBytes
 	}
