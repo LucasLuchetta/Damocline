@@ -1,6 +1,6 @@
 ﻿# Technical audit: integrated capacity milestones
 
-This audit was reconciled after PRs #103 and #104 merged to `master` at `d05c718`. PR #104 added bounded final soaks, explicit staging long-run mode, generator CPU/RSS abort guardrails, atomic report replacement, repeated open-arrival campaigns, recovery evidence after failed spikes, and an integrated loopback spike/recovery fixture. PR #103 added bounded local report history and terminal-safe history output. This working cohort addresses explicit synthetic cleanup during external cancellation.
+This audit was reconciled after PRs #103 through #105 merged to `master` at `5792290`. PR #104 added bounded final soaks, explicit staging long-run mode, generator CPU/RSS abort guardrails, atomic report replacement, repeated open-arrival campaigns, recovery evidence after failed spikes, and an integrated loopback spike/recovery fixture. PR #103 added bounded local report history and terminal-safe history output. PR #105 added explicit synthetic cleanup during external cancellation. The current candidate adds opt-in exact calibration gates to open-arrival `run` and `arrival-campaign`.
 
 ## What the recent merges delivered
 

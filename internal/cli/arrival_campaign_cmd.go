@@ -11,8 +11,10 @@ import (
 	"time"
 
 	"github.com/LucasLuchetta/Damocline/internal/arrivalcampaign"
+	"github.com/LucasLuchetta/Damocline/internal/calibration"
 	"github.com/LucasLuchetta/Damocline/internal/capacitygoal"
 	"github.com/LucasLuchetta/Damocline/internal/config"
+	"github.com/LucasLuchetta/Damocline/internal/engine"
 	"github.com/LucasLuchetta/Damocline/internal/generatorhealth"
 	"github.com/LucasLuchetta/Damocline/internal/report"
 )
@@ -43,6 +45,7 @@ func arrivalCampaignCmd(args []string, stdout, stderr io.Writer) int {
 	writes := fs.Bool("allow-writes", false, "explicitly opt in to HTTP mutation methods")
 	insecure := fs.Bool("allow-insecure-http", false, "permit intentional plaintext HTTP to a non-loopback host")
 	out := fs.String("out", "", "JSON campaign report output path")
+	calibrationFile := fs.String("calibration", "", "require exact local generator coverage for every planned arrival rate")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -132,6 +135,19 @@ func arrivalCampaignCmd(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "Demand: peak %d/s, growth %.1f%%, reserve %.1f%%; exact required base rate %d/s.\n", options.PeakRate, options.GrowthPercent, options.ReservePercent, rate)
 	}
 	if *dry {
+		if *calibrationFile != "" {
+			record, loadErr := loadCalibration(*calibrationFile)
+			if loadErr != nil {
+				fmt.Fprintf(stderr, "calibration error: %v\n", loadErr)
+				return 2
+			}
+			envelope := assessArrivalCampaignEnvelope(validated.Scenario, options, record, time.Now().UTC())
+			printArrivalCampaignEnvelope(stdout, envelope, options)
+			if envelope.Status != "READY" {
+				fmt.Fprintln(stderr, "DRY RUN BLOCKED: calibration does not cover every planned rate; no traffic would be sent.")
+				return 2
+			}
+		}
 		for trial := 1; trial <= options.Repeats; trial++ {
 			for _, phase := range arrivalcampaign.PlannedPhases(options, validated.Scenario.ArrivalRate, trial) {
 				fmt.Fprintf(stdout, "  Trial %d %s: %s at %d scheduled starts/s\n", trial, phase.Name, phase.Duration, phase.Rate)
@@ -143,9 +159,35 @@ func arrivalCampaignCmd(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, "DRY RUN: no traffic generated. Rates are scheduled journey starts/s; completed journeys/s and HTTP requests/s are separate measurements.")
 		return 0
 	}
+	var calibrationRecord *calibration.Record
+	if *calibrationFile != "" {
+		record, loadErr := loadCalibration(*calibrationFile)
+		if loadErr != nil {
+			fmt.Fprintf(stderr, "calibration error: %v\n", loadErr)
+			return 2
+		}
+		envelope := assessArrivalCampaignEnvelope(validated.Scenario, options, record, time.Now().UTC())
+		printArrivalCampaignEnvelope(stdout, envelope, options)
+		if envelope.Status != "READY" {
+			fmt.Fprintln(stderr, "CAMPAIGN BLOCKED: calibration does not cover every planned rate; no traffic was sent.")
+			return 2
+		}
+		calibrationRecord = &record
+	} else {
+		fmt.Fprintln(stdout, "No generator calibration envelope supplied; generator readiness was not checked before the campaign.")
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	result, err := arrivalcampaign.RunWithProgress(ctx, validated, options, func(snapshot arrivalcampaign.Result) error {
+	runner := arrivalcampaign.Runner(engine.Run)
+	if calibrationRecord != nil {
+		record := *calibrationRecord
+		runner = func(ctx context.Context, scenario config.Validated) report.Result {
+			run := engine.Run(ctx, scenario)
+			attachCalibrationRecord(&run, scenario.Scenario, record, time.Now().UTC())
+			return run
+		}
+	}
+	result, err := arrivalcampaign.WithRunnerProgress(ctx, validated, options, runner, func(snapshot arrivalcampaign.Result) error {
 		return report.WriteAnyJSON(*out, snapshot)
 	})
 	if err != nil {
@@ -185,4 +227,24 @@ func arrivalCampaignCmd(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+func assessArrivalCampaignEnvelope(scenario config.Scenario, options arrivalcampaign.Options, record calibration.Record, now time.Time) calibration.ArrivalEnvelope {
+	rates := []int{scenario.ArrivalRate}
+	if options.SpikeDuration > 0 {
+		rates = append(rates, options.SpikeRate)
+	}
+	return calibration.AssessArrivalEnvelope(scenario, rates, record, calibration.CurrentRuntime(), now)
+}
+
+func printArrivalCampaignEnvelope(stdout io.Writer, envelope calibration.ArrivalEnvelope, options arrivalcampaign.Options) {
+	fmt.Fprintf(stdout, "Local generator preflight: %s; this is fixture evidence, not target capacity or duration certification.\n", envelope.Status)
+	for _, rate := range envelope.Rates {
+		fmt.Fprintf(stdout, "  %d scheduled starts/s: %s — %s\n", rate.ArrivalRate, rate.Status, rate.Reason)
+	}
+	for _, duration := range []time.Duration{options.Warmup, options.Observation, options.SpikeDuration, options.Recovery, options.Soak} {
+		if duration > 5*time.Second {
+			fmt.Fprintf(stdout, "  Planned %s phase exceeds the 5s reference profile; sustained generator headroom is unverified.\n", duration)
+		}
+	}
 }

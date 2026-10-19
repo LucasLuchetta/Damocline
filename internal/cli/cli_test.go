@@ -47,6 +47,86 @@ func TestArrivalCampaignDryRunShowsOpenArrivalSchedule(t *testing.T) {
 	}
 }
 
+func TestRunRequireCalibrationBlocksBeforeTrafficAndRequiresArtifact(t *testing.T) {
+	path := writePassingCalibration(t, nil)
+	scenario := config.Scenario{Name: "synthetic", BaseURL: "http://127.0.0.1", Mode: "arrival", Users: 10,
+		ArrivalRate: 7, Duration: "5s", Timeout: "1s", MaxRPS: 50, P95LimitMS: 500, MaxErrorRate: 0,
+		Steps: []config.Step{{Name: "read", Method: "GET", Path: "/matrix/get-empty"}}}
+	data, err := json.Marshal(scenario)
+	if err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(t.TempDir(), "scenario.json")
+	if err := os.WriteFile(configPath, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"run", "--config", configPath, "--authorized", "--require-calibration", "--calibration", path}, &stdout, &stderr)
+	if code != 2 || !strings.Contains(stderr.String(), "no traffic was sent") || strings.Contains(stdout.String(), "Running bounded HTTP workload") {
+		t.Fatalf("unmeasured rate did not block before traffic: code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := Run([]string{"run", "--config", configPath, "--dry-run", "--require-calibration"}, &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "requires --calibration") {
+		t.Fatalf("required calibration without artifact was not rejected: code=%d stderr=%q", code, stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	closed := scenario
+	closed.Mode = "closed"
+	closed.ArrivalRate = 0
+	closedData, err := json.Marshal(closed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, closedData, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if code := Run([]string{"run", "--config", configPath, "--dry-run", "--require-calibration", "--calibration", path}, &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "only exact open-arrival") {
+		t.Fatalf("closed-loop gate was not rejected explicitly: code=%d stderr=%q", code, stderr.String())
+	}
+}
+
+func TestArrivalCampaignCalibrationDryRunBlocksUnmeasuredRate(t *testing.T) {
+	path := writePassingCalibration(t, nil)
+	scenario := config.Scenario{Name: "synthetic", BaseURL: "http://127.0.0.1", Mode: "arrival", Users: 10,
+		ArrivalRate: 7, Duration: "5s", Timeout: "1s", MaxRPS: 50, P95LimitMS: 500, MaxErrorRate: 0,
+		Steps: []config.Step{{Name: "read", Method: "GET", Path: "/matrix/get-empty"}}}
+	data, err := json.Marshal(scenario)
+	if err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(t.TempDir(), "scenario.json")
+	if err := os.WriteFile(configPath, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"arrival-campaign", "--config", configPath, "--observation", "10s", "--recovery", "10s", "--repeats", "2", "--dry-run", "--calibration", path}, &stdout, &stderr)
+	if code != 2 || !strings.Contains(stderr.String(), "DRY RUN BLOCKED") || !strings.Contains(stdout.String(), "BLOCKED") {
+		t.Fatalf("unmeasured campaign rate did not block: code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+}
+
+func TestArrivalCampaignCalibrationGateBlocksBeforeSendingTraffic(t *testing.T) {
+	path := writePassingCalibration(t, nil)
+	scenario := config.Scenario{Name: "synthetic", BaseURL: "http://127.0.0.1:1", Mode: "arrival", Users: 10,
+		ArrivalRate: 7, Duration: "5s", Timeout: "1s", MaxRPS: 50, P95LimitMS: 500, MaxErrorRate: 0,
+		Steps: []config.Step{{Name: "read", Method: "GET", Path: "/matrix/get-empty"}}}
+	data, err := json.Marshal(scenario)
+	if err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(t.TempDir(), "scenario.json")
+	if err := os.WriteFile(configPath, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"arrival-campaign", "--config", configPath, "--warmup", "0s", "--observation", "10s", "--recovery", "10s", "--repeats", "2", "--out", filepath.Join(t.TempDir(), "campaign.json"), "--authorized", "--calibration", path}, &stdout, &stderr)
+	if code != 2 || !strings.Contains(stderr.String(), "no traffic was sent") || strings.Contains(stdout.String(), "Report:") {
+		t.Fatalf("unmeasured campaign rate did not block before traffic: code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+}
+
 func TestClosedCampaignDryRunShowsCooldownBetweenTrials(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	path := filepath.Join("..", "..", "examples", "advanced-readonly.json")
