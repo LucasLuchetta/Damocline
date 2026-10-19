@@ -273,6 +273,48 @@ func TestWithRunnerPreservesTrialAndPhaseSchedule(t *testing.T) {
 	}
 }
 
+func TestArrivalStabilizationRunsBeforeObservationAndDriftStopsCampaign(t *testing.T) {
+	base := validatedArrival(t)
+	var names []string
+	result, err := WithRunner(context.Background(), base, Options{Stabilization: 10 * time.Second, Observation: 10 * time.Second, Recovery: 10 * time.Second, Repeats: 2}, func(_ context.Context, v config.Validated) report.Result {
+		name := "observation"
+		if len(names) == 0 {
+			name = "stabilization"
+		}
+		names = append(names, name)
+		run := syntheticArrivalPhase(v, "PASS")
+		if name == "stabilization" {
+			run.Windows[3].Metrics.P95MS = 150
+			run.Windows[3].Journeys.P95MS = 150
+		}
+		return run
+	})
+	if err != nil || result.Outcome != "INCONCLUSIVE" || len(names) != 1 || len(result.Trials) != 1 || len(result.Trials[0].Phases) != 1 || result.Trials[0].Phases[0].Name != "stabilization" || result.Trials[0].Phases[0].Stability != "NON_STATIONARY" {
+		t.Fatalf("arrival stabilization did not gate observation: names=%v result=%+v err=%v", names, result, err)
+	}
+}
+
+func TestArrivalStabilizationDrainIsIncludedInBudget(t *testing.T) {
+	options := Options{Stabilization: 10 * time.Second, Observation: 10 * time.Second, Recovery: 10 * time.Second, Repeats: 2}
+	if got, want := PlannedBudget(options), 4*time.Minute; got != want {
+		t.Fatalf("stabilization drain missing from arrival campaign budget: got %s want %s", got, want)
+	}
+}
+
+func TestArrivalStabilizationCancellationDoesNotStartObservation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	calls := 0
+	result, err := WithRunner(ctx, validatedArrival(t), Options{Stabilization: 10 * time.Second, Observation: 10 * time.Second, Recovery: 10 * time.Second, Repeats: 2}, func(ctx context.Context, v config.Validated) report.Result {
+		calls++
+		cancel()
+		<-ctx.Done()
+		return report.Result{Outcome: "ABORTED", Config: report.RunConfig{Mode: "arrival", ArrivalRate: v.Scenario.ArrivalRate, Users: v.Scenario.Users, Duration: v.Duration.String()}, Target: v.Base.Scheme + "://" + v.Base.Host}
+	})
+	if err != nil || result.Outcome != "ABORTED" || calls != 1 || len(result.Trials) != 1 || len(result.Trials[0].Phases) != 1 || result.Trials[0].Phases[0].Name != "stabilization" {
+		t.Fatalf("arrival stabilization cancellation did not stop before observation: calls=%d result=%+v err=%v", calls, result, err)
+	}
+}
+
 func TestWithRunnerCreatesWindowScheduleWhenBaseHasNone(t *testing.T) {
 	base := validatedArrival(t)
 	base.Window = 0

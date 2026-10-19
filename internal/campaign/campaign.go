@@ -15,7 +15,7 @@ import (
 	"github.com/LucasLuchetta/Damocline/internal/report"
 )
 
-const CurrentSchemaVersion = 10
+const CurrentSchemaVersion = 11
 
 const (
 	DefaultWallTimeLimit = 15 * time.Minute
@@ -70,6 +70,7 @@ func effectiveStabilityPolicy(policy StabilityPolicy) StabilityPolicy {
 
 type Options struct {
 	Warmup           time.Duration
+	Stabilization    time.Duration
 	Observation      time.Duration
 	SpikeUsers       int
 	SpikeDuration    time.Duration
@@ -94,9 +95,12 @@ type PlannedPhase struct {
 
 // PlannedPhases returns the exact stage order used by every trial.
 func PlannedPhases(options Options, baseUsers int) []PlannedPhase {
-	phases := make([]PlannedPhase, 0, 4)
+	phases := make([]PlannedPhase, 0, 5)
 	if options.Warmup > 0 {
 		phases = append(phases, PlannedPhase{Name: "warmup", Duration: options.Warmup, Users: baseUsers})
+	}
+	if options.Stabilization > 0 {
+		phases = append(phases, PlannedPhase{Name: "stabilization", Duration: options.Stabilization, Users: baseUsers, Required: true})
 	}
 	phases = append(phases, PlannedPhase{Name: "observation", Duration: options.Observation, Users: baseUsers, Required: true})
 	if options.SpikeDuration > 0 {
@@ -146,6 +150,7 @@ type Result struct {
 	Target                 string                      `json:"target"`
 	StartedAt              string                      `json:"started_at"`
 	Warmup                 string                      `json:"warmup"`
+	Stabilization          string                      `json:"stabilization"`
 	Observation            string                      `json:"observation"`
 	SpikeUsers             int                         `json:"spike_users,omitempty"`
 	SpikeDuration          string                      `json:"spike_duration,omitempty"`
@@ -200,9 +205,9 @@ func Validate(options Options) error {
 	if options.LongRun != options.StagingConfirmed {
 		return fmt.Errorf("long-run campaigns require both --allow-long-run and --staging-confirmed")
 	}
-	observationLimit, soakLimit, budgetLimit := 10*time.Minute, 3*time.Minute, DefaultWallTimeLimit
+	observationLimit, soakLimit, stabilizationLimit, budgetLimit := 10*time.Minute, 3*time.Minute, 3*time.Minute, DefaultWallTimeLimit
 	if options.LongRun {
-		observationLimit, soakLimit, budgetLimit = LongRunPhaseLimit, LongRunPhaseLimit, LongRunWallTimeLimit
+		observationLimit, soakLimit, stabilizationLimit, budgetLimit = LongRunPhaseLimit, LongRunPhaseLimit, LongRunPhaseLimit, LongRunWallTimeLimit
 		if options.Budget == 0 {
 			return fmt.Errorf("long-run campaigns require an explicit --budget (maximum 2h)")
 		}
@@ -212,6 +217,9 @@ func Validate(options Options) error {
 	}
 	if options.Warmup < 0 || options.Warmup > 3*time.Minute || options.Recovery < 0 || options.Recovery > 3*time.Minute {
 		return fmt.Errorf("warmup and recovery must be between 0 and 3m")
+	}
+	if options.Stabilization < 0 || options.Stabilization > stabilizationLimit || (options.Stabilization > 0 && options.Stabilization < 10*time.Second) {
+		return fmt.Errorf("stabilization must be between 10s and %s when enabled", stabilizationLimit)
 	}
 	if options.Observation < 10*time.Second || options.Observation > observationLimit {
 		return fmt.Errorf("observation must be between 10s and %s", observationLimit)
@@ -234,11 +242,11 @@ func Validate(options Options) error {
 	if options.Repeats < 2 || options.Repeats > 5 {
 		return fmt.Errorf("repeats must be between 2 and 5")
 	}
-	minimum := time.Duration(options.Repeats)*(options.Warmup+options.Observation+options.SpikeDuration+options.Recovery) + options.Soak + time.Duration(options.Repeats-1)*options.Cooldown
+	minimum := time.Duration(options.Repeats)*(options.Warmup+options.Stabilization+options.Observation+options.SpikeDuration+options.Recovery) + options.Soak + time.Duration(options.Repeats-1)*options.Cooldown
 	if options.Budget != 0 && (options.Budget < minimum || options.Budget > budgetLimit) {
 		return fmt.Errorf("budget must cover every phase and be at most %s", budgetLimit)
 	}
-	if options.Budget != 0 && options.Soak > 0 && options.Budget < defaultBudget(options) {
+	if options.Budget != 0 && (options.Soak > 0 || options.Stabilization > 0) && options.Budget < defaultBudget(options) {
 		return fmt.Errorf("budget must reserve bounded drain allowance for every phase")
 	}
 	if options.LongRun && options.Budget < defaultBudget(options) {
@@ -277,7 +285,7 @@ func ValidateForScenario(base config.Validated, options Options) error {
 		return fmt.Errorf("long-run campaigns require scenario environment to be explicitly declared as staging")
 	}
 	policy := effectiveStabilityPolicy(options.Stability)
-	for _, duration := range []time.Duration{options.Observation, options.Soak} {
+	for _, duration := range []time.Duration{options.Stabilization, options.Observation, options.Soak} {
 		if duration == 0 {
 			continue
 		}
@@ -286,10 +294,10 @@ func ValidateForScenario(base config.Validated, options Options) error {
 			window = min(30*time.Second, duration/4)
 		}
 		if window <= 0 || int(math.Ceil(duration.Seconds()/window.Seconds())) < policy.MinimumWindows {
-			return fmt.Errorf("stability minimum-windows exceeds the observation or soak window coverage")
+			return fmt.Errorf("stability minimum-windows exceeds stabilization, observation, or soak window coverage")
 		}
 		if options.LongRun && int(math.Ceil(duration.Seconds()/window.Seconds())) > MaxCampaignWindows {
-			return fmt.Errorf("long-run observation and soak phases are limited to %d windows; increase window_duration", MaxCampaignWindows)
+			return fmt.Errorf("long-run stabilization, observation and soak phases are limited to %d windows; increase window_duration", MaxCampaignWindows)
 		}
 	}
 	return nil
@@ -301,7 +309,7 @@ func defaultBudget(options Options) time.Duration {
 	if options.Soak > 0 {
 		soakDrain = 30 * time.Second
 	}
-	return time.Duration(options.Repeats)*(options.Warmup+options.Observation+options.SpikeDuration+options.Recovery+time.Duration(phases)*30*time.Second) + options.Soak + soakDrain + time.Duration(options.Repeats-1)*options.Cooldown
+	return time.Duration(options.Repeats)*(options.Warmup+options.Stabilization+options.Observation+options.SpikeDuration+options.Recovery+time.Duration(phases)*30*time.Second) + options.Soak + soakDrain + time.Duration(options.Repeats-1)*options.Cooldown
 }
 
 // PlannedBudget returns the explicit wall-time cap or the bounded default.
@@ -368,6 +376,7 @@ func WithRunnerProgress(ctx context.Context, base config.Validated, options Opti
 		Target:              base.Base.Scheme + "://" + base.Base.Host,
 		StartedAt:           time.Now().UTC().Format(time.RFC3339),
 		Warmup:              options.Warmup.String(),
+		Stabilization:       options.Stabilization.String(),
 		Observation:         options.Observation.String(),
 		SpikeUsers:          options.SpikeUsers,
 		SpikeDuration:       options.SpikeDuration.String(),
@@ -384,7 +393,7 @@ func WithRunnerProgress(ctx context.Context, base config.Validated, options Opti
 		Outcome:             "INCONCLUSIVE",
 		Notes: []string{
 			"Warm-up runs establish workload state but are excluded from capacity conclusions.",
-			"Observation, configured spike, recovery, and the optional final soak all require PASS; this is evidence under the configured workload, not a universal capacity certification.",
+			"Active stabilization, observation, configured spike, recovery, and the optional final soak require complete bounded evidence; passing phases do not establish universal capacity certification.",
 		},
 	}
 	if options.LongRun {
@@ -453,7 +462,7 @@ func WithRunnerProgress(ctx context.Context, base config.Validated, options Opti
 			run := runner(ctx, v)
 			state, reason := ClassifyEvidence(run)
 			stability := ""
-			if phase.Name == "observation" || phase.Name == "soak" {
+			if phase.Name == "stabilization" || phase.Name == "observation" || phase.Name == "soak" {
 				stability = AssessStabilityWithPolicy(run, options.Stability)
 			}
 			trial.Phases = append(trial.Phases, Phase{Name: phase.Name, EvidenceState: state, Reason: reason, Stability: stability, Run: run})
@@ -477,7 +486,7 @@ func WithRunnerProgress(ctx context.Context, base config.Validated, options Opti
 				}
 				continue
 			}
-			if (phase.Name == "observation" || phase.Name == "soak") && state == "PASS_OBSERVED" && stability != "NO_LARGE_DRIFT_DETECTED" {
+			if (phase.Name == "stabilization" || phase.Name == "observation" || phase.Name == "soak") && state == "PASS_OBSERVED" && stability != "NO_LARGE_DRIFT_DETECTED" {
 				trial.Outcome = "INCONCLUSIVE"
 				break
 			}

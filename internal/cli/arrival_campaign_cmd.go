@@ -25,6 +25,7 @@ func arrivalCampaignCmd(args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	filename := fs.String("config", "", "arrival-mode scenario JSON")
 	warmup := fs.Duration("warmup", 30*time.Second, "warm-up duration (0s-3m)")
+	stabilization := fs.Duration("stabilization", 0, "optional bounded active stability screen before observation (10s-3m; long-run up to 30m)")
 	observation := fs.Duration("observation", 2*time.Minute, "steady observation duration (10s-10m; long-run up to 30m)")
 	spikeRate := fs.Int("spike-journeys-per-second", 0, "optional higher scheduled journey-start rate")
 	spikeDuration := fs.Duration("spike-duration", 0, "optional spike duration (10s-3m)")
@@ -99,7 +100,7 @@ func arrivalCampaignCmd(args []string, stdout, stderr io.Writer) int {
 	if guardrails.Enabled() {
 		guardrails.ConsecutiveSamples = *guardrailSamples
 	}
-	options := arrivalcampaign.Options{Warmup: *warmup, Observation: *observation, SpikeRate: *spikeRate, SpikeDuration: *spikeDuration,
+	options := arrivalcampaign.Options{Warmup: *warmup, Stabilization: *stabilization, Observation: *observation, SpikeRate: *spikeRate, SpikeDuration: *spikeDuration,
 		Recovery: *recovery, Soak: *soak, Cooldown: *cooldown, Repeats: *repeats, Budget: *budget, PeakRate: *peak, GrowthPercent: *growth, ReservePercent: *reserve,
 		Guardrails: guardrails,
 		LongRun:    *longRun, StagingConfirmed: *stagingConfirmed}
@@ -129,8 +130,8 @@ func arrivalCampaignCmd(args []string, stdout, stderr io.Writer) int {
 		}
 		validated.Scenario.WindowDuration = validated.Window.String()
 	}
-	fmt.Fprintf(stdout, "Arrival campaign: %s | %s://%s | base %d scheduled starts/s | worker limit %d | observation %s | repeats %d | cooldown %s | wall-time cap %s\n",
-		validated.Scenario.Name, validated.Base.Scheme, validated.Base.Host, validated.Scenario.ArrivalRate, validated.Scenario.Users, options.Observation, options.Repeats, options.Cooldown, arrivalcampaign.PlannedBudget(options))
+	fmt.Fprintf(stdout, "Arrival campaign: %s | %s://%s | base %d scheduled starts/s | worker limit %d | stabilization %s | observation %s | repeats %d | cooldown %s | wall-time cap %s\n",
+		validated.Scenario.Name, validated.Base.Scheme, validated.Base.Host, validated.Scenario.ArrivalRate, validated.Scenario.Users, options.Stabilization, options.Observation, options.Repeats, options.Cooldown, arrivalcampaign.PlannedBudget(options))
 	if options.LongRun {
 		fmt.Fprintln(stdout, "LONG-RUN MODE: explicit opt-in; environment declared staging (user-provided, not independently verified).")
 	}
