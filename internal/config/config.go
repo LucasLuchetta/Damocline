@@ -518,6 +518,11 @@ func Parse(s Scenario, o Options) (Validated, error) {
 				return v, fmt.Errorf("invalid cookie prefix for workflow %q", name)
 			}
 		}
+		for _, profile := range profiles {
+			if _, ok := s.ProfileCookieEnvPrefixes[profile.Name]; !ok {
+				return v, fmt.Errorf("profile_cookie_env_prefixes must provide a session prefix for every workflow; missing %q", profile.Name)
+			}
+		}
 	}
 	cookies, err := ResolveSessions(s.PerVUCookieEnvPrefix, s.Users)
 	if err != nil {

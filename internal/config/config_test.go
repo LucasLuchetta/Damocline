@@ -340,6 +340,10 @@ func TestWorkflowSessionsAreDistinctCompleteAndFingerprintSafe(t *testing.T) {
 	if _, err := Parse(s, Options{Authorized: true}); err == nil {
 		t.Fatal("unknown workflow session mapping accepted")
 	}
+	s.ProfileCookieEnvPrefixes = map[string]string{"browse": "DAMO_BROWSE_"}
+	if _, err := Parse(s, Options{Authorized: true}); err == nil {
+		t.Fatal("incomplete workflow session mapping accepted")
+	}
 	s.ProfileCookieEnvPrefixes = map[string]string{"browse": "DAMO_BROWSE_", "edit": "DAMO_BROWSE_"}
 	if _, err := Parse(s, Options{Authorized: true}); err == nil {
 		t.Fatal("equivalent cookie sets with reordered pairs accepted across workflows")
