@@ -41,6 +41,33 @@ func TestCampaignDryRunShowsBoundedWallTime(t *testing.T) {
 	}
 }
 
+func TestRunDisplaysRequestAndSuccessfulJourneyThroughputSeparately(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
+	defer server.Close()
+	path := filepath.Join(t.TempDir(), "scenario.json")
+	scenario := config.Scenario{
+		Name: "loopback-throughput", BaseURL: server.URL, Users: 1, Duration: "1s",
+		Timeout: "2s", ThinkTime: "0s", MaxRPS: 1, P95LimitMS: 5000, MaxErrorRate: 0.9,
+		Steps: []config.Step{{Name: "transaction", Method: "GET", Path: "/", ExpectedStatus: []int{http.StatusOK}}},
+	}
+	data, err := json.Marshal(scenario)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	if code := Run([]string{"run", "--config", path, "--authorized"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("loopback run failed: code=%d stderr=%s output=%s", code, stderr.String(), stdout.String())
+	}
+	for _, expected := range []string{"req/s", "Journey throughput:", "successful configured journeys/s", "complete,", "cancelled/incomplete", "near max_rps", "USER CAPACITY:  NOT DETERMINED"} {
+		if !strings.Contains(stdout.String(), expected) {
+			t.Fatalf("run output omitted %q: %s", expected, stdout.String())
+		}
+	}
+}
+
 func TestForcedInterruptionProcessHelper(t *testing.T) {
 	if os.Getenv("DAMOCLINE_FORCED_INTERRUPTION_HELPER") != "1" {
 		return

@@ -64,7 +64,11 @@ func evaluateWithQuality(evidence campaign.Result, goal capacitygoal.Goal, asses
 		result.Findings = append(result.Findings, "Observation variability is not recorded for every independent trial; demand remains INSUFFICIENT_EVIDENCE.")
 		return result, nil
 	}
-	if evidence.SchemaVersion < campaign.CurrentSchemaVersion {
+	if evidence.SchemaVersion >= 3 && !validSuccessfulJourneyVariability(evidence.ObservationVariability) {
+		result.Findings = append(result.Findings, "Successful journey throughput spread is missing or malformed in this schema-v3 campaign; demand remains INSUFFICIENT_EVIDENCE.")
+		return result, nil
+	}
+	if evidence.SchemaVersion < 2 {
 		result.Findings = append(result.Findings, "Legacy campaign reports lack verifiable stage classification and observation drift evidence; demand remains INSUFFICIENT_EVIDENCE.")
 		return result, nil
 	}
@@ -75,6 +79,12 @@ func evaluateWithQuality(evidence campaign.Result, goal capacitygoal.Goal, asses
 		result.Findings = append(result.Findings, fmt.Sprintf("Observed observation p95 ranged from %.0f to %.0f ms across %d trials; review the full report before changing infrastructure.", evidence.ObservationVariability.P95MinMS, evidence.ObservationVariability.P95MaxMS, evidence.ObservationVariability.Runs))
 	}
 	return result, nil
+}
+
+func validSuccessfulJourneyVariability(v *campaign.Variability) bool {
+	return v != nil && !math.IsNaN(v.SuccessfulJourneysMinPerSec) && !math.IsInf(v.SuccessfulJourneysMinPerSec, 0) &&
+		!math.IsNaN(v.SuccessfulJourneysMaxPerSec) && !math.IsInf(v.SuccessfulJourneysMaxPerSec, 0) &&
+		v.SuccessfulJourneysMinPerSec >= 0 && v.SuccessfulJourneysMaxPerSec >= v.SuccessfulJourneysMinPerSec
 }
 
 func qualityBlocker(evidence campaign.Result, assess qualityAssessor) string {
@@ -247,7 +257,7 @@ func validObservationVariability(v *campaign.Variability, repeats int) bool {
 }
 
 // ReadCampaign reads a bounded saved campaign report. It never makes a network
-// request and accepts only the report schema emitted by the local campaign command.
+// request and accepts only supported historical or current campaign schemas.
 func ReadCampaign(path string) (campaign.Result, error) {
 	file, err := os.Open(path)
 	if err != nil {
@@ -269,13 +279,13 @@ func ReadCampaign(path string) (campaign.Result, error) {
 }
 
 func validateEvidence(evidence campaign.Result) error {
-	if (evidence.SchemaVersion != 1 && evidence.SchemaVersion != campaign.CurrentSchemaVersion) || evidence.Scenario == "" || evidence.BaseUsers < 1 || evidence.Repeats < 2 || evidence.Repeats > 5 || len(evidence.Trials) != evidence.Repeats {
+	if evidence.SchemaVersion < 1 || evidence.SchemaVersion > campaign.CurrentSchemaVersion || evidence.Scenario == "" || evidence.BaseUsers < 1 || evidence.Repeats < 2 || evidence.Repeats > 5 || len(evidence.Trials) != evidence.Repeats {
 		return errors.New("expected a complete supported repeated campaign")
 	}
 	if evidence.Outcome != "PASS" {
 		return nil
 	}
-	if evidence.SchemaVersion == campaign.CurrentSchemaVersion {
+	if evidence.SchemaVersion >= 2 {
 		return validateStageEvidence(evidence)
 	}
 	for _, trial := range evidence.Trials {

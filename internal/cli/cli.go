@@ -196,6 +196,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	fmt.Fprintf(stdout, "Result: %s | requests: %d (%d passed, %d failed, %d cancelled) | p95: %.1f ms | error rate: %.2f%% | %.1f req/s\n", result.Outcome, result.Metrics.Total, result.Metrics.Success, result.Metrics.Failures, result.Metrics.Cancelled, result.Metrics.P95MS, result.ErrorsRate*100, float64(result.Metrics.Total)/result.WindowSeconds())
+	if result.ObservationSeconds > 0 {
+		fmt.Fprintf(stdout, "Journey throughput: %.2f successful configured journeys/s; %.2f completed journeys/s (%d complete, %d failed, %d cancelled/incomplete).\n", report.SuccessfulJourneysPerSecond(result), report.CompletedJourneysPerSecond(result), result.Journeys.Total, result.Journeys.Failures, result.Journeys.Cancelled)
+	}
 	fmt.Fprintf(
 		stdout,
 		"HTTP responses: 1xx=%d 2xx=%d 3xx=%d 4xx=%d 5xx=%d; redirects=%d, 429=%d, assertions=%d, timeouts=%d, DNS failures=%d, connection failures=%d, TLS failures=%d, transport failures=%d, oversized=%d.\n",
@@ -223,11 +226,15 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	for _, profile := range result.Profiles {
 		started := profile.Journeys.Total + profile.Journeys.Cancelled
+		rate := 0.0
+		if result.ObservationSeconds > 0 {
+			rate = float64(profile.Journeys.Success) / result.ObservationSeconds
+		}
 		if result.Config.Mode == "closed" {
-			fmt.Fprintf(stdout, "  Profile %s: configured weight=%d, assigned VUs=%d, started journeys=%d, completed=%d, cancelled=%d\n", profile.Name, profile.Weight, profile.AssignedVUs, started, profile.Journeys.Total, profile.Journeys.Cancelled)
+			fmt.Fprintf(stdout, "  Profile %s: configured weight=%d, assigned VUs=%d, started=%d, successful=%d (%.2f journeys/s), failed-complete=%d, cancelled-incomplete=%d\n", profile.Name, profile.Weight, profile.AssignedVUs, started, profile.Journeys.Success, rate, profile.Journeys.Failures, profile.Journeys.Cancelled)
 			continue
 		}
-		fmt.Fprintf(stdout, "  Profile %s: configured weight=%d, started journeys=%d, completed=%d, cancelled=%d\n", profile.Name, profile.Weight, started, profile.Journeys.Total, profile.Journeys.Cancelled)
+		fmt.Fprintf(stdout, "  Profile %s: configured weight=%d, started=%d, successful=%d (%.2f journeys/s), failed-complete=%d, cancelled-incomplete=%d\n", profile.Name, profile.Weight, started, profile.Journeys.Success, rate, profile.Journeys.Failures, profile.Journeys.Cancelled)
 	}
 	fmt.Fprintf(stdout, "Iterations: %d started / %d completed; arrivals dropped: %d\n", result.IterationsStarted, result.IterationsCompleted, result.ArrivalsDropped)
 	fmt.Fprintf(stdout, "Observed configured think-time waits: %.1f ms across %d intervals; journey latency includes rate-token waits and these intervals.\n", result.ObservedThinkTimeMS, result.ThinkTimeObservations)
@@ -310,7 +317,7 @@ func campaignCmd(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stdout, "  Abort reason: %s\n", trial.AbortReason)
 		}
 		for _, phase := range trial.Phases {
-			fmt.Fprintf(stdout, "  %s: %s (%s) | p95 %.0fms | errors %.2f%% | requests %d\n", phase.Name, phase.Run.Outcome, phase.EvidenceState, phase.Run.Metrics.P95MS, phase.Run.ErrorsRate*100, phase.Run.Metrics.Total)
+			fmt.Fprintf(stdout, "  %s: %s (%s) | p95 %.0fms | errors %.2f%% | requests %d | successful journeys %.2f/s (%d complete, %d failed, %d cancelled)\n", phase.Name, phase.Run.Outcome, phase.EvidenceState, phase.Run.Metrics.P95MS, phase.Run.ErrorsRate*100, phase.Run.Metrics.Total, report.SuccessfulJourneysPerSecond(phase.Run), phase.Run.Journeys.Total, phase.Run.Journeys.Failures, phase.Run.Journeys.Cancelled)
 			if phase.Stability != "" {
 				fmt.Fprintf(stdout, "    observation drift screen: %s\n", phase.Stability)
 			}
@@ -320,7 +327,7 @@ func campaignCmd(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	if variability := result.ObservationVariability; variability != nil {
-		fmt.Fprintf(stdout, "Observation spread across %d trials: p95 %.0f-%.0fms | errors %.2f%%-%.2f%% | throughput %.2f-%.2f req/s\n", variability.Runs, variability.P95MinMS, variability.P95MaxMS, variability.ErrorRateMin*100, variability.ErrorRateMax*100, variability.ThroughputMinRPS, variability.ThroughputMaxRPS)
+		fmt.Fprintf(stdout, "Observation spread across %d trials: p95 %.0f-%.0fms | errors %.2f%%-%.2f%% | requests %.2f-%.2f/s | successful journeys %.2f-%.2f/s\n", variability.Runs, variability.P95MinMS, variability.P95MaxMS, variability.ErrorRateMin*100, variability.ErrorRateMax*100, variability.ThroughputMinRPS, variability.ThroughputMaxRPS, variability.SuccessfulJourneysMinPerSec, variability.SuccessfulJourneysMaxPerSec)
 		fmt.Fprintln(stdout, "This is observed run-to-run spread, not a statistical confidence interval.")
 	}
 	fmt.Fprintf(stdout, "Campaign outcome: %s\n", result.Outcome)

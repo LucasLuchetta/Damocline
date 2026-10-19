@@ -12,7 +12,7 @@ import (
 	"github.com/LucasLuchetta/Damocline/internal/report"
 )
 
-const CurrentSchemaVersion = 2
+const CurrentSchemaVersion = 3
 
 type Options struct {
 	Warmup        time.Duration
@@ -85,13 +85,15 @@ type Result struct {
 // Variability summarizes the spread observed across independent observation
 // phases. It is descriptive and does not claim a confidence interval.
 type Variability struct {
-	Runs             int     `json:"runs"`
-	P95MinMS         float64 `json:"p95_min_ms"`
-	P95MaxMS         float64 `json:"p95_max_ms"`
-	ErrorRateMin     float64 `json:"error_rate_min"`
-	ErrorRateMax     float64 `json:"error_rate_max"`
-	ThroughputMinRPS float64 `json:"throughput_min_rps"`
-	ThroughputMaxRPS float64 `json:"throughput_max_rps"`
+	Runs                        int     `json:"runs"`
+	P95MinMS                    float64 `json:"p95_min_ms"`
+	P95MaxMS                    float64 `json:"p95_max_ms"`
+	ErrorRateMin                float64 `json:"error_rate_min"`
+	ErrorRateMax                float64 `json:"error_rate_max"`
+	ThroughputMinRPS            float64 `json:"throughput_min_rps"`
+	ThroughputMaxRPS            float64 `json:"throughput_max_rps"`
+	SuccessfulJourneysMinPerSec float64 `json:"successful_journeys_min_per_second"`
+	SuccessfulJourneysMaxPerSec float64 `json:"successful_journeys_max_per_second"`
 }
 
 type Runner func(context.Context, config.Validated) report.Result
@@ -376,7 +378,7 @@ func ClassifyEvidence(run report.Result) (string, string) {
 }
 
 func summarizeObservationVariability(trials []Trial) *Variability {
-	summary := Variability{P95MinMS: math.Inf(1), ErrorRateMin: math.Inf(1), ThroughputMinRPS: math.Inf(1)}
+	summary := Variability{P95MinMS: math.Inf(1), ErrorRateMin: math.Inf(1), ThroughputMinRPS: math.Inf(1), SuccessfulJourneysMinPerSec: math.Inf(1)}
 	for _, trial := range trials {
 		for _, phase := range trial.Phases {
 			if phase.Name != "observation" || phase.Run.WindowSeconds() <= 0 {
@@ -390,6 +392,9 @@ func summarizeObservationVariability(trials []Trial) *Variability {
 			throughput := float64(phase.Run.Metrics.Total) / phase.Run.WindowSeconds()
 			summary.ThroughputMinRPS = math.Min(summary.ThroughputMinRPS, throughput)
 			summary.ThroughputMaxRPS = math.Max(summary.ThroughputMaxRPS, throughput)
+			journeyThroughput := report.SuccessfulJourneysPerSecond(phase.Run)
+			summary.SuccessfulJourneysMinPerSec = math.Min(summary.SuccessfulJourneysMinPerSec, journeyThroughput)
+			summary.SuccessfulJourneysMaxPerSec = math.Max(summary.SuccessfulJourneysMaxPerSec, journeyThroughput)
 		}
 	}
 	if summary.Runs == 0 {

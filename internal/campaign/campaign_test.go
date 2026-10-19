@@ -27,7 +27,7 @@ func TestCampaignSeparatesWarmupObservationAndRecovery(t *testing.T) {
 		durations = append(durations, v.Duration)
 		return stableResult(v)
 	})
-	if err != nil || result.Outcome != "PASS" || len(result.Trials) != 2 || len(durations) != 6 || result.ObservationVariability == nil || result.ObservationVariability.Runs != 2 {
+	if err != nil || result.Outcome != "PASS" || len(result.Trials) != 2 || len(durations) != 6 || result.ObservationVariability == nil || result.ObservationVariability.Runs != 2 || result.ObservationVariability.SuccessfulJourneysMinPerSec != 8 || result.ObservationVariability.SuccessfulJourneysMaxPerSec != 8 {
 		t.Fatalf("unexpected campaign: %+v err=%v durations=%v", result, err, durations)
 	}
 }
@@ -65,7 +65,7 @@ func TestDefaultCampaignBudgetIncludesBoundedDrain(t *testing.T) {
 	result, err := WithRunner(context.Background(), scenario(t), options, func(_ context.Context, v config.Validated) report.Result {
 		return stableResult(v)
 	})
-	if err != nil || result.Budget != "4m20s" || result.SchemaVersion != 2 {
+	if err != nil || result.Budget != "4m20s" || result.SchemaVersion != CurrentSchemaVersion {
 		t.Fatalf("effective cap or schema missing: %+v %v", result, err)
 	}
 	options.Observation = 7 * time.Minute
