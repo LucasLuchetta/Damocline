@@ -311,6 +311,14 @@ For local Docker container snapshots, run `damocline docker --authorized --out r
 
 The dashboard binds only to `127.0.0.1` (or `localhost`/`::1`) and reads one bounded, locally saved run or campaign report. Run views display request metrics, steps and observation windows. Campaign views retain each trial and phase, show per-window HTTP and journey outcomes, and identify incomplete checkpoints without assigning a final result. Both views plot collected Prometheus-text samples as separate observations against their UTC collection times; sparse points are not connected or interpolated. Metric values are not mapped to SLOs or interpreted as causes. Dropped starts and generator peaks remain run-wide context because reports do not retain those series per window. The dashboard makes no load requests and exposes no non-loopback listener.
 
+To share a validated run, campaign, or exploration without its private target details, create a separate export:
+
+```powershell
+.\damocline.exe report export --file reports\campaign.json --out reports\campaign-redacted.json
+```
+
+The export preserves aggregate and per-window measurements but aliases arbitrary workflow/step names and removes destinations, routes, notes, warning text, fingerprints, revisions and absolute timestamps. Custom metric names and values are omitted because they may contain identifiers. The `damocline-redacted-evidence-v1` file is descriptive only and cannot be used by `goal`, `plan`, or `audit`; keep the original artifact private for full offline validation.
+
 ## 8. Limitations and quality checks
 
 - A high VU count with a low RPS cap **does not prove** the server can support that count of active people.
