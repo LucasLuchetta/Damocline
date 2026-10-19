@@ -109,7 +109,7 @@ type Result struct {
 	GrowthPercent        float64                     `json:"growth_percent,omitempty"`
 	ReservePercent       float64                     `json:"reserve_percent,omitempty"`
 	Warmup               string                      `json:"warmup"`
-	Stabilization        string                      `json:"stabilization"`
+	Stabilization        string                      `json:"stabilization,omitempty"`
 	Observation          string                      `json:"observation"`
 	SpikeStartsPerSecond int                         `json:"spike_scheduled_journey_starts_per_second,omitempty"`
 	SpikeDuration        string                      `json:"spike_duration,omitempty"`

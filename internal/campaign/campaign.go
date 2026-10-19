@@ -150,7 +150,7 @@ type Result struct {
 	Target                 string                      `json:"target"`
 	StartedAt              string                      `json:"started_at"`
 	Warmup                 string                      `json:"warmup"`
-	Stabilization          string                      `json:"stabilization"`
+	Stabilization          string                      `json:"stabilization,omitempty"`
 	Observation            string                      `json:"observation"`
 	SpikeUsers             int                         `json:"spike_users,omitempty"`
 	SpikeDuration          string                      `json:"spike_duration,omitempty"`
