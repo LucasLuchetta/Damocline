@@ -55,6 +55,9 @@ type Workload struct {
 	TargetTested       bool    `json:"exact_target_tested,omitempty"`
 	HighestPassingLoad *int    `json:"highest_passing_tested_load,omitempty"`
 	FirstFailingLoad   *int    `json:"first_failing_tested_load,omitempty"`
+	RequestedMinimum   int     `json:"requested_minimum_load,omitempty"`
+	RequestedMaximum   int     `json:"requested_maximum_load,omitempty"`
+	CalibratedLoads    []int   `json:"calibrated_probe_loads,omitempty"`
 }
 
 type Probe struct {
@@ -217,6 +220,8 @@ func FromArrivalExplorer(e arrivalexplorer.Result) Evidence {
 		MaximumLoad: e.MaxJourneysPerSecond, TargetLoad: e.TargetJourneysPerSecond, WorkerLimit: e.WorkerLimit,
 		TargetTested: e.TargetTested, Observation: safeDuration(e.StageDuration), Repeats: e.Repeats,
 		HighestPassingLoad: cloneInt(e.HighestPassingJourneysPerSecond), FirstFailingLoad: cloneInt(e.FirstFailingJourneysPerSecond),
+		RequestedMinimum: e.RequestedMinJourneysPerSecond, RequestedMaximum: e.RequestedMaxJourneysPerSecond,
+		CalibratedLoads: append([]int(nil), e.CalibratedProbeRates...),
 	}}
 	for _, probe := range e.Probes {
 		item := Probe{TestedLoad: probe.JourneysPerSecond, Status: safeOutcome(probe.Status), Runs: make([]Run, 0, len(probe.Runs))}

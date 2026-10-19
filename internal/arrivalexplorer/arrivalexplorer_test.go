@@ -45,6 +45,50 @@ func TestArrivalRateSearchUsesJourneyStartsAndExactTarget(t *testing.T) {
 	}
 }
 
+func TestCalibratedSearchUsesOnlyExactProfilesAndPreservesRequestedRange(t *testing.T) {
+	base := arrivalScenario(t, 100, 10)
+	probed := make([]int, 0)
+	result, err := WithRunner(context.Background(), base, Options{
+		MinJourneysPerSecond: 2, MaxJourneysPerSecond: 10, TargetJourneysPerSecond: 5,
+		RequestedMinJourneysPerSecond: 1, RequestedMaxJourneysPerSecond: 20,
+		ProbeRates: []int{2, 5, 10}, Repeats: 2, StageDuration: 10 * time.Second,
+	}, func(_ context.Context, v config.Validated) report.Result {
+		probed = append(probed, v.Scenario.ArrivalRate)
+		return completeRun(v, "PASS", v.Scenario.ArrivalRate)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.SchemaVersion != 2 || result.RequestedMinJourneysPerSecond != 1 || result.RequestedMaxJourneysPerSecond != 20 ||
+		result.MinJourneysPerSecond != 2 || result.MaxJourneysPerSecond != 10 || result.Outcome != "PASSED_TO_CONFIGURED_CEILING" ||
+		!result.TargetTested || len(result.CalibratedProbeRates) != 3 {
+		t.Fatalf("calibrated bounds and requested envelope were not retained: %+v", result)
+	}
+	for _, rate := range probed {
+		if !containsRate(result.CalibratedProbeRates, rate) {
+			t.Fatalf("explorer probed an uncalibrated rate %d: %v", rate, probed)
+		}
+	}
+	if len(probed) != 6 || probed[0] != 2 || probed[1] != 2 || probed[2] != 5 || probed[3] != 5 || probed[4] != 10 || probed[5] != 10 {
+		t.Fatalf("unexpected calibrated search path, exact target must be reached: %v", probed)
+	}
+}
+
+func TestCalibratedProbeRatesRejectMalformedSchedules(t *testing.T) {
+	base := arrivalScenario(t, 100, 10)
+	for _, rates := range [][]int{{2}, {2, 2, 10}, {5, 2, 10}} {
+		if err := Validate(Options{MinJourneysPerSecond: 2, MaxJourneysPerSecond: 10, RequestedMinJourneysPerSecond: 1,
+			RequestedMaxJourneysPerSecond: 20, ProbeRates: rates, Repeats: 2, StageDuration: 10 * time.Second}, base.Scenario); err == nil {
+			t.Fatalf("malformed calibrated schedule was accepted: %v", rates)
+		}
+	}
+	if err := Validate(Options{MinJourneysPerSecond: 2, MaxJourneysPerSecond: 10, RequestedMinJourneysPerSecond: 1,
+		RequestedMaxJourneysPerSecond: 20, TargetJourneysPerSecond: 7, ProbeRates: []int{2, 5, 10}, Repeats: 2,
+		StageDuration: 10 * time.Second}, base.Scenario); err == nil {
+		t.Fatal("an in-range exact target without an exact calibrated profile was accepted")
+	}
+}
+
 func TestFailedExactTargetIsStillMarkedAsTested(t *testing.T) {
 	base := arrivalScenario(t, 100, 10)
 	result, err := WithRunner(context.Background(), base, Options{

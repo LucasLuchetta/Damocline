@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"sort"
 	"time"
 
 	"github.com/LucasLuchetta/Damocline/internal/arrivalexplorer"
@@ -65,10 +66,27 @@ func EvaluateJourneyStarts(ex arrivalexplorer.Result, g JourneyStartGoal) (Journ
 		return JourneyStartAssessment{}, err
 	}
 	stage, err := time.ParseDuration(ex.StageDuration)
-	if ex.SchemaVersion != 1 || ex.Scenario == "" || ex.WorkerLimit < 1 || ex.WorkerLimit > 50 ||
+	if (ex.SchemaVersion != 1 && ex.SchemaVersion != 2) || ex.Scenario == "" || ex.WorkerLimit < 1 || ex.WorkerLimit > 50 ||
 		ex.MinJourneysPerSecond < 1 || ex.MaxJourneysPerSecond < ex.MinJourneysPerSecond || ex.MaxJourneysPerSecond > 100 ||
 		ex.Repeats < 2 || ex.Repeats > 4 || len(ex.Probes) == 0 || err != nil || stage < 10*time.Second || stage > 3*time.Minute {
 		return JourneyStartAssessment{}, errors.New("invalid or empty arrival exploration: expected bounded repeated schema-v1 probes")
+	}
+	if ex.SchemaVersion == 2 {
+		if ex.RequestedMinJourneysPerSecond < 1 || ex.RequestedMaxJourneysPerSecond < ex.RequestedMinJourneysPerSecond ||
+			ex.RequestedMaxJourneysPerSecond > 100 || len(ex.CalibratedProbeRates) < 1 ||
+			ex.MinJourneysPerSecond < ex.RequestedMinJourneysPerSecond || ex.MaxJourneysPerSecond > ex.RequestedMaxJourneysPerSecond ||
+			ex.CalibratedProbeRates[0] != ex.MinJourneysPerSecond || ex.CalibratedProbeRates[len(ex.CalibratedProbeRates)-1] != ex.MaxJourneysPerSecond {
+			return JourneyStartAssessment{}, errors.New("invalid calibrated arrival exploration rate envelope")
+		}
+		for i, rate := range ex.CalibratedProbeRates {
+			if rate < ex.MinJourneysPerSecond || rate > ex.MaxJourneysPerSecond || i > 0 && rate <= ex.CalibratedProbeRates[i-1] {
+				return JourneyStartAssessment{}, errors.New("calibrated arrival exploration rates are not unique and ascending")
+			}
+		}
+		if ex.TargetJourneysPerSecond > 0 && ex.TargetJourneysPerSecond >= ex.RequestedMinJourneysPerSecond &&
+			ex.TargetJourneysPerSecond <= ex.RequestedMaxJourneysPerSecond && !containsCalibratedRate(ex.CalibratedProbeRates, ex.TargetJourneysPerSecond) {
+			return JourneyStartAssessment{}, errors.New("arrival report exact target has no calibrated probe profile")
+		}
 	}
 
 	a := JourneyStartAssessment{
@@ -93,6 +111,9 @@ func EvaluateJourneyStarts(ex arrivalexplorer.Result, g JourneyStartGoal) (Journ
 		p := &ex.Probes[i]
 		if p.JourneysPerSecond < ex.MinJourneysPerSecond || p.JourneysPerSecond > ex.MaxJourneysPerSecond || seenRates[p.JourneysPerSecond] {
 			return JourneyStartAssessment{}, errors.New("arrival report contains duplicate or out-of-bounds probe rates")
+		}
+		if ex.SchemaVersion == 2 && !containsCalibratedRate(ex.CalibratedProbeRates, p.JourneysPerSecond) {
+			return JourneyStartAssessment{}, errors.New("arrival report contains a probe outside its calibrated rate envelope")
 		}
 		seenRates[p.JourneysPerSecond] = true
 		if ex.TargetJourneysPerSecond > 0 && p.JourneysPerSecond == ex.TargetJourneysPerSecond {
@@ -154,6 +175,11 @@ func EvaluateJourneyStarts(ex arrivalexplorer.Result, g JourneyStartGoal) (Journ
 	a.State = "SHORT_TRIAL_TARGET_PASSED"
 	a.Findings = append(a.Findings, fmt.Sprintf("%d short trials at the exact %d scheduled journey starts/s passed their configured criteria. This is not sustained capacity or a conversion to users or HTTP requests/s.", ex.Repeats, target))
 	return a, nil
+}
+
+func containsCalibratedRate(rates []int, target int) bool {
+	index := sort.SearchInts(rates, target)
+	return index < len(rates) && rates[index] == target
 }
 
 func validateProbeRecord(p arrivalexplorer.Probe, ex arrivalexplorer.Result, stage time.Duration) string {

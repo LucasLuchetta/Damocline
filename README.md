@@ -280,7 +280,7 @@ damocline monitor --duration 10m --interval 2s --out reports/host.json
 damocline correlate --load reports/capacity.json --host reports/host.json --out reports/correlated.json
 ```
 
-The monitor does not require an exposed metrics port and does not identify a root cause by itself. See the **[advanced testing guide](docs/ADVANCED_TESTING.md)** for PowerShell, production safety, per-VU sessions, calibration caveats and scenarios.
+The monitor does not require an exposed metrics port and does not identify a root cause by itself. See the **[advanced testing guide](docs/ADVANCED_TESTING.md)** for PowerShell, production safety, per-VU sessions, calibration caveats and scenarios. For open-arrival exploration, optional `--calibration` restricts the search to exact compatible local generator profiles and records the requested and effective rate bounds; this does not qualify the application target or sustained phases.
 
 ## Developer quick start
 

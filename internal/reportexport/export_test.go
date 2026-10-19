@@ -135,8 +135,9 @@ func TestExplorerExportsPreserveLoadUnitsAndDropPrivateText(t *testing.T) {
 	arrivalRun := report.Result{Outcome: "PASS", ElapsedSeconds: 10, ObservationSeconds: 10,
 		Config:  report.RunConfig{Mode: "arrival", Users: 15, ArrivalRate: 4, Duration: "10s", MaxRPS: 20, P95LimitMS: 250, MaxErrorRate: .01},
 		Metrics: report.MetricSet{Total: 40, Success: 40, P95MS: 80}}
-	arrival := arrivalexplorer.Result{SchemaVersion: 1, Scenario: secret, Target: "https://" + secret, StartedAt: "2026-04-03T12:30:00Z",
+	arrival := arrivalexplorer.Result{SchemaVersion: 2, Scenario: secret, Target: "https://" + secret, StartedAt: "2026-04-03T12:30:00Z",
 		StageDuration: "10s", Repeats: 2, WorkerLimit: 15, MinJourneysPerSecond: 2, MaxJourneysPerSecond: 10,
+		RequestedMinJourneysPerSecond: 1, RequestedMaxJourneysPerSecond: 20, CalibratedProbeRates: []int{2, 4, 10},
 		TargetJourneysPerSecond: 4, TargetTested: true, Outcome: "PASS", Reason: secret, Notes: []string{secret},
 		Probes: []arrivalexplorer.Probe{{JourneysPerSecond: 4, Status: "PASS", Reason: secret, Runs: []report.Result{arrivalRun}}}}
 	data, err = Marshal(FromArrivalExplorer(arrival))
@@ -147,6 +148,7 @@ func TestExplorerExportsPreserveLoadUnitsAndDropPrivateText(t *testing.T) {
 		t.Fatal(err)
 	}
 	if strings.Contains(string(data), secret) || exported.Kind != "open_arrival_exploration" || exported.Workload.LoadUnit != "scheduled_journey_starts_per_second" ||
+		exported.Workload.RequestedMinimum != 1 || exported.Workload.RequestedMaximum != 20 || len(exported.Workload.CalibratedLoads) != 3 ||
 		exported.Workload.JourneyStartsPS != 0 || exported.Workload.WorkerLimit != 15 || exported.Workload.TargetLoad != 4 || !exported.Workload.TargetTested || len(exported.Probes) != 1 || exported.Probes[0].TestedLoad != 4 {
 		t.Fatalf("arrival exploration export mixed load units or retained private text: %+v %s", exported.Workload, data)
 	}

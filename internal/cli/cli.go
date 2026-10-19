@@ -117,7 +117,7 @@ Usage:
   damocline run --config scenario.json --authorized [--calibration reports/reference.json --require-calibration] [--app-metrics-endpoint https://app.example.com/metrics --app-metrics-interval 10s] [--out reports/run.json]
   damocline run --config scenario.json --dry-run
   damocline explore --config scenario.json --min-users 2 --max-users 20 --stage-duration 20s --repeats 2 --authorized
-  damocline explore-arrival --config arrival.json --min-journeys-per-second 2 --max-journeys-per-second 20 --authorized
+  damocline explore-arrival --config arrival.json --min-journeys-per-second 2 --max-journeys-per-second 20 [--calibration reference.json --require-calibration] --authorized
 	  damocline campaign --config scenario.json --warmup 30s --observation 2m --recovery 30s --repeats 2 --app-metrics-endpoint https://app.example.com/metrics --authorized
 	  damocline campaign --config staging.json --observation 30m --allow-long-run --staging-confirmed --budget 70m --authorized
 	  damocline arrival-campaign --config arrival.json --observation 2m --recovery 30s --repeats 2 --calibration reports/reference.json --app-metrics-endpoint https://app.example.com/metrics --authorized
@@ -157,6 +157,8 @@ func exploreArrival(args []string, stdout, stderr io.Writer) int {
 	repeats := fs.Int("repeats", 2, "confirmation runs for each passing rate (2-4)")
 	stage := fs.Duration("stage-duration", 20*time.Second, "duration for each repeated probe (10s-3m)")
 	budget := fs.Duration("budget", 10*time.Minute, "maximum exploration wall time (up to 15m)")
+	calibrationFile := fs.String("calibration", "", "optionally restrict probes to exact compatible local generator profiles")
+	requireCalibration := fs.Bool("require-calibration", false, "require --calibration and block unless the minimum rate is covered")
 	authorized := fs.Bool("authorized", false, "confirm permission to benchmark the target")
 	dry := fs.Bool("dry-run", false, "validate and explain the rate schedule without sending requests")
 	writes := fs.Bool("allow-writes", false, "explicitly opt in to HTTP mutation methods")
@@ -202,6 +204,10 @@ func exploreArrival(args []string, stdout, stderr io.Writer) int {
 		TargetJourneysPerSecond: *targetRate, Repeats: *repeats,
 		StageDuration: *stage, Budget: *budget,
 	}
+	if *requireCalibration && *calibrationFile == "" {
+		fmt.Fprintln(stderr, "--require-calibration requires --calibration")
+		return 2
+	}
 	if err := arrivalexplorer.Validate(options, scenario); err != nil {
 		fmt.Fprintf(stderr, "invalid arrival-rate exploration: %v\n", err)
 		return 2
@@ -213,6 +219,35 @@ func exploreArrival(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		fmt.Fprintf(stderr, "configuration error: %v\n", err)
 		return 2
+	}
+	var calibrationRecord *calibration.Record
+	if *calibrationFile != "" {
+		record, loadErr := loadCalibration(*calibrationFile)
+		if loadErr != nil {
+			fmt.Fprintf(stderr, "calibration error: %v\n", loadErr)
+			return 2
+		}
+		rates, envelope, selectErr := selectCalibratedArrivalRates(validated.Scenario, *minRate, *maxRate, *targetRate, record, time.Now().UTC())
+		printArrivalExploreEnvelope(stdout, envelope)
+		if selectErr != nil {
+			fmt.Fprintf(stderr, "ARRIVAL EXPLORATION BLOCKED: %v; no traffic was sent.\n", selectErr)
+			return 2
+		}
+		options.RequestedMinJourneysPerSecond = *minRate
+		options.RequestedMaxJourneysPerSecond = *maxRate
+		options.ProbeRates = rates
+		options.MinJourneysPerSecond = rates[0]
+		options.MaxJourneysPerSecond = rates[len(rates)-1]
+		if err := arrivalexplorer.Validate(options, validated.Scenario); err != nil {
+			fmt.Fprintf(stderr, "invalid calibrated arrival exploration: %v\n", err)
+			return 2
+		}
+		calibrationRecord = &record
+		fmt.Fprintf(stdout, "Calibrated probe set: %v/s; effective search bounds %d-%d/s (requested %d-%d/s).\n",
+			rates, rates[0], rates[len(rates)-1], *minRate, *maxRate)
+		if len(rates) < *maxRate-*minRate+1 {
+			fmt.Fprintln(stdout, "Uncalibrated rates will not be probed; passing the highest calibrated rate does not establish the requested upper bound.")
+		}
 	}
 	fmt.Fprintf(stdout, "Arrival-rate explore: %s | %s://%s | scheduled journey starts %d-%d/s | worker limit %d | stage %s | repeats %d | max_rps %d\n",
 		validated.Scenario.Name, validated.Base.Scheme, validated.Base.Host,
@@ -234,7 +269,16 @@ func exploreArrival(args []string, stdout, stderr io.Writer) int {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	result, err := arrivalexplorer.Run(ctx, validated, options)
+	runner := arrivalexplorer.Runner(engine.Run)
+	if calibrationRecord != nil {
+		record := *calibrationRecord
+		runner = func(runCtx context.Context, scenario config.Validated) report.Result {
+			result := engine.Run(runCtx, scenario)
+			attachCalibrationRecord(&result, scenario.Scenario, record, time.Now().UTC())
+			return result
+		}
+	}
+	result, err := arrivalexplorer.WithRunner(ctx, validated, options, runner)
 	if err != nil {
 		fmt.Fprintf(stderr, "arrival-rate exploration error: %v\n", err)
 		return 2

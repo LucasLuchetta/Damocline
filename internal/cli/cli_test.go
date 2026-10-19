@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/LucasLuchetta/Damocline/internal/arrivalexplorer"
+	"github.com/LucasLuchetta/Damocline/internal/calibration"
 	"github.com/LucasLuchetta/Damocline/internal/config"
 	"github.com/LucasLuchetta/Damocline/internal/reference"
 	"github.com/LucasLuchetta/Damocline/internal/report"
@@ -289,6 +291,112 @@ func TestArrivalExploreRejectsClosedLoopScenario(t *testing.T) {
 	code := Run([]string{"explore-arrival", "--config", path, "--dry-run"}, &stdout, &stderr)
 	if code != 2 || !strings.Contains(stderr.String(), "requires mode=arrival") {
 		t.Fatalf("arrival explorer accepted a closed-loop scenario: code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+}
+
+func TestArrivalExploreCalibrationLimitsSearchToMeasuredRates(t *testing.T) {
+	calibrationPath := writePassingCalibration(t, nil)
+	scenario := config.Scenario{Name: "synthetic-reference-shape", BaseURL: "http://127.0.0.1:18080", Mode: "arrival",
+		Users: 10, ArrivalRate: 2, Duration: "20s", Timeout: "1s", MaxRPS: 50,
+		P95LimitMS: 500, MaxErrorRate: 0, Steps: []config.Step{{Name: "work", Method: "GET", Path: "/work"}}}
+	data, err := json.Marshal(scenario)
+	if err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(t.TempDir(), "scenario.json")
+	if err := os.WriteFile(configPath, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"explore-arrival", "--config", configPath, "--min-journeys-per-second", "2", "--max-journeys-per-second", "20",
+		"--target-journeys-per-second", "10", "--calibration", calibrationPath, "--dry-run"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("calibrated dry run failed: code=%d stderr=%s", code, stderr.String())
+	}
+	for _, expected := range []string{"3 exact scheduled-start profiles are eligible", "Exact compatible rates: [2 5 10]/s",
+		"Calibrated probe set: [2 5 10]/s", "effective search bounds 2-10/s (requested 2-20/s)",
+		"Uncalibrated rates will not be probed", "DRY RUN: no traffic generated"} {
+		if !strings.Contains(stdout.String(), expected) {
+			t.Fatalf("calibrated dry run omitted %q: %s", expected, stdout.String())
+		}
+	}
+}
+
+func TestArrivalExploreCalibrationBlocksUncalibratedMinimumOrTarget(t *testing.T) {
+	calibrationPath := writePassingCalibration(t, nil)
+	scenario := config.Scenario{Name: "synthetic-reference-shape", BaseURL: "http://127.0.0.1:18080", Mode: "arrival",
+		Users: 10, ArrivalRate: 2, Duration: "20s", Timeout: "1s", MaxRPS: 50,
+		P95LimitMS: 500, MaxErrorRate: 0, Steps: []config.Step{{Name: "work", Method: "GET", Path: "/work"}}}
+	data, _ := json.Marshal(scenario)
+	configPath := filepath.Join(t.TempDir(), "scenario.json")
+	if err := os.WriteFile(configPath, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "uncalibrated minimum", args: []string{"--min-journeys-per-second", "3", "--max-journeys-per-second", "10"}, want: "requested minimum rate 3/s"},
+		{name: "uncalibrated exact target", args: []string{"--min-journeys-per-second", "2", "--max-journeys-per-second", "10", "--target-journeys-per-second", "7"}, want: "exact demand target 7/s"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			args := append([]string{"explore-arrival", "--config", configPath}, tc.args...)
+			args = append(args, "--calibration", calibrationPath, "--require-calibration", "--dry-run")
+			var stdout, stderr bytes.Buffer
+			if code := Run(args, &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), tc.want) || !strings.Contains(stderr.String(), "no traffic was sent") {
+				t.Fatalf("incompatible calibration did not block before traffic: code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+			}
+		})
+	}
+	var stdout, stderr bytes.Buffer
+	if code := Run([]string{"explore-arrival", "--config", configPath, "--require-calibration", "--dry-run"}, &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "requires --calibration") {
+		t.Fatalf("required calibration without artifact was accepted: code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+}
+
+func TestCalibratedArrivalExploreExecutesOnlyQualifiedProfileAndRetainsEvidence(t *testing.T) {
+	calibrationPath := writePassingCalibration(t, nil)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(make([]byte, 4<<10))
+	}))
+	defer server.Close()
+	scenario := config.Scenario{Name: "synthetic-reference-shape", BaseURL: server.URL, Mode: "arrival",
+		Users: 10, ArrivalRate: 2, Duration: "10s", Timeout: "1s", MaxRPS: 50,
+		P95LimitMS: 1000, MaxErrorRate: .1, MinSamplesPerStep: 1,
+		Steps: []config.Step{{Name: "work", Method: "GET", Path: "/work"}}}
+	data, err := json.Marshal(scenario)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	configPath, outputPath := filepath.Join(dir, "scenario.json"), filepath.Join(dir, "exploration.json")
+	if err := os.WriteFile(configPath, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"explore-arrival", "--config", configPath, "--min-journeys-per-second", "2", "--max-journeys-per-second", "2",
+		"--target-journeys-per-second", "2", "--stage-duration", "10s", "--calibration", calibrationPath,
+		"--authorized", "--out", outputPath}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("calibrated loopback exploration failed: code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var result arrivalexplorer.Result
+	data, err = os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.SchemaVersion != 2 || result.Outcome != "PASSED_TO_CONFIGURED_CEILING" || result.RequestedMaxJourneysPerSecond != 2 ||
+		len(result.CalibratedProbeRates) != 1 || len(result.Probes) != 1 || result.Probes[0].JourneysPerSecond != 2 || len(result.Probes[0].Runs) != 2 {
+		t.Fatalf("saved calibrated exploration omitted its qualified envelope: %+v", result)
+	}
+	for _, run := range result.Probes[0].Runs {
+		if run.Calibration == nil || run.Calibration.Record.SchemaVersion != calibration.SchemaVersion || run.Config.ArrivalRate != 2 {
+			t.Fatalf("native trial did not retain its exact calibration provenance: %+v", run.Calibration)
+		}
 	}
 }
 
