@@ -2,11 +2,28 @@ package explorer
 
 import (
 	"context"
+	"encoding/json"
 	"github.com/LucasLuchetta/Damocline/internal/config"
+	"github.com/LucasLuchetta/Damocline/internal/generatorhealth"
 	"github.com/LucasLuchetta/Damocline/internal/report"
 	"testing"
 	"time"
 )
+
+func TestSchemaTwoPersistsProbeAndAbortReasons(t *testing.T) {
+	result := Result{SchemaVersion: 2, Outcome: "INCONCLUSIVE", Reason: "wall-time cap reached", Probes: []Probe{{Users: 7, Status: "INCONCLUSIVE", Reason: "arrivals were dropped"}}}
+	data, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var restored Result
+	if err := json.Unmarshal(data, &restored); err != nil {
+		t.Fatal(err)
+	}
+	if restored.SchemaVersion != 2 || restored.Reason != result.Reason || len(restored.Probes) != 1 || restored.Probes[0].Reason != result.Probes[0].Reason {
+		t.Fatalf("versioned exploration reasons did not round-trip: %+v", restored)
+	}
+}
 
 func TestBracketAndRefine(t *testing.T) {
 	v, err := config.Parse(config.Scenario{Name: "test", BaseURL: "https://example.com", Users: 1, Duration: "10s", MaxRPS: 100, P95LimitMS: 1000, Steps: []config.Step{{Name: "x", Path: "/"}}}, config.Options{Authorized: true})
@@ -45,6 +62,23 @@ func TestNoPassingLevel(t *testing.T) {
 		t.Fatalf("unexpected: %+v, %v", r, err)
 	}
 }
+
+func TestGeneratorLimitedFailureCannotBracketApplicationCapacity(t *testing.T) {
+	v, err := config.Parse(config.Scenario{Name: "x", BaseURL: "https://example.com", Users: 1, Duration: "10s", MaxRPS: 100, P95LimitMS: 1000, Steps: []config.Step{{Name: "x", Path: "/"}}}, config.Options{Authorized: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := WithRunner(context.Background(), v, Options{MinUsers: 1, MaxUsers: 8, Repeats: 2, StageDuration: 10 * time.Second}, func(_ context.Context, run config.Validated) report.Result {
+		return report.Result{Outcome: "FAIL", SchemaVersion: 3, ElapsedSeconds: 10, ObservationSeconds: 10,
+			Config: report.RunConfig{Users: run.Scenario.Users, Mode: "closed", MaxRPS: 100}, Metrics: report.MetricSet{Total: 100, Failures: 100},
+			Generator: &generatorhealth.Summary{Samples: 4, GoCPUValid: true, GoCPUUtilizationRatio: 0.95,
+				ProcessSamples: 4, ProcessCPUValid: true, PeakProcessRSSBytes: 1024}}
+	})
+	if err != nil || result.Outcome != "INCONCLUSIVE" || result.FirstFailingUsers != nil || result.Reason == "" {
+		t.Fatalf("generator-bound failure was reported as an application bracket: %+v err=%v", result, err)
+	}
+}
+
 func TestAbort(t *testing.T) {
 	v, err := config.Parse(config.Scenario{Name: "x", BaseURL: "https://example.com", Users: 1, Duration: "10s", MaxRPS: 100, P95LimitMS: 1000, Steps: []config.Step{{Name: "x", Path: "/"}}}, config.Options{Authorized: true})
 	if err != nil {
@@ -56,26 +90,53 @@ func TestAbort(t *testing.T) {
 		t.Fatal("should not run")
 		return report.Result{}
 	})
-	if err != nil || r.Outcome != "ABORTED" {
+	if err != nil || r.Outcome != "ABORTED" || r.Reason == "" || len(r.Probes) != 1 || r.Probes[0].Reason == "" {
 		t.Fatalf("unexpected: %+v %v", r, err)
 	}
 }
 
 func TestInconclusiveGeneratorCannotBecomeApplicationFailure(t *testing.T) {
-    v, err := config.Parse(config.Scenario{
-        Name: "local scenario", BaseURL:"http://127.0.0.1:18080",
-        Users:1, Duration:"10s", MaxRPS:20, P95LimitMS:1000,
-        Steps:[]config.Step{{Name:"local",Path:"/"}},
-    },config.Options{Authorized:true})
-    if err!=nil{t.Fatal(err)}
-    r,err:=WithRunner(context.Background(),v,Options{
-        MinUsers:1,MaxUsers:4,Repeats:2,StageDuration:10*time.Second,
-    },func(context.Context,config.Validated)report.Result{
-        return report.Result{Outcome:"INCONCLUSIVE",ArrivalsDroppedLate:1}
-    })
-    if err!=nil || r.Outcome!="INCONCLUSIVE" || r.HighestPassingUsers!=nil || r.FirstFailingUsers!=nil {
-        t.Fatalf("generator limitations must not be branded as server capacity failure: %+v err=%v",r,err)
-    }
+	v, err := config.Parse(config.Scenario{
+		Name: "local scenario", BaseURL: "http://127.0.0.1:18080",
+		Users: 1, Duration: "10s", MaxRPS: 20, P95LimitMS: 1000,
+		Steps: []config.Step{{Name: "local", Path: "/"}},
+	}, config.Options{Authorized: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := WithRunner(context.Background(), v, Options{
+		MinUsers: 1, MaxUsers: 4, Repeats: 2, StageDuration: 10 * time.Second,
+	}, func(context.Context, config.Validated) report.Result {
+		return report.Result{Outcome: "INCONCLUSIVE", ArrivalsDroppedLate: 1}
+	})
+	if err != nil || r.Outcome != "INCONCLUSIVE" || r.HighestPassingUsers != nil || r.FirstFailingUsers != nil {
+		t.Fatalf("generator limitations must not be branded as server capacity failure: %+v err=%v", r, err)
+	}
+}
+
+func TestPassWithInvalidOrIncompleteDeliveryCannotCountAsPassing(t *testing.T) {
+	cancelled := int64(1)
+	for _, tc := range []struct {
+		name string
+		run  report.Result
+	}{
+		{name: "invalid quality", run: report.Result{Outcome: "PASS", Quality: &report.Quality{State: report.QualityInvalid}}},
+		{name: "dropped arrivals", run: report.Result{Outcome: "PASS", ArrivalsDropped: 1}},
+		{name: "cancelled before admission", run: report.Result{Outcome: "PASS", ArrivalsCancelledBeforeAdmission: &cancelled}},
+		{name: "cancelled journey", run: report.Result{Outcome: "PASS", Journeys: report.MetricSet{Cancelled: 1}}},
+		{name: "current schema ledger invalid", run: report.Result{SchemaVersion: report.CurrentSchemaVersion, Outcome: "PASS"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			v, err := config.Parse(config.Scenario{Name: "synthetic", BaseURL: "http://127.0.0.1:18080", Users: 1, Duration: "10s", MaxRPS: 20, P95LimitMS: 1000, Steps: []config.Step{{Name: "page", Path: "/"}}}, config.Options{Authorized: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := WithRunner(context.Background(), v, Options{MinUsers: 1, MaxUsers: 1, Repeats: 2, StageDuration: 10 * time.Second}, func(context.Context, config.Validated) report.Result { return tc.run })
+			if err != nil || result.Outcome != "INCONCLUSIVE" || result.HighestPassingUsers != nil || len(result.Probes) != 1 || result.Probes[0].Reason == "" {
+				t.Fatalf("invalid delivery was counted as a passing probe: %+v err=%v", result, err)
+			}
+		})
+	}
 }
 
 func TestBusinessTargetIsTestedAtExactLoad(t *testing.T) {
@@ -84,18 +145,22 @@ func TestBusinessTargetIsTestedAtExactLoad(t *testing.T) {
 		Users: 2, Duration: "10s", MaxRPS: 100, P95LimitMS: 1000,
 		Steps: []config.Step{{Name: "page", Path: "/"}},
 	}, config.Options{Authorized: true})
-	if err != nil {t.Fatal(err)}
-	counts:=map[int]int{}
-	out,err:=WithRunner(context.Background(),v,Options{
-		MinUsers:2, MaxUsers:20, TargetUsers:15, Repeats:2,
-		StageDuration:10*time.Second,
-	},func(_ context.Context,c config.Validated)report.Result{
+	if err != nil {
+		t.Fatal(err)
+	}
+	counts := map[int]int{}
+	out, err := WithRunner(context.Background(), v, Options{
+		MinUsers: 2, MaxUsers: 20, TargetUsers: 15, Repeats: 2,
+		StageDuration: 10 * time.Second,
+	}, func(_ context.Context, c config.Validated) report.Result {
 		counts[c.Scenario.Users]++
-		return report.Result{Outcome:"PASS"}
+		return report.Result{Outcome: "PASS"}
 	})
-	if err != nil {t.Fatal(err)}
-	if counts[15] != 2 || out.Outcome!="PASSED_TO_CONFIGURED_CEILING"{
-		t.Fatalf("exact business goal stage missing: %+v counts=%v",out,counts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if counts[15] != 2 || out.Outcome != "PASSED_TO_CONFIGURED_CEILING" {
+		t.Fatalf("exact business goal stage missing: %+v counts=%v", out, counts)
 	}
 }
 func TestOutOfRangeBusinessTargetNeverRaisesSafetyCeiling(t *testing.T) {
@@ -104,16 +169,20 @@ func TestOutOfRangeBusinessTargetNeverRaisesSafetyCeiling(t *testing.T) {
 		Users: 2, Duration: "10s", MaxRPS: 100, P95LimitMS: 1000,
 		Steps: []config.Step{{Name: "page", Path: "/"}},
 	}, config.Options{Authorized: true})
-	if err != nil {t.Fatal(err)}
-	counts:=map[int]int{}
-	_,err=WithRunner(context.Background(),v,Options{
-		MinUsers:2,MaxUsers:16,TargetUsers:250,Repeats:2,StageDuration:10*time.Second,
-	},func(_ context.Context,c config.Validated)report.Result{
+	if err != nil {
+		t.Fatal(err)
+	}
+	counts := map[int]int{}
+	_, err = WithRunner(context.Background(), v, Options{
+		MinUsers: 2, MaxUsers: 16, TargetUsers: 250, Repeats: 2, StageDuration: 10 * time.Second,
+	}, func(_ context.Context, c config.Validated) report.Result {
 		counts[c.Scenario.Users]++
-		return report.Result{Outcome:"PASS"}
+		return report.Result{Outcome: "PASS"}
 	})
-	if err!=nil{t.Fatal(err)}
-	if counts[250]!=0 || counts[16]==0 {
-		t.Fatalf("exceeded safety range: %v",counts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if counts[250] != 0 || counts[16] == 0 {
+		t.Fatalf("exceeded safety range: %v", counts)
 	}
 }

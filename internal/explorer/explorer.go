@@ -24,6 +24,7 @@ type Options struct {
 type Probe struct {
 	Users  int             `json:"users"`
 	Status string          `json:"status"`
+	Reason string          `json:"reason,omitempty"`
 	Runs   []report.Result `json:"runs"`
 }
 type Result struct {
@@ -38,6 +39,7 @@ type Result struct {
 	HighestPassingUsers *int     `json:"highest_passing_tested_users,omitempty"`
 	FirstFailingUsers   *int     `json:"first_failing_tested_users,omitempty"`
 	Outcome             string   `json:"outcome"`
+	Reason              string   `json:"reason,omitempty"`
 	Probes              []Probe  `json:"probes"`
 	Notes               []string `json:"notes"`
 }
@@ -89,7 +91,7 @@ func WithRunner(ctx context.Context, base config.Validated, opt Options, runner 
 		}
 	}
 	started := time.Now()
-	result := Result{SchemaVersion: 1, Scenario: base.Scenario.Name, Target: base.Base.Scheme + "://" + base.Base.Host, StartedAt: started.UTC().Format(time.RFC3339), StageDuration: opt.StageDuration.String(), Repeats: opt.Repeats, MinUsers: opt.MinUsers, MaxUsers: opt.MaxUsers, Outcome: "INCONCLUSIVE", Notes: []string{
+	result := Result{SchemaVersion: 2, Scenario: base.Scenario.Name, Target: base.Base.Scheme + "://" + base.Base.Host, StartedAt: started.UTC().Format(time.RFC3339), StageDuration: opt.StageDuration.String(), Repeats: opt.Repeats, MinUsers: opt.MinUsers, MaxUsers: opt.MaxUsers, Outcome: "INCONCLUSIVE", Notes: []string{
 		"The highest repeatedly passing tested level is not a universal server capacity. It applies only to this HTTP workload, traffic cap, deployment, and service-level objectives.",
 		"The generator reports Go runtime heap, goroutines, GC, and partial Go CPU activity per trial; full process metrics, server CPU/RAM, databases, and root causes remain unverified.",
 	}}
@@ -98,6 +100,7 @@ func WithRunner(ctx context.Context, base config.Validated, opt Options, runner 
 		for k := 0; k < opt.Repeats; k++ {
 			if ctx.Err() != nil {
 				p.Status = "ABORTED"
+				p.Reason = abortReason(ctx.Err())
 				break
 			}
 			v := base
@@ -113,10 +116,33 @@ func WithRunner(ctx context.Context, base config.Validated, opt Options, runner 
 			}
 			r := runner(ctx, v)
 			p.Runs = append(p.Runs, r)
+			if r.Outcome == "ABORTED" {
+				p.Status = "ABORTED"
+				p.Reason = abortReason(ctx.Err())
+				if ctx.Err() == nil {
+					p.Reason = "The native run reported ABORTED before the stage completed."
+				}
+				break
+			}
+			if reason := deliveryIssue(r); reason != "" {
+				p.Status = "INCONCLUSIVE"
+				p.Reason = reason
+				break
+			}
+			if r.Outcome == "FAIL" && (r.SchemaVersion >= 16 || r.Generator != nil) {
+				if reason := report.GeneratorEvidenceIssue(r); reason != "" {
+					p.Status = "INCONCLUSIVE"
+					p.Reason = reason
+					break
+				}
+			}
 			if r.Outcome != "PASS" {
 				p.Status = "FAIL"
-				if r.Outcome == "ABORTED" || r.Outcome == "INCONCLUSIVE" {
+				if r.Outcome == "INCONCLUSIVE" {
 					p.Status = r.Outcome
+					p.Reason = "The stage did not produce decisive evidence."
+				} else {
+					p.Reason = "The configured application objective failed."
 				}
 				break
 			}
@@ -127,6 +153,7 @@ func WithRunner(ctx context.Context, base config.Validated, opt Options, runner 
 				}
 			}
 			if p.Status == "INCONCLUSIVE" {
+				p.Reason = "The configured request-rate ceiling may be limiting the workload."
 				break
 			}
 		}
@@ -140,6 +167,7 @@ func WithRunner(ctx context.Context, base config.Validated, opt Options, runner 
 		status := probe(candidate)
 		if status == "ABORTED" || status == "INCONCLUSIVE" {
 			result.Outcome = status
+			result.Reason = result.Probes[len(result.Probes)-1].Reason
 			return result, nil
 		}
 		if status == "PASS" {
@@ -178,12 +206,14 @@ func WithRunner(ctx context.Context, base config.Validated, opt Options, runner 
 	for high-low > 1 {
 		if ctx.Err() != nil {
 			result.Outcome = "ABORTED"
+			result.Reason = abortReason(ctx.Err())
 			return result, nil
 		}
 		mid := low + (high-low)/2
 		status := probe(mid)
 		if status == "ABORTED" || status == "INCONCLUSIVE" {
 			result.Outcome = status
+			result.Reason = result.Probes[len(result.Probes)-1].Reason
 			return result, nil
 		}
 		if status == "PASS" {
@@ -196,4 +226,28 @@ func WithRunner(ctx context.Context, base config.Validated, opt Options, runner 
 	result.FirstFailingUsers = &high
 	result.Outcome = "BRACKETED"
 	return result, nil
+}
+
+func abortReason(err error) string {
+	if err == context.DeadlineExceeded {
+		return "Exploration wall-time budget expired before the probe completed."
+	}
+	return "Exploration was interrupted by its caller."
+}
+
+func deliveryIssue(run report.Result) string {
+	if run.Quality != nil && run.Quality.State == report.QualityInvalid {
+		return "Generator or report accounting is invalid; this probe cannot be treated as an application failure or pass."
+	}
+	if run.ArrivalsDropped > 0 || run.ArrivalsDroppedLate > 0 || run.ArrivalsDroppedBusy > 0 ||
+		run.ArrivalsCancelledBeforeAdmission != nil && *run.ArrivalsCancelledBeforeAdmission > 0 ||
+		run.Metrics.Cancelled > 0 || run.Journeys.Cancelled > 0 {
+		return "Planned arrivals or configured journeys were dropped or cancelled; delivered workload is incomplete."
+	}
+	if run.SchemaVersion >= 16 {
+		if assessment := report.AssessQuality(run); assessment.State == report.QualityInvalid {
+			return "Current-schema report fails recomputed delivery or generator-accounting checks."
+		}
+	}
+	return ""
 }

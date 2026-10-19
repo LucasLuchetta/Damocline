@@ -13,6 +13,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/LucasLuchetta/Damocline/internal/generatorhealth"
 )
 
 type Scenario struct {
@@ -69,6 +71,7 @@ type Step struct {
 	Headers        map[string]string  `json:"headers,omitempty"`
 	ExpectedStatus []int              `json:"expected_status,omitempty"`
 	MustContain    string             `json:"must_contain,omitempty"`
+	JSONAssertions map[string]string  `json:"json_assertions,omitempty"`
 	BodyEnv        string             `json:"body_env,omitempty"`
 	Extract        map[string]Extract `json:"extract,omitempty"`
 }
@@ -99,6 +102,7 @@ type Validated struct {
 	Profiles            []PreparedProfile
 	Cookies             []string
 	SyntheticDataPrefix string
+	GeneratorGuardrails generatorhealth.Guardrails
 }
 
 // PreparedProfile contains the safe, resolved workflow selected by the
@@ -397,6 +401,9 @@ func Parse(s Scenario, o Options) (Validated, error) {
 			if len(step.MustContain) > 256 {
 				return v, fmt.Errorf("must_contain is limited to 256 bytes in %q", step.Name)
 			}
+			if err := validateJSONAssertions(step.JSONAssertions); err != nil {
+				return v, fmt.Errorf("step %q JSON assertions: %w", step.Name, err)
+			}
 			head := make(map[string]string, len(step.Headers))
 			for key, value := range step.Headers {
 				canonical := strings.ToLower(strings.TrimSpace(key))
@@ -585,7 +592,20 @@ func containsCookieHeader(steps []Step) bool {
 func validatePathTemplate(path string, available map[string]bool) error {
 	pathOnly, query, hasQuery := strings.Cut(path, "?")
 	if hasQuery && strings.Contains(query, "{{") {
-		return errors.New("variables are only supported as complete path segments, headers, or body_env content")
+		values, err := url.ParseQuery(query)
+		if err != nil {
+			return fmt.Errorf("invalid query string: %w", err)
+		}
+		for key, items := range values {
+			if strings.Contains(key, "{{") || strings.Contains(key, "}}") {
+				return errors.New("query templates are supported only in parameter values")
+			}
+			for _, value := range items {
+				if err := validateTemplate(value, available); err != nil {
+					return fmt.Errorf("query template: %w", err)
+				}
+			}
+		}
 	}
 	for _, segment := range strings.Split(pathOnly, "/") {
 		if !strings.Contains(segment, "{{") {
@@ -632,7 +652,7 @@ func validateExtracts(extracts map[string]Extract, available map[string]bool) er
 		if hasPointer == hasHeader {
 			return fmt.Errorf("extract %q must define exactly one of json_pointer or header", name)
 		}
-		if hasPointer && (!strings.HasPrefix(extract.JSONPointer, "/") || len(extract.JSONPointer) > 512) {
+		if hasPointer && !validJSONPointer(extract.JSONPointer) {
 			return fmt.Errorf("extract %q has an invalid json_pointer", name)
 		}
 		if hasHeader && (len(extract.Header) > 128 || strings.ContainsAny(extract.Header, "\r\n")) {
@@ -641,6 +661,37 @@ func validateExtracts(extracts map[string]Extract, available map[string]bool) er
 		available[name] = true
 	}
 	return nil
+}
+
+func validateJSONAssertions(assertions map[string]string) error {
+	if len(assertions) > 20 {
+		return errors.New("at most 20 JSON assertions are allowed per step")
+	}
+	for pointer, expected := range assertions {
+		if !validJSONPointer(pointer) {
+			return fmt.Errorf("invalid JSON pointer %q", pointer)
+		}
+		if len(expected) > 256 {
+			return fmt.Errorf("expected scalar at %q exceeds 256 bytes", pointer)
+		}
+	}
+	return nil
+}
+
+func validJSONPointer(pointer string) bool {
+	if pointer == "" || len(pointer) > 512 || !strings.HasPrefix(pointer, "/") || strings.ContainsAny(pointer, "\r\n") {
+		return false
+	}
+	for i := 0; i < len(pointer); i++ {
+		if pointer[i] != '~' {
+			continue
+		}
+		if i+1 == len(pointer) || pointer[i+1] != '0' && pointer[i+1] != '1' {
+			return false
+		}
+		i++
+	}
+	return true
 }
 
 func isLoopback(h string) bool {

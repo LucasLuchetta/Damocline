@@ -13,6 +13,7 @@ import (
 
 	"github.com/LucasLuchetta/Damocline/internal/campaign"
 	"github.com/LucasLuchetta/Damocline/internal/capacitygoal"
+	"github.com/LucasLuchetta/Damocline/internal/generatorhealth"
 	"github.com/LucasLuchetta/Damocline/internal/report"
 )
 
@@ -45,17 +46,23 @@ type CampaignLevelAssessment struct {
 }
 
 type campaignLevelShape struct {
-	SchemaVersion int               `json:"schema_version"`
-	Scenario      string            `json:"scenario"`
-	Target        string            `json:"target"`
-	Warmup        string            `json:"warmup"`
-	Observation   string            `json:"observation"`
-	SpikeDuration string            `json:"spike_duration"`
-	SpikeRatio    string            `json:"spike_ratio"`
-	Recovery      string            `json:"recovery"`
-	Budget        string            `json:"budget,omitempty"`
-	Repeats       int               `json:"repeats"`
-	Controls      *campaignRunShape `json:"controls,omitempty"`
+	SchemaVersion       int                         `json:"schema_version"`
+	Scenario            string                      `json:"scenario"`
+	Target              string                      `json:"target"`
+	Warmup              string                      `json:"warmup"`
+	Observation         string                      `json:"observation"`
+	SpikeDuration       string                      `json:"spike_duration"`
+	SpikeRatio          string                      `json:"spike_ratio"`
+	Recovery            string                      `json:"recovery"`
+	Soak                string                      `json:"soak,omitempty"`
+	Cooldown            string                      `json:"cooldown,omitempty"`
+	LongRun             bool                        `json:"long_run,omitempty"`
+	Environment         string                      `json:"declared_environment,omitempty"`
+	StabilityPolicy     campaign.StabilityPolicy    `json:"stability_policy"`
+	GeneratorGuardrails *generatorhealth.Guardrails `json:"generator_guardrails,omitempty"`
+	Budget              string                      `json:"budget,omitempty"`
+	Repeats             int                         `json:"repeats"`
+	Controls            *campaignRunShape           `json:"controls,omitempty"`
 }
 
 type campaignRunShape struct {
@@ -212,7 +219,9 @@ func campaignCollectionShape(e campaign.Result) (string, error) {
 	shape := campaignLevelShape{
 		SchemaVersion: e.SchemaVersion, Scenario: e.Scenario, Target: e.Target,
 		Warmup: e.Warmup, Observation: e.Observation,
-		SpikeDuration: e.SpikeDuration, Recovery: e.Recovery, Budget: e.Budget, Repeats: e.Repeats,
+		SpikeDuration: e.SpikeDuration, Recovery: e.Recovery, Soak: e.Soak, Cooldown: e.Cooldown, StabilityPolicy: e.EffectiveStabilityPolicy(), Budget: e.Budget, Repeats: e.Repeats,
+		LongRun: e.LongRun, Environment: e.DeclaredEnvironment,
+		GeneratorGuardrails: e.GeneratorGuardrails,
 	}
 	if e.SpikeUsers == 0 {
 		shape.SpikeRatio = "none"
@@ -222,7 +231,7 @@ func campaignCollectionShape(e campaign.Result) (string, error) {
 		gcd := greatestCommonDivisor(e.SpikeUsers, e.BaseUsers)
 		shape.SpikeRatio = fmt.Sprintf("%d/%d", e.SpikeUsers/gcd, e.BaseUsers/gcd)
 	}
-	_, planned, err := campaignLevelSchedule(e)
+	options, _, err := campaignLevelSchedule(e)
 	if err != nil {
 		return "", err
 	}
@@ -230,11 +239,15 @@ func campaignCollectionShape(e campaign.Result) (string, error) {
 	controlSet := false
 	seenRequiredPhases := 0
 	for _, trial := range e.Trials {
-		if trial.Number < 1 || trial.Number > e.Repeats || len(trial.Phases) > len(planned) || trial.Outcome == "PASS" && len(trial.Phases) != len(planned) {
+		trialPlanned := campaign.PlannedPhases(options, e.BaseUsers)
+		if e.SchemaVersion >= 4 {
+			trialPlanned = campaign.PlannedTrialPhases(options, e.BaseUsers, trial.Number)
+		}
+		if trial.Number < 1 || trial.Number > e.Repeats || len(trial.Phases) > len(trialPlanned) || trial.Outcome == "PASS" && len(trial.Phases) != len(trialPlanned) {
 			return "", errors.New("campaign trial phases do not match the declared schedule")
 		}
 		for phaseIndex, phase := range trial.Phases {
-			want := planned[phaseIndex]
+			want := trialPlanned[phaseIndex]
 			if phase.Name != want.Name || phase.Run.Config.Users != want.Users || phase.Run.Config.Duration != want.Duration.String() || phase.Run.Target != e.Target {
 				return "", errors.New("campaign phase does not match its declared workload schedule")
 			}
@@ -284,9 +297,13 @@ func campaignCollectionShape(e campaign.Result) (string, error) {
 			}
 		}
 	}
-	if seenRequiredPhases == 0 || !controlSet {
+	if seenRequiredPhases > 0 && !controlSet {
 		return "", errors.New("no required phase controls")
 	}
+	return digestCampaignShape(shape)
+}
+
+func digestCampaignShape(shape campaignLevelShape) (string, error) {
 	data, err := json.Marshal(shape)
 	if err != nil {
 		return "", err
@@ -296,6 +313,15 @@ func campaignCollectionShape(e campaign.Result) (string, error) {
 }
 
 func campaignLevelSchedule(e campaign.Result) (campaign.Options, []campaign.PlannedPhase, error) {
+	if e.SchemaVersion < 7 && e.GeneratorGuardrails != nil {
+		return campaign.Options{}, nil, errors.New("generator resource guardrails are unsupported by this campaign schema")
+	}
+	if e.SchemaVersion < 6 && e.LongRun {
+		return campaign.Options{}, nil, errors.New("long-run declaration is unsupported by this campaign schema")
+	}
+	if e.LongRun && e.DeclaredEnvironment != "staging" {
+		return campaign.Options{}, nil, errors.New("long-run campaign is missing its declared staging environment")
+	}
 	warmup, err := time.ParseDuration(e.Warmup)
 	if err != nil {
 		return campaign.Options{}, nil, errors.New("invalid campaign warmup schedule")
@@ -312,14 +338,42 @@ func campaignLevelSchedule(e campaign.Result) (campaign.Options, []campaign.Plan
 	if err != nil {
 		return campaign.Options{}, nil, errors.New("invalid campaign recovery schedule")
 	}
-	budget, err := time.ParseDuration(e.Budget)
+	soak := time.Duration(0)
+	if e.SchemaVersion >= 4 && e.Soak != "" {
+		soak, err = time.ParseDuration(e.Soak)
+	}
+	if err != nil {
+		return campaign.Options{}, nil, errors.New("invalid campaign soak schedule")
+	}
+	cooldown := time.Duration(0)
+	if e.SchemaVersion >= 9 {
+		cooldown, err = time.ParseDuration(e.Cooldown)
+	} else if e.Cooldown != "" {
+		return campaign.Options{}, nil, errors.New("cooldown is unsupported by this campaign schema")
+	}
+	if err != nil || cooldown < 0 || cooldown > 5*time.Minute {
+		return campaign.Options{}, nil, errors.New("invalid campaign cooldown schedule")
+	}
+	budget := time.Duration(0)
+	if e.Budget != "" {
+		budget, err = time.ParseDuration(e.Budget)
+	}
 	if err != nil {
 		return campaign.Options{}, nil, errors.New("invalid campaign budget")
 	}
 	options := campaign.Options{Warmup: warmup, Observation: observation, SpikeUsers: e.SpikeUsers,
-		SpikeDuration: spike, Recovery: recovery, Repeats: e.Repeats, Budget: budget}
+		SpikeDuration: spike, Recovery: recovery, Soak: soak, Cooldown: cooldown, Repeats: e.Repeats, Budget: budget,
+		Stability: e.EffectiveStabilityPolicy(), LongRun: e.LongRun, StagingConfirmed: e.LongRun}
+	if e.SchemaVersion >= 7 && e.GeneratorGuardrails != nil {
+		options.Guardrails = *e.GeneratorGuardrails
+	}
 	if err := campaign.Validate(options); err != nil {
-		return campaign.Options{}, nil, fmt.Errorf("invalid campaign schedule: %w", err)
+		if !(e.SchemaVersion < 4 && options.Budget > 0 && options.Budget <= 15*time.Minute && options.Budget >= time.Duration(options.Repeats)*(options.Warmup+options.Observation+options.SpikeDuration+options.Recovery)) {
+			return campaign.Options{}, nil, fmt.Errorf("invalid campaign schedule: %w", err)
+		}
+	}
+	if options.Budget == 0 {
+		options.Budget = campaign.PlannedBudget(options)
 	}
 	return options, campaign.PlannedPhases(options, e.BaseUsers), nil
 }

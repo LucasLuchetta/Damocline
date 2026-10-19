@@ -204,13 +204,16 @@ func Run(parent context.Context, v config.Validated) report.Result {
 
 func runWithTransport(parent context.Context, v config.Validated, transport *http.Transport) report.Result {
 	started := time.Now()
-	generatorMonitor := generatorhealth.Start(250 * time.Millisecond)
+	scheduleDeadline := started.Add(v.Duration)
 	// Stop admitting new work at the configured boundary, then allow any
 	// already-started journey a bounded time to finish.
 	drainAllowance := drainDuration(v)
 	ctx, cancel := context.WithTimeout(parent, v.Duration+drainAllowance)
 	defer cancel()
-	scheduleCtx, cancelSchedule := context.WithTimeout(parent, v.Duration)
+	generatorMonitor := generatorhealth.StartWithGuardrails(250*time.Millisecond, v.GeneratorGuardrails, func(generatorhealth.GuardrailTrigger) {
+		cancel()
+	})
+	scheduleCtx, cancelSchedule := context.WithTimeout(ctx, v.Duration)
 	defer cancelSchedule()
 	coll := newCollector(v, started)
 	ticker := time.NewTicker(time.Second / time.Duration(v.Scenario.MaxRPS))
@@ -381,7 +384,7 @@ func runWithTransport(parent context.Context, v config.Validated, transport *htt
 				}
 				profileIndex := closedProfiles[index]
 				var journeyOrdinal uint64
-				for scheduleCtx.Err() == nil {
+				for scheduleCtx.Err() == nil && time.Now().Before(scheduleDeadline) {
 					scheduledIterations.Add(1)
 					journeyOrdinal++
 					iteration(clients[index], v.Profiles[profileIndex], index, journeyOrdinal)
@@ -542,6 +545,22 @@ func runWithTransport(parent context.Context, v config.Validated, transport *htt
 	}
 	if errors.Is(parent.Err(), context.Canceled) || errors.Is(parent.Err(), context.DeadlineExceeded) {
 		result.Outcome = "ABORTED"
+	}
+	if generatorSnapshot.GuardrailTrigger != nil {
+		result.Outcome = "ABORTED"
+		trigger := generatorSnapshot.GuardrailTrigger
+		if trigger.Resource == "generator_process_cpu" {
+			result.Warnings = append(result.Warnings, fmt.Sprintf("Generator process CPU guardrail triggered at %.1f%% (limit %.1f%%) for %d consecutive samples; this run is aborted and cannot be attributed to the target application.", trigger.ObservedCPUPercent, trigger.LimitCPUPercent, trigger.ConsecutiveSamples))
+		} else {
+			result.Warnings = append(result.Warnings, fmt.Sprintf("Generator process RSS guardrail triggered at %d bytes (limit %d bytes) for %d consecutive samples; this run is aborted and cannot be attributed to the target application.", trigger.ObservedRSSBytes, trigger.LimitRSSBytes, trigger.ConsecutiveSamples))
+		}
+	} else if v.GeneratorGuardrails.Enabled() &&
+		((v.GeneratorGuardrails.MaxProcessRSSBytes > 0 && generatorSnapshot.ProcessSamples < v.GeneratorGuardrails.ConsecutiveSamples) ||
+			(v.GeneratorGuardrails.MaxProcessCPUPercent > 0 && generatorSnapshot.ProcessCPUSamples < v.GeneratorGuardrails.ConsecutiveSamples)) {
+		if result.Outcome == "PASS" {
+			result.Outcome = "INCONCLUSIVE"
+		}
+		result.Warnings = append(result.Warnings, "Configured generator resource guardrails lacked enough valid process samples to establish that the limits were not exceeded.")
 	}
 	if len(v.Cookies) == 0 && v.Scenario.Users > 1 {
 		result.Warnings = append(result.Warnings, "Multiple virtual users may share one login identity; configure per_vu_cookie_env_prefix to test independent authenticated sessions.")
@@ -830,6 +849,11 @@ func execute(parent context.Context, client *http.Client, base *url.URL, timeout
 		observed.assertionFailure = true
 		return observed, nil
 	}
+	if len(s.JSONAssertions) > 0 && !jsonAssertionsMatch(s.JSONAssertions, data) {
+		observed := responseSample("assertion_json_mismatch")
+		observed.assertionFailure = true
+		return observed, nil
+	}
 	extracted, err := extractValues(s.Extract, res.Header, data)
 	if err != nil {
 		return responseSample("extraction_failed"), nil
@@ -837,6 +861,37 @@ func execute(parent context.Context, client *http.Client, base *url.URL, timeout
 	observed := responseSample("")
 	observed.success = true
 	return observed, extracted
+}
+
+func jsonAssertionsMatch(assertions map[string]string, body []byte) bool {
+	document, err := decodeJSONDocument(body)
+	if err != nil {
+		return false
+	}
+	for pointer, expected := range assertions {
+		actual, ok := jsonPointer(document, pointer)
+		if !ok || actual != expected {
+			return false
+		}
+	}
+	return true
+}
+
+func decodeJSONDocument(body []byte) (any, error) {
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.UseNumber()
+	var document any
+	if err := decoder.Decode(&document); err != nil {
+		return nil, err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return nil, errors.New("multiple JSON values")
+		}
+		return nil, err
+	}
+	return document, nil
 }
 
 func isDNSFailure(err error) bool {
@@ -886,6 +941,24 @@ func interpolateURL(base *url.URL, pathTemplate string, variables map[string]str
 	}
 	resolvedPath := strings.Join(segments, "/")
 	if hasQuery {
+		if strings.Contains(query, "{{") {
+			values, err := url.ParseQuery(query)
+			if err != nil {
+				return "", fmt.Errorf("parse query template: %w", err)
+			}
+			for key, items := range values {
+				if strings.Contains(key, "{{") || strings.Contains(key, "}}") {
+					return "", fmt.Errorf("query templates are supported only in parameter values")
+				}
+				for i, item := range items {
+					values[key][i], err = interpolateChecked(item, variables)
+					if err != nil {
+						return "", err
+					}
+				}
+			}
+			query = values.Encode()
+		}
 		resolvedPath += "?" + query
 	}
 	parsed, err := url.Parse(resolvedPath)
@@ -893,6 +966,23 @@ func interpolateURL(base *url.URL, pathTemplate string, variables map[string]str
 		return "", err
 	}
 	return base.ResolveReference(parsed).String(), nil
+}
+
+func interpolateChecked(value string, variables map[string]string) (string, error) {
+	var missing string
+	result := variablePattern.ReplaceAllStringFunc(value, func(match string) string {
+		name := strings.TrimSuffix(strings.TrimPrefix(match, "{{"), "}}")
+		resolved, ok := variables[name]
+		if !ok {
+			missing = name
+			return match
+		}
+		return resolved
+	})
+	if missing != "" {
+		return "", fmt.Errorf("missing variable %q", missing)
+	}
+	return result, nil
 }
 
 func interpolate(value string, variables map[string]string) string {
@@ -918,7 +1008,9 @@ func extractValues(extracts map[string]config.Extract, headers http.Header, body
 			continue
 		}
 		if document == nil {
-			if err := json.Unmarshal(body, &document); err != nil {
+			var err error
+			document, err = decodeJSONDocument(body)
+			if err != nil {
 				return nil, fmt.Errorf("decode JSON response: %w", err)
 			}
 		}
@@ -957,6 +1049,8 @@ func jsonPointer(document any, pointer string) (string, bool) {
 		return value, true
 	case float64:
 		return strconv.FormatFloat(value, 'f', -1, 64), true
+	case json.Number:
+		return value.String(), true
 	case bool:
 		return strconv.FormatBool(value), true
 	default:

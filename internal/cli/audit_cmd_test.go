@@ -12,12 +12,17 @@ import (
 	"github.com/LucasLuchetta/Damocline/internal/report"
 )
 
+func defaultCampaignStabilityPolicy() *campaign.StabilityPolicy {
+	policy := campaign.DefaultStabilityPolicy()
+	return &policy
+}
+
 func TestAuditCommandIsOfflineAndProducesMachineReadableEvidence(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "campaign.json")
 	out := filepath.Join(t.TempDir(), "audit.json")
-	evidence := campaign.Result{SchemaVersion: campaign.CurrentSchemaVersion,
+	evidence := campaign.Result{SchemaVersion: campaign.CurrentSchemaVersion, ExecutionState: "COMPLETED", Cooldown: "0s", StabilityPolicy: defaultCampaignStabilityPolicy(),
 		Scenario: "offline", BaseUsers: 2, Repeats: 2, Outcome: "INCONCLUSIVE",
-		Trials: []campaign.Trial{{Number: 1, Outcome: "INCONCLUSIVE"}, {Number: 2, Outcome: "INCONCLUSIVE"}},
+		Trials: []campaign.Trial{{RunID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Number: 1, Outcome: "INCONCLUSIVE"}, {RunID: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", Number: 2, Outcome: "INCONCLUSIVE"}},
 	}
 	if err := report.WriteAnyJSON(path, evidence); err != nil {
 		t.Fatal(err)
@@ -70,7 +75,7 @@ func TestAuditCommandRejectsMissingCampaign(t *testing.T) {
 
 func TestAuditCommandRequiresPeakWhenDemandOptionsAreSupplied(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "campaign.json")
-	evidence := campaign.Result{SchemaVersion: campaign.CurrentSchemaVersion, Scenario: "offline", BaseUsers: 2, Repeats: 2, Outcome: "INCONCLUSIVE"}
+	evidence := campaign.Result{SchemaVersion: campaign.CurrentSchemaVersion, ExecutionState: "COMPLETED", Scenario: "offline", BaseUsers: 2, Repeats: 2, Outcome: "INCONCLUSIVE", Cooldown: "0s", StabilityPolicy: defaultCampaignStabilityPolicy()}
 	if err := report.WriteAnyJSON(path, evidence); err != nil {
 		t.Fatal(err)
 	}
@@ -87,10 +92,10 @@ func TestAuditCommandAcceptsMultipleCampaignsAndKeepsExactDemandUnknown(t *testi
 	out := filepath.Join(directory, "collection.json")
 	for i, path := range []string{firstPath, secondPath} {
 		evidence := campaign.Result{
-			SchemaVersion: campaign.CurrentSchemaVersion, Scenario: "offline", BaseUsers: []int{2, 4}[i],
+			SchemaVersion: campaign.CurrentSchemaVersion, ExecutionState: "COMPLETED", Scenario: "offline", BaseUsers: []int{2, 4}[i], Cooldown: "0s", StabilityPolicy: defaultCampaignStabilityPolicy(),
 			Target: "http://127.0.0.1:18080", Warmup: "0s", Observation: "10s", SpikeDuration: "0s", Recovery: "10s", Budget: "2m20s",
 			Repeats: 2, Outcome: "ABORTED", Trials: []campaign.Trial{
-				{Number: 1, Outcome: "ABORTED", AbortReason: "The campaign was interrupted by its caller."},
+				{RunID: []string{"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "cccccccccccccccccccccccccccccccc"}[i], Number: 1, Outcome: "ABORTED", AbortReason: "The campaign was interrupted by its caller."},
 			},
 		}
 		if err := report.WriteAnyJSON(path, evidence); err != nil {
@@ -102,12 +107,17 @@ func TestAuditCommandAcceptsMultipleCampaignsAndKeepsExactDemandUnknown(t *testi
 	if exit := Run(args, &stdout, &stderr); exit != 0 {
 		t.Fatalf("multi-level audit exit: %d %s", exit, stderr.String())
 	}
-	for _, expected := range []string{"CAMPAIGN LEVEL AUDIT (OFFLINE)", "NOT_COMPARABLE", "2 VUs", "4 VUs", "not interpolated", "No traffic was generated"} {
+	for _, expected := range []string{"CAMPAIGN LEVEL AUDIT (OFFLINE)", "INCONCLUSIVE", "2 VUs", "4 VUs", "not interpolated", "No traffic was generated"} {
 		if !strings.Contains(stdout.String(), expected) {
 			t.Fatalf("missing %q in output: %s", expected, stdout.String())
 		}
 	}
 	rendered := strings.Replace(stdout.String(), "Audit JSON: "+out+"\n", "", 1)
+	if os.Getenv("UPDATE_GOLDEN") == "1" {
+		if err := os.WriteFile(filepath.Join("testdata", "audit_collection.golden.txt"), []byte(rendered), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	golden, err := os.ReadFile(filepath.Join("testdata", "audit_collection.golden.txt"))
 	if err != nil {
 		t.Fatal(err)
@@ -134,7 +144,7 @@ func TestAuditCommandAcceptsMultipleCampaignsAndKeepsExactDemandUnknown(t *testi
 	if err := json.Unmarshal(raw, &assessment); err != nil {
 		t.Fatal(err)
 	}
-	if assessment.AssessmentType != "CAMPAIGN_LEVEL_COLLECTION" || assessment.State != "NOT_COMPARABLE" || len(assessment.Levels) != 2 || assessment.Levels[0].TestedUsers != 2 || assessment.Levels[1].TestedUsers != 4 {
+	if assessment.AssessmentType != "CAMPAIGN_LEVEL_COLLECTION" || assessment.State != "INCONCLUSIVE" || len(assessment.Levels) != 2 || assessment.Levels[0].TestedUsers != 2 || assessment.Levels[1].TestedUsers != 4 {
 		t.Fatalf("machine-readable level collection is malformed: %+v", assessment)
 	}
 	if assessment.Demand == nil || assessment.Demand.TargetUsers != 3 || assessment.Demand.State != "INSUFFICIENT_EVIDENCE" {

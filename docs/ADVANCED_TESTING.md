@@ -43,6 +43,7 @@ Scenario fields:
 | `per_vu_cookie_env_prefix` | Optional prefix for independent session cookies. |
 | `profiles` | Optional replacement for `steps`: 2-10 named weighted workflows, each with `name`, `weight`, `steps`, and an optional fixed, uniform, or discrete timing override. |
 | `extract` | Optional map of response values to capture using exactly one `json_pointer` or `header` selector. |
+| `json_assertions` | Optional map of JSON Pointer paths to expected scalar values; a mismatch fails the request even when HTTP status is successful. |
 | `window_duration` | Optional 1s-60s request-metric window. Every sampled window must meet the request p95 and error SLOs. |
 
 Use either top-level `steps` or `profiles`, never both. [`examples/weighted-profiles-readonly.json`](../examples/weighted-profiles-readonly.json) shows a three-profile read-only mix. Profile weights describe the planned mix. In closed mode, configure at least one VU per profile; in arrival mode, inspect actual profile starts in the report. HTTP redirects are not followed. A redirect to login is a failure unless explicitly listed as expected (not recommended for an authenticated page test).
@@ -54,7 +55,11 @@ Scenario JSON files are limited to 1 MiB including trailing whitespace. Generate
 
 Optionally declare `profile_mix_basis` as `sanitized_analytics` or `business_estimate` and provide a short safe `profile_mix_reference` identifier. The default basis is `assumption`. This metadata is self-reported provenance, not proof that the mix is representative; do not put domains, paths, credentials, customer identifiers, or raw events in the reference.
 
-A later step may use a value extracted by an earlier one in the same journey. Path variables must occupy a whole path segment, which prevents a response value from changing origin or query semantics. Header and body templates use `{{variable_name}}`. Extracted values are not placed in report output.
+A later step may use a value extracted by an earlier one in the same journey. Path variables must occupy a whole path segment; query templates may occur in parameter values and are escaped as query components. Both remain relative to the configured origin. Header and body templates use `{{variable_name}}`. Extracted values and JSON assertion values are not placed in report output.
+
+For structured business outcomes, a step can declare, for example, `"json_assertions": {"/order/state": "ready"}`. The response must contain that scalar value at the JSON Pointer for the step to pass. Keep expected values synthetic and local. Assertion definitions change the workload fingerprint so runs with different business criteria are not treated as the same workload.
+
+[`examples/dependent-business-readonly.json`](../examples/dependent-business-readonly.json) combines a same-journey JSON extraction, an escaped query value, and a business-state assertion. Its origin and API paths are documentation placeholders; replace them only with an authorized staging target.
 
 ## 3. Independent test users
 
@@ -95,7 +100,68 @@ If a passing run approaches the configured `max_rps` cap, exploration is marked 
 
 Set `"mode": "arrival"`, `"arrival_rate": 5`, `"users": 10`, and `"max_rps": 20`. The scheduler attempts five journey starts per second, independently of response completion; only ten workers are available to handle them. If all workers are busy, arrivals are counted as dropped and the run fails instead of silently reporting a lower effective workload.
 
-This is distinct from 10 concurrent users. It answers a different capacity question. `explore` is deliberately restricted to closed-loop user counts; arrival-rate tests use `run`.
+This is distinct from 10 concurrent users. It answers a different capacity question. `explore` searches closed-loop VU counts; `explore-arrival` searches scheduled journey starts per second and leaves `users` as the worker limit. The arrival search doubles and refines within explicit bounds, repeats passing levels, and classifies each probe as observed pass/fail, invalid delivery, insufficient evidence, or aborted. Its wall-time budget must reserve at least one stage plus the engine's maximum bounded drain allowance; the overall search may still abort when later probes exhaust the budget. Dropped/cancelled arrivals, inadequate request/step/profile samples, generator pressure, a binding HTTP `max_rps` ceiling, and a configured shared-cookie identity prevent an application ceiling from being inferred. These short probes do not establish sustainable capacity or translate journey starts/s into VUs or HTTP requests/s.
+
+For weighted-profile scenarios, the explorer checks each configured step and profile in the aggregate report and every observation window. A profile or step that lacks the configured minimum successful sample coverage makes that probe insufficient evidence.
+
+Preview a bounded schedule without sending traffic:
+
+```powershell
+.\damocline.exe explore-arrival --config .\examples\arrival-rate-readonly.json --min-journeys-per-second 2 --max-journeys-per-second 10 --authorized --dry-run
+```
+
+For an actual run, first replace the reserved documentation origin and routes with an explicitly authorized target, then omit `--dry-run` and retain a low ceiling. Every JSON result records attempted journey-start levels and each underlying run separately.
+
+You can state the business demand in the same unit and have the explorer insert
+that exact calculated rate into its bounded search:
+
+```powershell
+.\damocline.exe explore-arrival --config .\myapp.local.json --min-journeys-per-second 2 --max-journeys-per-second 10 --peak-journeys-per-second 5 --growth-percent 25 --reserve-percent 20 --authorized --out reports\arrival.json
+```
+
+The example calculates `ceil(5 × 1.25 × 1.20) = 8` scheduled journey
+starts/s. If the target is above the configured ceiling, it is recorded as not
+directly testable; the search ceiling is not raised automatically. Assess a
+saved artifact later without generating traffic:
+
+```powershell
+.\damocline.exe goal --file reports\arrival.json --peak-journeys-per-second 5 --growth-percent 25 --reserve-percent 20
+```
+
+`goal` requires a direct probe at the exact calculated rate and recomputes
+evidence from the native reports. Nearby rates are not interpolated. Current
+ordinary runs have `LIMITED` measurement quality, so even repeated observed
+passes remain `INSUFFICIENT_EVIDENCE` for a positive demand finding. A
+short-trial pass is never sustainable capacity. Journey starts/s cannot be
+substituted with VUs, admitted/completed journeys, or HTTP requests/s.
+
+For repeated open-arrival evidence at a declared demand rate, use the distinct
+`arrival-campaign` command. The scenario `arrival_rate` is the base scheduled
+journey starts/s; `users` remains the journey-worker limit.
+
+```powershell
+.\damocline.exe arrival-campaign --config .\arrival.local.json --warmup 30s --observation 2m --spike-journeys-per-second 10 --spike-duration 20s --recovery 30s --soak 1m --repeats 2 --peak-journeys-per-second 5 --growth-percent 25 --reserve-percent 20 --authorized --out reports\arrival-campaign.json
+.\damocline.exe goal --file reports\arrival-campaign.json --peak-journeys-per-second 5 --growth-percent 25 --reserve-percent 20
+```
+
+Growth and reserve are successive multipliers; this example calculates an exact
+base target of 8 scheduled starts/s. The campaign preserves that rate through
+warm-up, observation, recovery and final soak, with an optional higher-rate
+spike. Required observation and soak phases use configured SLO windows plus the
+coarse drift screen. The whole campaign, including bounded phase drains, cannot
+exceed 15 minutes. Offline assessment verifies the exact base target, saved phase
+schedule and native run evidence; it never interpolates or treats a spike as the
+business demand target. Ordinary external run quality remains LIMITED, so this
+path does not certify sustainable capacity.
+
+Recovery must be at least 10 seconds. Observation and optional soak need at least
+three complete configured windows; when `window_duration` is omitted, the
+campaign chooses a bounded window that fits the shortest evaluated phase. An
+explicit window that cannot provide the required coverage is rejected before
+traffic begins. A failed campaign phase is reported as an SLO miss only when its
+saved report independently reproduces the violation with valid measurement,
+delivery and generator evidence; otherwise the offline goal remains
+insufficient evidence.
 
 ## 7. Repeated phased campaign
 
@@ -107,7 +173,27 @@ Use a campaign when a short exploratory probe is insufficient. Each trial runs w
 
 The whole campaign is bounded to 15 minutes. Observation can last up to 10 minutes; warm-up, spike, and recovery are bounded to 3 minutes. An optional spike must use more VUs than the base scenario and stays inside the existing 50-VU safety ceiling. The campaign stops at the first non-passing trial. The default wall-time cap includes up to 30 seconds of drain per scheduled phase and repeat; an explicit `--budget` may be shorter, in which case it can abort during drain. An aborted trial records whether the campaign deadline expired or its caller interrupted it. The dry run prints the effective cap and every planned trial/phase with its duration and VU level.
 
-Configure `window_duration` in the scenario to control request p95 and error windows. When omitted, the campaign creates at least four windows per non-warm-up phase, each no longer than 30 seconds. Schema-v2 reports distinguish observed PASS/FAIL from invalid delivery and incomplete evidence. Observation requires at least three complete windows with 20 requests each: a first-to-last p95 rise above both 20% and 5 ms, or throughput loss above 20%, is labeled `NON_STATIONARY` and makes the campaign inconclusive. A passing screen means only that this large drift was not detected. It does not establish stationarity or sustainable capacity.
+Every non-dry campaign requires `--out`. The artifact is atomically checkpointed after each completed phase. A checkpoint is marked `RUNNING` and includes the completed phase reports plus the pending trial; offline `plan` or `goal` audit treats it as incomplete evidence. The phase currently in flight cannot be saved until its report returns, so forced termination during that phase preserves only earlier phases. A checkpoint write failure stops the campaign before another phase starts. Dry-run previews do not generate traffic and do not require an artifact path.
+
+Configure `window_duration` in the scenario to control request p95 and error windows. When omitted, the campaign creates at least four windows per non-warm-up phase, each no longer than 30 seconds. Schema-v2 and later reports distinguish observed PASS/FAIL from invalid delivery and incomplete evidence. Campaign schema v5 persists the drift policy; schemas v1-v4 retain the historical default screen. Set bounded thresholds with `--stability-min-windows` (3-20), `--stability-min-samples` (20-100000), `--stability-max-p95-increase-percent` (>0-100), `--stability-max-p95-increase-ms` (0-10000), and `--stability-max-throughput-drop-percent` (>0-100). Defaults preserve the coarse three-window, 20-sample, 20% plus 5 ms p95, and 20% throughput-loss screen. The offline `plan` command recomputes the screen using the exact saved policy and rejects missing or invalid schema-v5 policy data. A passing screen means only that the configured large-drift limits were not crossed; it does not establish stationarity or sustainable capacity.
+For explicitly bounded staging investigations that need more than the default
+15-minute campaign limit, declare `"environment": "staging"` in the scenario
+and use both opt-in flags, an explicit wall budget, and an output path:
+
+```powershell
+.\damocline.exe campaign --config .\staging.local.json --observation 30m --recovery 45s --repeats 2 --allow-long-run --staging-confirmed --budget 70m --authorized --out reports\long-campaign.json
+.\damocline.exe arrival-campaign --config .\staging-arrival.local.json --observation 30m --recovery 45s --repeats 2 --allow-long-run --staging-confirmed --budget 70m --authorized --out reports\long-arrival-campaign.json
+```
+
+Long-run mode caps each observation or soak phase at 30 minutes, the complete
+campaign including drains at 2 hours, and each phase report at 120 windows.
+The default 3-minute individual-run and 15-minute campaign/exploration limits
+remain unchanged. `--staging-confirmed` and the scenario environment are
+operator declarations; Damocline cannot verify deployment topology. `--out`
+is required so all completed and partial phase evidence is retained. Ctrl+C or
+the declared budget stops further work; use the dry-run schedule first and
+monitor the staging system during the run. This mode does not add automatic
+abort thresholds for application resource metrics.
 
 Assess a completed campaign against an owner demand target without making HTTP
 requests:
@@ -128,7 +214,8 @@ buy infrastructure. Schema-v2 evidence also requires the exact planned phase ord
 For an authorized write workflow, declare an environment-backed data prefix and
 use `{{synthetic_id}}` in complete path segments, headers, or `body_env`
 content. Damocline generates a fresh identifier for every journey and never
-writes that identifier to a report.
+writes that identifier to a report. `--dry-run --allow-writes` marks each
+non-GET/HEAD step as `MUTATING` and shows its route without sending requests.
 
 ```powershell
 $env:DAMOCLINE_TEST_DATA_PREFIX = "damocline-check"
@@ -145,10 +232,14 @@ $env:DAMOCLINE_TEST_DATA_PREFIX = "damocline-check"
 }
 ```
 
-Cleanup is an explicit workflow step, so a failed or cancelled journey can
-leave test data behind. Use an isolated test namespace, validate cleanup in
-staging, and retain an application-specific cleanup procedure; Damocline does
-not delete resources outside the configured, authorized journey.
+Cleanup is an explicit workflow step. The engine continues through configured
+steps after a business assertion fails, so a final DELETE can clean up that
+journey; the step's own status and failures remain visible in the report.
+Cancellation, process termination, missing extracted values, or a failed
+cleanup request can still leave test data behind. Use an isolated test
+namespace, validate cleanup in staging, and retain an application-specific
+cleanup procedure; Damocline does not delete resources outside the configured,
+authorized journey.
 
 ## 8. Monitor the Linux VPS independently
 

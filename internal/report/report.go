@@ -18,9 +18,10 @@ import (
 // CurrentSchemaVersion is the newest persisted HTTP run report schema emitted
 // by the engine. Readers must reject future versions until their semantics are
 // reviewed and supported. Version 20 adds DNS and connection failure details
-// to HTTP diagnostics, v21 adds seeded think-time provenance, and v22 adds
-// completed journeys to observation windows.
-const CurrentSchemaVersion = 22
+// to HTTP diagnostics, v21 adds seeded think-time provenance, v22 adds
+// completed journeys to observation windows, and v23 records generator
+// resource guardrails and their abort trigger.
+const CurrentSchemaVersion = 23
 
 type MetricSet struct {
 	Total                 int                     `json:"total"`

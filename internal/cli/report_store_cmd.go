@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"strings"
 	"time"
+	"unicode"
 
 	"github.com/LucasLuchetta/Damocline/internal/reportstore"
 )
@@ -38,7 +40,7 @@ func reportHistoryCmd(command string, args []string, stdout, stderr io.Writer) i
 		}
 		fmt.Fprintln(stdout, "Saved at (UTC) | kind | scenario | outcome | bytes | ID")
 		for _, entry := range entries {
-			fmt.Fprintf(stdout, "%s | %s | %s | %s | %d | %s\n", entry.SavedAt.Format(time.RFC3339Nano), entry.Kind, entry.Scenario, entry.Outcome, entry.Bytes, entry.ID)
+			fmt.Fprintf(stdout, "%s | %s | %s | %s | %d | %s\n", entry.SavedAt.Format(time.RFC3339Nano), entry.Kind, safeHistoryField(entry.Scenario), safeHistoryField(entry.Outcome), entry.Bytes, entry.ID)
 		}
 		return 0
 	case "save":
@@ -79,4 +81,22 @@ func reportHistoryCmd(command string, args []string, stdout, stderr io.Writer) i
 	default:
 		return 2
 	}
+}
+
+func safeHistoryField(value string) string {
+	var safe strings.Builder
+	count := 0
+	for _, char := range value {
+		if count == 80 {
+			safe.WriteString("…")
+			break
+		}
+		if unicode.IsPrint(char) && !unicode.Is(unicode.Cf, char) {
+			safe.WriteRune(char)
+		} else {
+			safe.WriteRune('?')
+		}
+		count++
+	}
+	return safe.String()
 }
