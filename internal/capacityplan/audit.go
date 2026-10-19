@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/LucasLuchetta/Damocline/internal/campaign"
@@ -29,7 +30,7 @@ type CampaignAudit struct {
 	PassingLevels       []int        `json:"observed_passing_levels"`
 	FailingLevels       []int        `json:"observed_failing_levels"`
 	TestedDuration      string       `json:"tested_duration"`
-	Confidence          string       `json:"confidence"`
+	Confidence          string       `json:"confidence"` // Legacy campaign-level marker; use Assessment.Confidence for dimensions.
 	LimitingWorkflows   []string     `json:"limiting_workflows"`
 	Unknowns            []string     `json:"known_unknowns"`
 	State               string       `json:"state"`
@@ -59,15 +60,26 @@ type PhaseAudit struct {
 // Confidence is deliberately qualitative until a dependence-aware method is
 // implemented and validated for the workload.
 type Assessment struct {
-	SchemaVersion int           `json:"schema_version"`
-	Audit         CampaignAudit `json:"audit"`
-	Demand        *Result       `json:"demand,omitempty"`
-	State         string        `json:"state"`
+	SchemaVersion int                  `json:"schema_version"`
+	Audit         CampaignAudit        `json:"audit"`
+	Confidence    ConfidenceDimensions `json:"confidence_dimensions"`
+	Demand        *Result              `json:"demand,omitempty"`
+	State         string               `json:"state"`
+}
+
+// ConfidenceDimensions keeps measurement evidence, workload representativeness,
+// and decision confidence separate. A favorable dimension never upgrades
+// another dimension or the assessment state.
+type ConfidenceDimensions struct {
+	Measurement                string   `json:"measurement_confidence"`
+	WorkloadRepresentativeness string   `json:"workload_representativeness"`
+	Decision                   string   `json:"decision_confidence"`
+	Findings                   []string `json:"findings"`
 }
 
 func BuildAssessment(e campaign.Result, goal *capacitygoal.Goal) (Assessment, error) {
 	audit := AuditCampaign(e)
-	assessment := Assessment{SchemaVersion: 1, Audit: audit, State: audit.State}
+	assessment := Assessment{SchemaVersion: 1, Audit: audit, Confidence: assessConfidence(e, audit), State: audit.State}
 	if goal != nil {
 		plan, err := Evaluate(e, *goal)
 		if err != nil {
@@ -82,6 +94,66 @@ func BuildAssessment(e campaign.Result, goal *capacitygoal.Goal) (Assessment, er
 		}
 	}
 	return assessment, nil
+}
+
+func assessConfidence(e campaign.Result, audit CampaignAudit) ConfidenceDimensions {
+	dimensions := ConfidenceDimensions{
+		Measurement: "NOT_ASSESSED", WorkloadRepresentativeness: "NOT_ASSESSED",
+		Decision: "NOT_ESTABLISHED", Findings: []string{},
+	}
+	if audit.State == "INVALID_EVIDENCE" {
+		dimensions.Measurement = "INVALID"
+	} else {
+		switch audit.MeasurementQuality {
+		case report.QualityValid:
+			dimensions.Measurement = "CONTROLLED_ENVELOPE_ONLY"
+			dimensions.Findings = append(dimensions.Findings, "Measurement accounting is within a validated envelope; this does not establish statistical confidence or target equivalence.")
+		case report.QualityLimited:
+			dimensions.Measurement = "LIMITED"
+			dimensions.Findings = append(dimensions.Findings, "Measurement confidence is limited because at least one phase is outside the validated measurement envelope.")
+		case report.QualityInvalid:
+			dimensions.Measurement = "INVALID"
+		}
+	}
+
+	basis, reference := "", ""
+	declared, missing, inconsistent := false, false, false
+	for _, trial := range e.Trials {
+		for _, phase := range trial.Phases {
+			if phase.Name == "warmup" {
+				continue
+			}
+			currentBasis := strings.TrimSpace(phase.Run.Config.ProfileMixBasis)
+			currentReference := strings.TrimSpace(phase.Run.Config.ProfileMixReference)
+			if currentBasis == "" || currentReference == "" {
+				missing = true
+				continue
+			}
+			if !declared {
+				basis, reference, declared = currentBasis, currentReference, true
+				continue
+			}
+			if currentBasis != basis || currentReference != reference {
+				inconsistent = true
+			}
+		}
+	}
+	if inconsistent {
+		dimensions.WorkloadRepresentativeness = "INCONSISTENT_DECLARATION"
+		dimensions.Findings = append(dimensions.Findings, "Profile-mix basis or reference changes between required phases; workload representativeness is not assessed.")
+	} else if declared && !missing {
+		dimensions.WorkloadRepresentativeness = "DECLARED_UNVERIFIED"
+		dimensions.Findings = append(dimensions.Findings, fmt.Sprintf("Profile-mix basis %q and reference %q are declared, but no independent evidence verifies that they represent actual demand.", basis, reference))
+	} else {
+		dimensions.Findings = append(dimensions.Findings, "Workload representativeness is not assessed because a complete profile-mix basis and reference are not recorded in every required phase.")
+	}
+	if audit.State == "INVALID_EVIDENCE" {
+		dimensions.WorkloadRepresentativeness = "NOT_ASSESSED"
+		dimensions.Decision = "INVALID_EVIDENCE"
+		dimensions.Findings = append(dimensions.Findings, "Source campaign evidence is invalid; workload representativeness cannot be assessed from it.")
+	}
+	dimensions.Findings = append(dimensions.Findings, "Decision confidence is not established: dependence, stationarity, workload equivalence, and host identity are not validated together.")
+	return dimensions
 }
 
 func evidenceDigest(value any) string {

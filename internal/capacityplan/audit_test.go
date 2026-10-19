@@ -70,6 +70,9 @@ func TestAssessmentBindsDigestsAndOptionalDemand(t *testing.T) {
 	if first.Audit.TestedDuration != "40s" || first.Audit.Confidence != "NOT_ESTABLISHED" || first.Demand == nil || first.Audit.DemandTargetUsers != 2 {
 		t.Fatalf("assessment is missing campaign and demand summary: %+v", first)
 	}
+	if first.Confidence.Measurement != "LIMITED" || first.Confidence.WorkloadRepresentativeness != "NOT_ASSESSED" || first.Confidence.Decision != "NOT_ESTABLISHED" {
+		t.Fatalf("confidence dimensions were collapsed or overstated: %+v", first.Confidence)
+	}
 	var roundTrip Assessment
 	data, err := json.Marshal(first)
 	if err != nil {
@@ -82,6 +85,32 @@ func TestAssessmentBindsDigestsAndOptionalDemand(t *testing.T) {
 	changed := AuditCampaign(e)
 	if changed.EvidenceID == first.Audit.EvidenceID {
 		t.Fatal("changed campaign content must produce a different evidence ID")
+	}
+}
+
+func TestConfidenceDimensionsDoNotCompensateForEachOther(t *testing.T) {
+	e := auditFixture()
+	for trialIndex := range e.Trials {
+		for phaseIndex := range e.Trials[trialIndex].Phases {
+			phase := &e.Trials[trialIndex].Phases[phaseIndex]
+			phase.Run.Config.ProfileMixBasis = "sanitized_analytics"
+			phase.Run.Config.ProfileMixReference = "fixture-week-v1"
+		}
+	}
+	audit := CampaignAudit{State: "OBSERVED_PASS_ONLY", MeasurementQuality: report.QualityValid}
+	dimensions := assessConfidence(e, audit)
+	if dimensions.Measurement != "CONTROLLED_ENVELOPE_ONLY" || dimensions.WorkloadRepresentativeness != "DECLARED_UNVERIFIED" || dimensions.Decision != "NOT_ESTABLISHED" {
+		t.Fatalf("strong measurement evidence upgraded workload or decision confidence: %+v", dimensions)
+	}
+	e.Trials[1].Phases[1].Run.Config.ProfileMixReference = "different-reference"
+	dimensions = assessConfidence(e, audit)
+	if dimensions.WorkloadRepresentativeness != "INCONSISTENT_DECLARATION" || dimensions.Decision != "NOT_ESTABLISHED" {
+		t.Fatalf("conflicting declarations were treated as verified: %+v", dimensions)
+	}
+	audit.MeasurementQuality = report.QualityLimited
+	dimensions = assessConfidence(e, audit)
+	if dimensions.Measurement != "LIMITED" || dimensions.WorkloadRepresentativeness != "INCONSISTENT_DECLARATION" {
+		t.Fatalf("limited measurement state was not kept independent: %+v", dimensions)
 	}
 }
 
@@ -126,7 +155,7 @@ func TestAssessmentPreservesInvalidEvidenceStateWithDemandGoal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if assessment.State != "INVALID_EVIDENCE" || assessment.Audit.State != "INVALID_EVIDENCE" || assessment.Demand == nil || assessment.Demand.State != "INSUFFICIENT_EVIDENCE" {
+	if assessment.State != "INVALID_EVIDENCE" || assessment.Audit.State != "INVALID_EVIDENCE" || assessment.Confidence.Measurement != "INVALID" || assessment.Confidence.WorkloadRepresentativeness != "NOT_ASSESSED" || assessment.Confidence.Decision != "INVALID_EVIDENCE" || assessment.Demand == nil || assessment.Demand.State != "INSUFFICIENT_EVIDENCE" {
 		t.Fatalf("demand assessment must not mask invalid source evidence: %+v", assessment)
 	}
 }

@@ -43,6 +43,16 @@ is explicitly `NOT_ESTABLISHED`: current conditional intervals assume IID
 observations and do not establish dependence-aware confidence. Demand is not
 extrapolated into untested workload levels.
 
+The machine-readable assessment also keeps three dimensions separate:
+measurement evidence (`LIMITED`, `INVALID`, or `CONTROLLED_ENVELOPE_ONLY`),
+workload representativeness (`NOT_ASSESSED`, `DECLARED_UNVERIFIED`, or
+`INCONSISTENT_DECLARATION`), and decision confidence (`NOT_ESTABLISHED` unless
+the evidence itself is invalid). A profile-mix label is only a declaration;
+it does not independently verify real demand. `CONTROLLED_ENVELOPE_ONLY` is a
+measurement-envelope status, not a statistical confidence interval. It does
+not make an unrepresentative workload representative or create decision
+confidence.
+
 ## Stricter observation window screen
 
 The G2 coarse screen now inspects **each** complete observation window rather
