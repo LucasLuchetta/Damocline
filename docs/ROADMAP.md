@@ -1,4 +1,4 @@
-# Roadmap — evidence-based application capacity
+# Roadmap â€” evidence-based application capacity
 
 **Project stage:** pre-alpha; no stable release or universal user-capacity certification.  
 **Scope of this roadmap:** Damocline's **native, local-first Go HTTP capacity engine**, including workload models, capacity exploration, per-workflow analysis, optional infrastructure observability, reports, and an accessible CLI. Browser recording and distributed execution are **post-core extensions**, not prerequisites for the first trustworthy product.
@@ -21,17 +21,17 @@ Read [measurement definitions](METRICS.md), [scientific foundations and limitati
 
 These are **capabilities**, not a declaration of end-to-end production readiness.
 
-### B0 — Core and calibration
+### B0 â€” Core and calibration
 
 - [x] **B0-01:** Native Go HTTP runner; GET/HEAD and explicitly authorized writes; bounded rate, VUs, timeout and duration. Verified by existing engine/config tests; currently up to 50 VUs, 100 request starts/s and 3 minutes for an individual run.
 - [x] **B0-02:** Closed-loop actors, configurable think times and open-loop journey starts, with explicitly accounted offered/admitted/busy-dropped/late-dropped arrivals.
 - [x] **B0-03:** Bounded graceful-drain logic and incomplete request/journey accounting; cancelled journeys cannot silently produce PASS.
 - [x] **B0-04:** Independent cookie jars with optional environment-backed per-VU cookies, named HTTP steps and response/status assertions. Real-browser rendering remains out of scope; bounded response-derived values and dependent HTTP steps are tracked in B2 below.
-- [x] **B0-05:** Separate-process loopback reference check with known delays/errors, 4 KiB bodies, a 30-second soak and extended 2–100 arrivals/s stages, plus scheduler-stall, overload and recovery checks.
+- [x] **B0-05:** Separate-process loopback reference check with known delays/errors, 4 KiB bodies, a 30-second soak and extended 2â€“100 arrivals/s stages, plus scheduler-stall, overload and recovery checks.
 - [x] **B0-06:** Go runtime and Windows/Linux process CPU/memory sampling for the **generator**, not the application server; collected alongside run metrics.
 - [x] **B0-07:** CI test, race/vet/build checks and extended bounded loopback calibration on Linux and Windows. See [reference validation](REFERENCE_VALIDATION.md) for its actual tolerances and limitations.
 
-### B1 — Existing exploration, reporting and CLI
+### B1 â€” Existing exploration, reporting and CLI
 
 - [x] **B1-01:** Short, bounded VU exploration with step-up, refinement after failure and repeated stage observations; highest observed passing / first observed failing levels are not sustained-capacity certificates.
 - [x] **B1-02:** Explicit business demand target, growth and reserve calculations; optional exact-target probe inside exploration bounds; offline `goal` command.
@@ -43,40 +43,42 @@ These are **capabilities**, not a declaration of end-to-end production readiness
 **Evidence boundary at baseline:** the local fixture checks detect gross measurement/accounting failures under specific conditions. They do **not** determine universal generator capacity, remote network timing accuracy, realistic population behavior, sustainable application capacity, or the benefit of a server upgrade. Every campaign needs a host-local calibration preflight for the proposed load envelope.
 
 
-### B2 — Additional experimental slices in PR #27
+### B2 â€” Additional experimental slices in PR #27
 
 The following implementation slices extend the baseline without meeting every verification requirement of G1–G6. **Keep a gate unchecked until all acceptance conditions in its own task are met.** These capabilities remain scoped to bounded, authorized workloads and must not be described as general production-capacity certification.
 
-- **G1-01–G1-03/G1-09/G1-17 (partial):** Strictly validated, named weighted HTTP profiles with deterministic closed-loop actor assignment, weighted open-loop journey selection, per-profile accounting, shared safety budget, and schema-v9 self-declared mix provenance retained in later report schemas. Source validity/freshness and production-derived mix validation, partly-open sessions and a complete workload-representativeness protocol remain open.
-- **G1-07/G1-11–G1-13 (partial):** Opt-in per-journey synthetic identifiers and bounded JSON Pointer/response-header extraction for subsequent request substitutions. This is not browser-based login recording, full credential lifecycle management, or application-specific write-data cleanup.
-- **G2-01–G2-05/G2-10–G2-17 (partial):** Bounded campaigns with warm-up, separate observation windows, optional VU spikes, recovery/repeats and request-window SLO checks; schema-v2 adds a bounded default drain allowance, stage evidence labels, exact saved-schedule checks, and a coarse observation drift screen. The initial observation/soak bound is 10 minutes. A configurable stabilization protocol, longer validated soaks, full journey-level gates and reproducible end-to-end capacity qualification remain open.
+- **G1-01â€“G1-03/G1-09/G1-17 (partial):** Strictly validated, named weighted HTTP profiles with deterministic closed-loop actor assignment, weighted open-loop journey selection, per-profile accounting, shared safety budget, and schema-v9 self-declared mix provenance retained in later report schemas. Source validity/freshness and production-derived mix validation, partly-open sessions and a complete workload-representativeness protocol remain open.
+- **G1-07/G1-11â€“G1-13 (partial):** Opt-in per-journey synthetic identifiers and bounded JSON Pointer/response-header extraction for subsequent request substitutions. This is not browser-based login recording, full credential lifecycle management, or application-specific write-data cleanup.
+- **G2-01–G2-05/G2-10–G2-17 (partial):** Closed-loop and open-arrival campaigns retain repeated warm-up, observation, optional spike, recovery, and final soak evidence with exact offline schedules. Campaign schema v5 persists coarse drift policy; schema v6 and arrival-campaign schema v2 add opt-in, bounded 30-minute staging phases under an explicit 2-hour wall budget. Default limits remain unchanged. Active stabilization, memory-leak qualification, runtime abort guardrails, dependence-aware uncertainty, and positive generator qualification for ordinary targets remain open.
+- **G2-01/G2-02/G2-05/G2-07â€“G2-10/G2-15/G2-17 (partial, open arrival):** A separate bounded `arrival-campaign` keeps scheduled starts/s distinct through warm-up, observation, optional spike, recovery and final soak, retains every native phase report, validates window coverage before traffic, and supports offline exact-base-demand assessment. It reuses configured windows and the existing coarse drift screen; generator quality remains LIMITED for external targets and production-representative sustained validation is open.
+- **G2-09/G5-09 (partial):** `explore-arrival` and `arrival-campaign` accept peak scheduled journey starts/s with growth and reserve, calculate an exact target, and retain it separately from observed outcomes; offline `goal` rechecks exact saved rates without traffic. It does not convert starts/s to VUs or interpolate neighboring rates; limited quality, representativeness, uncertainty and field validation remain open.
 - **G3-04/G3-05/G3-09/G3-16 (partial):** Conditional IID-assumption P95 rank interval, empirical repeat spread, a bounded Little's Law consistency signal, revision/environment labels for cautious comparisons, and offline business-goal assessment from completed campaign evidence. Dependence-aware coverage, strict experiment equivalence and general decision certification remain open.
 - **G4-02/G4-03/G4-06 (partial):** Explicitly authorized Docker container CPU/memory **snapshot** and bounded collection of configured Prometheus-text application metrics. No ongoing Docker/DB correlation, full adapter contract, clock-skew validation or causal bottleneck proof is implied.
 - **G6/compatibility (partial):** Loopback-only read-only report dashboard and cross-compiled source CLI targets for Linux, Windows and macOS. Scenario-building web UI, signed releases and runtime compatibility guarantees are still open.
 
-See the corresponding ADRs 0007–0012, implementation tests and measurement documentation for precise assumptions and limitations.
+See the corresponding ADRs 0007â€“0012, implementation tests and measurement documentation for precise assumptions and limitations.
 
 ## 1. Implementation order and decision gates
 
 | Gate | Priority | User-visible outcome | Depends on | Acceptance evidence |
 | --- | --- | --- | --- | --- |
-| **G0 — Measurement credibility** | P0 | A run indicates whether its generated load and timing are trustworthy in that envelope | Current B0 | Repeatable controlled fixtures, calibrated delivery/clock thresholds and generator-health evidence |
-| **G1 — Representative HTTP workload** | P1 | Multiple independent business journeys with a defined mix, data and authentic identities | G0 | Synthetic oracle for journeys, proportions, auth isolation and read/write effects |
-| **G2 — Sustained capacity protocol** | P1 | Passing load maintained throughout declared observation windows, not just 20–30-second aggregates | G0–G1 | Warm-up/steady/recovery separation, repeat trials, SLO windows and aborts |
-| **G3 — Statistical validity and reports** | P1 | Clearly supported, unsupported or inconclusive target demand, with traceable measurement evidence | G2 | Run-level uncertainty, reproducible verdicts, complete data and executive/technical replay |
-| **G4 — Optional bottleneck evidence** | P2 | Service-level resource observations and controlled before/after comparisons | G2 | Validated adapters, time sync, telemetry completeness, comparable campaigns |
-| **G5 — Decision-quality capacity planning** | P2 | Evidence-backed maintain/optimize/investigate/scale scenarios, cost trade-offs and growth outlook | G3–G4 when required | Identical-workload alternatives, model holdouts and no invented capacity |
-| **G6 — Stable core release** | P1/P2 | New users complete a safe and reproducible scenario without needing deep performance expertise | G0–G3 + security | Real-user usability, multi-platform CI, upgrade compatibility and public sanitized validation evidence |
+| **G0 â€” Measurement credibility** | P0 | A run indicates whether its generated load and timing are trustworthy in that envelope | Current B0 | Repeatable controlled fixtures, calibrated delivery/clock thresholds and generator-health evidence |
+| **G1 â€” Representative HTTP workload** | P1 | Multiple independent business journeys with a defined mix, data and authentic identities | G0 | Synthetic oracle for journeys, proportions, auth isolation and read/write effects |
+| **G2 â€” Sustained capacity protocol** | P1 | Passing load maintained throughout declared observation windows, not just 20â€“30-second aggregates | G0â€“G1 | Warm-up/steady/recovery separation, repeat trials, SLO windows and aborts |
+| **G3 â€” Statistical validity and reports** | P1 | Clearly supported, unsupported or inconclusive target demand, with traceable measurement evidence | G2 | Run-level uncertainty, reproducible verdicts, complete data and executive/technical replay |
+| **G4 â€” Optional bottleneck evidence** | P2 | Service-level resource observations and controlled before/after comparisons | G2 | Validated adapters, time sync, telemetry completeness, comparable campaigns |
+| **G5 â€” Decision-quality capacity planning** | P2 | Evidence-backed maintain/optimize/investigate/scale scenarios, cost trade-offs and growth outlook | G3â€“G4 when required | Identical-workload alternatives, model holdouts and no invented capacity |
+| **G6 â€” Stable core release** | P1/P2 | New users complete a safe and reproducible scenario without needing deep performance expertise | G0â€“G3 + security | Real-user usability, multi-platform CI, upgrade compatibility and public sanitized validation evidence |
 
-The *first functional release* need not wait for every P2 adapter or optional browser feature. However, a **validated sustainable-capacity claim** requires G0–G3 evidence **for that workload, host and observation interval**, not just that the corresponding features exist in the code.
+The *first functional release* need not wait for every P2 adapter or optional browser feature. However, a **validated sustainable-capacity claim** requires G0â€“G3 evidence **for that workload, host and observation interval**, not just that the corresponding features exist in the code.
 
-## 2. G0 / P0 — Make the measurements defensible
+## 2. G0 / P0 â€” Make the measurements defensible
 
-See the [G0 acceptance matrix](G0_STATUS.md) for the implementation, test, validation and remaining-gap audit across G0-01–G0-17.
+See the [G0 acceptance matrix](G0_STATUS.md) for the implementation, test, validation and remaining-gap audit across G0-01â€“G0-17.
 
 **Owned areas:** `internal/engine`, `internal/scheduler`, `internal/reference`, `internal/generatorhealth`, `internal/report`, `cmd/damocline-calibrate`.
 
-### G0-A — Calibrate the generator beyond one loopback case
+### G0-A â€” Calibrate the generator beyond one loopback case
 
 - [x] **G0-01:** Record versioned loopback preflight metadata (generator OS/arch/logical CPUs/GOMAXPROCS/effective CPU entitlement/Go/source revision or exact executable digest, time boundaries, network mode, fixed 4 KiB fixture description and fingerprint, observed stage arrival delivery, bounds). **Verified within its fixture-only scope:** schema-v7 round-trip, incompatibility, redaction tests, and Linux/Windows calibration CI; workload-specific equivalence and aging remain G0-02/G0-08. Linux quota evidence walks the process cgroup hierarchy; cpuset constraints remain unverified.
 - [ ] **G0-02:** Add explicit preflight acceptance for a requested workload (not just a global calibration PASS), comparing required arrivals/s, request mix, connections and body sizes to **validated fixture ranges**. **Verify:** outside-range cases yield `INCONCLUSIVE`. **Partial implementation:** offline declared-dimension assessment plus `run --calibration` validates and attaches bounded preflight evidence. Calibration schema v6 executes 30 exact workload shape/connection-policy/rate pairs through the native engine and compares arrival/body observations and accepted TCP connections with independent child-server counters: GET responses 0/1/4/64 KiB, plus POST request/response bodies of 4/4 KiB, each at exactly 2, 5, and 10 arrivals/s under both reusable HTTP (5-second duration) and new-per-request (2-second duration), with 10 workers, max_rps 50 and 1-second timeout. The exact shape and complete control tuple are required; untested rates and ceilings do not interpolate. Schema-v3 through v5 artifacts remain readable with their historical narrower profiles. Deterministic exact-pair, altered-tuple, connection-ledger and compatibility tests exercise both policies. Repeated schema-v6 runtime acceptance passed twice on Windows AMD64, Go 1.26.3, 12 logical CPUs; each run reconciled 30/30 profiles, exact per-profile independent accepted TCP counts and 980/980 aggregate independent server requests. Environment-backed request bodies are compared only by byte length and their content is not persisted. This still does not validate TLS, other body sizes, variable response distributions, multi-step profiles, physical host identity, cross-host equivalence or external application capacity; ordinary application runs remain inconclusive. The schema-v7 repeated acceptance now exercises this exact profile matrix in a quota-bounded Docker Desktop/WSL2 container; bare-metal Linux and cross-host equivalence remain unvalidated.
@@ -90,7 +92,7 @@ See the [G0 acceptance matrix](G0_STATUS.md) for the implementation, test, valid
 - [ ] **G0-10 (partial):** The bounded loopback calibration runner writes versioned machine-readable evidence on Linux and Windows. Acceptance manifest v3 executes two or three independent calibrator processes, verifies schema-v7 effective CPU entitlement, exact schema-v6 profile/rate/connection-policy tuples and aggregate/per-profile request/body/TCP-connection ledgers, recomputes controlled-soak quality, checks overload and induced HTTP-failure controls, runs the transport matrix, and preserves state snapshots, reports, hashes and bounded logs through failure or interruption. Failed stages identify exact delivery, outcome, quality, response shape, latency, generator health, scheduler lag, or independent-server-ledger mismatches. Missing, unknown, or INVALID measurement quality cannot pass calibration; non-finite latency is rejected. Repeated schema-v6 acceptance passed twice on Windows AMD64 as previously recorded. Schema-v7 repeated acceptance passed twice in Docker Desktop/WSL2 Linux amd64 using the hierarchical cgroup reader, with finite quota 4, 12 logical CPUs and GOMAXPROCS=12: each run reconciled 30/30 profiles and 980/980 aggregate requests, recomputed the soak as `VALID_WITHIN_ENVELOPE`, and passed 10/10 transport cases plus negative controls. This is container runtime evidence, not bare-metal Linux validation. Broader hardware classes, stable-runner tolerance bands and dependence-aware run variability remain open; repeat spread is descriptive, not a confidence interval.
 - [ ] **G0-11:** Recheck the safety ceiling after new generator validation; raise caps only through an **explicit opt-in** feature with independently validated new envelopes. **Verify:** existing production-safe defaults and rate ceilings remain unchanged otherwise.
 
-### G0-B — Standardize HTTP measurements and correctness
+### G0-B â€” Standardize HTTP measurements and correctness
 
 - [ ] **G0-12:** Define exact timestamp boundaries for request queue wait, rate-token wait, DNS, TCP, TLS, first response byte, body receive, transport errors and full client-observed latency (e.g. Go `httptrace`). **Verify:** local deterministic phase fixtures and published metric semantics. **Partial:** bounded client trace totals/counts for rate-token wait, DNS, TCP, TLS, first byte, complete/incomplete body reads and full completion/error; body read failures increment only the incomplete count, preserving per-request phase conservation. Schema-v13 records per-step request metrics in each configured observation window and screens window p50/p95 against the fixture coarse 15-150 ms guardrail when each has at least 100 successful observations. The guardrail is descriptive, not an SLO or confidence interval. Pure Transport queue time and callback accuracy under host pressure remain unvalidated.
 - [ ] **G0-13:** Record per-step request latency separately from journey elapsed time and configured think time; keep canceled/incomplete journeys distinct from completed percentile samples. **Verify:** scripted multi-step fixture with known pauses and aborts. **Partial slice in this PR:** per-run and per-profile observed between-step sleep totals/counts, independent per-step request latency, completed journey elapsed time, and a multi-step abort fixture that excludes partial journey duration from completed percentiles. Distributional think-time models and clock-accuracy calibration remain open.
@@ -101,11 +103,11 @@ See the [G0 acceptance matrix](G0_STATUS.md) for the implementation, test, valid
 
 **G0 exit test:** calibration is repeatable on the actual generator class; the proposed workload lies within its validated local envelope; scheduling/cancellation/timing/counts reconcile; process health is present or explicitly unavailable. A skipped, failed, stale or non-equivalent preflight must **never** be described as a scientifically validated capacity result.
 
-## 3. G1 / P1 — Model realistic HTTP workload without a browser recorder
+## 3. G1 / P1 â€” Model realistic HTTP workload without a browser recorder
 
 **Owned areas:** new `internal/workload` (proposed), `internal/config`, `internal/engine`, guided CLI.
 
-### G1-A — Workload mix and human-like activity
+### G1-A â€” Workload mix and human-like activity
 
 - [ ] **G1-01:** Add a versioned multi-workflow scenario format: named journey, ordered HTTP steps, optional weight, workload model and independent authentication context. **Verify:** backward-compatible single-workflow JSON migration and strict parser tests.
 - [ ] **G1-02:** Allow at least two concurrent workflows with independent weights, e.g. 60% read dashboards, 25% search, 15% save. **Verify:** large seeded synthetic run reaches expected ratios with statistical tolerance; not exact fixed counts unless requested.
@@ -114,60 +116,60 @@ See the [G0 acceptance matrix](G0_STATUS.md) for the implementation, test, valid
 - [ ] **G1-05:** Add deterministic/seeding support for scenario selection, think-time distributions and reproducible actor assignment. **Verify:** same seed recreates workload decisions under a controlled schedule.
 - **G1-05 partial implementation:** a recorded seed now determines bounded between-step pause choices by closed-loop actor/journey or arrival callback ordinal, and the seed enters schema-v21 report configuration and workload fingerprints. Weighted profile selection remains deterministic; full workload replay under perturbed scheduling and seeded data choices remain unvalidated.
 - [ ] **G1-06:** Add configurable *bounded* think-time distributions (fixed, uniform, empirically sampled), preserving a deterministic test mode. **Verify:** generated times conform to specified units/ranges/distribution.
-- **G1-06 partial implementation:** fixed, inclusive uniform, and seeded discrete sample pauses are validated within 0–30 seconds, with profile overrides and a three-workflow loopback fixture. Repeated sample entries express relative frequency; deterministic selection and a coarse synthetic frequency check are tested. Statistical goodness-of-fit against representative traces and workload representativeness remain open.
+- **G1-06 partial implementation:** fixed, inclusive uniform, and seeded discrete sample pauses are validated within 0â€“30 seconds, with profile overrides and a three-workflow loopback fixture. Repeated sample entries express relative frequency; deterministic selection and a coarse synthetic frequency check are tested. Statistical goodness-of-fit against representative traces and workload representativeness remain open.
 - [ ] **G1-07:** Support varied payload sizes, request parameters and synthetic data fixtures without embedding production identifiers. **Verify:** all generated combinations are bounded and sanitized.
 - [ ] **G1-08:** Support session start/end, arrival-rate distribution and dependent actions within a partly-open session; do not call concurrent active sessions "independent people" without calibrated activity assumptions. **Verify:** controlled arrivals and think-time distribution against known traces.
 - [ ] **G1-09:** Add per-workflow budget allocation and a shared global limit so concurrent flows cannot bypass `max_rps` / VU safety controls. **Verify:** combined traffic never exceeds explicitly permitted bounds.
 - [ ] **G1-10:** Add scheduled mix changes (e.g. peak workday vs normal) within a campaign, labeled as **different workload phases**. **Verify:** each phase's mix and delivered load separately accounted.
 
-### G1-B — Sessions, state and business correctness
+### G1-B â€” Sessions, state and business correctness
 
-- [ ] **G1-11:** Isolate cookies, per-VU variables, synthetic record IDs and login state across actors; prevent accidental cross-user request replay. **Verify:** two-user synthetic fixture rejects leaked state.
-- [ ] **G1-12:** Add opt-in response-variable extraction (JSON field, header or constrained HTML token), with strict size/secret controls. **Verify:** create → returned ID → read/update workflow, negative cases, no secret serialization.
-- [ ] **G1-13:** Add request templates that substitute **previously extracted** values with encoding and allowed-host checks. **Verify:** invalid substitutions cannot redirect to unintended hosts or inject headers.
+- [ ] **G1-11 partial:** Cookie jars and extracted journey values are actor-local; a concurrent two-actor loopback fixture checks each session cookie against its own extracted record ID while JSON business assertions run. Synthetic IDs are separately verified unique per journey. **Verify remaining:** broader open-arrival interleaving, login refresh and state leakage stress coverage.
+- [ ] **G1-12:** Add opt-in response-variable extraction (JSON field, header or constrained HTML token), with strict size/secret controls. **Verify:** create â†’ returned ID â†’ read/update workflow, negative cases, no secret serialization.
+- [ ] **G1-13 partial:** Request templates substitute previously extracted values in complete path segments, query values, headers and environment-backed bodies. Path segments and query values receive component-specific escaping; the resolved request remains relative to the configured origin. **Verify remaining:** broader adversarial substitution tests for header/body contexts and explicit host-boundary regressions.
 - [ ] **G1-14:** Add configurable session expiry and explicitly authorized refresh/login flows using test accounts; default remains manual/environment-backed credentials. **Verify:** valid/expired/rotated token fixture cases and no passwords persisted.
-- [ ] **G1-15:** Validate complete business outcomes, not just HTTP 200: expected status, response assertion and optional state postcondition. **Verify:** false-positive 200/login redirect and unsuccessful write are counted as failures.
-- [ ] **G1-16:** Add write-safety controls: opt-in writes, unique synthetic data per worker, idempotency keys when applicable, cleanup strategy, and dry-run preview of mutating routes. **Verify:** no writes without permission; cleanup failure is visible.
+- [ ] **G1-15 partial:** Steps can require expected status, bounded text and up to 20 JSON Pointer scalar postconditions. Mismatches on HTTP 200 count as request/journey failures with redacted aggregate diagnostics; criteria are included in the workload fingerprint. **Verify remaining:** explicit login-redirect fixture and broader unsuccessful-write postcondition coverage.
+- [ ] **G1-16 partial:** Writes and DELETE require `--allow-writes`; dry-run marks configured mutating routes and sends no traffic; environment-backed synthetic IDs are unique per journey and stay out of reports; explicit final DELETE steps run after ordinary business assertion failures and both successful and failed cleanup outcomes remain in per-step metrics. Cancellation, process loss and idempotency-key policy remain open. **Verify remaining:** cleanup behavior under cancellation and idempotency semantics.
 - [ ] **G1-17:** Import **sanitized aggregate** visit/action rates or accept explicitly labeled estimates; store source and validity horizon of workload-mix assumptions. **Verify:** no raw user events/identifiers required.
 - [ ] **G1-18:** Tag each result with a workload fingerprint (mix, session model, timing, dataset and auth independence) to prevent invalid before/after comparisons. **Verify:** changing mix invalidates automatic "same workload" conclusions.
 
 **G1 exit test:** at least three concurrent named HTTP journeys run with stated proportions and per-actor isolation; completed business actions are asserted; mix, arrival process and think times match synthetic reference distributions; every request remains authorized and bounded. **Visual click recording is NOT required to pass G1.**
 
-## 4. G2 / P1 — Sustainable Capacity Explorer
+## 4. G2 / P1 â€” Sustainable Capacity Explorer
 
 **Owned areas:** `internal/explorer` and proposed `internal/campaign`, `internal/engine`, `internal/report`.
 
-### G2-A — Campaign execution
+### G2-A â€” Campaign execution
 
-- [ ] **G2-01:** Define a versioned capacity campaign: baseline, warm-up, measured steady stage, ramp, spike, recovery and optional soak. **Verify:** schema, safe defaults and a complete dry-run schedule.
+- [x] **G2-01 partial:** Versioned closed-loop and open-arrival campaign schemas support warm-up, observation, optional spike, recovery and optional final bounded soak after prior repeated trials; exact schedules and phase evidence are checked offline. **Verify:** schema compatibility, bounded dry-run schedules and per-window evidence. A ramp stage and broader controls remain open.
 - [ ] **G2-02:** Separate warm-up/steady/recovery samples with immutable time-window boundaries; ensure warm-up does not influence steady-state percentiles. **Verify:** injected cold-start latency fixture.
-- [ ] **G2-03:** Add bounded *long-running* stages behind explicit staging-first approval and safe abort controls; do not silently remove current 3-minute run / 15-minute exploration ceilings. **Verify:** wall-time, load and cancellation limits.
-- [ ] **G2-04:** Support a bounded soak at a candidate **previously tested passing** load, with periodically evaluated windows rather than a single aggregate. **Verify:** synthetic memory leak / latency creep must cause failure.
-- [ ] **G2-05:** Support targeted spikes and recovery probes; preserve each phase's planned/achieved load, error rate, latency, unfinished work and generator health. **Verify:** reference server with controlled saturation/recovery.
-- [ ] **G2-06:** Detect stabilization using a documented, configurable rule (time-window variance, throughput and backlog), or label the stage **NON_STATIONARY**. **Verify:** steady and intentionally drifting fixture cases.
-- [ ] **G2-07:** Stop admission at a precise boundary, drain in-flight journeys for a bounded period, and preserve censored/incomplete counts. **Verify:** slow request, cancel and timeout fixtures.
-- [ ] **G2-08:** Abort with a named reason if error/latency limits, lost arrivals, generator CPU/RSS, request ceilings, customer-specified resource safety limits or user interruption trigger. **Verify:** each abort path test.
-- [ ] **G2-09:** Validate that the **exact business demand target** is probed whenever safely reachable; do not infer a passing goal solely from nearby stage levels. **Verify:** non-power-of-two target and untested-target cases.
-- [ ] **G2-10:** Store every attempted stage and every independent run, including failures, dropped workloads and aborts; prohibit "best run only" summaries. **Verify:** forced first-run failure cannot be hidden by later successes.
-- [ ] **G2-11:** Add repeated campaigns across independently separated runs/sessions, with explicit cool-down and bounded test data resets. **Verify:** distinct runs retain independent environment/run IDs.
-- [ ] **G2-12:** Add optional step-wise *arrival-rate* exploration as distinct from the current closed-loop VU explorer. **Verify:** RPS and VUs are never compared as interchangeable capacity units.
-- [ ] **G2-13:** Make search-budget exhaustion, generator-limit binding, auth/session limitations and safety abort result in **INCONCLUSIVE / NOT_REACHED**, not an inferred server ceiling. **Verify:** injected budget, missing-auth and rate-cap fixtures.
+- [x] **G2-03 partial:** Explicit `--allow-long-run --staging-confirmed` mode requires a scenario `environment` declaration of `staging`, caller authorization, an explicit `--budget`, and `--out`; observation/soak phases are capped at 30 minutes, the full wall-time budget at 2 hours, and each report at 120 windows. Default 3-minute runs, 15-minute campaigns and exploration ceilings remain unchanged. Optional consecutive-sample generator CPU/RSS guardrails abort active phases and retain trigger evidence. The environment declaration is user-provided and not independently verified. **Verify remaining:** field validation of staging procedures.
+- [ ] **G2-04 partial:** Optional final soak runs at the configured base workload after repeated observation/recovery trials pass; every saved run window and journey must satisfy configured gates and coarse drift screening. Standard soak remains capped at 3 minutes; explicitly approved staging long-run soak is capped at 30 minutes. A deterministic latency-creep fixture confirms that drift prevents PASS. This does not replace runtime memory-leak qualification. **Verify remaining:** controlled runtime leak fixture and longer soak observations.
+- [x] **G2-05 partial:** Targeted spike objective failures retain and execute a following recovery probe in both closed-loop and open-arrival campaigns; the trial remains FAIL after recovery, and offline readers require the recovery evidence. An integrated loopback fixture deliberately degrades only the spike stage and verifies recovery, phase SLO results, scheduled/admitted/completed work, no unfinished journeys, and generator samples. **Remaining:** broaden controlled saturation/recovery shapes and retain workload-specific capacity limitations.
+- [x] **G2-06 partial:** Campaign observation and final-soak stages screen aggregate request, completed-journey, step and profile windows. Schema-v6 persists bounded user-selected minimum windows/samples, p95-rise and throughput-drop thresholds; offline validation replays the exact policy. The screen remains coarse and does not establish statistical stationarity. **Verify remaining:** calibrated steady/drifting fixtures under broader window-variance and backlog signals, plus a distinct active stabilization stage.
+- [ ] **G2-07 (partial):** Stop admission at the monotonic observation boundary even when timer delivery is delayed; drain in-flight journeys for a bounded period and preserve censored/incomplete counts. Scheduler boundary and existing slow-request, cancellation, and timeout fixtures reconcile admitted, completed, cancelled, and late work. **Verify remaining:** broader stop-source fixtures and cross-platform scheduling calibration.
+- [ ] **G2-08 partial:** Campaign and explorer classify dropped arrivals, invalid measurement evidence and cancelled work as invalid/inconclusive delivery; current-schema campaign PASS/FAIL phases also require valid generator process health, nonzero sampled RSS, and headroom below the conservative CPU and client-rate guardrails before attribution to the application. Campaigns additionally support configurable consecutive-sample local generator CPU/RSS aborts with persisted trigger evidence and offline policy matching. Explorer records reasons for delivery limits, rate-cap binding and interruption. Transient process CPU peaks do not alone establish sustained saturation. This is not a universal capacity threshold. **Verify remaining:** end-to-end tests for every other stop source and causal attribution.
+- [x] **G2-09:** Probe the exact business target when it is within configured bounds and reached through passing stages; never lift the configured ceiling or infer target success from neighboring levels. **Verify:** non-power-of-two target, above-ceiling target and exact-target-only assessment tests.
+- [x] **G2-10 (partial):** Persist every attempted campaign phase and trial outcome, including observed failures, invalid/dropped delivery and controlled aborts; stop at the first terminal result so later PASS runs cannot replace it. **Verified:** first observation failure remains in the saved campaign, reloads as `OBSERVED_FAIL` in the offline audit, and a forged later PASS trial makes the artifact `INVALID_EVIDENCE`. Ordinary cancellation results retain their abort reason. Schemas v10/v6 now atomically checkpoint after every completed phase and identify a pending trial; offline audit retains those phases as explicitly inconclusive. **Remaining:** a forced stop during the active phase cannot persist that phase's not-yet-returned report, and final checkpoint disk failure still prevents completion.
+- [ ] **G2-11 (partial):** Closed-loop and open-arrival campaigns support an explicit 0–5 minute cool-down between passing trials and persist a unique random trial run ID; offline assessors validate the schedule and reject duplicate/malformed IDs. **Remaining:** bounded application-specific test-data reset workflows and independent authenticated session identities. A trial ID groups its phases; it does not identify or verify an environment or session. **Verify:** cooldown is budgeted and reproduced offline, and interrupted cooldowns retain an ABORTED trial.
+- [x] **G2-12 (partial):** Add bounded optional step-wise *arrival-rate* exploration as a separate command/result from the closed-loop VU explorer. **Verified:** deterministic search and loopback engine tests preserve scheduled starts/s, worker limits, and HTTP requests/s as separate values; dropped work and generator/client ceilings remain inconclusive. This does not meet sustained-capacity or broad calibration gates in G0/G2.
+- [x] **G2-13 (partial):** Keep arrival-search interruption, generator/client request ceilings, explicit shared-cookie identity limitations, wall-budget expiry and missing application authentication from producing a server ceiling. **Verified:** caller abort between levels and deadline during a probe return `ABORTED`; request-cap binding and dropped work remain invalid delivery; shared sessions and a loopback authentication-required endpoint remain insufficient evidence. Customer-specified resource guardrails and full campaign abort coverage remain open.
 - [ ] **G2-14:** Preserve stable observation windows and metrics on resume after interruption only if equivalence can be demonstrated; otherwise restart with a new run identity. **Verify:** interrupted/restarted workload cannot silently merge data.
 
-### G2-B — Definition of a supported workload level
+### G2-B â€” Definition of a supported workload level
 
 - [ ] **G2-15:** Declare required journey-level SLOs, valid sample coverage, acceptable errors, completed-work ratio, dropped-work policy and time-window requirements **before** a campaign starts. **Verify:** pre-run validation rejects vague/missing objectives.
-- [ ] **G2-16:** Classify each stage separately as `PASS_OBSERVED`, `FAIL_OBSERVED`, `INVALID_DELIVERY` or `INSUFFICIENT_EVIDENCE`. **Verify:** deterministic fixture cases for each category.
-- [ ] **G2-17:** Require repeated passing steady-state stages plus adequate generator evidence before labeling a workload `SUSTAINED_AT_TESTED_CONDITIONS`. **Verify:** brief spike/cold-start/unstable-trial examples cannot pass.
+- [x] **G2-16 (partial):** Classify each arrival probe as `PASS_OBSERVED`, `FAIL_OBSERVED`, `INVALID_DELIVERY`, `INSUFFICIENT_EVIDENCE` or `ABORTED`, reusing the campaign evidence classifier and requiring configured step/profile sample ledgers. **Verified:** deterministic search, missing-ledger, drop, generator, request-cap and abort fixtures. Full campaign window semantics remain part of the campaign gate.
+- [ ] **G2-17 partial:** Require repeated observation/recovery passes, adequate per-window request and journey evidence, a no-large-drift screen and an optional final soak after previous passing trials. The offline assessor also recomputes delivery, SLO and generator evidence. Ordinary target runs remain LIMITED and cannot receive `SUSTAINED_AT_TESTED_CONDITIONS`. **Verify remaining:** positive generator qualification for ordinary target campaigns, longer independent soaks and dependence-aware uncertainty.
 - [ ] **G2-18:** Report **highest validated tested level** and **first observed failing level** separately, including an explicit unknown upper bound when every stage passes. **Verify:** no extrapolated "maximum users" from untested traffic.
 
 **G2 exit test:** a reproducible synthetic workload passes a sustained level across repeated stable windows; a deliberately degraded server fails; a saturated generator yields **invalid/inconclusive**, and no unlimited workload or invented hard capacity is presented.
 
-## 5. G3 / P1 — Statistics, workflow analysis and evidence-grade reporting
+## 5. G3 / P1 â€” Statistics, workflow analysis and evidence-grade reporting
 
 **Owned areas:** `internal/statistics`, `internal/report`, `internal/insights`, `internal/capacitygoal`, `internal/correlate`.
 
-### G3-A — Correct statistical reasoning
+### G3-A â€” Correct statistical reasoning
 
 - [ ] **G3-01:** Add timestamped, bounded window aggregates for each HTTP step, journey, workflow and complete campaign. **Verify:** windows add up to the exact observation interval and preserve incomplete counts.
 - [x] **G3-02 partial:** Schema-v22 reports retain completed journeys in each observation window; the offline demand planner checks run-level and per-window journey latency/error bounds, and campaign stability screening checks journey sample adequacy and coarse drift. **Verify:** schema compatibility, ledger reconciliation, low-sample windows and slow-journey drift fixtures pass. Dependence-aware uncertainty, p99 objectives, broader sample adequacy rules and sustained qualification remain open.
@@ -180,7 +182,7 @@ See the [G0 acceptance matrix](G0_STATUS.md) for the implementation, test, valid
 - [ ] **G3-09 (partial):** Add run equivalence validation for before/after comparisons: matching SLOs, workload fingerprints, data shape, app version, duration, environment and client calibration. **Verify:** mismatched runs yield `NOT_COMPARABLE`. Schema-v11 reports include a SHA-256 fingerprint of declared profile and step structure (without resolved environment secrets, body values or extracted values); the comparator checks matching workload revision, environment, target, controls, duration and objectives, and identifies the result only as `MATCHED_DECLARED_WORKLOAD`. Application revision is recorded as a treatment and changed revisions receive a distinct warning. Run reports do not embed loopback preflight or authenticated host identity, so generator equivalence remains unknown; actual environment-backed payload equivalence also remains open.
 - [ ] **G3-10:** Add regression thresholds with documented error bars for comparing versions/infrastructure; keep effect size and practical business impact visible. **Verify:** known small/noisy/no-effect cases do not claim improvement.
 
-### G3-B — Reporting that an owner can use
+### G3-B â€” Reporting that an owner can use
 
 - [ ] **G3-11 (partial):** Offline assessment now content-addresses saved campaign and phase reports, includes recorded workload fingerprints, run timestamps, observation durations, and quality findings. Host type is explicitly `NOT_RECORDED`; local immutable storage/authenticity and signed provenance remain open. **Verify:** content changes alter evidence IDs and repeated serialization yields stable IDs.
 - [ ] **G3-12 (partial):** `audit` can combine the campaign verdict with an exact optional business-demand goal and emits observed levels, sum of required phase durations, known unknowns, and visible journey failures in human/machine output. A repeated `--campaign` collection now retains per-level digests and aggregates observed levels only when declared workload fingerprints and the complete control signature match; exact demand still requires the exact tested level and non-monotonic outcomes remain explicit. Workflow breaches identify trial, phase, level, workflow, and observed p95/error values; an allowed isolated failure is not mislabeled. Golden CLI output now covers collection behavior. Confidence remains `NOT_ESTABLISHED`; root-cause diagnosis and broader end-to-end evidence remain open.
@@ -195,7 +197,7 @@ See the [G0 acceptance matrix](G0_STATUS.md) for the implementation, test, valid
 
 **G3 exit test:** a nontechnical reader can answer **"Does the defined workload meet our explicit objectives for the observed duration?"**; a reviewer can reproduce the verdict from anonymized artifacts. The report does not claim real-user capacity from raw VU counts or statistical certainty from an invalid sample.
 
-## 6. G4 / P2 — Optional infrastructure diagnostics and controlled experiments
+## 6. G4 / P2 â€” Optional infrastructure diagnostics and controlled experiments
 
 **Owned areas:** `internal/hostmon`, `internal/correlate`, proposed `internal/telemetry` adapters.
 
@@ -215,14 +217,14 @@ See the [G0 acceptance matrix](G0_STATUS.md) for the implementation, test, valid
 
 **G4 exit test:** trusted adapter values align with HTTP windows and can support falsifiable bottleneck hypotheses; comparable tuning/resource alternatives are recorded. A CPU chart alone must never imply that a larger VPS fixes the problem.
 
-## 7. G5 / P2 — Science-grounded capacity planning and investment decisions
+## 7. G5 / P2 â€” Science-grounded capacity planning and investment decisions
 
 **Owned areas:** `internal/capacitygoal` plus proposed `internal/model` and `internal/planner`.
 
-- [ ] **G5-01:** Record peak active-user **definition** and source (measured sessions, concurrency, arrival trace or declared estimate), not just an integer input. **Verify:** unknown human→VU equivalence stays explicit.
+- [ ] **G5-01:** Record peak active-user **definition** and source (measured sessions, concurrency, arrival trace or declared estimate), not just an integer input. **Verify:** unknown humanâ†’VU equivalence stays explicit.
 - [ ] **G5-02:** Represent growth horizon, peak multiplier, seasonality and safety reserve as **demand scenarios**, separate from tested-capacity evidence. **Verify:** deterministic computations and uncertainty/sensitivity boundaries.
 - [ ] **G5-03:** Relate user activity, session duration, actions/minute, think time and backend requests per action when estimating workload units. **Verify:** synthetic trace reproduces derived arrivals, with assumptions shown.
-- [ ] **G5-04:** Add Little's Law (`L = λW`) only as a consistency check for matching workload boundaries and stable intervals. **Verify:** queueing fixture satisfies relation within experimentally justified tolerance; transient data rejects check.
+- [ ] **G5-04:** Add Little's Law (`L = Î»W`) only as a consistency check for matching workload boundaries and stable intervals. **Verify:** queueing fixture satisfies relation within experimentally justified tolerance; transient data rejects check.
 - [ ] **G5-05:** Fit a constrained Universal Scalability Law to **repeated measured throughput** across stable load levels; retain coefficients, residuals and applicability range. **Verify:** synthetic known curves + counterexamples.
 - [ ] **G5-06:** Hold back one or more actual measured stages for model validation; reject unstable/bad fits and mark beyond-range forecasts explicitly speculative. **Verify:** noisy/poor fit does not generate a trusted max-VU prediction.
 - [ ] **G5-07:** Provide sensitivity intervals for projected business demand and capacity, not false point precision. **Verify:** different assumptions propagate into an explicit range/unknown state.
@@ -236,7 +238,7 @@ See the [G0 acceptance matrix](G0_STATUS.md) for the implementation, test, valid
 
 **G5 exit test:** for a business goal, the tool can say **what was demonstrated**, **what is estimated**, **what remains unknown**, and **which intervention was shown to improve outcomes in comparable tests**. It does not advertise a universal number of humans supported.
 
-## 8. G6 / P1–P2 — Finish the accessible local-first CLI
+## 8. G6 / P1â€“P2 â€” Finish the accessible local-first CLI
 
 **Owned areas:** `internal/cli`, guided flow, source installation and local artifact handling.
 
@@ -250,7 +252,7 @@ See the [G0 acceptance matrix](G0_STATUS.md) for the implementation, test, valid
 - [ ] **G6-08:** Show a live **safety/status dashboard** in the terminal: phase, offered/achieved rate, errors, generator limits, next action and stop hotkey. **Verify:** no command invokes hidden network traffic.
 - [ ] **G6-09:** Offer finish/report navigation with executive summary first and a clear path to technical evidence or JSON. **Verify:** CLI integration tests for PASS, FAIL and INCONCLUSIVE.
 - [ ] **G6-10:** Add a guided "compare before/after" campaign that prevents inequivalent workload/environment comparisons. **Verify:** mismatch message and no fabricated performance gain.
-- [ ] **G6-11:** Implement crash-safe local report persistence (atomic writes/versioned history) with retention limits and explicit deletion; never commit local results. **Verify:** interrupted process leaves previous reports intact.
+- [ ] **G6-11 (partial):** JSON report outputs serialize and enforce the exact 16 MiB cap before creating a restricted same-directory temporary file; data is synced before platform-specific replacement, Unix directory metadata is synced, and Windows uses write-through replacement. Existing destinations remain intact until replacement succeeds. Deterministic tests cover replacement, permissions, failed replacement, temporary cleanup and exact byte boundaries. Versioned report history, opt-in retention and explicit deletion remain open. **Verify:** interrupted process leaves previous reports intact; retention and deletion require explicit local lifecycle controls.
 - [ ] **G6-12:** Test installation, Unicode/ASCII output, keyboard navigation, non-interactive invocation and source updater on Windows and Linux. **Verify:** cross-platform CI and an offline mode.
 - [ ] **G6-13:** Conduct small, documented usability sessions with target developers (new user sets up scenario, interprets validity, compares target) and address observed misunderstandings. **Verify:** task completion notes in sanitized public summary.
 - [ ] **G6-14:** Add integration checks that guided paths and direct commands share the same safety, validation and underlying engine behavior. **Verify:** no CLI-only bypass to limits or writes.
@@ -274,7 +276,7 @@ See the [G0 acceptance matrix](G0_STATUS.md) for the implementation, test, valid
 - [ ] **Q-11:** Add explicit warnings for active production testing and proof of authorization; never use a customer environment as the default CI target. **Verify:** all continuous checks use loopback.
 - [ ] **Q-12:** Track field failures, statistical false positives and surprising load-generation behavior and turn every demonstrated bug into a deterministic local regression fixture. **Verify:** triaged issues with reproduce/expected/observed sections.
 
-## 10. Post-core / P3 — Advanced features, intentionally deferred
+## 10. Post-core / P3 â€” Advanced features, intentionally deferred
 
 These must not block the safe, useful HTTP capacity product.
 
@@ -286,7 +288,7 @@ These must not block the safe, useful HTTP capacity product.
 - [ ] **A-06:** Local web UI for charts, workflow design and report history with the same safety/evidence rules as the CLI.
 - [ ] **A-07:** Automated scenario suggestions and natural-language explanations as optional assistance, without automatic authority to execute traffic or certify results.
 
-## 11. Validation matrix — tests that must exist before capacity claims
+## 11. Validation matrix â€” tests that must exist before capacity claims
 
 | Fixture / experimental condition | Main failure to detect | Expected evidence or verdict | Required gate |
 | --- | --- | --- | --- |
@@ -295,7 +297,7 @@ These must not block the safe, useful HTTP capacity product.
 | Paused/saturated generator; binding client rate cap | Mistaking missing offered load for a target limit | Generator-related limitation; **not** server capacity failure | G0, G2 |
 | Server with bounded concurrency and long queue | Artificial closed-loop self-throttling or masked dropped arrivals | Correct open-vs-closed behavior and incomplete work | G0, G1 |
 | Three weighted synthetic HTTP workflows | Incorrect traffic mix, shared identity or state | Per-workflow realized mix, state correctness, shared global cap | G1 |
-| Dependent create → read → update with synthetic IDs | HTTP 200 returned despite incorrect business outcome | Journey assertion fails; data isolated and cleaned up | G1 |
+| Dependent create â†’ read â†’ update with synthetic IDs | HTTP 200 returned despite incorrect business outcome | Journey assertion fails; data isolated and cleaned up | G1 |
 | Warm-up slowdown then stable service | Transient response incorrectly considered steady | Disjoint warm-up/steady/recovery metrics | G2 |
 | Gradual memory leak / latency drift | Aggregate PASS despite sustained degradation | Time-window failure or non-stationary/inconclusive result | G2, G3 |
 | High load, recovery and graceful drain | Lost or unreported incomplete work | Exact cancelled/dropped/completed counts and recovery evidence | G2 |
@@ -330,7 +332,7 @@ Acceptance thresholds must be justified by the **specific fixture, hardware clas
 | --- | --- | --- |
 | **Experimental / current** | Existing bounded runner, reference tests and initial explorer | "Observed synthetic HTTP behavior at specified load and duration." |
 | **Measurement-qualified core** | G0, G1 and Q measurement/auth gates | "Workload delivered and measured within validated host/workload conditions." |
-| **Sustained-capacity qualified core** | G0–G3, G6 and Q; repeated representative stable campaigns | "This defined workload was sustained at the highest **tested passing** level over this observation period, with stated uncertainty." |
+| **Sustained-capacity qualified core** | G0â€“G3, G6 and Q; repeated representative stable campaigns | "This defined workload was sustained at the highest **tested passing** level over this observation period, with stated uncertainty." |
 | **Decision-support qualified** | Sustained core + G4/G5 evidence **for the claim actually made** | "Observed alternatives and bottleneck evidence support this recommendation; missing evidence is explicitly inconclusive." |
 | **Advanced optional** | Relevant A-series checks | Separate browser/distributed features, never used to retroactively claim HTTP engine accuracy. |
 
@@ -340,13 +342,13 @@ Acceptance thresholds must be justified by the **specific fixture, hardware clas
 
 Use the current implementation and acceptance evidence in [the technical audit](TECHNICAL_AUDIT.md) before scoping a PR. A block should deliver a coherent capability through configuration, execution, measurement, reporting, failure handling, local fixtures, and documentation. Several related roadmap IDs can close together when their full acceptance evidence exists; partial implementation must remain labeled partial. PR size alone is not a target.
 
-1. **Representative workload (G1-01–G1-18):** finish reproducible timing/data choices, actor isolation, realistic three-workflow mix checks, business assertions, and safe synthetic-data lifecycle. Reuse the existing weighted profiles, shared rate cap, response extraction, and seeded timing. Keep legacy scenarios working.
-2. **Sustained campaign (G2-01–G2-17 + G3-01/G3-02):** add declared stabilization, bounded soak and abort rules, full journey/window SLOs, generator-limited decisions, and controlled stable/drifting/saturated fixtures to the existing campaign and window engine.
-3. **Evidence-grade demand answer (G3-03–G3-19 + G5-01/G5-02/G5-08/G5-09):** assess trial-level dependence and sample adequacy, retain distinct measurement/workload/decision confidence, and provide one traceable offline campaign summary that answers an exact demand goal without extrapolating human capacity.
-4. **Optional diagnosis and controlled alternatives (G4-01–G4-13 + remaining G5):** align read-only target telemetry to tested windows, preserve an HTTP-only unknown-cause path, and compare software/resource/cost interventions only under matched, repeated workloads.
+1. **Representative workload (G1-01â€“G1-18):** finish reproducible timing/data choices, actor isolation, realistic three-workflow mix checks, business assertions, and safe synthetic-data lifecycle. Reuse the existing weighted profiles, shared rate cap, response extraction, and seeded timing. Keep legacy scenarios working.
+2. **Sustained campaign (G2-01â€“G2-17 + G3-01/G3-02):** add declared stabilization, bounded soak and abort rules, full journey/window SLOs, generator-limited decisions, and controlled stable/drifting/saturated fixtures to the existing campaign and window engine.
+3. **Evidence-grade demand answer (G3-03â€“G3-19 + G5-01/G5-02/G5-08/G5-09):** assess trial-level dependence and sample adequacy, retain distinct measurement/workload/decision confidence, and provide one traceable offline campaign summary that answers an exact demand goal without extrapolating human capacity.
+4. **Optional diagnosis and controlled alternatives (G4-01â€“G4-13 + remaining G5):** align read-only target telemetry to tested windows, preserve an HTTP-only unknown-cause path, and compare software/resource/cost interventions only under matched, repeated workloads.
 
 G0 correctness and calibration gates apply whenever a workload envelope changes. Q safety, compatibility, and CI gates apply to every block. The CLI path (G6) must be updated with each user-visible capability, then validated end to end as a release gate.
 
 ---
 
-**North star:** *Find the limit before it finds you* means discovering **validated, workload-specific limits** with reproducible evidence and actionable interpretation — not promising an unmeasured number of users.
+**North star:** *Find the limit before it finds you* means discovering **validated, workload-specific limits** with reproducible evidence and actionable interpretation â€” not promising an unmeasured number of users.

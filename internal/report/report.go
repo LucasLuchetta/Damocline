@@ -18,9 +18,10 @@ import (
 // CurrentSchemaVersion is the newest persisted HTTP run report schema emitted
 // by the engine. Readers must reject future versions until their semantics are
 // reviewed and supported. Version 20 adds DNS and connection failure details
-// to HTTP diagnostics, v21 adds seeded think-time provenance, and v22 adds
-// completed journeys to observation windows.
-const CurrentSchemaVersion = 22
+// to HTTP diagnostics, v21 adds seeded think-time provenance, v22 adds
+// completed journeys to observation windows, and v23 records generator
+// resource guardrails and their abort trigger.
+const CurrentSchemaVersion = 23
 
 type MetricSet struct {
 	Total                 int                     `json:"total"`
@@ -432,20 +433,41 @@ func WriteJSON(path string, r Result) error { return WriteAnyJSON(path, r) }
 
 // WriteAnyJSON safely writes redacted report values to a restricted local file.
 func WriteAnyJSON(path string, r any) error {
-	bytes, err := json.MarshalIndent(r, "", "  ")
+	data, err := json.MarshalIndent(r, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal report: %w", err)
 	}
-	if len(bytes) > maxReportBytes {
+	if len(data)+1 > maxReportBytes {
 		return errors.New("report exceeds the 16 MiB output limit")
 	}
-	bytes = append(bytes, '\n')
+	data = append(data, '\n')
 	d := filepath.Dir(path)
 	if err := os.MkdirAll(d, 0700); err != nil {
 		return fmt.Errorf("create report directory: %w", err)
 	}
-	if err := os.WriteFile(path, bytes, 0600); err != nil {
-		return fmt.Errorf("write report: %w", err)
+	temp, err := os.CreateTemp(d, ".damocline-report-*.tmp")
+	if err != nil {
+		return fmt.Errorf("create temporary report: %w", err)
+	}
+	tempPath := temp.Name()
+	defer os.Remove(tempPath)
+	if err := temp.Chmod(0600); err != nil {
+		temp.Close()
+		return fmt.Errorf("restrict temporary report permissions: %w", err)
+	}
+	if _, err := temp.Write(data); err != nil {
+		temp.Close()
+		return fmt.Errorf("write temporary report: %w", err)
+	}
+	if err := temp.Sync(); err != nil {
+		temp.Close()
+		return fmt.Errorf("sync temporary report: %w", err)
+	}
+	if err := temp.Close(); err != nil {
+		return fmt.Errorf("close temporary report: %w", err)
+	}
+	if err := replaceReportFile(tempPath, path); err != nil {
+		return fmt.Errorf("replace report: %w", err)
 	}
 	return nil
 }

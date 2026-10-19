@@ -96,13 +96,19 @@ The G2 coarse screen now inspects **each** complete observation window rather
 than only the first and last. For runs with named steps or weighted journeys
 it also checks every named step/profile separately. A single minority
 workflow can no longer conceal a large transient regression behind a stable
-aggregate. Every named series needs at least 20 samples in each window for
-this **coarse** screen; otherwise the screen is `INSUFFICIENT_WINDOWS`.
+aggregate. Every named series needs the configured minimum number of samples
+in each window for this **coarse** screen; schema v5 records that minimum and
+bounds it to 20-100000, while historical campaign schemas use 20. Otherwise
+the screen is `INSUFFICIENT_WINDOWS`.
 
-A latency p95 increase of over 20% **and** over 5 ms, or throughput loss
-over 20% compared with the first window, triggers `NON_STATIONARY`.
-These are provisional heuristic guardrails, not a statistical stationarity
-test, confidence interval or guaranteed detection threshold. Short or uneven
+A latency p95 increase over both the saved percentage and absolute thresholds,
+or throughput loss over the saved percentage threshold compared with the first
+window, triggers `NON_STATIONARY`. Schema-v5 policies bound the p95 percentage
+to (0,100], the absolute threshold to 0-10000 ms and throughput decrease to
+(0,100]. Defaults remain 20% and 5 ms for p95 and 20% for throughput. The
+offline reader recomputes classifications using the saved policy. These are
+provisional heuristic guardrails, not a statistical stationarity test,
+confidence interval or guaranteed detection threshold. Short or uneven
 workloads may become inconclusive, intentionally.
 
 ## Windows PowerShell validation

@@ -31,6 +31,27 @@ func validSyntheticQualityRun() Result {
 	}
 }
 
+func TestGeneratorGuardrailTriggerRequiresMatchingPolicyAndConsecutiveSamples(t *testing.T) {
+	policy := generatorhealth.Guardrails{MaxProcessCPUPercent: 75, MaxProcessRSSBytes: 512 * 1024 * 1024, ConsecutiveSamples: 3}
+	cpu := generatorhealth.GuardrailTrigger{Resource: "generator_process_cpu", ObservedCPUPercent: 80, LimitCPUPercent: 75, ConsecutiveSamples: 3, SampleNumber: 5, ElapsedMS: 1000}
+	rss := generatorhealth.GuardrailTrigger{Resource: "generator_process_rss", ObservedRSSBytes: policy.MaxProcessRSSBytes + 1, LimitRSSBytes: policy.MaxProcessRSSBytes, ConsecutiveSamples: 3, SampleNumber: 5, ElapsedMS: 1000}
+	for _, trigger := range []generatorhealth.GuardrailTrigger{cpu, rss} {
+		if !validGuardrailTrigger(policy, trigger) {
+			t.Fatalf("valid trigger rejected: %+v", trigger)
+		}
+	}
+	bad := cpu
+	bad.ConsecutiveSamples = 2
+	if validGuardrailTrigger(policy, bad) {
+		t.Fatal("trigger with a different consecutive sample count was accepted")
+	}
+	bad = rss
+	bad.ObservedRSSBytes = bad.LimitRSSBytes
+	if validGuardrailTrigger(policy, bad) {
+		t.Fatal("trigger at, rather than above, the RSS limit was accepted")
+	}
+}
+
 func qualityTestRuntime() calibration.Runtime {
 	runtime := calibration.CurrentRuntime()
 	if runtime.LogicalCPUs < 1 {
@@ -656,6 +677,23 @@ func TestQualityUsesWindowMeanInsteadOfIsolatedProcessCPUPeak(t *testing.T) {
 	q := AssessQuality(r)
 	if strings.Contains(strings.Join(q.Findings, " "), "sustained generator headroom") {
 		t.Fatalf("an isolated interval peak should not be called sustained process CPU saturation: %+v", q)
+	}
+}
+
+func TestGeneratorEvidenceIssueUsesMeanProcessCPU(t *testing.T) {
+	r := validSyntheticQualityRun()
+	g := *r.Generator
+	g.PeakProcessRSSBytes = 4096
+	g.PeakProcessCPUUtilizationRatio = 1.2
+	g.MeanProcessCPUUtilizationRatio = 0.1
+	r.Generator = &g
+	if reason := GeneratorEvidenceIssue(r); reason != "" {
+		t.Fatalf("transient process CPU peak rejected adequate mean headroom: %s", reason)
+	}
+	g.MeanProcessCPUUtilizationRatio = GeneratorUtilizationGuard
+	r.Generator = &g
+	if reason := GeneratorEvidenceIssue(r); reason == "" || !strings.Contains(reason, "CPU") {
+		t.Fatalf("sustained process CPU guardrail not enforced: %s", reason)
 	}
 }
 

@@ -63,6 +63,9 @@ func auditCmd(args []string, stdout, stderr io.Writer) int {
 	audit := assessment.Audit
 	fmt.Fprintln(stdout, "--- DAMOCLINE | CAMPAIGN EVIDENCE AUDIT (OFFLINE) ---")
 	fmt.Fprintf(stdout, "Observed campaign outcome: %s\n", audit.ObservedOutcome)
+	if audit.ExecutionState != "" {
+		fmt.Fprintf(stdout, "Campaign execution state: %s\n", audit.ExecutionState)
+	}
 	fmt.Fprintf(stdout, "Audited evidence verdict: %s\n", audit.State)
 	fmt.Fprintf(stdout, "Recomputed measurement quality: %s\n", audit.MeasurementQuality)
 	fmt.Fprintf(stdout, "Required phases reviewed: %d\n", audit.RequiredPhases)
@@ -138,7 +141,9 @@ func auditCampaignCollection(paths []string, goal *capacitygoal.Goal, out string
 		fmt.Fprintln(stdout, "Scenario, target and workload match: NOT ESTABLISHED")
 	} else {
 		fmt.Fprintf(stdout, "Scenario: %s | target: %s\n", assessment.Scenario, assessment.Target)
-		fmt.Fprintf(stdout, "Workload fingerprint: %s\n", assessment.WorkloadFingerprint)
+		if assessment.WorkloadFingerprint != "" {
+			fmt.Fprintf(stdout, "Workload fingerprint: %s\n", assessment.WorkloadFingerprint)
+		}
 	}
 	fmt.Fprintf(stdout, "Observed passing levels: %v | failing levels: %v | inconclusive levels: %v\n", assessment.PassingLevels, assessment.FailingLevels, assessment.InconclusiveLevels)
 	fmt.Fprintf(stdout, "Observed pattern: %s\n", assessment.ObservationPattern)

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/LucasLuchetta/Damocline/internal/config"
+	"github.com/LucasLuchetta/Damocline/internal/generatorhealth"
 	"github.com/LucasLuchetta/Damocline/internal/reference"
 	"github.com/LucasLuchetta/Damocline/internal/report"
 )
@@ -735,13 +737,22 @@ func TestWeightedProfilesAreMeasuredSeparately(t *testing.T) {
 
 func TestSyntheticDataIDsAreUniqueAndNeverReported(t *testing.T) {
 	var mu sync.Mutex
-	seen := map[string]bool{}
+	created := map[string]bool{}
+	cleaned := map[string]bool{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost && r.Method != http.MethodDelete {
 			t.Errorf("unexpected method %s", r.Method)
 		}
 		mu.Lock()
-		seen[r.URL.Path] = true
+		switch r.Method {
+		case http.MethodPost:
+			if created[r.URL.Path] {
+				t.Errorf("synthetic identifier was reused across journeys: %q", r.URL.Path)
+			}
+			created[r.URL.Path] = true
+		case http.MethodDelete:
+			cleaned[r.URL.Path] = true
+		}
 		mu.Unlock()
 		w.WriteHeader(http.StatusNoContent)
 	}))
@@ -755,17 +766,82 @@ func TestSyntheticDataIDsAreUniqueAndNeverReported(t *testing.T) {
 	}
 	v.Duration = 300 * time.Millisecond
 	r := Run(context.Background(), v)
-	if r.Metrics.Success == 0 || len(seen) < 2 {
-		t.Fatalf("synthetic workflow did not execute: %+v paths=%v", r, seen)
+	if r.Metrics.Success == 0 || len(created) < 2 || len(created) != len(cleaned) {
+		t.Fatalf("synthetic writes were not unique and paired with cleanup: result=%+v created=%v cleaned=%v", r, created, cleaned)
 	}
-	for path := range seen {
+	for path := range created {
 		if !strings.HasPrefix(path, "/records/damocline-test-") {
 			t.Fatalf("unexpected synthetic path %q", path)
+		}
+		if !cleaned[path] {
+			t.Fatalf("synthetic record %q was not cleaned", path)
 		}
 	}
 	encoded, err := json.Marshal(r)
 	if err != nil || strings.Contains(string(encoded), "damocline-test-") {
 		t.Fatalf("synthetic IDs must not be reported: %s err=%v", encoded, err)
+	}
+}
+
+func TestExplicitCleanupRunsAfterBusinessPostconditionFailure(t *testing.T) {
+	var mu sync.Mutex
+	created := map[string]bool{}
+	cleanupAttempted := map[string]bool{}
+	var deleteRequests atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPost:
+			mu.Lock()
+			created[r.URL.Path] = true
+			mu.Unlock()
+			w.WriteHeader(http.StatusCreated)
+		case http.MethodGet:
+			_, _ = w.Write([]byte(`{"state":"pending"}`))
+		case http.MethodDelete:
+			mu.Lock()
+			cleanupAttempted[r.URL.Path] = true
+			mu.Unlock()
+			if deleteRequests.Add(1) == 1 {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			w.WriteHeader(http.StatusMethodNotAllowed)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("DAMOCLINE_TEST_DATA_PREFIX", "damocline-cleanup")
+	s := config.Scenario{Name: "write verify cleanup", BaseURL: srv.URL, Users: 2, Duration: "1s", MaxRPS: 20, P95LimitMS: 1000, MaxErrorRate: 0,
+		SyntheticDataPrefixEnv: "DAMOCLINE_TEST_DATA_PREFIX",
+		Steps: []config.Step{
+			{Name: "create", Method: "POST", Path: "/records/{{synthetic_id}}", ExpectedStatus: []int{http.StatusCreated}},
+			{Name: "verify", Path: "/records/{{synthetic_id}}", JSONAssertions: map[string]string{"/state": "ready"}},
+			{Name: "cleanup", Method: "DELETE", Path: "/records/{{synthetic_id}}", ExpectedStatus: []int{http.StatusNoContent}},
+		}}
+	v, err := config.Parse(s, config.Options{Authorized: true, AllowWrites: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	v.Duration = 300 * time.Millisecond
+	r := Run(context.Background(), v)
+	mu.Lock()
+	defer mu.Unlock()
+	cleanupSuccess := 0
+	cleanupFailures := 0
+	for _, step := range r.Steps {
+		if step.Name == "cleanup" {
+			cleanupSuccess = step.Metrics.Success
+			cleanupFailures = step.Metrics.Failures
+		}
+	}
+	if r.Outcome != "FAIL" || r.Metrics.Reasons["assertion_json_mismatch"] == 0 || cleanupSuccess == 0 || cleanupFailures == 0 || len(created) < 2 {
+		t.Fatalf("failed business postcondition or cleanup was not visible: %+v created=%v cleanup_attempted=%v", r, created, cleanupAttempted)
+	}
+	for path := range created {
+		if !cleanupAttempted[path] {
+			t.Errorf("explicit cleanup did not run after postcondition failure for %q", path)
+		}
 	}
 }
 
@@ -799,6 +875,114 @@ func TestJourneyExtractsResponseValuesForLaterSteps(t *testing.T) {
 	r := Run(context.Background(), v)
 	if r.Outcome != "PASS" || r.Steps[0].Metrics.Success == 0 || r.Steps[1].Metrics.Success == 0 {
 		t.Fatalf("dependent journey did not complete: %+v", r)
+	}
+}
+
+func TestExtractedQueryValueIsEscapedAndCannotChangeRequestStructure(t *testing.T) {
+	const extracted = "alpha&admin=true+percent%/value"
+	var gotID string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/session":
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": extracted})
+		case "/records":
+			if r.URL.Query().Get("id") != extracted || r.URL.Query().Get("admin") != "" {
+				t.Errorf("query substitution changed query structure: raw=%q parsed=%v", r.URL.RawQuery, r.URL.Query())
+			}
+			gotID = r.URL.Query().Get("id")
+			_, _ = w.Write([]byte("record found"))
+		default:
+			t.Errorf("template escaped the configured origin/path: %s", r.URL.String())
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	s := config.Scenario{Name: "encoded query workflow", BaseURL: srv.URL, Users: 1, Duration: "1s", MaxRPS: 20, P95LimitMS: 1000, MaxErrorRate: 0,
+		Steps: []config.Step{
+			{Name: "session", Path: "/session", Extract: map[string]config.Extract{"record_id": {JSONPointer: "/id"}}},
+			{Name: "record", Path: "/records?id={{record_id}}", MustContain: "record found"},
+		}}
+	v, err := config.Parse(s, config.Options{Authorized: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	v.Duration = 250 * time.Millisecond
+	r := Run(context.Background(), v)
+	if r.Outcome != "PASS" || gotID != extracted || r.Steps[1].Metrics.Success == 0 {
+		t.Fatalf("query value did not survive a safe encoded round trip: id=%q result=%+v", gotID, r)
+	}
+}
+
+func TestJSONPostconditionTurnsFalseHTTP200IntoBusinessFailure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"order":{"state":"pending","id":"synthetic-42"}}`))
+	}))
+	defer srv.Close()
+	for _, tc := range []struct {
+		name     string
+		expected string
+		outcome  string
+	}{
+		{name: "matching business state", expected: "pending", outcome: "PASS"},
+		{name: "HTTP 200 with wrong business state", expected: "committed", outcome: "FAIL"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := config.Scenario{Name: "business postcondition", BaseURL: srv.URL, Users: 1, Duration: "1s", MaxRPS: 20, P95LimitMS: 1000, MaxErrorRate: 0,
+				Steps: []config.Step{{Name: "confirm", Path: "/orders/42", ExpectedStatus: []int{200}, JSONAssertions: map[string]string{"/order/state": tc.expected}}}}
+			v, err := config.Parse(s, config.Options{Authorized: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			v.Duration = 250 * time.Millisecond
+			r := Run(context.Background(), v)
+			if r.Outcome != tc.outcome {
+				t.Fatalf("JSON postcondition outcome=%s, want %s: %+v", r.Outcome, tc.outcome, r)
+			}
+			if tc.outcome == "FAIL" && (r.Metrics.Reasons["assertion_json_mismatch"] == 0 || r.Metrics.HTTP.AssertionFailures == 0) {
+				t.Fatalf("JSON assertion failure was not diagnosed: %+v", r.Metrics)
+			}
+			encoded, err := json.Marshal(r)
+			if err != nil || strings.Contains(string(encoded), tc.expected) {
+				t.Fatalf("assertion values leaked into run report: %s err=%v", encoded, err)
+			}
+		})
+	}
+}
+
+func TestDependentNumericJSONWorkflowPreservesLargeIntegerExactly(t *testing.T) {
+	const id = "9007199254740993"
+	var wrongOwner atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/session":
+			_, _ = fmt.Fprint(w, `{"id":`+id+`}`)
+		case "/records":
+			if r.URL.Query().Get("owner") != id {
+				wrongOwner.Add(1)
+				_, _ = fmt.Fprint(w, `{"id":0}`)
+				return
+			}
+			_, _ = fmt.Fprint(w, `{"id":`+id+`}`)
+		default:
+			t.Errorf("unexpected path %q", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	s := config.Scenario{Name: "large numeric ID workflow", BaseURL: srv.URL, Users: 1, Duration: "1s", MaxRPS: 20, P95LimitMS: 1000, MaxErrorRate: 0,
+		Steps: []config.Step{
+			{Name: "session", Path: "/session", Extract: map[string]config.Extract{"id": {JSONPointer: "/id"}}},
+			{Name: "verify", Path: "/records?owner={{id}}", JSONAssertions: map[string]string{"/id": id}},
+		}}
+	v, err := config.Parse(s, config.Options{Authorized: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	v.Duration = 250 * time.Millisecond
+	r := Run(context.Background(), v)
+	if r.Outcome != "PASS" || wrongOwner.Load() != 0 || r.Metrics.Reasons["assertion_json_mismatch"] != 0 {
+		t.Fatalf("large numeric JSON identifier was rounded during extraction or assertion: outcome=%s wrong_owner=%d metrics=%+v", r.Outcome, wrongOwner.Load(), r.Metrics)
 	}
 }
 
@@ -984,6 +1168,62 @@ func TestDistinctCookieSessions(t *testing.T) {
 		t.Fatalf("session isolation failed result=%+v observed=%v", r, observed)
 	}
 }
+
+func TestConcurrentActorsKeepCookiesAndExtractedValuesIsolated(t *testing.T) {
+	var nextSession atomic.Int64
+	var mu sync.Mutex
+	seenSessions := map[string]bool{}
+	seenPairs := map[string]bool{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/session":
+			cookie, err := r.Cookie("sid")
+			id := ""
+			if err == nil {
+				id = cookie.Value
+			} else {
+				id = fmt.Sprintf("actor-%d", nextSession.Add(1))
+				http.SetCookie(w, &http.Cookie{Name: "sid", Value: id, Path: "/"})
+			}
+			mu.Lock()
+			seenSessions[id] = true
+			mu.Unlock()
+			time.Sleep(10 * time.Millisecond)
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": id})
+		case "/records/actor-1", "/records/actor-2":
+			id := strings.TrimPrefix(r.URL.Path, "/records/")
+			cookie, err := r.Cookie("sid")
+			if err != nil || cookie.Value != id {
+				t.Errorf("actor state crossed: path id=%q cookie=%v err=%v", id, cookie, err)
+			}
+			mu.Lock()
+			seenPairs[id] = true
+			mu.Unlock()
+			_, _ = w.Write([]byte(`{"state":"ready"}`))
+		default:
+			t.Errorf("unexpected path %q", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	s := config.Scenario{Name: "isolated dependent actors", BaseURL: srv.URL, Users: 2, Duration: "1s", MaxRPS: 20, P95LimitMS: 1000, MaxErrorRate: 0,
+		Steps: []config.Step{
+			{Name: "session", Path: "/session", Extract: map[string]config.Extract{"record_id": {JSONPointer: "/id"}}},
+			{Name: "record", Path: "/records/{{record_id}}", JSONAssertions: map[string]string{"/state": "ready"}},
+		}}
+	v, err := config.Parse(s, config.Options{Authorized: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	v.Duration = 350 * time.Millisecond
+	r := Run(context.Background(), v)
+	mu.Lock()
+	defer mu.Unlock()
+	if r.Outcome != "PASS" || len(seenSessions) != 2 || len(seenPairs) != 2 {
+		t.Fatalf("concurrent actor cookies or extracted values were not isolated: outcome=%s sessions=%v pairs=%v report=%+v", r.Outcome, seenSessions, seenPairs, r)
+	}
+}
+
 func TestArrivalDropReporting(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { time.Sleep(250 * time.Millisecond); w.WriteHeader(200) }))
 	defer srv.Close()
@@ -1288,6 +1528,41 @@ func TestRunIncludesLocalGeneratorHealth(t *testing.T) {
 	}
 	if result.Outcome != "PASS" {
 		t.Fatalf("monitoring changed successful workload: %+v", result)
+	}
+}
+
+func TestRunAbortsOnConsecutiveGeneratorRSSGuardrail(t *testing.T) {
+	var arrived, cancelled atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		arrived.Add(1)
+		<-r.Context().Done()
+		cancelled.Add(1)
+	}))
+	defer srv.Close()
+	v := scenario(t, srv.URL, []config.Step{{Name: "slow", Path: "/work"}})
+	v.Scenario.Users = 4
+	v.Duration = 5 * time.Second
+	v.Scenario.Duration = v.Duration.String()
+	v.GeneratorGuardrails = generatorhealth.Guardrails{MaxProcessRSSBytes: 1, ConsecutiveSamples: 2}
+	started := time.Now()
+	result := Run(context.Background(), v)
+	if result.Outcome != "ABORTED" || result.Generator == nil || result.Generator.GuardrailTrigger == nil {
+		t.Fatalf("resource threshold did not abort the phase with evidence: outcome=%s generator=%+v", result.Outcome, result.Generator)
+	}
+	trigger := result.Generator.GuardrailTrigger
+	if trigger.Resource != "generator_process_rss" || trigger.LimitRSSBytes != 1 || trigger.ConsecutiveSamples != 2 ||
+		result.Generator.Guardrails == nil || *result.Generator.Guardrails != v.GeneratorGuardrails {
+		t.Fatalf("resource trigger or policy was not persisted: %+v", result.Generator)
+	}
+	deadline := time.Now().Add(time.Second)
+	for cancelled.Load() < arrived.Load() && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if time.Since(started) > 3*time.Second || arrived.Load() == 0 || cancelled.Load() != arrived.Load() {
+		t.Fatalf("guardrail failed to stop and account for in-flight work promptly: elapsed=%s arrived=%d cancelled=%d", time.Since(started), arrived.Load(), cancelled.Load())
+	}
+	if quality := report.AssessQuality(result); quality.State == report.QualityInvalid {
+		t.Fatalf("guardrail abort report is malformed: %+v", quality)
 	}
 }
 

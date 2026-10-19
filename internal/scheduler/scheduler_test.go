@@ -67,6 +67,26 @@ func TestDriveAccountsForSchedulerStall(t *testing.T) {
 	}
 }
 
+func TestDriveDoesNotAdmitAfterObservationBoundary(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	const duration = 250 * time.Millisecond
+	started := time.Now()
+	var admitted []time.Time
+	s := Drive(ctx, duration, 20, func() bool {
+		admitted = append(admitted, time.Now())
+		return true
+	})
+	if !s.Consistent() || s.Planned != 5 || s.Admitted+s.DroppedLate != s.Planned || s.DroppedBusy != 0 {
+		t.Fatalf("boundary arrivals did not reconcile: %+v", s)
+	}
+	for _, at := range admitted {
+		if at.Sub(started) >= duration {
+			t.Fatalf("admission occurred after observation boundary: %v", at.Sub(started))
+		}
+	}
+}
+
 func TestDriveSeparatesExternalCancellationFromSchedulerLateness(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

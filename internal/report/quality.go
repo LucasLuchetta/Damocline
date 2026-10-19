@@ -8,6 +8,7 @@ import (
 
 	"github.com/LucasLuchetta/Damocline/internal/calibration"
 	"github.com/LucasLuchetta/Damocline/internal/config"
+	"github.com/LucasLuchetta/Damocline/internal/generatorhealth"
 )
 
 // Quality describes whether arithmetic delivery/accounting evidence can be
@@ -23,11 +24,50 @@ const (
 	QualityValid   = "VALID_WITHIN_ENVELOPE"
 	QualityLimited = "LIMITED"
 	QualityInvalid = "INVALID"
+	// GeneratorUtilizationGuard is a conservative short-trial evidence screen,
+	// not a universal generator or application capacity threshold.
+	GeneratorUtilizationGuard = 0.90
 	// SamplerCollectionWallLimit is a conservative screening threshold, not a
 	// calibrated estimate of CPU overhead. Collection wall time at or above 5%
 	// of the observation window is material enough to limit the measurement.
 	SamplerCollectionWallLimit = 0.05
 )
+
+// GeneratorEvidenceIssue reports whether a short workload-level comparison
+// lacks delivery, process-health, or headroom evidence. A nonempty result means
+// a failed stage cannot be attributed to the application from this report.
+func GeneratorEvidenceIssue(r Result) string {
+	if r.Quality != nil && r.Quality.State == QualityInvalid ||
+		r.SchemaVersion >= 16 && AssessQuality(r).State == QualityInvalid {
+		return "Report accounting or generator evidence is invalid."
+	}
+	return GeneratorCapacityIssue(r)
+}
+
+// GeneratorCapacityIssue screens evidence that the load generator could
+// deliver the configured workload with adequate health and headroom. It does
+// not revalidate report accounting or infer application-side saturation.
+func GeneratorCapacityIssue(r Result) string {
+	if r.Metrics.Total <= 0 || r.Generator == nil || r.Generator.Samples < 2 || !r.Generator.GoCPUValid ||
+		r.Generator.ProcessSamples < 2 || !r.Generator.ProcessCPUValid || r.Generator.PeakProcessRSSBytes == 0 {
+		return "Generator process health evidence is incomplete."
+	}
+	if r.ArrivalsDropped > 0 || r.ArrivalsDroppedLate > 0 || r.ArrivalsDroppedBusy > 0 ||
+		r.ArrivalsCancelledBeforeAdmission != nil && *r.ArrivalsCancelledBeforeAdmission > 0 ||
+		r.Metrics.Cancelled > 0 || r.Journeys.Cancelled > 0 {
+		return "Planned arrivals or configured journeys were dropped or cancelled."
+	}
+	if r.Config.MaxRPS <= 0 || r.WindowSeconds() <= 0 {
+		return "Configured request ceiling or observation duration is missing."
+	}
+	if r.Generator.GoCPUUtilizationRatio >= GeneratorUtilizationGuard || r.Generator.MeanProcessCPUUtilizationRatio >= GeneratorUtilizationGuard {
+		return "Generator CPU reached the project's conservative utilization guardrail."
+	}
+	if float64(r.Metrics.Total)/r.WindowSeconds() >= GeneratorUtilizationGuard*float64(r.Config.MaxRPS) {
+		return "Observed request rate reached the configured client rate ceiling guardrail."
+	}
+	return ""
+}
 
 // AssessQuality uses only aggregate invariants and reported generator
 // observations. It does NOT infer network quality or target saturation.
@@ -131,6 +171,25 @@ func AssessQuality(r Result) *Quality {
 		limit("Generator process measurements are missing or unsupported.")
 	}
 	if r.Generator != nil {
+		if r.SchemaVersion < 23 && (r.Generator.Guardrails != nil || r.Generator.GuardrailTrigger != nil) {
+			invalidate("Pre-v23 reports cannot carry generator resource guardrail evidence.")
+		}
+		if r.SchemaVersion >= 23 {
+			if r.Generator.Guardrails != nil {
+				policy := *r.Generator.Guardrails
+				if !policy.Validate() || !policy.Enabled() {
+					invalidate("Generator resource guardrail policy is malformed.")
+				} else if policy.MaxProcessCPUPercent > 0 && r.Generator.ProcessCPUSamples < policy.ConsecutiveSamples ||
+					policy.MaxProcessRSSBytes > 0 && r.Generator.ProcessSamples < policy.ConsecutiveSamples {
+					limit("Configured generator resource guardrails lack enough valid samples to establish that the limits were not exceeded.")
+				}
+			}
+			if trigger := r.Generator.GuardrailTrigger; trigger != nil {
+				if r.Generator.Guardrails == nil || !validGuardrailTrigger(*r.Generator.Guardrails, *trigger) || r.Outcome != "ABORTED" {
+					invalidate("Generator resource guardrail trigger is missing its valid policy or aborted outcome.")
+				}
+			}
+		}
 		if r.Generator.InvalidProcessSamples < 0 {
 			invalidate("Generator process sample invalidation count is negative.")
 		} else if r.Generator.InvalidProcessSamples > 0 {
@@ -523,6 +582,24 @@ func AssessQuality(r Result) *Quality {
 		q.State = QualityValid
 	}
 	return q
+}
+
+func validGuardrailTrigger(policy generatorhealth.Guardrails, trigger generatorhealth.GuardrailTrigger) bool {
+	if !policy.Validate() || !policy.Enabled() || trigger.SampleNumber < policy.ConsecutiveSamples ||
+		trigger.ConsecutiveSamples != policy.ConsecutiveSamples || math.IsNaN(trigger.ElapsedMS) || math.IsInf(trigger.ElapsedMS, 0) || trigger.ElapsedMS < 0 {
+		return false
+	}
+	switch trigger.Resource {
+	case "generator_process_cpu":
+		return policy.MaxProcessCPUPercent > 0 && trigger.LimitCPUPercent == policy.MaxProcessCPUPercent &&
+			!math.IsNaN(trigger.ObservedCPUPercent) && !math.IsInf(trigger.ObservedCPUPercent, 0) &&
+			trigger.ObservedCPUPercent > trigger.LimitCPUPercent && trigger.ObservedRSSBytes == 0 && trigger.LimitRSSBytes == 0
+	case "generator_process_rss":
+		return policy.MaxProcessRSSBytes > 0 && trigger.LimitRSSBytes == policy.MaxProcessRSSBytes &&
+			trigger.ObservedRSSBytes > trigger.LimitRSSBytes && trigger.ObservedCPUPercent == 0 && trigger.LimitCPUPercent == 0
+	default:
+		return false
+	}
 }
 
 func validFailureClassificationEvidence(r Result) bool {

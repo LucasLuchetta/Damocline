@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/LucasLuchetta/Damocline/internal/campaign"
 	"github.com/LucasLuchetta/Damocline/internal/capacitygoal"
@@ -17,6 +18,7 @@ func auditFixture() campaign.Result {
 }
 
 func auditFixtureAtUsers(users int) campaign.Result {
+	stabilityPolicy := campaign.DefaultStabilityPolicy()
 	phaseRun := func() report.Result {
 		metricSet := func(total int) report.MetricSet {
 			return report.MetricSet{
@@ -46,15 +48,23 @@ func auditFixtureAtUsers(users int) campaign.Result {
 	}
 	a, b := phaseRun(), phaseRun()
 	e := campaign.Result{
-		SchemaVersion: campaign.CurrentSchemaVersion, Scenario: "synthetic", Target: a.Target,
-		BaseUsers: users, Warmup: "0s", Observation: "10s", SpikeDuration: "0s", Recovery: "10s",
-		Budget: "2m20s", Repeats: 2, Outcome: "PASS",
+		SchemaVersion: campaign.CurrentSchemaVersion, ExecutionState: "COMPLETED", Scenario: "synthetic", Target: a.Target,
+		BaseUsers: users, Warmup: "0s", Observation: "10s", SpikeDuration: "0s", Recovery: "10s", Cooldown: "0s",
+		Budget: "3m20s", Repeats: 2, Outcome: "PASS", Soak: "10s", StabilityPolicy: &stabilityPolicy,
 	}
 	for n := 1; n <= 2; n++ {
-		e.Trials = append(e.Trials, campaign.Trial{Number: n, Outcome: "PASS", Phases: []campaign.Phase{
+		phases := []campaign.Phase{
 			{Name: "observation", EvidenceState: "PASS_OBSERVED", Stability: campaign.AssessStability(a), Run: a},
 			{Name: "recovery", EvidenceState: "PASS_OBSERVED", Run: b},
-		}})
+		}
+		if n == 2 {
+			phases = append(phases, campaign.Phase{Name: "soak", EvidenceState: "PASS_OBSERVED", Stability: campaign.AssessStability(a), Run: a})
+		}
+		runID := strings.Repeat("a", 32)
+		if n == 2 {
+			runID = strings.Repeat("b", 32)
+		}
+		e.Trials = append(e.Trials, campaign.Trial{RunID: runID, Number: n, Outcome: "PASS", Phases: phases})
 	}
 	return e
 }
@@ -62,11 +72,71 @@ func auditFixtureAtUsers(users int) campaign.Result {
 func TestAuditCampaignObservationalPassDoesNotCertifyCapacity(t *testing.T) {
 	e := auditFixture()
 	a := AuditCampaign(e)
-	if a.State != "OBSERVED_PASS_ONLY" || a.MeasurementQuality != report.QualityLimited || a.RequiredPhases != 4 {
+	if a.State != "OBSERVED_PASS_ONLY" || a.MeasurementQuality != report.QualityLimited || a.RequiredPhases != 5 {
 		t.Fatalf("unexpected conservative verdict: %+v", a)
 	}
 	if !strings.Contains(strings.Join(a.Findings, " "), "not a validated capacity ceiling") {
 		t.Fatalf("missing explicit certification limitation: %+v", a)
+	}
+}
+
+func TestRunningCampaignCheckpointRemainsAuditableButInconclusive(t *testing.T) {
+	evidence := auditFixture()
+	pending := evidence.Trials[1]
+	pending.Phases = pending.Phases[:1]
+	pending.Outcome = "IN_PROGRESS"
+	evidence.Trials = evidence.Trials[:1]
+	evidence.PendingTrial = &pending
+	evidence.ExecutionState = "RUNNING"
+	evidence.Outcome = "INCONCLUSIVE"
+	if err := validateEvidence(evidence); err != nil {
+		t.Fatalf("valid in-progress checkpoint was rejected: %v", err)
+	}
+	audit := AuditCampaign(evidence)
+	if audit.State != "INCONCLUSIVE" || audit.ExecutionState != "RUNNING" || audit.ObservedOutcome != "INCONCLUSIVE" || audit.RequiredPhases != 3 || audit.EvidenceID != evidenceDigest(evidence) {
+		t.Fatalf("checkpoint did not preserve partial evidence without a positive verdict: %+v", audit)
+	}
+	if !strings.Contains(strings.Join(audit.Findings, " "), "final campaign and pending-trial outcomes are unknown") {
+		t.Fatalf("checkpoint limitation was not reported: %+v", audit.Findings)
+	}
+	evidence.PendingTrial.RunID = evidence.Trials[0].RunID
+	if err := validateEvidence(evidence); err == nil || !strings.Contains(err.Error(), "distinct valid run IDs") {
+		t.Fatalf("checkpoint accepted a duplicate pending trial ID: %v", err)
+	}
+}
+
+func TestSchemaEightRequiresRecoveryAfterObservedSpikeFailure(t *testing.T) {
+	evidence := auditFixture()
+	evidence.SchemaVersion = 8
+	evidence.Cooldown = ""
+	evidence.Outcome = "FAIL"
+	evidence.SpikeUsers = 4
+	evidence.SpikeDuration = "10s"
+	evidence.Soak = ""
+	options := campaign.Options{Observation: 10 * time.Second, SpikeUsers: 4, SpikeDuration: 10 * time.Second,
+		Recovery: 10 * time.Second, Repeats: 2}
+	evidence.Budget = campaign.PlannedBudget(options).String()
+	trial := campaign.Trial{Number: 1, Outcome: "FAIL"}
+	observationRun := evidence.Trials[0].Phases[0].Run
+	observationRun.Config.Duration = "10s"
+	observationState, _ := campaign.ClassifyEvidence(observationRun)
+	observation := campaign.Phase{Name: "observation", Run: observationRun,
+		EvidenceState: observationState, Stability: campaign.AssessStability(observationRun)}
+	spikeRun := observationRun
+	spikeRun.Config.Users, spikeRun.Outcome = 4, "FAIL"
+	spikeState, _ := campaign.ClassifyEvidence(spikeRun)
+	spike := campaign.Phase{Name: "spike", Run: spikeRun, EvidenceState: spikeState}
+	recoveryRun := observationRun
+	recoveryState, _ := campaign.ClassifyEvidence(recoveryRun)
+	recovery := campaign.Phase{Name: "recovery", Run: recoveryRun, EvidenceState: recoveryState}
+	trial.Phases = []campaign.Phase{observation, spike, recovery}
+	evidence.Trials = []campaign.Trial{trial}
+	if err := validatePartialStageEvidence(evidence); err != nil {
+		t.Fatalf("failed spike with passing recovery should remain a valid failed trial: %v", err)
+	}
+	evidence.Trials[0].Phases = evidence.Trials[0].Phases[:2]
+	if err := validatePartialStageEvidence(evidence); err == nil || !strings.Contains(err.Error(), "missing its recovery observation") {
+		t.Fatalf("failed spike without recovery was accepted: %v", err)
 	}
 }
 
@@ -83,7 +153,7 @@ func TestAssessmentBindsDigestsAndOptionalDemand(t *testing.T) {
 	if first.Audit.EvidenceID == "" || first.Audit.EvidenceID != second.Audit.EvidenceID || first.Audit.Phases[0].EvidenceID != second.Audit.Phases[0].EvidenceID {
 		t.Fatalf("evidence digests must be stable and present: %+v", first.Audit)
 	}
-	if first.Audit.TestedDuration != "40s" || first.Audit.Confidence != "NOT_ESTABLISHED" || first.Demand == nil || first.Audit.DemandTargetUsers != 2 {
+	if first.Audit.TestedDuration != "50s" || first.Audit.Confidence != "NOT_ESTABLISHED" || first.Demand == nil || first.Audit.DemandTargetUsers != 2 {
 		t.Fatalf("assessment is missing campaign and demand summary: %+v", first)
 	}
 	if first.Confidence.Measurement != "LIMITED" || first.Confidence.WorkloadRepresentativeness != "NOT_ASSESSED" || first.Confidence.Decision != "NOT_ESTABLISHED" {

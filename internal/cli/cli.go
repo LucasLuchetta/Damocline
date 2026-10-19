@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/LucasLuchetta/Damocline/internal/appmetrics"
+	"github.com/LucasLuchetta/Damocline/internal/arrivalexplorer"
 	"github.com/LucasLuchetta/Damocline/internal/campaign"
 	"github.com/LucasLuchetta/Damocline/internal/capacitygoal"
 	"github.com/LucasLuchetta/Damocline/internal/config"
@@ -21,6 +22,7 @@ import (
 	"github.com/LucasLuchetta/Damocline/internal/dockermon"
 	"github.com/LucasLuchetta/Damocline/internal/engine"
 	"github.com/LucasLuchetta/Damocline/internal/explorer"
+	"github.com/LucasLuchetta/Damocline/internal/generatorhealth"
 	"github.com/LucasLuchetta/Damocline/internal/hostmon"
 	"github.com/LucasLuchetta/Damocline/internal/insights"
 	"github.com/LucasLuchetta/Damocline/internal/report"
@@ -74,8 +76,12 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return run(args[1:], stdout, stderr)
 	case "explore":
 		return explore(args[1:], stdout, stderr)
+	case "explore-arrival":
+		return exploreArrival(args[1:], stdout, stderr)
 	case "campaign":
 		return campaignCmd(args[1:], stdout, stderr)
+	case "arrival-campaign":
+		return arrivalCampaignCmd(args[1:], stdout, stderr)
 	case "monitor":
 		return monitor(args[1:], stdout, stderr)
 	case "metrics":
@@ -99,13 +105,17 @@ Usage:
   damocline start    # original guided wizard
   damocline report --file run.json [--compare previous.json] [--host host.json]
 	  damocline dashboard --file run.json [--addr 127.0.0.1:8787]
-  damocline goal --file capacity.json --peak-users 20 [--growth-percent 25] [--reserve-percent 20]
+  damocline goal --file capacity.json (--peak-users 20 | --peak-journeys-per-second 5) [--growth-percent 25] [--reserve-percent 20]
 	  damocline plan --campaign campaign.json --peak-users 20 [--growth-percent 25] [--reserve-percent 20]
 	damocline audit --campaign campaign.json [--campaign higher-level.json] [--peak-users 20] [--growth-percent 25] [--reserve-percent 20] [--out assessment.json]
   damocline run --config scenario.json --authorized [--calibration reports/reference.json] [--out reports/run.json]
   damocline run --config scenario.json --dry-run
   damocline explore --config scenario.json --min-users 2 --max-users 20 --stage-duration 20s --repeats 2 --authorized
+  damocline explore-arrival --config arrival.json --min-journeys-per-second 2 --max-journeys-per-second 20 --authorized
 	  damocline campaign --config scenario.json --warmup 30s --observation 2m --recovery 30s --repeats 2 --authorized
+	  damocline campaign --config staging.json --observation 30m --allow-long-run --staging-confirmed --budget 70m --authorized
+	damocline arrival-campaign --config arrival.json --observation 2m --recovery 30s --repeats 2 --authorized
+	  damocline arrival-campaign --config staging-arrival.json --observation 30m --allow-long-run --staging-confirmed --budget 70m --authorized
   damocline explore --config scenario.json --peak-users 10 --growth-percent 25 --reserve-percent 20 --authorized
   damocline monitor --duration 3m --interval 2s --out reports/host.json
 	  damocline metrics --endpoint https://app.example.com/metrics --authorized [--out reports/app-metrics.json]
@@ -122,9 +132,164 @@ Only test applications you own or are expressly authorized to assess.
 Start with low concurrency and request rates. Run 'damocline run --help' for flags.
 
 Damocline runs its own bounded HTTP engine with closed-loop VUs or arrival-rate
-mode. Explore repeats candidate VU levels; it does not establish a universal
-server limit or include infrastructure telemetry.
+mode. 'explore' searches VU levels; 'explore-arrival' searches scheduled open-loop
+journey starts per second. Neither is requests/second, successful journeys per
+second, or a universal server limit.
 `)
+}
+
+func exploreArrival(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("explore-arrival", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	filename := fs.String("config", "", "arrival-mode scenario JSON")
+	minRate := fs.Int("min-journeys-per-second", 2, "first scheduled journey-start rate")
+	maxRate := fs.Int("max-journeys-per-second", 20, "maximum scheduled journey-start rate")
+	targetRate := fs.Int("target-journeys-per-second", 0, "optional exact business demand rate to probe")
+	peakDemand := fs.Int("peak-journeys-per-second", 0, "expected peak scheduled journey-start demand/s")
+	growth := fs.Float64("growth-percent", 0, "projected demand growth (percent)")
+	reserve := fs.Float64("reserve-percent", 0, "additional reserve on projected demand (percent)")
+	repeats := fs.Int("repeats", 2, "confirmation runs for each passing rate (2-4)")
+	stage := fs.Duration("stage-duration", 20*time.Second, "duration for each repeated probe (10s-3m)")
+	budget := fs.Duration("budget", 10*time.Minute, "maximum exploration wall time (up to 15m)")
+	authorized := fs.Bool("authorized", false, "confirm permission to benchmark the target")
+	dry := fs.Bool("dry-run", false, "validate and explain the rate schedule without sending requests")
+	writes := fs.Bool("allow-writes", false, "explicitly opt in to HTTP mutation methods")
+	insecure := fs.Bool("allow-insecure-http", false, "permit intentional plaintext HTTP to a non-loopback host")
+	out := fs.String("out", "", "JSON exploration report output path")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if *filename == "" || len(fs.Args()) != 0 {
+		fmt.Fprintln(stderr, "--config is required and positional arguments are not accepted")
+		return 2
+	}
+	scenario, err := config.Load(*filename)
+	if err != nil {
+		fmt.Fprintf(stderr, "configuration error: %v\n", err)
+		return 2
+	}
+	if scenario.Mode != "arrival" {
+		fmt.Fprintln(stderr, "explore-arrival requires mode=arrival; closed-loop scenarios use damocline explore")
+		return 2
+	}
+	if *peakDemand < 0 || ((*growth != 0 || *reserve != 0) && *peakDemand == 0) {
+		fmt.Fprintln(stderr, "--growth-percent and --reserve-percent require a positive --peak-journeys-per-second")
+		return 2
+	}
+	goalRequested := *peakDemand > 0
+	if goalRequested {
+		required, err := capacitygoal.EvaluatedJourneyStarts(capacitygoal.JourneyStartGoal{
+			PeakStartsPerSecond: *peakDemand, GrowthPercent: *growth, ReservePercent: *reserve,
+		})
+		if err != nil {
+			fmt.Fprintf(stderr, "invalid journey-start demand goal: %v\n", err)
+			return 2
+		}
+		if *targetRate > 0 && *targetRate != required {
+			fmt.Fprintln(stderr, "--target-journeys-per-second conflicts with the calculated peak, growth, and reserve target")
+			return 2
+		}
+		*targetRate = required
+	}
+	options := arrivalexplorer.Options{
+		MinJourneysPerSecond: *minRate, MaxJourneysPerSecond: *maxRate,
+		TargetJourneysPerSecond: *targetRate, Repeats: *repeats,
+		StageDuration: *stage, Budget: *budget,
+	}
+	if err := arrivalexplorer.Validate(options, scenario); err != nil {
+		fmt.Fprintf(stderr, "invalid arrival-rate exploration: %v\n", err)
+		return 2
+	}
+	scenario.ArrivalRate = *minRate
+	validated, err := config.Parse(scenario, config.Options{
+		Authorized: *authorized || *dry, AllowWrites: *writes, AllowInsecureHTTP: *insecure,
+	})
+	if err != nil {
+		fmt.Fprintf(stderr, "configuration error: %v\n", err)
+		return 2
+	}
+	fmt.Fprintf(stdout, "Arrival-rate explore: %s | %s://%s | scheduled journey starts %d-%d/s | worker limit %d | stage %s | repeats %d | max_rps %d\n",
+		validated.Scenario.Name, validated.Base.Scheme, validated.Base.Host,
+		*minRate, *maxRate, validated.Scenario.Users, stage.String(), *repeats, validated.Scenario.MaxRPS)
+	if *targetRate > 0 {
+		if *targetRate < *minRate || *targetRate > *maxRate {
+			fmt.Fprintln(stdout, "WARNING: exact journey-start target is outside the configured range and will not raise the safe ceiling.")
+		} else {
+			fmt.Fprintf(stdout, "Exact scheduled journey-start target: %d/s (tested only when reached through the bounded search).\n", *targetRate)
+		}
+	}
+	if goalRequested {
+		fmt.Fprintf(stdout, "Business demand: peak %d starts/s, growth %.1f%%, reserve %.1f%%; required exact target %d starts/s.\n",
+			*peakDemand, *growth, *reserve, *targetRate)
+	}
+	if *dry {
+		fmt.Fprintln(stdout, "DRY RUN: no traffic generated. Rates are scheduled journey starts/s; request/s and completed journeys/s are separate measured quantities.")
+		return 0
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	result, err := arrivalexplorer.Run(ctx, validated, options)
+	if err != nil {
+		fmt.Fprintf(stderr, "arrival-rate exploration error: %v\n", err)
+		return 2
+	}
+	for _, probe := range result.Probes {
+		fmt.Fprintf(stdout, "Scheduled starts %d/s: %s\n", probe.JourneysPerSecond, probe.Status)
+		if probe.Reason != "" {
+			fmt.Fprintf(stdout, "  Reason: %s\n", probe.Reason)
+		}
+		for _, run := range probe.Runs {
+			seconds := run.WindowSeconds()
+			if seconds <= 0 {
+				fmt.Fprintf(stdout, "  no valid observation duration; scheduled %d; admitted %v; dropped %d\n", run.ArrivalsScheduled, run.ArrivalsAdmitted, run.ArrivalsDropped)
+				continue
+			}
+			admitted := int64(0)
+			if run.ArrivalsAdmitted != nil {
+				admitted = *run.ArrivalsAdmitted
+			}
+			fmt.Fprintf(stdout, "  offered %.2f starts/s; admitted %.2f/s; dropped %d; request throughput %.2f/s; successful completed journeys %.2f/s; request p95 %.0fms; errors %.2f%%\n",
+				float64(run.ArrivalsScheduled)/seconds, float64(admitted)/seconds, run.ArrivalsDropped,
+				float64(run.Metrics.Total)/seconds, report.SuccessfulJourneysPerSecond(run), run.Metrics.P95MS, run.ErrorsRate*100)
+		}
+	}
+	fmt.Fprintf(stdout, "Outcome: %s\n", result.Outcome)
+	if result.Reason != "" {
+		fmt.Fprintf(stdout, "Reason: %s\n", result.Reason)
+	}
+	if result.HighestPassingJourneysPerSecond != nil {
+		fmt.Fprintf(stdout, "Highest repeatedly passing tested scheduled-start rate: %d journeys/s\n", *result.HighestPassingJourneysPerSecond)
+	}
+	if result.FirstFailingJourneysPerSecond != nil {
+		fmt.Fprintf(stdout, "First observed failing tested scheduled-start rate: %d journeys/s\n", *result.FirstFailingJourneysPerSecond)
+	}
+	for _, note := range result.Notes {
+		fmt.Fprintf(stdout, "Note: %s\n", note)
+	}
+	if goalRequested {
+		assessment, assessErr := capacitygoal.EvaluateJourneyStarts(result, capacitygoal.JourneyStartGoal{
+			PeakStartsPerSecond: *peakDemand, GrowthPercent: *growth, ReservePercent: *reserve,
+		})
+		if assessErr != nil {
+			fmt.Fprintf(stderr, "arrival demand assessment error: %v\n", assessErr)
+		} else {
+			fmt.Fprintf(stdout, "BUSINESS GOAL: %s | required %d scheduled starts/s.\n", assessment.State, assessment.TargetStartsPerSecond)
+			for _, finding := range assessment.Findings {
+				fmt.Fprintf(stdout, "  - %s\n", finding)
+			}
+		}
+	}
+	if *out != "" {
+		if err := report.WriteAnyJSON(*out, result); err != nil {
+			fmt.Fprintf(stderr, "report error: %v\n", err)
+			return 2
+		}
+		fmt.Fprintf(stdout, "Report: %s\n", *out)
+	}
+	if result.Outcome == "BRACKETED" || result.Outcome == "PASSED_TO_CONFIGURED_CEILING" {
+		return 0
+	}
+	return 1
 }
 func run(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
@@ -180,7 +345,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 		if i := strings.IndexByte(path, '?'); i >= 0 {
 			path = path[:i]
 		}
-		fmt.Fprintf(stdout, "  - %s: %s %s\n", step.Name, step.Method, path)
+		if step.Method != http.MethodGet && step.Method != http.MethodHead {
+			fmt.Fprintf(stdout, "  - %s: %s %s [MUTATING; requires --allow-writes]\n", step.Name, step.Method, path)
+		} else {
+			fmt.Fprintf(stdout, "  - %s: %s %s\n", step.Name, step.Method, path)
+		}
 	}
 	if *dry {
 		fmt.Fprintln(stdout, "DRY RUN: no requests were sent.")
@@ -269,12 +438,24 @@ func campaignCmd(args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	filename := fs.String("config", "", "scenario JSON")
 	warmup := fs.Duration("warmup", 30*time.Second, "warm-up duration (0s-3m)")
-	observation := fs.Duration("observation", 2*time.Minute, "steady observation duration (10s-3m)")
+	observation := fs.Duration("observation", 2*time.Minute, "steady observation duration (10s-10m)")
 	spikeUsers := fs.Int("spike-users", 0, "optional peak virtual users above the base scenario")
 	spikeDuration := fs.Duration("spike-duration", 0, "optional spike duration (10s-3m)")
 	recovery := fs.Duration("recovery", 30*time.Second, "recovery duration after observation (0s-3m)")
+	soak := fs.Duration("soak", 0, "optional final sustained observation after all repeated trials (10s-3m; long-run up to 30m)")
+	cooldown := fs.Duration("cooldown", 0, "optional bounded wait between independent trials (0-5m)")
+	longRun := fs.Bool("allow-long-run", false, "opt in to campaign phases up to 30m and a wall budget up to 2h")
+	stagingConfirmed := fs.Bool("staging-confirmed", false, "confirm the scenario environment is staging for a long-run campaign")
+	maxGeneratorCPU := fs.Float64("max-generator-cpu-percent", 0, "abort when sampled generator process CPU exceeds this percent of detected capacity (0 disables)")
+	maxGeneratorRSSMB := fs.Uint64("max-generator-rss-mb", 0, "abort when sampled generator process RSS exceeds this MiB limit (0 disables)")
+	guardrailSamples := fs.Int("resource-guardrail-samples", 2, "consecutive process samples required to trigger resource aborts (2-20)")
+	minWindows := fs.Int("stability-min-windows", 3, "minimum complete observation windows for the drift screen (3-20)")
+	minSamples := fs.Int("stability-min-samples", 20, "minimum completed samples in each aggregate and named window (20-100000)")
+	maxP95IncreasePercent := fs.Float64("stability-max-p95-increase-percent", 20, "maximum p95 increase from the first window before drift is reported (>0-100)")
+	maxP95IncreaseMS := fs.Float64("stability-max-p95-increase-ms", 5, "minimum absolute p95 increase in milliseconds before drift is reported (0-10000)")
+	maxThroughputDropPercent := fs.Float64("stability-max-throughput-drop-percent", 20, "maximum throughput decrease from the first window before drift is reported (>0-100)")
 	repeats := fs.Int("repeats", 2, "independent trials (2-5)")
-	budget := fs.Duration("budget", 0, "maximum campaign wall time (up to 15m)")
+	budget := fs.Duration("budget", 0, "maximum campaign wall time (15m; long-run mode allows up to 2h)")
 	authorized := fs.Bool("authorized", false, "confirm authorization to benchmark the target")
 	dry := fs.Bool("dry-run", false, "validate campaign settings without sending traffic")
 	writes := fs.Bool("allow-writes", false, "explicitly opt in to HTTP mutation methods")
@@ -287,7 +468,22 @@ func campaignCmd(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "--config is required and positional arguments are not accepted")
 		return 2
 	}
-	options := campaign.Options{Warmup: *warmup, Observation: *observation, SpikeUsers: *spikeUsers, SpikeDuration: *spikeDuration, Recovery: *recovery, Repeats: *repeats, Budget: *budget}
+	if !*dry && *out == "" {
+		fmt.Fprintln(stderr, "campaigns require --out to preserve every attempted phase and trial")
+		return 2
+	}
+	if *maxGeneratorRSSMB > (1<<64-1)/(1024*1024) {
+		fmt.Fprintln(stderr, "--max-generator-rss-mb is too large")
+		return 2
+	}
+	guardrails := generatorhealth.Guardrails{MaxProcessCPUPercent: *maxGeneratorCPU, MaxProcessRSSBytes: *maxGeneratorRSSMB * 1024 * 1024}
+	if guardrails.Enabled() {
+		guardrails.ConsecutiveSamples = *guardrailSamples
+	}
+	options := campaign.Options{Warmup: *warmup, Observation: *observation, SpikeUsers: *spikeUsers, SpikeDuration: *spikeDuration, Recovery: *recovery, Soak: *soak, Cooldown: *cooldown, Repeats: *repeats, Budget: *budget,
+		Guardrails: guardrails,
+		LongRun:    *longRun, StagingConfirmed: *stagingConfirmed,
+		Stability: campaign.StabilityPolicy{MinimumWindows: *minWindows, MinimumSamplesPerWindow: *minSamples, MaxP95IncreasePercent: *maxP95IncreasePercent, MaxP95IncreaseMS: *maxP95IncreaseMS, MaxThroughputDropPercent: *maxThroughputDropPercent}}
 	if err := campaign.Validate(options); err != nil {
 		fmt.Fprintf(stderr, "invalid campaign: %v\n", err)
 		return 2
@@ -297,24 +493,46 @@ func campaignCmd(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "configuration error: %v\n", err)
 		return 2
 	}
+	if !*dry {
+		if err := rejectCampaignOutputAlias(*filename, *out); err != nil {
+			fmt.Fprintf(stderr, "invalid campaign output: %v\n", err)
+			return 2
+		}
+	}
 	validated, err := config.Parse(scenario, config.Options{Authorized: *authorized || *dry, AllowWrites: *writes, AllowInsecureHTTP: *insecure})
 	if err != nil {
 		fmt.Fprintf(stderr, "configuration error: %v\n", err)
 		return 2
 	}
-	fmt.Fprintf(stdout, "Campaign: %s | %s://%s | warm-up %s | observation %s | spike %d VUs for %s | recovery %s | repeats %d | wall-time cap %s\n", validated.Scenario.Name, validated.Base.Scheme, validated.Base.Host, options.Warmup, options.Observation, options.SpikeUsers, options.SpikeDuration, options.Recovery, options.Repeats, campaign.PlannedBudget(options))
+	if err := campaign.ValidateForScenario(validated, options); err != nil {
+		fmt.Fprintf(stderr, "invalid campaign: %v\n", err)
+		return 2
+	}
+	fmt.Fprintf(stdout, "Campaign: %s | %s://%s | warm-up %s | observation %s | spike %d VUs for %s | recovery %s | final soak %s | repeats %d | cooldown %s | wall-time cap %s\n", validated.Scenario.Name, validated.Base.Scheme, validated.Base.Host, options.Warmup, options.Observation, options.SpikeUsers, options.SpikeDuration, options.Recovery, options.Soak, options.Repeats, options.Cooldown, campaign.PlannedBudget(options))
+	fmt.Fprintf(stdout, "Drift screen: >=%d windows, >=%d samples/window, p95 increase >%.1f%% and >%.1fms, throughput decrease >%.1f%%\n", options.Stability.MinimumWindows, options.Stability.MinimumSamplesPerWindow, options.Stability.MaxP95IncreasePercent, options.Stability.MaxP95IncreaseMS, options.Stability.MaxThroughputDropPercent)
+	if options.LongRun {
+		fmt.Fprintln(stdout, "LONG-RUN MODE: explicit opt-in; environment declared staging (user-provided, not independently verified).")
+	}
+	if options.Guardrails.Enabled() {
+		fmt.Fprintf(stdout, "Generator abort guardrails: CPU %.1f%% | RSS %.1f MiB | %d consecutive samples. These limits apply to the local generator, not the target application.\n", guardrails.MaxProcessCPUPercent, float64(guardrails.MaxProcessRSSBytes)/(1024*1024), guardrails.ConsecutiveSamples)
+	}
 	if *dry {
 		for trial := 1; trial <= options.Repeats; trial++ {
-			for _, phase := range campaign.PlannedPhases(options, validated.Scenario.Users) {
+			for _, phase := range campaign.PlannedTrialPhases(options, validated.Scenario.Users, trial) {
 				fmt.Fprintf(stdout, "  Trial %d %s: %s at %d VUs\n", trial, phase.Name, phase.Duration, phase.Users)
 			}
 		}
-		fmt.Fprintln(stdout, "DRY RUN: no traffic generated. Warm-up is excluded from the conclusion; observation and recovery must pass in every trial.")
+		if options.Cooldown > 0 {
+			fmt.Fprintf(stdout, "  Cool-down between independent trials: %s\n", options.Cooldown)
+		}
+		fmt.Fprintln(stdout, "DRY RUN: no traffic generated. Warm-up is excluded from the conclusion; observation, recovery, and any final soak must pass.")
 		return 0
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	result, err := campaign.Run(ctx, validated, options)
+	result, err := campaign.RunWithProgress(ctx, validated, options, func(snapshot campaign.Result) error {
+		return report.WriteAnyJSON(*out, snapshot)
+	})
 	if err != nil {
 		fmt.Fprintf(stderr, "campaign error: %v\n", err)
 		return 2
@@ -327,7 +545,7 @@ func campaignCmd(args []string, stdout, stderr io.Writer) int {
 		for _, phase := range trial.Phases {
 			fmt.Fprintf(stdout, "  %s: %s (%s) | p95 %.0fms | errors %.2f%% | requests %d | successful journeys %.2f/s (%d complete, %d failed, %d cancelled)\n", phase.Name, phase.Run.Outcome, phase.EvidenceState, phase.Run.Metrics.P95MS, phase.Run.ErrorsRate*100, phase.Run.Metrics.Total, report.SuccessfulJourneysPerSecond(phase.Run), phase.Run.Journeys.Total, phase.Run.Journeys.Failures, phase.Run.Journeys.Cancelled)
 			if phase.Stability != "" {
-				fmt.Fprintf(stdout, "    observation drift screen: %s\n", phase.Stability)
+				fmt.Fprintf(stdout, "    %s drift screen: %s\n", phase.Name, phase.Stability)
 			}
 			if phase.EvidenceState == "INVALID_DELIVERY" || phase.EvidenceState == "INSUFFICIENT_EVIDENCE" {
 				fmt.Fprintf(stdout, "    %s\n", phase.Reason)
@@ -341,10 +559,6 @@ func campaignCmd(args []string, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stdout, "Campaign outcome: %s\n", result.Outcome)
 	fmt.Fprintln(stdout, "This is repeated observed evidence under the configured workload. It is not a universal capacity certification or infrastructure recommendation.")
 	if *out != "" {
-		if err := report.WriteAnyJSON(*out, result); err != nil {
-			fmt.Fprintf(stderr, "report error: %v\n", err)
-			return 2
-		}
 		fmt.Fprintf(stdout, "Report: %s\n", *out)
 	}
 	if result.Outcome != "PASS" {
@@ -475,8 +689,14 @@ func explore(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stdout, "  [p95 %.0fms, errors %.2f%%, requests %d]", r.Metrics.P95MS, r.ErrorsRate*100, r.Metrics.Total)
 		}
 		fmt.Fprintln(stdout)
+		if p.Reason != "" {
+			fmt.Fprintf(stdout, "  %s\n", p.Reason)
+		}
 	}
 	fmt.Fprintf(stdout, "Outcome: %s\n", result.Outcome)
+	if result.Reason != "" {
+		fmt.Fprintf(stdout, "Reason: %s\n", result.Reason)
+	}
 	fmt.Fprintln(stdout, "Server upgrade recommendation: NOT ESTABLISHED. Explore measures workload-specific passing levels, not server headroom; collect host/container/database metrics before sizing infrastructure.")
 	if result.HighestPassingUsers != nil {
 		fmt.Fprintf(stdout, "Highest repeatedly passing tested level: %d VUs (not a universal server limit)\n", *result.HighestPassingUsers)

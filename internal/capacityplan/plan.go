@@ -2,6 +2,7 @@
 package capacityplan
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/LucasLuchetta/Damocline/internal/campaign"
 	"github.com/LucasLuchetta/Damocline/internal/capacitygoal"
+	"github.com/LucasLuchetta/Damocline/internal/generatorhealth"
 	"github.com/LucasLuchetta/Damocline/internal/report"
 	"github.com/LucasLuchetta/Damocline/internal/statistics"
 )
@@ -67,7 +69,7 @@ func evaluateWithQuality(evidence campaign.Result, goal capacitygoal.Goal, asses
 		return result, nil
 	}
 	if evidence.SchemaVersion >= 3 && !validSuccessfulJourneyVariability(evidence.ObservationVariability) {
-		result.Findings = append(result.Findings, "Successful journey throughput spread is missing or malformed in this schema-v3 campaign; demand remains INSUFFICIENT_EVIDENCE.")
+		result.Findings = append(result.Findings, fmt.Sprintf("Successful journey throughput spread is missing or malformed in this schema-v%d campaign; demand remains INSUFFICIENT_EVIDENCE.", evidence.SchemaVersion))
 		return result, nil
 	}
 	if evidence.SchemaVersion < 2 {
@@ -322,8 +324,64 @@ func readCampaignBytes(path string, maxBytes int64) ([]byte, error) {
 }
 
 func validateEvidence(evidence campaign.Result) error {
+	if evidence.SchemaVersion >= 10 {
+		switch evidence.ExecutionState {
+		case "RUNNING":
+			if evidence.Outcome != "INCONCLUSIVE" || evidence.PendingTrial == nil || len(evidence.Trials) >= evidence.Repeats {
+				return errors.New("in-progress campaign checkpoint is missing a pending trial or has an invalid state")
+			}
+			pending := *evidence.PendingTrial
+			if pending.Number != len(evidence.Trials)+1 || pending.Outcome != "IN_PROGRESS" || !validCampaignRunID(pending.RunID) || pending.AbortReason != "" {
+				return errors.New("in-progress campaign checkpoint has an invalid pending trial")
+			}
+			normalized := checkpointAsAbortedEvidence(evidence)
+			return validateEvidence(normalized)
+		case "COMPLETED":
+			if evidence.PendingTrial != nil {
+				return errors.New("completed campaign cannot contain a pending trial")
+			}
+		default:
+			return errors.New("campaign execution state is missing or unsupported")
+		}
+	} else if evidence.ExecutionState != "" || evidence.PendingTrial != nil {
+		return errors.New("execution checkpoints are unsupported by this campaign schema")
+	}
 	if evidence.SchemaVersion < 1 || evidence.SchemaVersion > campaign.CurrentSchemaVersion || evidence.Scenario == "" || evidence.BaseUsers < 1 || evidence.Repeats < 2 || evidence.Repeats > 5 || len(evidence.Trials) == 0 || len(evidence.Trials) > evidence.Repeats {
 		return errors.New("expected a complete supported repeated campaign")
+	}
+	if evidence.SchemaVersion >= 5 {
+		if err := campaign.ValidateStabilityPolicy(evidence.EffectiveStabilityPolicy()); err != nil {
+			return fmt.Errorf("invalid persisted stability policy: %w", err)
+		}
+	}
+	if evidence.SchemaVersion < 6 && evidence.LongRun {
+		return errors.New("long-run declaration is unsupported by this campaign schema")
+	}
+	if evidence.SchemaVersion < 7 && evidence.GeneratorGuardrails != nil {
+		return errors.New("generator resource guardrails are unsupported by this campaign schema")
+	}
+	if evidence.SchemaVersion < 9 && evidence.Cooldown != "" {
+		return errors.New("cooldown is unsupported by this campaign schema")
+	}
+	if evidence.SchemaVersion < 9 {
+		for _, trial := range evidence.Trials {
+			if trial.RunID != "" {
+				return errors.New("trial run IDs are unsupported by this campaign schema")
+			}
+		}
+	}
+	if evidence.SchemaVersion >= 9 {
+		cooldown, err := time.ParseDuration(evidence.Cooldown)
+		if err != nil || cooldown < 0 || cooldown > 5*time.Minute {
+			return errors.New("invalid saved inter-trial cooldown")
+		}
+		seenRunIDs := make(map[string]bool, len(evidence.Trials))
+		for _, trial := range evidence.Trials {
+			if !validCampaignRunID(trial.RunID) || seenRunIDs[trial.RunID] {
+				return errors.New("campaign trials must have distinct valid run IDs")
+			}
+			seenRunIDs[trial.RunID] = true
+		}
 	}
 	if evidence.Outcome == "PASS" && len(evidence.Trials) != evidence.Repeats {
 		return errors.New("a passing campaign must contain every configured trial")
@@ -363,6 +421,17 @@ func validateEvidence(evidence campaign.Result) error {
 	return nil
 }
 
+func checkpointAsAbortedEvidence(evidence campaign.Result) campaign.Result {
+	pending := *evidence.PendingTrial
+	pending.Outcome = "ABORTED"
+	pending.AbortReason = "The saved checkpoint has no terminal trial result; campaign completion is unknown."
+	evidence.Trials = append(append([]campaign.Trial(nil), evidence.Trials...), pending)
+	evidence.PendingTrial = nil
+	evidence.ExecutionState = "COMPLETED"
+	evidence.Outcome = "ABORTED"
+	return evidence
+}
+
 func validatePartialStageEvidence(evidence campaign.Result) error {
 	phaseCount := 0
 	for _, trial := range evidence.Trials {
@@ -382,11 +451,15 @@ func validatePartialStageEvidence(evidence campaign.Result) error {
 		}
 		return nil
 	}
-	_, expected, err := campaignLevelSchedule(evidence)
+	options, _, err := campaignLevelSchedule(evidence)
 	if err != nil {
 		return err
 	}
 	for trialIndex, trial := range evidence.Trials {
+		expected := campaign.PlannedPhases(options, evidence.BaseUsers)
+		if evidence.SchemaVersion >= 4 {
+			expected = campaign.PlannedTrialPhases(options, evidence.BaseUsers, trialIndex+1)
+		}
 		if trial.Number != trialIndex+1 {
 			return errors.New("partial campaign trials are not in declared order")
 		}
@@ -408,13 +481,20 @@ func validatePartialStageEvidence(evidence campaign.Result) error {
 			}
 			state, _ := campaign.ClassifyEvidence(phase.Run)
 			stability := ""
-			if phase.Name == "observation" {
-				stability = campaign.AssessStability(phase.Run)
+			if phase.Name == "observation" || phase.Name == "soak" {
+				stability = campaign.AssessStabilityWithPolicy(phase.Run, evidence.EffectiveStabilityPolicy())
 			}
-			if phase.EvidenceState != state || phase.Name == "observation" && phase.Stability != stability {
+			if phase.EvidenceState != state || (phase.Name == "observation" || phase.Name == "soak") && phase.Stability != stability {
 				return fmt.Errorf("trial %d has stale or altered %s phase evidence", trial.Number, phase.Name)
 			}
-			if want.Required && (phase.Run.Outcome == "FAIL" || state == "FAIL_OBSERVED") || phase.Run.Outcome == "ABORTED" || phase.Run.Outcome == "INCONCLUSIVE" || state == "INVALID_DELIVERY" || state == "INSUFFICIENT_EVIDENCE" || phase.Name == "observation" && stability != "NO_LARGE_DRIFT_DETECTED" {
+			observedFailure := want.Required && (phase.Run.Outcome == "FAIL" || state == "FAIL_OBSERVED")
+			if evidence.SchemaVersion >= 8 && phase.Name == "spike" && phase.Run.Outcome == "FAIL" && state == "FAIL_OBSERVED" {
+				if phaseIndex+1 >= len(trial.Phases) || trial.Phases[phaseIndex+1].Name != "recovery" {
+					return errors.New("a failed spike phase is missing its recovery observation")
+				}
+				observedFailure = false
+			}
+			if observedFailure || phase.Run.Outcome == "ABORTED" || phase.Run.Outcome == "INCONCLUSIVE" || state == "INVALID_DELIVERY" || state == "INSUFFICIENT_EVIDENCE" || (phase.Name == "observation" || phase.Name == "soak") && stability != "NO_LARGE_DRIFT_DETECTED" {
 				if phaseIndex != len(trial.Phases)-1 {
 					return errors.New("terminal phase evidence is followed by additional phases")
 				}
@@ -430,7 +510,8 @@ func validatePartialStageEvidence(evidence campaign.Result) error {
 				return errors.New("passing trial contains terminal phase evidence")
 			}
 		case "FAIL":
-			if !terminalCause || len(trial.Phases) == 0 || !expected[len(trial.Phases)-1].Required || trial.Phases[len(trial.Phases)-1].Run.Outcome != "FAIL" || trial.Phases[len(trial.Phases)-1].EvidenceState != "FAIL_OBSERVED" {
+			lastPhaseFailed := len(trial.Phases) > 0 && expected[len(trial.Phases)-1].Required && trial.Phases[len(trial.Phases)-1].Run.Outcome == "FAIL" && trial.Phases[len(trial.Phases)-1].EvidenceState == "FAIL_OBSERVED"
+			if !terminalCause && !lastPhaseFailed && !(evidence.SchemaVersion >= 8 && recoveredSpikeFailure(trial)) {
 				return errors.New("failed trial has no terminal observed objective breach")
 			}
 		case "INCONCLUSIVE":
@@ -501,7 +582,15 @@ func validateStageEvidence(evidence campaign.Result) error {
 		return errors.New("invalid warmup duration")
 	}
 	observation, err := parsePhaseDuration("observation", evidence.Observation)
-	if err != nil || observation < 10*time.Second || observation > 10*time.Minute {
+	longRun := evidence.SchemaVersion >= 6 && evidence.LongRun
+	observationLimit, soakLimit, wallTimeLimit := 10*time.Minute, 3*time.Minute, 15*time.Minute
+	if longRun {
+		observationLimit, soakLimit, wallTimeLimit = campaign.LongRunPhaseLimit, campaign.LongRunPhaseLimit, campaign.LongRunWallTimeLimit
+		if evidence.DeclaredEnvironment != "staging" {
+			return errors.New("long-run campaign is missing its declared staging environment")
+		}
+	}
+	if err != nil || observation < 10*time.Second || observation > observationLimit {
 		return errors.New("invalid observation duration")
 	}
 	spike, err := parsePhaseDuration("spike", evidence.SpikeDuration)
@@ -512,8 +601,29 @@ func validateStageEvidence(evidence campaign.Result) error {
 	if err != nil || recovery == 0 || recovery > 3*time.Minute {
 		return errors.New("a passing campaign requires recovery duration")
 	}
-	budget, err := parsePhaseDuration("budget", evidence.Budget)
-	if err != nil || budget == 0 || budget > 15*time.Minute || budget < time.Duration(evidence.Repeats)*(warmup+observation+spike+recovery) || evidence.Target == "" || evidence.BaseUsers > 50 {
+	soak := time.Duration(0)
+	if evidence.SchemaVersion >= 4 {
+		if evidence.Soak != "" {
+			soak, err = parsePhaseDuration("soak", evidence.Soak)
+		}
+		if err != nil || (soak > 0 && (soak < 10*time.Second || soak > soakLimit)) {
+			return errors.New("invalid soak stage")
+		}
+	}
+	cooldown := time.Duration(0)
+	if evidence.SchemaVersion >= 9 {
+		cooldown, err = time.ParseDuration(evidence.Cooldown)
+		if err != nil || cooldown < 0 || cooldown > 5*time.Minute {
+			return errors.New("invalid cooldown stage")
+		}
+	}
+	budget := time.Duration(0)
+	if evidence.Budget != "" {
+		budget, err = parsePhaseDuration("budget", evidence.Budget)
+	} else if evidence.SchemaVersion < 4 {
+		budget = campaign.PlannedBudget(campaign.Options{Warmup: warmup, Observation: observation, SpikeUsers: evidence.SpikeUsers, SpikeDuration: spike, Recovery: recovery, Repeats: evidence.Repeats})
+	}
+	if err != nil || budget == 0 || budget > wallTimeLimit || budget < time.Duration(evidence.Repeats)*(warmup+observation+spike+recovery)+soak || evidence.Target == "" || evidence.BaseUsers > 50 {
 		return errors.New("invalid campaign wall-time budget")
 	}
 	if spike > 0 {
@@ -521,8 +631,21 @@ func validateStageEvidence(evidence campaign.Result) error {
 			return errors.New("spike load does not exceed base load")
 		}
 	}
-	expected := campaign.PlannedPhases(campaign.Options{Warmup: warmup, Observation: observation, SpikeUsers: evidence.SpikeUsers, SpikeDuration: spike, Recovery: recovery}, evidence.BaseUsers)
+	options := campaign.Options{Warmup: warmup, Observation: observation, SpikeUsers: evidence.SpikeUsers, SpikeDuration: spike, Recovery: recovery, Soak: soak, Cooldown: cooldown, Repeats: evidence.Repeats, LongRun: longRun, StagingConfirmed: longRun}
+	if evidence.SchemaVersion >= 7 && evidence.GeneratorGuardrails != nil {
+		options.Guardrails = *evidence.GeneratorGuardrails
+	}
+	if evidence.SchemaVersion >= 4 && budget < campaign.PlannedBudget(options) {
+		return errors.New("campaign wall-time budget omits bounded phase drain allowance")
+	}
+	if evidence.SchemaVersion >= 4 {
+		options.Budget = budget
+		if err := campaign.Validate(options); err != nil {
+			return fmt.Errorf("invalid saved campaign schedule: %w", err)
+		}
+	}
 	for i, trial := range evidence.Trials {
+		expected := campaign.PlannedTrialPhases(options, evidence.BaseUsers, i+1)
 		if trial.Number != i+1 || trial.Outcome != "PASS" || len(trial.Phases) != len(expected) {
 			return errors.New("campaign trial sequence is incomplete")
 		}
@@ -531,14 +654,48 @@ func validateStageEvidence(evidence campaign.Result) error {
 			if phase.Name != want.Name || phase.Run.Config.Users != want.Users || phase.Run.Config.Duration != want.Duration.String() || phase.Run.Target != evidence.Target || (phase.Run.Outcome != "PASS" && (phase.Name != "warmup" || phase.Run.Outcome != "FAIL")) {
 				return fmt.Errorf("trial %d has mismatched %s phase evidence", i+1, want.Name)
 			}
+			if !campaignRunGuardrailsMatch(evidence, phase.Run) {
+				return fmt.Errorf("trial %d has mismatched %s generator guardrails", i+1, want.Name)
+			}
 			state, _ := campaign.ClassifyEvidence(phase.Run)
 			if phase.EvidenceState != state || phase.EvidenceState == "INVALID_DELIVERY" || (phase.Name != "warmup" && phase.EvidenceState != "PASS_OBSERVED") {
 				return fmt.Errorf("trial %d has inconsistent %s phase classification", i+1, want.Name)
 			}
-			if phase.Name == "observation" && (phase.Stability != "NO_LARGE_DRIFT_DETECTED" || phase.Stability != campaign.AssessStability(phase.Run)) {
+			if (phase.Name == "observation" || phase.Name == "soak") && (phase.Stability != "NO_LARGE_DRIFT_DETECTED" || phase.Stability != campaign.AssessStabilityWithPolicy(phase.Run, evidence.EffectiveStabilityPolicy())) {
 				return fmt.Errorf("trial %d lacks reproducible stable-window evidence", i+1)
 			}
 		}
 	}
 	return nil
+}
+
+func validCampaignRunID(value string) bool {
+	if len(value) != 32 {
+		return false
+	}
+	_, err := hex.DecodeString(value)
+	return err == nil
+}
+
+func campaignRunGuardrailsMatch(evidence campaign.Result, run report.Result) bool {
+	want := generatorhealth.Guardrails{}
+	if evidence.SchemaVersion >= 7 && evidence.GeneratorGuardrails != nil {
+		want = *evidence.GeneratorGuardrails
+	}
+	got := generatorhealth.Guardrails{}
+	if run.Generator != nil && run.Generator.Guardrails != nil {
+		got = *run.Generator.Guardrails
+	}
+	return want.Equal(got)
+}
+
+func recoveredSpikeFailure(trial campaign.Trial) bool {
+	for index, phase := range trial.Phases {
+		if phase.Name == "spike" && phase.Run.Outcome == "FAIL" && phase.EvidenceState == "FAIL_OBSERVED" &&
+			index+1 == len(trial.Phases)-1 && trial.Phases[index+1].Name == "recovery" &&
+			trial.Phases[index+1].Run.Outcome == "PASS" && trial.Phases[index+1].EvidenceState == "PASS_OBSERVED" {
+			return true
+		}
+	}
+	return false
 }

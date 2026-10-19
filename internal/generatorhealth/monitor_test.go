@@ -59,6 +59,60 @@ func TestAccumulatorProcessHealthPeaks(t *testing.T) {
 	}
 }
 
+func TestGuardrailsRequireConsecutiveSamplesAndRetainTrigger(t *testing.T) {
+	start := time.Unix(0, 0)
+	policy := Guardrails{MaxProcessRSSBytes: 100, ConsecutiveSamples: 2}
+	var observed []GuardrailTrigger
+	m := &Monitor{guardrails: policy, startedAt: start, onTrigger: func(trigger GuardrailTrigger) { observed = append(observed, trigger) }}
+	for i, rss := range []uint64{150, 90, 120, 130} {
+		r := reading{at: start.Add(time.Duration(i+1) * time.Second), logicalCPUs: 1, maxProcs: 1,
+			processRSSBytes: rss, processCPUSeconds: float64(i), processAvailable: true}
+		m.acc.add(r)
+		m.observeGuardrails(r)
+	}
+	if len(observed) != 1 || observed[0].Resource != "generator_process_rss" || observed[0].ObservedRSSBytes != 130 ||
+		observed[0].LimitRSSBytes != 100 || observed[0].ConsecutiveSamples != 2 || observed[0].SampleNumber != 4 {
+		t.Fatalf("RSS guardrail did not trigger on the first complete consecutive breach: %+v", observed)
+	}
+	if m.trigger == nil || m.trigger.SampleNumber != 4 {
+		t.Fatalf("guardrail trigger was not retained: %+v", m.trigger)
+	}
+}
+
+func TestGuardrailsRequireConsecutiveCPUSamples(t *testing.T) {
+	start := time.Unix(0, 0)
+	policy := Guardrails{MaxProcessCPUPercent: 50, ConsecutiveSamples: 2}
+	var trigger *GuardrailTrigger
+	m := &Monitor{guardrails: policy, startedAt: start, onTrigger: func(value GuardrailTrigger) { trigger = &value }}
+	for i, cpu := range []float64{0, .2, .3, .9, 1.6} {
+		r := reading{at: start.Add(time.Duration(i) * time.Second), logicalCPUs: 1, maxProcs: 1,
+			processCPUSeconds: cpu, processRSSBytes: 100, processAvailable: true}
+		m.acc.add(r)
+		m.observeGuardrails(r)
+	}
+	if trigger == nil || trigger.Resource != "generator_process_cpu" || trigger.ObservedCPUPercent <= 50 || trigger.ConsecutiveSamples != 2 {
+		t.Fatalf("CPU guardrail did not trigger after two consecutive over-limit intervals: %+v", trigger)
+	}
+}
+
+func TestGuardrailPolicyValidation(t *testing.T) {
+	for _, policy := range []Guardrails{
+		{}, {MaxProcessCPUPercent: 90, ConsecutiveSamples: 2}, {MaxProcessRSSBytes: 1024, ConsecutiveSamples: 20},
+	} {
+		if !policy.Validate() {
+			t.Errorf("valid guardrail policy rejected: %+v", policy)
+		}
+	}
+	for _, policy := range []Guardrails{
+		{MaxProcessCPUPercent: 101, ConsecutiveSamples: 2}, {MaxProcessRSSBytes: 1024, ConsecutiveSamples: 1},
+		{MaxProcessCPUPercent: math.NaN(), ConsecutiveSamples: 2}, {ConsecutiveSamples: 2},
+	} {
+		if policy.Validate() {
+			t.Errorf("invalid guardrail policy accepted: %+v", policy)
+		}
+	}
+}
+
 func TestAccumulatorNormalizesCPUByEffectiveQuota(t *testing.T) {
 	start := time.Unix(0, 0)
 	var a accumulator

@@ -38,9 +38,12 @@ func TestWorkloadFingerprintChangesWhenJourneyDefinitionChanges(t *testing.T) {
 	base := Scenario{Name: "fingerprint", BaseURL: "https://app.example.com", Users: 2, Duration: "1s", MaxRPS: 20, P95LimitMS: 1000, Steps: []Step{{Name: "read", Method: "GET", Path: "/items", ExpectedStatus: []int{200}}}}
 	want := preparedFingerprint(t, base)
 	cases := map[string]func(*Scenario){
-		"path":        func(s *Scenario) { s.Steps[0].Path = "/orders" },
-		"header":      func(s *Scenario) { s.Steps[0].Headers = map[string]string{"Accept": "text/html"} },
-		"assertion":   func(s *Scenario) { s.Steps[0].MustContain = "ready" },
+		"path":      func(s *Scenario) { s.Steps[0].Path = "/orders" },
+		"header":    func(s *Scenario) { s.Steps[0].Headers = map[string]string{"Accept": "text/html"} },
+		"assertion": func(s *Scenario) { s.Steps[0].MustContain = "ready" },
+		"JSON postcondition": func(s *Scenario) {
+			s.Steps[0].JSONAssertions = map[string]string{"/state": "ready"}
+		},
 		"body source": func(s *Scenario) { s.Steps[0].Method = "POST"; s.Steps[0].BodyEnv = "DAMOCLINE_BODY" },
 		"extraction":  func(s *Scenario) { s.Steps[0].Extract = map[string]Extract{"id": {JSONPointer: "/id"}} },
 		"profile weight": func(s *Scenario) {

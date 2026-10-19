@@ -1,15 +1,93 @@
 package capacityplan
 
 import (
+	"context"
 	"math"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/LucasLuchetta/Damocline/internal/campaign"
 	"github.com/LucasLuchetta/Damocline/internal/capacitygoal"
+	"github.com/LucasLuchetta/Damocline/internal/config"
+	"github.com/LucasLuchetta/Damocline/internal/generatorhealth"
 	"github.com/LucasLuchetta/Damocline/internal/report"
 )
+
+func TestFirstObservedFailureSurvivesPersistenceAndCannotBeHiddenByLaterPass(t *testing.T) {
+	base, err := config.Parse(config.Scenario{
+		Name: "synthetic", BaseURL: "http://127.0.0.1:18080", Users: 2, Duration: "10s", Timeout: "1s",
+		MaxRPS: 40, P95LimitMS: 1000, MaxErrorRate: 0.1, WindowDuration: "2.5s",
+		Steps: []config.Step{{Name: "request", Method: "GET", Path: "/"}},
+	}, config.Options{Authorized: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	evidence, err := campaign.WithRunner(context.Background(), base, campaign.Options{
+		Observation: 10 * time.Second, Recovery: 10 * time.Second, Repeats: 2,
+	}, func(_ context.Context, v config.Validated) report.Result {
+		calls++
+		run := auditFixture().Trials[0].Phases[0].Run
+		run.Target = v.Base.Scheme + "://" + v.Base.Host
+		run.Config.Users = v.Scenario.Users
+		run.Config.Duration = v.Duration.String()
+		run.Config.WindowDuration = v.Window.String()
+		if calls == 1 {
+			run.Outcome = "FAIL"
+		}
+		return run
+	})
+	if err != nil || calls != 1 || evidence.Outcome != "FAIL" || len(evidence.Trials) != 1 || len(evidence.Trials[0].Phases) != 1 {
+		t.Fatalf("first observed failure was not terminal and retained: calls=%d evidence=%+v err=%v", calls, evidence, err)
+	}
+
+	path := filepath.Join(t.TempDir(), "failed-campaign.json")
+	if err := report.WriteAnyJSON(path, evidence); err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := ReadCampaign(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	audit := AuditCampaign(reloaded)
+	if audit.State != "OBSERVED_FAIL" || len(reloaded.Trials) != 1 || len(reloaded.Trials[0].Phases) != 1 ||
+		audit.RequiredPhases != 1 || len(audit.PassingLevels) != 0 ||
+		len(audit.FailingLevels) != 1 || audit.FailingLevels[0] != evidence.BaseUsers {
+		t.Fatalf("the first observed failure was lost or summarized as a pass: audit=%+v evidence=%+v", audit, reloaded)
+	}
+
+	forged := evidence
+	forged.Outcome = "PASS"
+	forged.Trials = append(append([]campaign.Trial(nil), evidence.Trials...), auditFixture().Trials[1])
+	forged.Trials[1].Number = 2
+	forged.Trials[1].Outcome = "PASS"
+	forged.ObservationVariability = validVariability()
+	forgedAudit := AuditCampaign(forged)
+	if forgedAudit.State != "INVALID_EVIDENCE" {
+		t.Fatalf("a later passing trial hid the earlier failure: %+v", forgedAudit)
+	}
+
+	duplicateIDs := auditFixture()
+	duplicateIDs.Trials[1].RunID = duplicateIDs.Trials[0].RunID
+	if audit := AuditCampaign(duplicateIDs); audit.State != "INVALID_EVIDENCE" {
+		t.Fatalf("duplicate trial run IDs were accepted: %+v", audit)
+	}
+}
+
+func TestCampaignRunGuardrailsMustMatchOfflinePolicy(t *testing.T) {
+	policy := generatorhealth.Guardrails{MaxProcessRSSBytes: 512 * 1024 * 1024, ConsecutiveSamples: 3}
+	evidence := campaign.Result{SchemaVersion: 7, GeneratorGuardrails: &policy}
+	run := report.Result{Generator: &generatorhealth.Summary{Guardrails: &policy}}
+	if !campaignRunGuardrailsMatch(evidence, run) {
+		t.Fatal("matching campaign and phase guardrails were rejected")
+	}
+	run.Generator.Guardrails = nil
+	if campaignRunGuardrailsMatch(evidence, run) {
+		t.Fatal("missing phase guardrails were accepted")
+	}
+}
 
 func TestEvaluateRequiresExactSustainedEvidence(t *testing.T) {
 	goal := capacitygoal.Goal{PeakUsers: 100, GrowthPercent: 20, ReservePercent: 25}
@@ -152,10 +230,10 @@ func TestEvaluateRejectsIncompletePassingCampaign(t *testing.T) {
 	}
 }
 
-func TestSchemaTwoRequiresExactStageSequenceAndClassification(t *testing.T) {
+func TestSchemaThreeRequiresExactStageSequenceAndClassification(t *testing.T) {
 	makeEvidence := func() campaign.Result {
 		evidence := campaign.Result{
-			SchemaVersion: 2, Scenario: "synthetic", Target: "http://127.0.0.1", Outcome: "PASS",
+			SchemaVersion: 3, Scenario: "synthetic", Target: "http://127.0.0.1", Outcome: "PASS",
 			BaseUsers: 10, Repeats: 2, Warmup: "0s", Observation: "10s", SpikeDuration: "0s", Recovery: "10s", Budget: "2m20s",
 			Trials: passingTrials(), ObservationVariability: validVariability(),
 		}
@@ -247,6 +325,61 @@ func TestSchemaTwoRequiresExactStageSequenceAndClassification(t *testing.T) {
 	}
 }
 
+func TestSchemaFourRequiresFinalSoakEvidence(t *testing.T) {
+	evidence := campaign.Result{SchemaVersion: 4, Scenario: "synthetic", Target: "http://127.0.0.1", Outcome: "PASS", BaseUsers: 10, Repeats: 2, Warmup: "0s", Observation: "10s", SpikeDuration: "0s", Recovery: "10s", Soak: "10s", Budget: "3m20s", Trials: passingTrials(), ObservationVariability: validVariability()}
+	for i := range evidence.Trials {
+		for j := range evidence.Trials[i].Phases {
+			p := &evidence.Trials[i].Phases[j]
+			p.Run.Config.Users, p.Run.Config.Duration, p.Run.Config.WindowDuration = 10, "10s", "2.5s"
+			p.Run.Target = evidence.Target
+			p.Run.Outcome = "PASS"
+			p.EvidenceState = "PASS_OBSERVED"
+			p.Run.Metrics, p.Run.Journeys = validStatisticalRun().Metrics, validStatisticalRun().Metrics
+			p.Run.Steps = []report.StepResult{{Name: "step", Metrics: validStatisticalRun().Metrics}}
+			p.Run.Windows = nil
+			for k := 0; k < 4; k++ {
+				m := validStatisticalRun().Metrics
+				m.Total, m.Success = 300, 300
+				p.Run.Windows = append(p.Run.Windows, report.WindowResult{StartSeconds: float64(k) * 2.5, EndSeconds: float64(k+1) * 2.5, Metrics: m, Journeys: m, Steps: []report.WindowMetric{{Name: "step", Metrics: m}}})
+			}
+			if p.Name == "observation" || p.Name == "soak" {
+				p.Stability = "NO_LARGE_DRIFT_DETECTED"
+			}
+		}
+	}
+	soak := campaign.Phase{Name: "soak", EvidenceState: "PASS_OBSERVED", Stability: "NO_LARGE_DRIFT_DETECTED", Run: evidence.Trials[1].Phases[0].Run}
+	soak.Run.Config.Duration = "10s"
+	evidence.Trials[1].Phases = append(evidence.Trials[1].Phases, soak)
+	if err := validateEvidence(evidence); err != nil {
+		t.Fatalf("valid schema-v4 soak evidence rejected: %v", err)
+	}
+	missing := evidence
+	missing.Trials = append([]campaign.Trial(nil), evidence.Trials...)
+	missing.Trials[1].Phases = append([]campaign.Phase(nil), evidence.Trials[1].Phases[:2]...)
+	if err := validateEvidence(missing); err == nil {
+		t.Fatal("passing schema-v4 campaign without final soak accepted")
+	}
+}
+
+func TestSchemaFiveRecomputesPersistedStabilityPolicy(t *testing.T) {
+	evidence := auditFixture()
+	observation := &evidence.Trials[0].Phases[0]
+	observation.Run.Windows[3].Metrics.P95MS = 115
+	if err := validateEvidence(evidence); err != nil {
+		t.Fatalf("default policy evidence should remain stable at this drift: %v", err)
+	}
+	evidence.StabilityPolicy.MaxP95IncreasePercent = 10
+	if err := validateEvidence(evidence); err == nil {
+		t.Fatal("campaign with drift under its saved stricter policy was accepted")
+	}
+	defaultPolicy := campaign.DefaultStabilityPolicy()
+	evidence.StabilityPolicy = &defaultPolicy
+	evidence.StabilityPolicy.MinimumSamplesPerWindow = 21
+	if err := validateEvidence(evidence); err == nil {
+		t.Fatal("schema-v5 campaign with invalid saved window threshold was accepted")
+	}
+}
+
 func TestWeightedProfilesRequirePerWindowJourneyEvidence(t *testing.T) {
 	evidence := campaign.Result{SchemaVersion: 1, Scenario: "synthetic", Outcome: "PASS", BaseUsers: 10, Repeats: 2, Trials: passingTrials(), ObservationVariability: validVariability()}
 	for trialIndex := range evidence.Trials {
@@ -290,13 +423,15 @@ func validStatisticalRun() report.Result {
 	}
 	return report.Result{
 		Outcome: "PASS", ObservationSeconds: 10,
-		Config:  report.RunConfig{P95LimitMS: 100, MaxErrorRate: 0.01, MinSamplesPerStep: 1, WindowDuration: "10s"},
+		Config:  report.RunConfig{P95LimitMS: 100, MaxErrorRate: 0.01, MinSamplesPerStep: 1, WindowDuration: "10s", MaxRPS: 1000},
 		Metrics: metrics, Steps: []report.StepResult{{Name: "step", Metrics: metrics}},
 		Windows: []report.WindowResult{{StartSeconds: 0, EndSeconds: 10, Metrics: metrics,
 			Journeys: metrics, Steps: []report.WindowMetric{{Name: "step", Metrics: metrics}}}},
 		SchemaVersion: report.CurrentSchemaVersion,
 		Journeys:      metrics,
-		Quality:       &report.Quality{State: report.QualityValid},
+		Generator: &generatorhealth.Summary{Samples: 4, GoCPUValid: true, ProcessSamples: 4, ProcessCPUValid: true,
+			PeakProcessRSSBytes: 1024},
+		Quality: &report.Quality{State: report.QualityValid},
 	}
 }
 

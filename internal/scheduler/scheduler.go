@@ -90,9 +90,10 @@ func Drive(ctx context.Context, duration time.Duration, rate int, admit func() b
 			lag := now.Sub(intended)
 			stats.Planned++
 			stats.observe(lag)
-			if stopped && now.Sub(start) < duration {
+			elapsed := now.Sub(start)
+			if stopped && elapsed < duration {
 				stats.CancelledBeforeAdmission++
-			} else if lag >= interval {
+			} else if elapsed >= duration || lag >= interval {
 				stats.DroppedLate++
 			} else if admit() {
 				stats.Admitted++
