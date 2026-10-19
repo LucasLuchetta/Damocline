@@ -7,11 +7,15 @@ import (
 	"testing"
 
 	"github.com/LucasLuchetta/Damocline/internal/calibration"
+	"github.com/LucasLuchetta/Damocline/internal/generatorhealth"
 	"github.com/LucasLuchetta/Damocline/internal/report"
 )
 
 func TestHandlerRendersReport(t *testing.T) {
-	h := Handler(report.Result{Name: "Local report", SchemaVersion: 13, Outcome: "PASS", ObservationSeconds: 2, Config: report.RunConfig{MaxRPS: 5}, Metrics: report.MetricSet{Total: 2, P95MS: 100, HTTP: report.HTTPDiagnostics{StatusCodes: map[int]int{429: 1}, Status4xx: 1, RateLimitedResponses: 1}}, Journeys: report.MetricSet{Total: 1, Success: 1, P95MS: 250}, ObservedThinkTimeMS: 60, ThinkTimeObservations: 1, Calibration: &report.CalibrationEvidence{Coverage: calibration.Coverage{Status: "INCONCLUSIVE", Dimensions: []calibration.Dimension{{Name: "observed_response_size", Status: "MATCHED", Reason: "every step matched"}}}}, Quality: &report.Quality{State: report.QualityLimited, Findings: []string{"endpoint identity remains unverified"}}, Steps: []report.StepResult{{Name: "page", Metrics: report.MetricSet{ResponseBody: report.ResponseBodyDiagnostics{CompleteObservations: 2, MinBytes: 12, MaxBytes: 40, TotalBytes: 52}}, HTTPTrace: report.HTTPTrace{FirstByteCount: 1, FirstByteMS: 12, TLSCount: 1, TLSMS: 3}}}, Windows: []report.WindowResult{{StartSeconds: 0, EndSeconds: 1, Steps: []report.WindowMetric{{Name: "page", Metrics: report.MetricSet{Total: 2, P95MS: 120}}}, Profiles: []report.WindowMetric{{Name: "checkout", Metrics: report.MetricSet{Total: 1, P95MS: 300}}}}}})
+	h := Handler(report.Result{Name: "Local report", SchemaVersion: 13, Outcome: "PASS", ObservationSeconds: 2, ArrivalsScheduled: 12, ArrivalsDropped: 2, ArrivalsDroppedBusy: 1, ArrivalsDroppedLate: 1, Generator: &generatorhealth.Summary{Samples: 8, PeakHeapAllocBytes: 1024, PeakGoroutines: 4, PeakProcessRSSBytes: 2048}, Config: report.RunConfig{MaxRPS: 5, P95LimitMS: 200, MaxErrorRate: 0.05}, Metrics: report.MetricSet{Total: 2, P95MS: 100, HTTP: report.HTTPDiagnostics{StatusCodes: map[int]int{429: 1}, Status4xx: 1, RateLimitedResponses: 1}}, Journeys: report.MetricSet{Total: 1, Success: 1, P95MS: 250}, ObservedThinkTimeMS: 60, ThinkTimeObservations: 1, Calibration: &report.CalibrationEvidence{Coverage: calibration.Coverage{Status: "INCONCLUSIVE", Dimensions: []calibration.Dimension{{Name: "observed_response_size", Status: "MATCHED", Reason: "every step matched"}}}}, Quality: &report.Quality{State: report.QualityLimited, Findings: []string{"endpoint identity remains unverified"}}, Steps: []report.StepResult{{Name: "page", Metrics: report.MetricSet{ResponseBody: report.ResponseBodyDiagnostics{CompleteObservations: 2, MinBytes: 12, MaxBytes: 40, TotalBytes: 52}}, HTTPTrace: report.HTTPTrace{FirstByteCount: 1, FirstByteMS: 12, TLSCount: 1, TLSMS: 3}}}, Windows: []report.WindowResult{
+		{StartSeconds: 0, EndSeconds: 1, Metrics: report.MetricSet{Total: 10, Success: 9, Failures: 1, P95MS: 120, P99MS: 250}, Journeys: report.MetricSet{Total: 5, Success: 4, Failures: 1, P95MS: 300, P99MS: 450}, Steps: []report.WindowMetric{{Name: "page", Metrics: report.MetricSet{Total: 2, Success: 2, P95MS: 120, P99MS: 200}}}, Profiles: []report.WindowMetric{{Name: "checkout", Metrics: report.MetricSet{Total: 1, Success: 1, P95MS: 300, P99MS: 400}}}},
+		{StartSeconds: 1, EndSeconds: 2, Metrics: report.MetricSet{Total: 10, Success: 10, P95MS: 80, P99MS: 100}, Journeys: report.MetricSet{Total: 4, Success: 4, P95MS: 180, P99MS: 220}},
+	}})
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/", nil))
 	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "Local report") || !strings.Contains(w.Body.String(), "page") {
@@ -39,6 +43,11 @@ func TestHandlerRendersReport(t *testing.T) {
 	}
 	if !strings.Contains(w.Body.String(), "0-1s") || !strings.Contains(w.Body.String(), "step page") || !strings.Contains(w.Body.String(), "profile checkout") {
 		t.Fatalf("report view omitted per-step or per-profile window evidence: %s", w.Body.String())
+	}
+	for _, expected := range []string{"Observation-window timeline", "Request p95 and p99 by observation window", `points="182.5,89.8 457.5,108.2"`, `points="182.5,30.0 457.5,99.0"`, "0-1s", "1-2s", "aggregate journeys", "Success", "Run-wide context (not aligned to windows)", "dropped starts: 2", "peak process RSS 2048 bytes"} {
+		if !strings.Contains(w.Body.String(), expected) {
+			t.Fatalf("report view omitted timeline evidence %q: %s", expected, w.Body.String())
+		}
 	}
 }
 
