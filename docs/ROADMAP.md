@@ -109,7 +109,7 @@ See the [G0 acceptance matrix](G0_STATUS.md) for the implementation, test, valid
 
 ### G1-A â€” Workload mix and human-like activity
 
-- [ ] **G1-01:** Add a versioned multi-workflow scenario format: named journey, ordered HTTP steps, optional weight, workload model and independent authentication context. **Verify:** backward-compatible single-workflow JSON migration and strict parser tests.
+- [ ] **G1-01 (partial):** Scenario version 1 now supports named weighted workflows, ordered HTTP steps, strict version parsing, and non-overwriting migration from legacy flat steps or weighted profiles. Independent per-workflow authentication remains open. **Verify:** parser and migration tests cover historical inputs, future versions, ambiguous formats, and destination preservation.
 - [x] **G1-02:** Allow at least two concurrent workflows with independent weights, e.g. 60% read dashboards, 25% search, 15% save. **Verified:** the bounded native engine selects by journey start and its weighted profile fixture checks measured ratios against a slow multi-step workflow and a fast single-step workflow.
 - [x] **G1-03:** Profile weights apply to selected **journey starts**. They do not describe time spent, HTTP request share, VU allocation or completed-work share. **Verified:** a loopback test confirms different journey lengths and response times do not alter the configured start ratios; open-arrival profiles retain selected, worker-started and busy-dropped counts separately.
 - [ ] **G1-04:** Support selectable closed-loop actors, independently scheduled journey arrivals and (later in G1) partly-open **session** arrivals. **Verify:** slowing the target changes closed-loop throughput but not the intended open schedule.
