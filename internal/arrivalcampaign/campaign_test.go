@@ -54,6 +54,61 @@ func TestWithRunnerRejectsCalculatedDemandMismatch(t *testing.T) {
 	}
 }
 
+func TestArrivalCampaignRunsRecoveryAfterObservedSpikeFailure(t *testing.T) {
+	base := validatedArrival(t)
+	var rates []int
+	result, err := WithRunner(context.Background(), base, Options{
+		Observation: 10 * time.Second, SpikeRate: 2, SpikeDuration: 10 * time.Second,
+		Recovery: 10 * time.Second, Repeats: 2,
+	}, func(_ context.Context, v config.Validated) report.Result {
+		rates = append(rates, v.Scenario.ArrivalRate)
+		outcome := "PASS"
+		if v.Scenario.ArrivalRate == 2 {
+			outcome = "FAIL"
+		}
+		return syntheticArrivalPhase(v, outcome)
+	})
+	if err != nil || result.Outcome != "FAIL" || len(rates) != 3 || rates[0] != 1 || rates[1] != 2 || rates[2] != 1 {
+		t.Fatalf("spike failure did not retain its recovery phase: outcome=%s rates=%v err=%v", result.Outcome, rates, err)
+	}
+	phases := result.Trials[0].Phases
+	if len(phases) != 3 || phases[0].Name != "observation" || phases[1].Name != "spike" || phases[1].EvidenceState != "FAIL_OBSERVED" || phases[2].Name != "recovery" || phases[2].Run.Outcome != "PASS" {
+		t.Fatalf("arrival campaign did not preserve the failed spike and passing recovery evidence: %+v", phases)
+	}
+}
+
+func syntheticArrivalPhase(v config.Validated, outcome string) report.Result {
+	run := report.Result{
+		SchemaVersion: 15, Name: v.Scenario.Name, Target: v.Base.Scheme + "://" + v.Base.Host,
+		Outcome: outcome, ElapsedSeconds: v.Duration.Seconds(), ObservationSeconds: v.Duration.Seconds(),
+		Config: report.RunConfig{Mode: "arrival", Users: v.Scenario.Users, ArrivalRate: v.Scenario.ArrivalRate,
+			MaxRPS: v.Scenario.MaxRPS, P95LimitMS: v.Scenario.P95LimitMS, MaxErrorRate: v.Scenario.MaxErrorRate,
+			MinSamplesPerStep: v.Scenario.MinSamplesPerStep, RequestTimeout: v.Scenario.Timeout,
+			Duration: v.Duration.String(), WindowDuration: v.Window.String(), WorkloadFingerprint: v.WorkloadFingerprint},
+		Metrics:   report.MetricSet{Total: 80, Success: 80, P95MS: 100},
+		Journeys:  report.MetricSet{Total: 80, Success: 80, P95MS: 100},
+		Generator: &generatorhealth.Summary{Samples: 5, GoCPUValid: true, ProcessSamples: 5, ProcessCPUValid: true},
+	}
+	if outcome == "FAIL" {
+		run.Metrics.Success, run.Metrics.Failures = 0, 80
+		run.Journeys.Success, run.Journeys.Failures = 0, 80
+	}
+	windowCount := int((v.Duration + v.Window - 1) / v.Window)
+	for index := 0; index < windowCount; index++ {
+		window := report.WindowResult{
+			StartSeconds: float64(index) * v.Window.Seconds(), EndSeconds: min(float64(index+1)*v.Window.Seconds(), v.Duration.Seconds()),
+			Metrics:  report.MetricSet{Total: 20, Success: 20, P95MS: 100},
+			Journeys: report.MetricSet{Total: 20, Success: 20, P95MS: 100},
+		}
+		if outcome == "FAIL" {
+			window.Metrics.Success, window.Metrics.Failures = 0, 20
+			window.Journeys.Success, window.Journeys.Failures = 0, 20
+		}
+		run.Windows = append(run.Windows, window)
+	}
+	return run
+}
+
 func TestValidateRequiresBudgetToCoverBoundedPhaseDrains(t *testing.T) {
 	base := validatedArrival(t)
 	options := Options{Observation: 10 * time.Second, Recovery: 10 * time.Second, Repeats: 2, Budget: 50 * time.Second}
@@ -125,7 +180,7 @@ func TestArrivalCampaignPersistsGeneratorGuardrailsAndAbortReason(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.SchemaVersion != 3 || result.Outcome != "ABORTED" || result.GeneratorGuardrails == nil || *result.GeneratorGuardrails != policy ||
+	if result.SchemaVersion != CurrentSchemaVersion || result.Outcome != "ABORTED" || result.GeneratorGuardrails == nil || *result.GeneratorGuardrails != policy ||
 		len(result.Trials) != 1 || !strings.Contains(result.Trials[0].AbortReason, "RSS") {
 		t.Fatalf("arrival campaign lost resource abort evidence: %+v", result)
 	}

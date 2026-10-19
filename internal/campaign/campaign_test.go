@@ -36,6 +36,28 @@ func TestCampaignSeparatesWarmupObservationAndRecovery(t *testing.T) {
 	}
 }
 
+func TestCampaignRunsRecoveryAfterObservedSpikeFailure(t *testing.T) {
+	var users []int
+	result, err := WithRunner(context.Background(), scenario(t), Options{
+		Observation: 10 * time.Second, SpikeUsers: 2, SpikeDuration: 10 * time.Second,
+		Recovery: 10 * time.Second, Repeats: 2,
+	}, func(_ context.Context, v config.Validated) report.Result {
+		users = append(users, v.Scenario.Users)
+		run := stableResult(v)
+		if v.Scenario.Users == 2 {
+			run.Outcome = "FAIL"
+		}
+		return run
+	})
+	if err != nil || result.Outcome != "FAIL" || len(users) != 3 || users[0] != 1 || users[1] != 2 || users[2] != 1 {
+		t.Fatalf("spike failure did not retain its recovery phase: outcome=%s users=%v err=%v", result.Outcome, users, err)
+	}
+	phases := result.Trials[0].Phases
+	if len(phases) != 3 || phases[0].Name != "observation" || phases[1].Name != "spike" || phases[1].EvidenceState != "FAIL_OBSERVED" || phases[2].Name != "recovery" || phases[2].Run.Outcome != "PASS" {
+		t.Fatalf("campaign did not preserve the failed spike and passing recovery evidence: %+v", phases)
+	}
+}
+
 func TestCampaignRunsStableSoakOnceAfterIndependentTrials(t *testing.T) {
 	var phases []string
 	result, err := WithRunner(context.Background(), scenario(t), Options{Observation: 10 * time.Second, Recovery: 10 * time.Second, Soak: 10 * time.Second, Repeats: 2}, func(_ context.Context, v config.Validated) report.Result {
@@ -82,6 +104,13 @@ func TestCampaignSoakMustFitBoundedBudget(t *testing.T) {
 		if err := Validate(Options{Observation: 10 * time.Second, Recovery: 10 * time.Second, Soak: soak, Repeats: 2}); err == nil {
 			t.Fatalf("unsafe soak duration accepted: %s", soak)
 		}
+	}
+}
+
+func TestCampaignSpikeRequiresRecoveryPhase(t *testing.T) {
+	options := Options{Observation: 10 * time.Second, SpikeUsers: 2, SpikeDuration: 10 * time.Second, Repeats: 2}
+	if err := Validate(options); err == nil {
+		t.Fatal("campaign spike without a recovery phase was accepted")
 	}
 }
 
@@ -135,7 +164,7 @@ func TestCampaignPersistsGeneratorGuardrailsAndAbortReason(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.SchemaVersion != 7 || result.Outcome != "ABORTED" || result.GeneratorGuardrails == nil || *result.GeneratorGuardrails != policy ||
+	if result.SchemaVersion != CurrentSchemaVersion || result.Outcome != "ABORTED" || result.GeneratorGuardrails == nil || *result.GeneratorGuardrails != policy ||
 		len(result.Trials) != 1 || !strings.Contains(result.Trials[0].AbortReason, "RSS") {
 		t.Fatalf("campaign lost resource abort evidence: %+v", result)
 	}

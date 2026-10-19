@@ -430,7 +430,14 @@ func validatePartialStageEvidence(evidence campaign.Result) error {
 			if phase.EvidenceState != state || (phase.Name == "observation" || phase.Name == "soak") && phase.Stability != stability {
 				return fmt.Errorf("trial %d has stale or altered %s phase evidence", trial.Number, phase.Name)
 			}
-			if want.Required && (phase.Run.Outcome == "FAIL" || state == "FAIL_OBSERVED") || phase.Run.Outcome == "ABORTED" || phase.Run.Outcome == "INCONCLUSIVE" || state == "INVALID_DELIVERY" || state == "INSUFFICIENT_EVIDENCE" || (phase.Name == "observation" || phase.Name == "soak") && stability != "NO_LARGE_DRIFT_DETECTED" {
+			observedFailure := want.Required && (phase.Run.Outcome == "FAIL" || state == "FAIL_OBSERVED")
+			if evidence.SchemaVersion >= 8 && phase.Name == "spike" && phase.Run.Outcome == "FAIL" && state == "FAIL_OBSERVED" {
+				if phaseIndex+1 >= len(trial.Phases) || trial.Phases[phaseIndex+1].Name != "recovery" {
+					return errors.New("a failed spike phase is missing its recovery observation")
+				}
+				observedFailure = false
+			}
+			if observedFailure || phase.Run.Outcome == "ABORTED" || phase.Run.Outcome == "INCONCLUSIVE" || state == "INVALID_DELIVERY" || state == "INSUFFICIENT_EVIDENCE" || (phase.Name == "observation" || phase.Name == "soak") && stability != "NO_LARGE_DRIFT_DETECTED" {
 				if phaseIndex != len(trial.Phases)-1 {
 					return errors.New("terminal phase evidence is followed by additional phases")
 				}
@@ -446,7 +453,8 @@ func validatePartialStageEvidence(evidence campaign.Result) error {
 				return errors.New("passing trial contains terminal phase evidence")
 			}
 		case "FAIL":
-			if !terminalCause || len(trial.Phases) == 0 || !expected[len(trial.Phases)-1].Required || trial.Phases[len(trial.Phases)-1].Run.Outcome != "FAIL" || trial.Phases[len(trial.Phases)-1].EvidenceState != "FAIL_OBSERVED" {
+			lastPhaseFailed := len(trial.Phases) > 0 && expected[len(trial.Phases)-1].Required && trial.Phases[len(trial.Phases)-1].Run.Outcome == "FAIL" && trial.Phases[len(trial.Phases)-1].EvidenceState == "FAIL_OBSERVED"
+			if !terminalCause && !lastPhaseFailed && !(evidence.SchemaVersion >= 8 && recoveredSpikeFailure(trial)) {
 				return errors.New("failed trial has no terminal observed objective breach")
 			}
 		case "INCONCLUSIVE":
@@ -607,4 +615,15 @@ func campaignRunGuardrailsMatch(evidence campaign.Result, run report.Result) boo
 		got = *run.Generator.Guardrails
 	}
 	return want.Equal(got)
+}
+
+func recoveredSpikeFailure(trial campaign.Trial) bool {
+	for index, phase := range trial.Phases {
+		if phase.Name == "spike" && phase.Run.Outcome == "FAIL" && phase.EvidenceState == "FAIL_OBSERVED" &&
+			index+1 == len(trial.Phases)-1 && trial.Phases[index+1].Name == "recovery" &&
+			trial.Phases[index+1].Run.Outcome == "PASS" && trial.Phases[index+1].EvidenceState == "PASS_OBSERVED" {
+			return true
+		}
+	}
+	return false
 }

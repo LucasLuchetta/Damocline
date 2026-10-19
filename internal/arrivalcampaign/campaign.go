@@ -15,7 +15,7 @@ import (
 	"github.com/LucasLuchetta/Damocline/internal/report"
 )
 
-const CurrentSchemaVersion = 3
+const CurrentSchemaVersion = 4
 const maximumCampaignDuration = 15 * time.Minute
 const LongRunWallTimeLimit = 2 * time.Hour
 const LongRunPhaseLimit = 30 * time.Minute
@@ -310,6 +310,7 @@ func WithRunner(parent context.Context, base config.Validated, options Options, 
 	}
 	for number := 1; number <= options.Repeats; number++ {
 		trial := Trial{Number: number, Phases: []Phase{}, Outcome: "PASS"}
+		spikeFailed := false
 		for _, phase := range PlannedPhases(options, base.Scenario.ArrivalRate, number) {
 			if ctx.Err() != nil {
 				trial.Outcome = "ABORTED"
@@ -353,6 +354,10 @@ func WithRunner(parent context.Context, base config.Validated, options Options, 
 				trial.Outcome = "INCONCLUSIVE"
 				break
 			}
+			if phase.Name == "spike" && run.Outcome == "FAIL" && state == "FAIL_OBSERVED" {
+				spikeFailed = true
+				continue
+			}
 			if (phase.Name == "observation" || phase.Name == "soak") && state == "PASS_OBSERVED" && stability != "NO_LARGE_DRIFT_DETECTED" {
 				trial.Outcome = "INCONCLUSIVE"
 				break
@@ -377,6 +382,10 @@ func WithRunner(parent context.Context, base config.Validated, options Options, 
 				break
 			}
 			if phase.Required && run.Outcome != "PASS" {
+				trial.Outcome = "FAIL"
+				break
+			}
+			if phase.Name == "recovery" && spikeFailed {
 				trial.Outcome = "FAIL"
 				break
 			}

@@ -13,7 +13,7 @@ import (
 	"github.com/LucasLuchetta/Damocline/internal/report"
 )
 
-const CurrentSchemaVersion = 7
+const CurrentSchemaVersion = 8
 
 const (
 	DefaultWallTimeLimit = 15 * time.Minute
@@ -214,6 +214,9 @@ func Validate(options Options) error {
 	if options.SpikeUsers < 0 || options.SpikeUsers > 50 || options.SpikeDuration < 0 || options.SpikeDuration > 3*time.Minute || (options.SpikeUsers > 0 && options.SpikeDuration < 10*time.Second) {
 		return fmt.Errorf("spike-users must be 1-50 and spike-duration must be 10s-3m")
 	}
+	if options.SpikeDuration > 0 && options.Recovery == 0 {
+		return fmt.Errorf("a spike requires a recovery phase so post-spike behavior is retained")
+	}
 	if options.Repeats < 2 || options.Repeats > 5 {
 		return fmt.Errorf("repeats must be between 2 and 5")
 	}
@@ -360,6 +363,7 @@ func WithRunner(ctx context.Context, base config.Validated, options Options, run
 	}
 	for number := 1; number <= options.Repeats; number++ {
 		trial := Trial{Number: number, Phases: []Phase{}, Outcome: "PASS"}
+		spikeFailed := false
 		for _, phase := range PlannedTrialPhases(options, base.Scenario.Users, number) {
 			if ctx.Err() != nil {
 				trial.Outcome = "ABORTED"
@@ -394,6 +398,14 @@ func WithRunner(ctx context.Context, base config.Validated, options Options, run
 				trial.Outcome = "INCONCLUSIVE"
 				break
 			}
+			if phase.Name == "spike" && run.Outcome == "FAIL" && state == "FAIL_OBSERVED" {
+				spikeFailed = true
+				if options.Recovery == 0 {
+					trial.Outcome = "FAIL"
+					break
+				}
+				continue
+			}
 			if (phase.Name == "observation" || phase.Name == "soak") && state == "PASS_OBSERVED" && stability != "NO_LARGE_DRIFT_DETECTED" {
 				trial.Outcome = "INCONCLUSIVE"
 				break
@@ -414,6 +426,10 @@ func WithRunner(ctx context.Context, base config.Validated, options Options, run
 				break
 			}
 			if phase.Required && run.Outcome != "PASS" {
+				trial.Outcome = "FAIL"
+				break
+			}
+			if phase.Name == "recovery" && spikeFailed {
 				trial.Outcome = "FAIL"
 				break
 			}

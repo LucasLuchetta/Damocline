@@ -3,8 +3,8 @@ Level collection verdict: INCONCLUSIVE
 Scenario: offline | target: http://127.0.0.1:18080
 Observed passing levels: [] | failing levels: [] | inconclusive levels: [2 4]
 Observed pattern: NO_DECISIVE_LEVEL
-  2 VUs: ABORTED | audit INCONCLUSIVE | measurement LIMITED | evidence sha256:272770ebbdb2f8cecd30e29cea7d36386487cc62a4dda70b435e2bafb0fb215b
-  4 VUs: ABORTED | audit INCONCLUSIVE | measurement LIMITED | evidence sha256:d3d2ed274e64a15bffc83cd7c295b13002841caaf2216b485225089839fa2732
+  2 VUs: ABORTED | audit INCONCLUSIVE | measurement LIMITED | evidence sha256:076f1ee71fb2742d9973f874149bc90a3b0da79ce47222d327a53c2b4a8d4b8f
+  4 VUs: ABORTED | audit INCONCLUSIVE | measurement LIMITED | evidence sha256:f055154830f707dc5454f3aaba8e59d5d3685b6a1183cc6dc0b545410f83cc83
 Demand target: 3 workload-equivalent active actors | plan state: INSUFFICIENT_EVIDENCE
   - A demand decision requires a campaign at the exact calculated workload level; nearby levels are not interpolated.
   - Each level is audited independently; no result is interpolated or extrapolated to an untested workload.

@@ -115,6 +115,11 @@ func EvaluateJourneyCampaign(saved arrivalcampaign.Result, goal JourneyStartGoal
 			if phase.EvidenceState != state || phase.Stability != stability {
 				return JourneyStartAssessment{}, errors.New("saved phase evidence labels disagree with native report data")
 			}
+			if saved.SchemaVersion >= 4 && expected.Name == "spike" && run.Outcome == "FAIL" && state == "FAIL_OBSERVED" {
+				if phaseIndex+1 >= len(trial.Phases) || trial.Phases[phaseIndex+1].Name != "recovery" {
+					return JourneyStartAssessment{}, errors.New("a failed arrival spike phase is missing its recovery observation")
+				}
+			}
 			if expected.Required && campaignHasAdequateSLOFailure(run, state, expected.Name == "observation" || expected.Name == "soak") {
 				observedSLOFailure = true
 			}
