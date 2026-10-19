@@ -114,19 +114,22 @@ func campaignProfileCmd(args []string, stdout, stderr io.Writer) int {
 		return 0
 	case "run":
 		return campaignProfileRun(args[1:], store, stdout, stderr)
+	case "verify":
+		return campaignProfileVerifyCmd(args[1:], store, stdout, stderr)
 	default:
 		fmt.Fprintln(stderr, campaignProfileUsage)
 		return 2
 	}
 }
 
-const campaignProfileUsage = `Usage: damocline campaign profile <save|list|show|migrate|delete|run>
+const campaignProfileUsage = `Usage: damocline campaign profile <save|list|show|migrate|delete|run|verify>
   save --file profile.json [--replace]
   list
   show --name NAME
   migrate --name NAME
   delete --name NAME
-  run --name NAME (--authorized | --dry-run) [--allow-writes] [--allow-insecure-http] [--staging-confirmed] [--calibration FILE] [--out FILE]`
+  run --name NAME (--authorized | --dry-run) [--allow-writes] [--allow-insecure-http] [--staging-confirmed] [--calibration FILE] [--out FILE]
+  verify --name NAME --campaign FILE [--out FILE]`
 
 func campaignProfileRun(args []string, store campaignprofile.Store, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("campaign profile run", flag.ContinueOnError)

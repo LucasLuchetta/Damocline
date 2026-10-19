@@ -206,6 +206,7 @@ damocline campaign profile list
 damocline campaign profile show --name local-readonly
 damocline campaign profile run --name local-readonly --dry-run
 damocline campaign profile run --name local-readonly --authorized
+damocline campaign profile verify --name local-readonly --campaign .damocline/reports/campaign.json --out verification.json
 ```
 
 Profiles are stored under `.damocline/profiles/`; schema-less/v0 profiles are
@@ -218,6 +219,15 @@ write the full trial and phase report to a unique file under
 `.damocline/reports/` unless `--out` is provided. Profiles capture settings, not
 target state or credentials; environment variables and body data must be supplied
 at run time. Do not commit local profiles or reports.
+
+`campaign profile verify` performs an offline comparison of the saved profile's
+workload and campaign controls against the phase configurations recorded in a
+campaign report. It generates no traffic and can save a machine-readable result
+without overwriting an existing file. A match is a consistency check, not a
+signature: it does not authenticate either file, attest the host or application
+revision, or verify credentials, target data state, and application-metrics
+endpoint settings. Environment-backed body contents must be present to reproduce
+the workload fingerprint.
 
 Open a saved run or campaign without generating traffic:
 

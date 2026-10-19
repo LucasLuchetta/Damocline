@@ -25,7 +25,7 @@ func TestCampaignProfileRunDryRunAndLoopbackReport(t *testing.T) {
 		fmt.Fprint(w, "ok")
 	}))
 	defer server.Close()
-	profile, err := campaignprofile.New("loopback", "", config.Scenario{Name: "loopback", Environment: "development", BaseURL: server.URL, Users: 2, Duration: "10s", Timeout: "1s", MaxRPS: 100, P95LimitMS: 1000, MaxErrorRate: 1, Steps: []config.Step{{Name: "health", Method: "GET", Path: "/"}}}, campaign.Options{Observation: 10 * time.Second, Repeats: 2})
+	profile, err := campaignprofile.New("loopback", "", config.Scenario{Name: "loopback", Environment: "development", BaseURL: server.URL, Users: 2, Duration: "10s", Timeout: "1s", MaxRPS: 100, P95LimitMS: 1000, MaxErrorRate: 0.1, Steps: []config.Step{{Name: "health", Method: "GET", Path: "/"}}}, campaign.Options{Observation: 10 * time.Second, Recovery: 10 * time.Second, Repeats: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,6 +66,37 @@ func TestCampaignProfileRunDryRunAndLoopbackReport(t *testing.T) {
 	}
 	if first.SchemaVersion != campaign.CurrentSchemaVersion || len(first.Trials) != 2 || len(first.Trials[0].Phases) == 0 || first.Trials[0].Phases[0].Run.Config.WorkloadFingerprint == "" {
 		t.Fatalf("first report lacks reproducible campaign evidence: schema=%d trials=%d", first.SchemaVersion, len(first.Trials))
+	}
+	verification, err := verifyCampaignProfile(profile, first)
+	if err != nil || verification.State != "MATCHED" || verification.ComparedPhases != 4 {
+		t.Fatalf("saved profile did not match its campaign report: state=%s phases=%d mismatches=%v err=%v", verification.State, verification.ComparedPhases, verification.Mismatches, err)
+	}
+	changedProfile := profile
+	changedProfile.Scenario.P95LimitMS++
+	changed, err := verifyCampaignProfile(changedProfile, first)
+	if err != nil || changed.State != "MISMATCHED" {
+		t.Fatalf("changed profile was not rejected: state=%s mismatches=%v err=%v", changed.State, changed.Mismatches, err)
+	}
+	verificationOut := filepath.Join(outDir, "verification.json")
+	beforeVerificationRequests := requests.Load()
+	stdout.Reset()
+	stderr.Reset()
+	if code := campaignProfileVerifyCmd([]string{"--name", "loopback", "--campaign", firstOut, "--out", verificationOut}, store, &stdout, &stderr); code != 0 {
+		t.Fatalf("offline profile verification code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if _, err := os.Stat(verificationOut); err != nil {
+		t.Fatalf("verification command did not create output: stdout=%s stderr=%s err=%v", stdout.String(), stderr.String(), err)
+	}
+	if got := requests.Load(); got != beforeVerificationRequests {
+		t.Fatalf("offline profile verification sent %d request(s)", got-beforeVerificationRequests)
+	}
+	verificationData, err := os.ReadFile(verificationOut)
+	if err != nil {
+		t.Fatalf("verification artifact not written: %v", err)
+	}
+	var savedVerification campaignProfileVerification
+	if err := json.Unmarshal(verificationData, &savedVerification); err != nil || savedVerification.State != "MATCHED" || savedVerification.CampaignEvidenceID != verification.CampaignEvidenceID {
+		t.Fatalf("invalid saved verification: %+v err=%v", savedVerification, err)
 	}
 
 	secondOut := filepath.Join(outDir, "second.json")
