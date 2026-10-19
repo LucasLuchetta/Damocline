@@ -133,7 +133,8 @@ buy infrastructure. Schema-v2 evidence also requires the exact planned phase ord
 For an authorized write workflow, declare an environment-backed data prefix and
 use `{{synthetic_id}}` in complete path segments, headers, or `body_env`
 content. Damocline generates a fresh identifier for every journey and never
-writes that identifier to a report.
+writes that identifier to a report. `--dry-run --allow-writes` marks each
+non-GET/HEAD step as `MUTATING` and shows its route without sending requests.
 
 ```powershell
 $env:DAMOCLINE_TEST_DATA_PREFIX = "damocline-check"
@@ -150,10 +151,14 @@ $env:DAMOCLINE_TEST_DATA_PREFIX = "damocline-check"
 }
 ```
 
-Cleanup is an explicit workflow step, so a failed or cancelled journey can
-leave test data behind. Use an isolated test namespace, validate cleanup in
-staging, and retain an application-specific cleanup procedure; Damocline does
-not delete resources outside the configured, authorized journey.
+Cleanup is an explicit workflow step. The engine continues through configured
+steps after a business assertion fails, so a final DELETE can clean up that
+journey; the step's own status and failures remain visible in the report.
+Cancellation, process termination, missing extracted values, or a failed
+cleanup request can still leave test data behind. Use an isolated test
+namespace, validate cleanup in staging, and retain an application-specific
+cleanup procedure; Damocline does not delete resources outside the configured,
+authorized journey.
 
 ## 8. Monitor the Linux VPS independently
 

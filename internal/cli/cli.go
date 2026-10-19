@@ -180,7 +180,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 		if i := strings.IndexByte(path, '?'); i >= 0 {
 			path = path[:i]
 		}
-		fmt.Fprintf(stdout, "  - %s: %s %s\n", step.Name, step.Method, path)
+		if step.Method != http.MethodGet && step.Method != http.MethodHead {
+			fmt.Fprintf(stdout, "  - %s: %s %s [MUTATING; requires --allow-writes]\n", step.Name, step.Method, path)
+		} else {
+			fmt.Fprintf(stdout, "  - %s: %s %s\n", step.Name, step.Method, path)
+		}
 	}
 	if *dry {
 		fmt.Fprintln(stdout, "DRY RUN: no requests were sent.")

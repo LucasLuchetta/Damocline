@@ -735,13 +735,22 @@ func TestWeightedProfilesAreMeasuredSeparately(t *testing.T) {
 
 func TestSyntheticDataIDsAreUniqueAndNeverReported(t *testing.T) {
 	var mu sync.Mutex
-	seen := map[string]bool{}
+	created := map[string]bool{}
+	cleaned := map[string]bool{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost && r.Method != http.MethodDelete {
 			t.Errorf("unexpected method %s", r.Method)
 		}
 		mu.Lock()
-		seen[r.URL.Path] = true
+		switch r.Method {
+		case http.MethodPost:
+			if created[r.URL.Path] {
+				t.Errorf("synthetic identifier was reused across journeys: %q", r.URL.Path)
+			}
+			created[r.URL.Path] = true
+		case http.MethodDelete:
+			cleaned[r.URL.Path] = true
+		}
 		mu.Unlock()
 		w.WriteHeader(http.StatusNoContent)
 	}))
@@ -755,17 +764,82 @@ func TestSyntheticDataIDsAreUniqueAndNeverReported(t *testing.T) {
 	}
 	v.Duration = 300 * time.Millisecond
 	r := Run(context.Background(), v)
-	if r.Metrics.Success == 0 || len(seen) < 2 {
-		t.Fatalf("synthetic workflow did not execute: %+v paths=%v", r, seen)
+	if r.Metrics.Success == 0 || len(created) < 2 || len(created) != len(cleaned) {
+		t.Fatalf("synthetic writes were not unique and paired with cleanup: result=%+v created=%v cleaned=%v", r, created, cleaned)
 	}
-	for path := range seen {
+	for path := range created {
 		if !strings.HasPrefix(path, "/records/damocline-test-") {
 			t.Fatalf("unexpected synthetic path %q", path)
+		}
+		if !cleaned[path] {
+			t.Fatalf("synthetic record %q was not cleaned", path)
 		}
 	}
 	encoded, err := json.Marshal(r)
 	if err != nil || strings.Contains(string(encoded), "damocline-test-") {
 		t.Fatalf("synthetic IDs must not be reported: %s err=%v", encoded, err)
+	}
+}
+
+func TestExplicitCleanupRunsAfterBusinessPostconditionFailure(t *testing.T) {
+	var mu sync.Mutex
+	created := map[string]bool{}
+	cleanupAttempted := map[string]bool{}
+	var deleteRequests atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPost:
+			mu.Lock()
+			created[r.URL.Path] = true
+			mu.Unlock()
+			w.WriteHeader(http.StatusCreated)
+		case http.MethodGet:
+			_, _ = w.Write([]byte(`{"state":"pending"}`))
+		case http.MethodDelete:
+			mu.Lock()
+			cleanupAttempted[r.URL.Path] = true
+			mu.Unlock()
+			if deleteRequests.Add(1) == 1 {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			w.WriteHeader(http.StatusMethodNotAllowed)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("DAMOCLINE_TEST_DATA_PREFIX", "damocline-cleanup")
+	s := config.Scenario{Name: "write verify cleanup", BaseURL: srv.URL, Users: 2, Duration: "1s", MaxRPS: 20, P95LimitMS: 1000, MaxErrorRate: 0,
+		SyntheticDataPrefixEnv: "DAMOCLINE_TEST_DATA_PREFIX",
+		Steps: []config.Step{
+			{Name: "create", Method: "POST", Path: "/records/{{synthetic_id}}", ExpectedStatus: []int{http.StatusCreated}},
+			{Name: "verify", Path: "/records/{{synthetic_id}}", JSONAssertions: map[string]string{"/state": "ready"}},
+			{Name: "cleanup", Method: "DELETE", Path: "/records/{{synthetic_id}}", ExpectedStatus: []int{http.StatusNoContent}},
+		}}
+	v, err := config.Parse(s, config.Options{Authorized: true, AllowWrites: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	v.Duration = 300 * time.Millisecond
+	r := Run(context.Background(), v)
+	mu.Lock()
+	defer mu.Unlock()
+	cleanupSuccess := 0
+	cleanupFailures := 0
+	for _, step := range r.Steps {
+		if step.Name == "cleanup" {
+			cleanupSuccess = step.Metrics.Success
+			cleanupFailures = step.Metrics.Failures
+		}
+	}
+	if r.Outcome != "FAIL" || r.Metrics.Reasons["assertion_json_mismatch"] == 0 || cleanupSuccess == 0 || cleanupFailures == 0 || len(created) < 2 {
+		t.Fatalf("failed business postcondition or cleanup was not visible: %+v created=%v cleanup_attempted=%v", r, created, cleanupAttempted)
+	}
+	for path := range created {
+		if !cleanupAttempted[path] {
+			t.Errorf("explicit cleanup did not run after postcondition failure for %q", path)
+		}
 	}
 }
 

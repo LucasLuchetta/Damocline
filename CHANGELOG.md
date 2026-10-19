@@ -5,6 +5,8 @@ This project follows a human-maintained changelog. No release exists yet.
 ## [Unreleased]
 
 ### Added
+- Mark every non-GET/HEAD route as `MUTATING` in CLI previews, prove synthetic IDs are unique per journey, and test that configured cleanup still runs after a failed business postcondition.
+- Extend loopback coverage to prove per-journey synthetic write IDs are unique and explicit cleanup steps run after business postcondition failures; document when cancellation or cleanup failure can leave synthetic data behind.
 - Support bounded JSON Pointer scalar postconditions on each workflow step, classify false HTTP-200 business outcomes as failures, include assertions in workload fingerprints, and keep assertion values out of reports.
 - Allow same-journey extracted values in query parameter values with query-component escaping, malformed-template rejection, and loopback coverage proving special characters cannot add parameters or change the request path.
 - Preserve probe-level reasons in exploration schema v2 and CLI output; current-schema accounting failures, invalid quality, dropped arrivals and cancelled HTTP/business journeys stop a VU level as INCONCLUSIVE instead of counting it as application PASS/FAIL. Share conservative generator evidence checks between exploration and exact business-goal assessment so generator-bound failures cannot form an application-capacity bracket.

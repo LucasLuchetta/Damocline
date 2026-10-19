@@ -33,6 +33,41 @@ func TestSeededWeightedExampleDryRunShowsTimingPolicy(t *testing.T) {
 	}
 }
 
+func TestWriteWorkflowDryRunClearlyMarksMutatingRoutes(t *testing.T) {
+	t.Setenv("DAMOCLINE_PREVIEW_PREFIX", "preview")
+	scenario := config.Scenario{
+		Name: "synthetic-write-preview", BaseURL: "https://app.example.com", Users: 1, Duration: "10s",
+		Timeout: "2s", MaxRPS: 5, P95LimitMS: 1000,
+		SyntheticDataPrefixEnv: "DAMOCLINE_PREVIEW_PREFIX",
+		Steps: []config.Step{
+			{Name: "create", Method: "POST", Path: "/records/{{synthetic_id}}?mode=test"},
+			{Name: "cleanup", Method: "DELETE", Path: "/records/{{synthetic_id}}"},
+		},
+	}
+	data, err := json.Marshal(scenario)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "scenario.json")
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"run", "--config", path, "--dry-run", "--allow-writes"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("mutating dry run failed: code=%d stderr=%s", code, stderr.String())
+	}
+	for _, expected := range []string{
+		"create: POST /records/{{synthetic_id}} [MUTATING; requires --allow-writes]",
+		"cleanup: DELETE /records/{{synthetic_id}} [MUTATING; requires --allow-writes]",
+		"DRY RUN: no requests were sent",
+	} {
+		if !strings.Contains(stdout.String(), expected) {
+			t.Fatalf("mutating preview omitted %q: %s", expected, stdout.String())
+		}
+	}
+}
+
 func TestJourneyP95DescriptionDoesNotInventLatencyWhenNoneCompleted(t *testing.T) {
 	if got := journeyP95Description(report.MetricSet{Total: 0, Cancelled: 2}); got != "unavailable (no completed journeys)" {
 		t.Fatalf("empty journey percentile was presented as a measurement: %q", got)

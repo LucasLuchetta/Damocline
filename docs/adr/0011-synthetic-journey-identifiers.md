@@ -18,6 +18,12 @@ added to step paths in reports, logs, scenario history, or diagnostics.
 ## Consequences
 
 Write workflows can target an application-specific synthetic namespace and
-can include their own explicit DELETE cleanup step. A cancelled or failed
-journey can still leave data behind, so this does not implement a universal
+can include their own explicit DELETE cleanup step. Cancellation or cleanup
+failure can still leave data behind, so this does not implement a universal
 data lifecycle manager or authorize deletion outside the configured workflow.
+
+The engine continues through the configured sequence after a completed request
+or business assertion fails, allowing a final cleanup step to run. Cancellation,
+process termination, missing dynamic values, or a failed cleanup request can
+still leave data behind. The cleanup step's outcome is included in the ordinary
+per-step evidence.
