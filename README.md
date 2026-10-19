@@ -146,6 +146,13 @@ measurement confidence, workload representativeness and decision confidence
 separately; a declared workload mix remains unverified without independent
 evidence.
 
+To audit multiple tested levels together, repeat `--campaign` with one saved
+campaign per level. The offline collection shows each level's verdict and
+aggregates only matching declared workload/control signatures; an exact demand
+verdict still requires a campaign at that precise VU level. It never fills in
+untested levels or turns observed passes/failures into a capacity curve. See
+[Campaign evidence audit](docs/CAMPAIGN_AUDIT.md).
+
 The command calculates the demand to validate and reports
 **GOAL_MET_UNDER_TESTED_CONDITIONS** only when a complete, passing, supported-schema
 repeated campaign exercised that exact base VU level and every required phase

@@ -43,6 +43,43 @@ is explicitly `NOT_ESTABLISHED`: current conditional intervals assume IID
 observations and do not establish dependence-aware confidence. Demand is not
 extrapolated into untested workload levels.
 
+`workflow_breaches` identifies each trial, required phase, tested VU level,
+workflow, breached p95/error objective, and observed values. A failure count
+inside the configured error budget is not labeled a breach. These observations
+describe which workflow metric crossed an SLO; they do not establish a root
+cause. Invalid evidence suppresses workflow-breach details.
+
+To inspect separately recorded campaigns at multiple active-workload levels,
+repeat `--campaign`:
+
+```powershell
+damocline audit --campaign reports/campaign-2-vus.json --campaign reports/campaign-4-vus.json --campaign reports/campaign-8-vus.json --peak-users 4 --out reports/level-assessment.json
+```
+
+The collection retains a full audit and evidence digest for each level. It
+aggregates pass/fail observations only when all campaigns have the same
+non-empty workload fingerprint, target, environment and application/workload
+revisions, SLOs, timing, request controls, phase schedule and repeat count;
+the configured spike proportion must also match. This is a match of declared
+conditions, not proof of physical host identity or actual demand equivalence.
+Missing or pre-schema-v14 fingerprints/connection policy, absent workload,
+application or environment revisions, or any changed control yield
+`NOT_COMPARABLE`, while the individual level audits remain available. Patterns
+such as `PASS_BELOW_FAIL`, `NO_FAILURE_OBSERVED`, and `NON_MONOTONIC` describe
+only recorded outcomes. A pass at a higher level after a failure at a lower
+level is labeled `NON_MONOTONIC`; the tool will not infer a capacity threshold.
+A demand target still requires a campaign at its exact
+calculated level and is never interpolated from neighboring campaigns.
+
+A campaign that stops at its first failing required phase can still contribute
+that observed failure. The audit replays the terminal trial against the exact
+planned phase prefix; unrun recovery or later phases are not filled in. An
+incomplete or aborted level is inconclusive unless its saved terminal evidence
+supports a specific observed SLO failure.
+
+Collection input is bounded to 20 files, 16 MiB per campaign, and 64 MiB total.
+This command is offline and never sends traffic.
+
 The machine-readable assessment also keeps three dimensions separate:
 measurement evidence (`LIMITED`, `INVALID`, or `CONTROLLED_ENVELOPE_ONLY`),
 workload representativeness (`NOT_ASSESSED`, `DECLARED_UNVERIFIED`, or

@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 	"time"
@@ -18,27 +19,44 @@ import (
 // campaign evidence. It is not an attestation of target identity, a
 // confidence interval, or a sustainable-capacity certificate.
 type CampaignAudit struct {
-	SchemaVersion       int          `json:"schema_version"`
-	EvidenceID          string       `json:"evidence_id"`
-	ScenarioFingerprint string       `json:"scenario_fingerprint,omitempty"`
-	Scenario            string       `json:"scenario"`
-	Target              string       `json:"target,omitempty"`
-	StartedAt           string       `json:"started_at,omitempty"`
-	DemandTargetUsers   int          `json:"demand_target_users,omitempty"`
-	TestedBaseUsers     int          `json:"tested_base_users"`
-	HostType            string       `json:"host_type"`
-	PassingLevels       []int        `json:"observed_passing_levels"`
-	FailingLevels       []int        `json:"observed_failing_levels"`
-	TestedDuration      string       `json:"tested_duration"`
-	Confidence          string       `json:"confidence"` // Legacy campaign-level marker; use Assessment.Confidence for dimensions.
-	LimitingWorkflows   []string     `json:"limiting_workflows"`
-	Unknowns            []string     `json:"known_unknowns"`
-	State               string       `json:"state"`
-	MeasurementQuality  string       `json:"measurement_quality"`
-	ObservedOutcome     string       `json:"observed_outcome"`
-	RequiredPhases      int          `json:"required_phases"`
-	Findings            []string     `json:"findings"`
-	Phases              []PhaseAudit `json:"phases"`
+	SchemaVersion       int              `json:"schema_version"`
+	EvidenceID          string           `json:"evidence_id"`
+	ScenarioFingerprint string           `json:"scenario_fingerprint,omitempty"`
+	Scenario            string           `json:"scenario"`
+	Target              string           `json:"target,omitempty"`
+	StartedAt           string           `json:"started_at,omitempty"`
+	DemandTargetUsers   int              `json:"demand_target_users,omitempty"`
+	TestedBaseUsers     int              `json:"tested_base_users"`
+	HostType            string           `json:"host_type"`
+	PassingLevels       []int            `json:"observed_passing_levels"`
+	FailingLevels       []int            `json:"observed_failing_levels"`
+	TestedDuration      string           `json:"tested_duration"`
+	Confidence          string           `json:"confidence"` // Legacy campaign-level marker; use Assessment.Confidence for dimensions.
+	LimitingWorkflows   []string         `json:"limiting_workflows"`
+	WorkflowBreaches    []WorkflowBreach `json:"workflow_breaches,omitempty"`
+	Unknowns            []string         `json:"known_unknowns"`
+	State               string           `json:"state"`
+	MeasurementQuality  string           `json:"measurement_quality"`
+	ObservedOutcome     string           `json:"observed_outcome"`
+	RequiredPhases      int              `json:"required_phases"`
+	Findings            []string         `json:"findings"`
+	Phases              []PhaseAudit     `json:"phases"`
+}
+
+// WorkflowBreach identifies the required campaign phase and observed SLO
+// dimensions that caused a named workflow to breach an objective.
+type WorkflowBreach struct {
+	Trial        int      `json:"trial"`
+	Phase        string   `json:"phase"`
+	TestedUsers  int      `json:"tested_users"`
+	Workflow     string   `json:"workflow"`
+	Reasons      []string `json:"reasons"`
+	P95MS        float64  `json:"p95_ms"`
+	P95LimitMS   float64  `json:"p95_limit_ms"`
+	Failures     int      `json:"failures"`
+	Total        int      `json:"total"`
+	ErrorRate    float64  `json:"error_rate"`
+	MaxErrorRate float64  `json:"max_error_rate"`
 }
 
 // PhaseAudit recomputes stage classification, drift, and measurement quality
@@ -193,15 +211,9 @@ func AuditCampaign(e campaign.Result) CampaignAudit {
 			if d, err := time.ParseDuration(phase.Run.Config.Duration); err == nil {
 				duration += d
 			}
-			if phase.Name == "observation" {
-				for _, p := range phase.Run.Profiles {
-					if p.Journeys.Failures > 0 || p.Journeys.P95MS > phase.Run.Config.P95LimitMS || (p.Journeys.Total > 0 && float64(p.Journeys.Failures)/float64(p.Journeys.Total) > phase.Run.Config.MaxErrorRate) {
-						profiles[p.Name] = true
-					}
-				}
-				if len(phase.Run.Profiles) == 0 && (phase.Run.Journeys.Failures > 0 || phase.Run.Journeys.P95MS > phase.Run.Config.P95LimitMS || (phase.Run.Journeys.Total > 0 && float64(phase.Run.Journeys.Failures)/float64(phase.Run.Journeys.Total) > phase.Run.Config.MaxErrorRate)) {
-					profiles["aggregate journey"] = true
-				}
+			for _, breach := range workflowBreaches(trial.Number, phase.Name, phase.Run.Config.Users, phase.Run.Profiles, phase.Run.Journeys, phase.Run.Config.P95LimitMS, phase.Run.Config.MaxErrorRate) {
+				a.WorkflowBreaches = append(a.WorkflowBreaches, breach)
+				profiles[breach.Workflow] = true
 			}
 		}
 		if trial.Outcome == "PASS" && e.Outcome == "PASS" {
@@ -234,18 +246,21 @@ func AuditCampaign(e campaign.Result) CampaignAudit {
 	if e.SchemaVersion < 1 || e.SchemaVersion > campaign.CurrentSchemaVersion {
 		a.State = "INVALID_EVIDENCE"
 		a.Findings = append(a.Findings, "Unsupported campaign evidence schema.")
+		clearWorkflowBreaches(&a)
 		return a
 	}
 	if err := validateEvidence(e); err != nil {
 		a.State = "INVALID_EVIDENCE"
 		a.PassingLevels, a.FailingLevels = []int{}, []int{}
 		a.Findings = append(a.Findings, "Campaign consistency check: "+err.Error())
+		clearWorkflowBreaches(&a)
 		return a
 	}
 	if len(e.Trials) == 0 {
 		a.State = "INVALID_EVIDENCE"
 		a.PassingLevels, a.FailingLevels = []int{}, []int{}
 		a.Findings = append(a.Findings, "No campaign trials were recorded.")
+		clearWorkflowBreaches(&a)
 		return a
 	}
 
@@ -304,6 +319,7 @@ func AuditCampaign(e campaign.Result) CampaignAudit {
 	if invalid {
 		a.State = "INVALID_EVIDENCE"
 		a.MeasurementQuality = report.QualityInvalid
+		clearWorkflowBreaches(&a)
 	} else {
 		if !limited {
 			a.MeasurementQuality = report.QualityValid
@@ -326,6 +342,48 @@ func AuditCampaign(e campaign.Result) CampaignAudit {
 		a.Findings = append(a.Findings, "All recorded mandatory stages met their observed objectives; statistical and workload-specific certification remain separate decisions.")
 	}
 	return a
+}
+
+func workflowBreaches(trial int, phase string, users int, profiles []report.ProfileResult, aggregate report.MetricSet, p95LimitMS, maxErrorRate float64) []WorkflowBreach {
+	if len(profiles) == 0 {
+		return workflowBreach(trial, phase, users, "aggregate journey", aggregate, p95LimitMS, maxErrorRate)
+	}
+	breaches := make([]WorkflowBreach, 0)
+	for _, profile := range profiles {
+		breaches = append(breaches, workflowBreach(trial, phase, users, profile.Name, profile.Journeys, p95LimitMS, maxErrorRate)...)
+	}
+	return breaches
+}
+
+func workflowBreach(trial int, phase string, users int, name string, metrics report.MetricSet, p95LimitMS, maxErrorRate float64) []WorkflowBreach {
+	if name == "" {
+		name = "unnamed workflow"
+	}
+	reasons := make([]string, 0, 2)
+	if p95LimitMS > 0 && !math.IsNaN(metrics.P95MS) && !math.IsInf(metrics.P95MS, 0) && metrics.P95MS > p95LimitMS {
+		reasons = append(reasons, "P95_ABOVE_LIMIT")
+	}
+	errorRate := 0.0
+	validCounts := metrics.Total > 0 && metrics.Failures >= 0 && metrics.Failures <= metrics.Total && metrics.Success == metrics.Total-metrics.Failures
+	if validCounts {
+		errorRate = float64(metrics.Failures) / float64(metrics.Total)
+		if maxErrorRate >= 0 && maxErrorRate <= 1 && !math.IsNaN(maxErrorRate) && !math.IsInf(maxErrorRate, 0) && errorRate > maxErrorRate {
+			reasons = append(reasons, "ERROR_RATE_ABOVE_LIMIT")
+		}
+	}
+	if len(reasons) == 0 {
+		return nil
+	}
+	return []WorkflowBreach{{
+		Trial: trial, Phase: phase, TestedUsers: users, Workflow: name, Reasons: reasons,
+		P95MS: metrics.P95MS, P95LimitMS: p95LimitMS,
+		Failures: metrics.Failures, Total: metrics.Total, ErrorRate: errorRate, MaxErrorRate: maxErrorRate,
+	}}
+}
+
+func clearWorkflowBreaches(a *CampaignAudit) {
+	a.LimitingWorkflows = []string{}
+	a.WorkflowBreaches = nil
 }
 
 func appendUniqueLevel(levels []int, level int) []int {

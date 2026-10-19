@@ -8,6 +8,7 @@ import (
 	"io"
 	"math"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/LucasLuchetta/Damocline/internal/campaign"
@@ -17,6 +18,7 @@ import (
 )
 
 const maxCampaignReportBytes = 16 << 20
+const maxCampaignCollectionBytes = 64 << 20
 
 type Result struct {
 	State       string   `json:"state"`
@@ -259,17 +261,9 @@ func validObservationVariability(v *campaign.Variability, repeats int) bool {
 // ReadCampaign reads a bounded saved campaign report. It never makes a network
 // request and accepts only supported historical or current campaign schemas.
 func ReadCampaign(path string) (campaign.Result, error) {
-	file, err := os.Open(path)
+	data, err := readCampaignBytes(path, maxCampaignReportBytes)
 	if err != nil {
 		return campaign.Result{}, err
-	}
-	defer file.Close()
-	data, err := io.ReadAll(io.LimitReader(file, maxCampaignReportBytes+1))
-	if err != nil {
-		return campaign.Result{}, err
-	}
-	if len(data) > maxCampaignReportBytes {
-		return campaign.Result{}, errors.New("campaign report exceeds the 16 MiB safety limit")
 	}
 	var result campaign.Result
 	if err := json.Unmarshal(data, &result); err != nil {
@@ -278,12 +272,70 @@ func ReadCampaign(path string) (campaign.Result, error) {
 	return result, nil
 }
 
+// ReadCampaignCollection reads a bounded list of local campaign reports.
+func ReadCampaignCollection(paths []string) ([]campaign.Result, error) {
+	if len(paths) < 2 || len(paths) > MaxCampaignCollectionSize {
+		return nil, fmt.Errorf("campaign collection must contain 2-%d reports", MaxCampaignCollectionSize)
+	}
+	results := make([]campaign.Result, 0, len(paths))
+	totalBytes := int64(0)
+	for _, path := range paths {
+		remaining := maxCampaignCollectionBytes - totalBytes
+		if remaining <= 0 {
+			return nil, errors.New("campaign collection exceeds the 64 MiB safety limit")
+		}
+		limit := int64(maxCampaignReportBytes)
+		if remaining < limit {
+			limit = remaining
+		}
+		data, err := readCampaignBytes(path, limit)
+		if err != nil {
+			return nil, err
+		}
+		totalBytes += int64(len(data))
+		var result campaign.Result
+		if err := json.Unmarshal(data, &result); err != nil {
+			return nil, fmt.Errorf("cannot decode campaign %q: %w", path, err)
+		}
+		results = append(results, result)
+	}
+	return results, nil
+}
+
+func readCampaignBytes(path string, maxBytes int64) ([]byte, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, maxBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > maxBytes {
+		if maxBytes == maxCampaignReportBytes {
+			return nil, errors.New("campaign report exceeds the 16 MiB safety limit")
+		}
+		return nil, errors.New("campaign collection exceeds the 64 MiB safety limit")
+	}
+	return data, nil
+}
+
 func validateEvidence(evidence campaign.Result) error {
-	if evidence.SchemaVersion < 1 || evidence.SchemaVersion > campaign.CurrentSchemaVersion || evidence.Scenario == "" || evidence.BaseUsers < 1 || evidence.Repeats < 2 || evidence.Repeats > 5 || len(evidence.Trials) != evidence.Repeats {
+	if evidence.SchemaVersion < 1 || evidence.SchemaVersion > campaign.CurrentSchemaVersion || evidence.Scenario == "" || evidence.BaseUsers < 1 || evidence.Repeats < 2 || evidence.Repeats > 5 || len(evidence.Trials) == 0 || len(evidence.Trials) > evidence.Repeats {
 		return errors.New("expected a complete supported repeated campaign")
 	}
+	if evidence.Outcome == "PASS" && len(evidence.Trials) != evidence.Repeats {
+		return errors.New("a passing campaign must contain every configured trial")
+	}
 	if evidence.Outcome != "PASS" {
-		return nil
+		if evidence.Outcome != "FAIL" && evidence.Outcome != "INCONCLUSIVE" && evidence.Outcome != "ABORTED" {
+			return errors.New("campaign has an unsupported terminal outcome")
+		}
+		if evidence.SchemaVersion >= 2 {
+			return validatePartialStageEvidence(evidence)
+		}
+		return validatePartialLegacyTrials(evidence)
 	}
 	if evidence.SchemaVersion >= 2 {
 		return validateStageEvidence(evidence)
@@ -306,6 +358,131 @@ func validateEvidence(evidence campaign.Result) error {
 		}
 		if !foundObservation || !foundRecovery {
 			return errors.New("a trial is missing observation or recovery evidence")
+		}
+	}
+	return nil
+}
+
+func validatePartialStageEvidence(evidence campaign.Result) error {
+	phaseCount := 0
+	for _, trial := range evidence.Trials {
+		phaseCount += len(trial.Phases)
+	}
+	if phaseCount == 0 {
+		if evidence.Outcome != "INCONCLUSIVE" && evidence.Outcome != "ABORTED" {
+			return errors.New("campaign has no phase evidence for its terminal outcome")
+		}
+		for trialIndex, trial := range evidence.Trials {
+			if trial.Number != trialIndex+1 || trial.Outcome != evidence.Outcome {
+				return errors.New("empty campaign trials must match the terminal outcome")
+			}
+			if trial.Outcome == "ABORTED" && strings.TrimSpace(trial.AbortReason) == "" {
+				return errors.New("aborted trial has no persisted abort reason")
+			}
+		}
+		return nil
+	}
+	_, expected, err := campaignLevelSchedule(evidence)
+	if err != nil {
+		return err
+	}
+	for trialIndex, trial := range evidence.Trials {
+		if trial.Number != trialIndex+1 {
+			return errors.New("partial campaign trials are not in declared order")
+		}
+		last := trialIndex == len(evidence.Trials)-1
+		if !last && (trial.Outcome != "PASS" || len(trial.Phases) != len(expected)) {
+			return errors.New("a partial campaign has a non-passing trial before its terminal trial")
+		}
+		if last && trial.Outcome != evidence.Outcome {
+			return errors.New("campaign and terminal trial outcomes differ")
+		}
+		if len(trial.Phases) > len(expected) || trial.Outcome == "PASS" && len(trial.Phases) != len(expected) {
+			return errors.New("partial campaign trial phases do not match the declared schedule")
+		}
+		terminalCause := false
+		for phaseIndex, phase := range trial.Phases {
+			want := expected[phaseIndex]
+			if phase.Name != want.Name || phase.Run.Config.Users != want.Users || phase.Run.Config.Duration != want.Duration.String() || phase.Run.Target != evidence.Target {
+				return fmt.Errorf("trial %d has mismatched %s phase evidence", trial.Number, want.Name)
+			}
+			state, _ := campaign.ClassifyEvidence(phase.Run)
+			stability := ""
+			if phase.Name == "observation" {
+				stability = campaign.AssessStability(phase.Run)
+			}
+			if phase.EvidenceState != state || phase.Name == "observation" && phase.Stability != stability {
+				return fmt.Errorf("trial %d has stale or altered %s phase evidence", trial.Number, phase.Name)
+			}
+			if want.Required && (phase.Run.Outcome == "FAIL" || state == "FAIL_OBSERVED") || phase.Run.Outcome == "ABORTED" || phase.Run.Outcome == "INCONCLUSIVE" || state == "INVALID_DELIVERY" || state == "INSUFFICIENT_EVIDENCE" || phase.Name == "observation" && stability != "NO_LARGE_DRIFT_DETECTED" {
+				if phaseIndex != len(trial.Phases)-1 {
+					return errors.New("terminal phase evidence is followed by additional phases")
+				}
+				terminalCause = true
+			}
+		}
+		if !last {
+			continue
+		}
+		switch trial.Outcome {
+		case "PASS":
+			if terminalCause {
+				return errors.New("passing trial contains terminal phase evidence")
+			}
+		case "FAIL":
+			if !terminalCause || len(trial.Phases) == 0 || !expected[len(trial.Phases)-1].Required || trial.Phases[len(trial.Phases)-1].Run.Outcome != "FAIL" || trial.Phases[len(trial.Phases)-1].EvidenceState != "FAIL_OBSERVED" {
+				return errors.New("failed trial has no terminal observed objective breach")
+			}
+		case "INCONCLUSIVE":
+			if !terminalCause {
+				return errors.New("inconclusive trial has no terminal evidence limitation")
+			}
+		case "ABORTED":
+			if strings.TrimSpace(trial.AbortReason) == "" {
+				return errors.New("aborted trial has no persisted abort reason")
+			}
+		}
+	}
+	return nil
+}
+
+func validatePartialLegacyTrials(evidence campaign.Result) error {
+	for trialIndex, trial := range evidence.Trials {
+		if trial.Number != trialIndex+1 {
+			return errors.New("partial campaign trials are not in declared order")
+		}
+		if trialIndex < len(evidence.Trials)-1 {
+			if trial.Outcome != "PASS" {
+				return errors.New("a partial campaign has a non-passing trial before its terminal trial")
+			}
+		} else if trial.Outcome != evidence.Outcome {
+			return errors.New("campaign and terminal trial outcomes differ")
+		}
+		if trial.Outcome == "PASS" {
+			foundObservation, foundRecovery := false, false
+			for _, phase := range trial.Phases {
+				switch phase.Name {
+				case "observation":
+					foundObservation = true
+				case "recovery":
+					foundRecovery = true
+				}
+				if phase.Name != "warmup" && phase.Run.Outcome != "PASS" {
+					return errors.New("a passing legacy trial contains a non-passing required phase")
+				}
+			}
+			if !foundObservation || !foundRecovery {
+				return errors.New("a passing legacy trial is missing observation or recovery evidence")
+			}
+		}
+		if trialIndex == len(evidence.Trials)-1 && trial.Outcome == "FAIL" {
+			observedFailure := false
+			for _, phase := range trial.Phases {
+				observedFailure = observedFailure || phase.Name != "warmup" && phase.Run.Outcome == "FAIL"
+			}
+			if !observedFailure {
+				return errors.New("failed legacy trial has no observed required-phase failure")
+			}
 		}
 	}
 	return nil
