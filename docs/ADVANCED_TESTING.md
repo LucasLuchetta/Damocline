@@ -334,7 +334,7 @@ To share a validated run, campaign, or exploration without its private target de
 .\damocline.exe report export --file reports\campaign.json --out reports\campaign-redacted.json
 ```
 
-The export preserves aggregate and per-window measurements but aliases arbitrary workflow/step names and removes destinations, routes, notes, warning text, fingerprints, revisions and absolute timestamps. Custom metric names and values are omitted because they may contain identifiers. The `damocline-redacted-evidence-v1` file is descriptive only and cannot be used by `goal`, `plan`, or `audit`; keep the original artifact private for full offline validation.
+The export preserves aggregate and per-window measurements but aliases arbitrary workflow/step names and removes destinations, routes, notes, warning text, fingerprints, revisions and absolute timestamps. Custom metric names and values are omitted because they may contain identifiers. The `damocline-redacted-evidence-v2` file includes fixed estimator/method identifiers and exact p95 IID interval bounds when available. It is descriptive only and cannot be used by `goal`, `plan`, or `audit`; keep the original artifact private for full offline validation.
 
 ## 8. Limitations and quality checks
 

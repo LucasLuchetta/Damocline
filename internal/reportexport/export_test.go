@@ -19,7 +19,7 @@ func TestRedactedRunExportOmitsUncontrolledStringsAndPreservesEvidence(t *testin
 	start := "2001-02-03T12:30:00.123456789Z"
 	count := int64(8)
 	run := report.Result{
-		SchemaVersion: report.CurrentSchemaVersion, Name: secret, Target: "https://user:token@" + secret + "/private/route?customer=731", Outcome: "PASS",
+		SchemaVersion: report.CurrentSchemaVersion, StatisticalMethods: report.CurrentStatisticalMethods(), Name: secret, Target: "https://user:token@" + secret + "/private/route?customer=731", Outcome: "PASS",
 		StartedAt: start, ElapsedSeconds: 8.5, ObservationSeconds: 8,
 		Config: report.RunConfig{WorkloadRevision: secret, ApplicationRevision: secret, WorkloadFingerprint: secret,
 			Environment: secret, ProfileMixReference: secret, Users: 4, Duration: "8s", RequestTimeout: "1s",
@@ -57,6 +57,9 @@ func TestRedactedRunExportOmitsUncontrolledStringsAndPreservesEvidence(t *testin
 	}
 	if exported.Run == nil || exported.Run.Metrics.Total != 8 || exported.Run.Metrics.P95MS != 240 || exported.Run.Metrics.RequestConstructionFailures != 1 || len(exported.Run.Windows) != 1 || len(exported.Run.Steps) != 1 {
 		t.Fatalf("run evidence was not preserved: %+v", exported.Run)
+	}
+	if exported.Run.StatisticalMethods.LatencyPercentileEstimator != report.PercentileEstimatorNearestRank || exported.Run.StatisticalMethods.P95IntervalMethod != report.P95IntervalMethodExactBinomialRanks {
+		t.Fatalf("safe statistical method provenance was not preserved: %+v", exported.Run.StatisticalMethods)
 	}
 	if exported.Run.Steps[0].ID != "step_001" || exported.Run.Windows[0].Steps[0].ID != "step_001" || exported.Run.Profiles[0].ID != "workflow_001" {
 		t.Fatalf("stable aliases did not preserve ledger links: %+v", exported.Run)

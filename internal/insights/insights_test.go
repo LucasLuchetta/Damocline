@@ -466,6 +466,7 @@ func TestReadRunAcceptsSchemaTwelveResponseBodyMeasurements(t *testing.T) {
 func TestReadRunAcceptsCurrentSchemaFourteenConnectionPolicyAndWindowLedgers(t *testing.T) {
 	r := synthetic()
 	r.SchemaVersion = report.CurrentSchemaVersion
+	r.StatisticalMethods = report.CurrentStatisticalMethods()
 	r.Config.ConnectionPolicy = "reuse"
 	zeroCancelledBeforeAdmission := int64(0)
 	r.ArrivalsCancelledBeforeAdmission = &zeroCancelledBeforeAdmission
@@ -490,6 +491,7 @@ func TestReadRunAcceptsCurrentSchemaFourteenConnectionPolicyAndWindowLedgers(t *
 func TestReadRunRejectsUnknownCurrentConnectionPolicy(t *testing.T) {
 	r := synthetic()
 	r.SchemaVersion = report.CurrentSchemaVersion
+	r.StatisticalMethods = report.CurrentStatisticalMethods()
 	r.Config.ConnectionPolicy = "unknown"
 	zero := int64(0)
 	r.ArrivalsCancelledBeforeAdmission = &zero
@@ -661,6 +663,10 @@ func TestSupportedReportSchemaGoldensRoundTrip(t *testing.T) {
 			case 29:
 				if got.Metrics.RequestConstructionFailures != 1 || got.Steps[0].Metrics.RequestConstructionFailures != 1 {
 					t.Fatal("schema-v29 local request rejection counts were not preserved")
+				}
+			case 30:
+				if got.StatisticalMethods != report.CurrentStatisticalMethods() {
+					t.Fatal("schema-v30 percentile and confidence methods were not preserved")
 				}
 			}
 		})

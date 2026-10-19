@@ -86,6 +86,9 @@ func AssessQuality(r Result) *Quality {
 	if r.Metrics.RequestConstructionFailures > 0 {
 		invalidate("One or more generated requests were rejected locally before delivery.")
 	}
+	if !HasValidStatisticalMethods(r) {
+		invalidate("Statistical method metadata is missing or inconsistent with the report schema.")
+	}
 	if r.SchemaVersion >= 20 && !validFailureClassificationEvidence(r) {
 		invalidate("HTTP failure-classification evidence is missing or inconsistent for schema 20.")
 	}

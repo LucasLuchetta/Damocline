@@ -141,8 +141,27 @@ func TestP95IIDRankIntervalUsesSortedLatencyRanks(t *testing.T) {
 		m.Record(time.Duration(i)*time.Millisecond, true, false, "")
 	}
 	r := m.Snapshot()
-	if !r.P95IID95Approximation || r.P95IID95LowerMS != 937 || r.P95IID95UpperMS != 964 {
+	if r.P95IID95Approximation || !r.P95IID95Exact || r.P95IID95LowerMS != 936 || r.P95IID95UpperMS != 964 {
 		t.Fatalf("unexpected p95 IID interval: %+v", r)
+	}
+}
+
+func TestNearestRankPercentilesUseCeilingRankWithoutInterpolation(t *testing.T) {
+	values := make([]time.Duration, 1_000)
+	for i := range values {
+		values[i] = time.Duration(i+1) * time.Millisecond
+	}
+	for n := 1; n <= len(values); n++ {
+		for _, method := range []struct {
+			value float64
+			per   int
+		}{{0.50, 50}, {0.95, 95}, {0.99, 99}} {
+			rank := (n*method.per + 99) / 100
+			got := percentile(values[:n], method.value)
+			if want := time.Duration(rank) * time.Millisecond; got != want {
+				t.Fatalf("n=%d p=%.2f: nearest-rank value=%s, want rank %d (%s)", n, method.value, got, rank, want)
+			}
+		}
 	}
 }
 

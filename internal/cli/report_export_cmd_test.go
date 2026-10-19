@@ -42,7 +42,7 @@ func TestReportExportWritesAllowlistedRedactedRunAndPreservesSource(t *testing.T
 			t.Fatalf("redacted export contains %q: %s", marker, text)
 		}
 	}
-	if !strings.Contains(text, "damocline-redacted-evidence-v1") || !strings.Contains(text, `"total": 2`) || !strings.Contains(text, "step_001") || !strings.Contains(stdout.String(), "not a native assessment artifact") {
+	if !strings.Contains(text, "damocline-redacted-evidence-v2") || !strings.Contains(text, `"total": 2`) || !strings.Contains(text, "step_001") || !strings.Contains(stdout.String(), "not a native assessment artifact") {
 		t.Fatalf("export omitted evidence or its limitation: %s | %s", text, stdout.String())
 	}
 	unchanged, err := os.ReadFile(input)
@@ -95,7 +95,7 @@ func TestReportExportOutputIsSeparateFormat(t *testing.T) {
 	if err := json.Unmarshal(data, &value); err != nil {
 		t.Fatal(err)
 	}
-	if value["format"] != "damocline-redacted-evidence-v1" || value["schema_version"] != nil || value["target"] != nil {
+	if value["format"] != "damocline-redacted-evidence-v2" || value["schema_version"] != nil || value["target"] != nil {
 		t.Fatalf("export was not clearly separated from native artifacts: %s", data)
 	}
 }

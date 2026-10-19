@@ -219,7 +219,7 @@ func TestEvaluateRequiresAdequateConditionalStatisticalEvidence(t *testing.T) {
 	})
 	t.Run("missing percentile interval blocks", func(t *testing.T) {
 		evidence := campaign.Result{SchemaVersion: 1, Scenario: "synthetic", Outcome: "PASS", BaseUsers: 10, Repeats: 2, Trials: passingTrials(), ObservationVariability: validVariability()}
-		evidence.Trials[0].Phases[0].Run.Steps[0].Metrics.P95IID95Approximation = false
+		evidence.Trials[0].Phases[0].Run.Steps[0].Metrics.P95IID95Exact = false
 		result, err := evaluateWithDeclaredTestQuality(evidence, goal)
 		if err != nil || result.State != "INSUFFICIENT_EVIDENCE" || !containsFinding(result.Findings, "per-step lacks an adequate p95 rank interval") {
 			t.Fatalf("missing per-step percentile interval must block: %+v %v", result, err)
@@ -488,10 +488,10 @@ func passingTrials() []campaign.Trial {
 func validStatisticalRun() report.Result {
 	metrics := report.MetricSet{
 		Total: 300, Success: 300, P95MS: 30,
-		P95IID95LowerMS: 20, P95IID95UpperMS: 50, P95IID95Approximation: true,
+		P95IID95LowerMS: 20, P95IID95UpperMS: 50, P95IID95Exact: true,
 	}
 	return report.Result{
-		Outcome: "PASS", ObservationSeconds: 10,
+		Outcome: "PASS", ObservationSeconds: 10, StatisticalMethods: report.CurrentStatisticalMethods(),
 		Config:  report.RunConfig{P95LimitMS: 100, MaxErrorRate: 0.01, MinSamplesPerStep: 1, WindowDuration: "10s", MaxRPS: 1000},
 		Metrics: metrics, Steps: []report.StepResult{{Name: "step", Metrics: metrics}},
 		Windows: []report.WindowResult{{StartSeconds: 0, EndSeconds: 10, Metrics: metrics,
