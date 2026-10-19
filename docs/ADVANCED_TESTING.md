@@ -168,14 +168,16 @@ any campaign phase starts:
 go run ./cmd/damocline arrival-campaign --config .\arrival.local.json --observation 2m --recovery 30s --repeats 2 --calibration .damocline\calibration\reference.json --authorized --out .damocline\reports\arrival-campaign.json
 ```
 
-Only exact passing schema-v6-or-later workload-matrix profiles are accepted;
-rates are not interpolated. The current generator runtime, age, worker limit,
-request-rate ceiling, timeout, connection policy and declared one-step request
-shape must match. If any planned base or spike rate is not covered, the command
-stops before traffic. Dry-run applies the same gate. The fixture's short profile
-does not establish headroom for longer campaign phases, and no artifact proves
-the target endpoint identity or response behavior. Without `--calibration`, no
-preflight readiness check is performed.
+Only exact passing workload-matrix profiles are accepted; rates are not
+interpolated. Schema-v8 artifacts include the existing HTTP profile matrix and
+trusted HTTPS GET profiles at 2, 5, and 10 starts/s. Historical schema-v6/v7
+artifacts retain their original HTTP-only scope. The current generator runtime,
+age, worker limit, request-rate ceiling, timeout, connection policy, transport
+scheme, and declared one-step request shape must match. If any planned base or
+spike rate is not covered, the command stops before traffic. Dry-run applies the
+same gate. Short fixture profiles do not establish headroom for longer campaign
+phases, and no artifact proves target endpoint identity or response behavior.
+Without `--calibration`, no preflight readiness check is performed.
 
 For a single open-arrival run, `--require-calibration` makes `--calibration`
 mandatory and blocks before traffic when the exact local generator envelope

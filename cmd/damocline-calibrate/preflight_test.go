@@ -50,10 +50,12 @@ func passingWorkloadObservations() []preflightWorkloadObservation {
 		requestBytes := int64(profile.RequestBodyBytes) * planned
 		responseBytes := int64(profile.ResponseBodyBytes) * planned
 		tcpConnections, _ := calibration.ExpectedReferenceTCPConnections(profile, planned)
+		tlsHandshakes, _ := calibration.ExpectedReferenceTLSHandshakes(profile, planned)
 		observations = append(observations, preflightWorkloadObservation{
 			ProfileID: profile.ID, Scheduled: planned, Admitted: planned,
 			Started: planned, Completed: planned, Outcome: "PASS",
 			ClientCompleteBodyObservations: planned,
+			ClientTLSHandshakes:            tlsHandshakes,
 			ClientResponseMinBytes:         int64(profile.ResponseBodyBytes),
 			ClientResponseMaxBytes:         int64(profile.ResponseBodyBytes),
 			ClientResponseTotalBytes:       responseBytes,

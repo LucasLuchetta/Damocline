@@ -80,9 +80,11 @@ func passingWorkloadObservations() []WorkloadObservation {
 		requestBytes := int64(profile.RequestBodyBytes) * planned
 		responseBytes := int64(profile.ResponseBodyBytes) * planned
 		tcpConnections, _ := ExpectedReferenceTCPConnections(profile, planned)
+		tlsHandshakes, _ := ExpectedReferenceTLSHandshakes(profile, planned)
 		observations = append(observations, WorkloadObservation{
 			ProfileID: profile.ID, Scheduled: planned, Admitted: planned, Started: planned,
 			Completed: planned, Outcome: "PASS", ClientCompleteBodyObservations: planned,
+			ClientTLSHandshakes:    tlsHandshakes,
 			ClientResponseMinBytes: int64(profile.ResponseBodyBytes),
 			ClientResponseMaxBytes: int64(profile.ResponseBodyBytes), ClientResponseTotalBytes: responseBytes,
 			ServerReceived: planned, ServerCompleted: planned,
@@ -111,6 +113,10 @@ func TestSchemaSixRejectsAlteredOrMissingWorkloadEvidence(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			artifact := passingArtifact(t)
+			artifact.Preflight.SchemaVersion = 6
+			artifact.Preflight.Fixture.WorkloadProfiles = referenceWorkloadProfilesV5()
+			artifact.Preflight.WorkloadObservations = passingObservationsForProfiles(referenceWorkloadProfilesV5())
+			refreshArtifactFingerprint(t, &artifact.Preflight)
 			test.mutate(&artifact.Preflight)
 			if err := ValidateRecord(artifact.Preflight); err == nil {
 				t.Fatal("altered schema-v6 workload evidence was accepted")
@@ -121,8 +127,8 @@ func TestSchemaSixRejectsAlteredOrMissingWorkloadEvidence(t *testing.T) {
 
 func TestReferenceMatrixCoversOnlyExactShapeAndRatePairs(t *testing.T) {
 	profiles := ReferenceWorkloadProfiles()
-	if len(profiles) != 30 {
-		t.Fatalf("got %d workload profiles, want 30 exact shape/connection/rate pairs", len(profiles))
+	if len(profiles) != 33 {
+		t.Fatalf("got %d workload profiles, want 30 HTTP and 3 HTTPS exact shape/rate pairs", len(profiles))
 	}
 	seen := make(map[string]bool, len(profiles))
 	for _, profile := range profiles {
@@ -135,7 +141,7 @@ func TestReferenceMatrixCoversOnlyExactShapeAndRatePairs(t *testing.T) {
 			t.Fatalf("unexpected interpolated or untested rate: %+v", profile)
 		}
 	}
-	for _, shape := range referenceWorkloadShapes() {
+	for _, shape := range referenceWorkloadShapesV7() {
 		for _, connectionPolicy := range []string{"reuse", "new_per_request"} {
 			for _, rate := range WorkloadMatrixArrivalRates() {
 				key := fmt.Sprintf("%s|%s|%d", shape.Path, connectionPolicy, rate)
@@ -143,6 +149,11 @@ func TestReferenceMatrixCoversOnlyExactShapeAndRatePairs(t *testing.T) {
 					t.Fatalf("missing exact pair path=%s connection_policy=%s rate=%d", shape.Path, connectionPolicy, rate)
 				}
 			}
+		}
+	}
+	for _, rate := range WorkloadMatrixArrivalRates() {
+		if !seen[fmt.Sprintf("/matrix/https-4k|reuse|%d", rate)] {
+			t.Fatalf("missing exact trusted HTTPS profile at %d arrivals/s", rate)
 		}
 	}
 }
@@ -223,6 +234,10 @@ func TestSchemaSixRequiresExactTCPConnectionEvidence(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			a := passingArtifact(t)
+			a.Preflight.SchemaVersion = 6
+			a.Preflight.Fixture.WorkloadProfiles = referenceWorkloadProfilesV5()
+			a.Preflight.WorkloadObservations = passingObservationsForProfiles(referenceWorkloadProfilesV5())
+			refreshArtifactFingerprint(t, &a.Preflight)
 			test.mutate(&a.Preflight.WorkloadObservations[test.index])
 			if err := ValidateRecord(a.Preflight); err == nil {
 				t.Fatal("schema-v6 calibration accepted incorrect per-profile TCP connection evidence")
@@ -233,9 +248,32 @@ func TestSchemaSixRequiresExactTCPConnectionEvidence(t *testing.T) {
 
 func TestSchemaSevenRejectsPassingCalibrationWithoutVerifiedCPUCapacity(t *testing.T) {
 	a := passingArtifact(t)
+	a.Preflight.SchemaVersion = 7
+	a.Preflight.Fixture.WorkloadProfiles = referenceWorkloadProfilesV5()
+	a.Preflight.WorkloadObservations = passingObservationsForProfiles(referenceWorkloadProfilesV5())
+	refreshArtifactFingerprint(t, &a.Preflight)
 	a.Preflight.Generator.CPUCapacityKnown = false
 	if err := ValidateRecord(a.Preflight); err == nil {
 		t.Fatal("passing schema-v7 calibration accepted unknown effective CPU capacity")
+	}
+}
+
+func TestSchemaEightRequiresExactTrustedTLSHandshakeEvidence(t *testing.T) {
+	tests := []struct {
+		name  string
+		value int64
+	}{
+		{name: "missing handshake", value: 0},
+		{name: "extra handshake", value: 2},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			a := passingArtifact(t)
+			a.Preflight.WorkloadObservations[30].ClientTLSHandshakes = test.value
+			if err := ValidateRecord(a.Preflight); err == nil {
+				t.Fatal("schema-v8 calibration accepted an inconsistent TLS handshake count")
+			}
+		})
 	}
 }
 
@@ -275,9 +313,11 @@ func passingObservationsForProfiles(profiles []WorkloadProfile) []WorkloadObserv
 		requestBytes := int64(profile.RequestBodyBytes) * planned
 		responseBytes := int64(profile.ResponseBodyBytes) * planned
 		tcpConnections, _ := ExpectedReferenceTCPConnections(profile, planned)
+		tlsHandshakes, _ := ExpectedReferenceTLSHandshakes(profile, planned)
 		observations = append(observations, WorkloadObservation{
 			ProfileID: profile.ID, Scheduled: planned, Admitted: planned, Started: planned,
 			Completed: planned, Outcome: "PASS", ClientCompleteBodyObservations: planned,
+			ClientTLSHandshakes:    tlsHandshakes,
 			ClientResponseMinBytes: int64(profile.ResponseBodyBytes),
 			ClientResponseMaxBytes: int64(profile.ResponseBodyBytes), ClientResponseTotalBytes: responseBytes,
 			ServerReceived: planned, ServerCompleted: planned,
@@ -286,6 +326,15 @@ func passingObservationsForProfiles(profiles []WorkloadProfile) []WorkloadObserv
 		})
 	}
 	return observations
+}
+
+func refreshArtifactFingerprint(t *testing.T, record *Record) {
+	t.Helper()
+	fingerprint, err := Fingerprint(record.Fixture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record.ScenarioFingerprintSHA256 = fingerprint
 }
 
 func TestLoadRecordRequiresValidArtifactAndReconciledStageLedgers(t *testing.T) {

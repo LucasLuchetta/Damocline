@@ -82,9 +82,11 @@ func passingCalibrationWorkloadObservations() []calibration.WorkloadObservation 
 		planned := int64(profile.ArrivalRate) * int64(duration/time.Second)
 		responseBytes := int64(profile.ResponseBodyBytes) * planned
 		tcpConnections, _ := calibration.ExpectedReferenceTCPConnections(profile, planned)
+		tlsHandshakes, _ := calibration.ExpectedReferenceTLSHandshakes(profile, planned)
 		observations = append(observations, calibration.WorkloadObservation{
 			ProfileID: profile.ID, Scheduled: planned, Admitted: planned, Started: planned, Completed: planned, Outcome: "PASS",
 			ClientCompleteBodyObservations: planned, ClientResponseMinBytes: int64(profile.ResponseBodyBytes),
+			ClientTLSHandshakes:    tlsHandshakes,
 			ClientResponseMaxBytes: int64(profile.ResponseBodyBytes), ClientResponseTotalBytes: responseBytes,
 			ServerReceived: planned, ServerCompleted: planned, ServerTCPConnections: tcpConnections,
 			ServerRequestBodyBytes: int64(profile.RequestBodyBytes) * planned, ServerResponseBodyBytes: responseBytes,

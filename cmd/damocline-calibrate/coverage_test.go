@@ -118,6 +118,9 @@ func TestEveryCalibratedShapeMatchesOnlyItsExactRatePairs(t *testing.T) {
 		scenario.Duration = profile.Duration
 		scenario.Timeout = profile.Timeout
 		scenario.ConnectionPolicy = profile.ConnectionPolicy
+		if profile.TransportScheme == "https" {
+			scenario.BaseURL = "https://127.0.0.1"
+		}
 		scenario.Steps = []config.Step{{Name: "matrix", Method: profile.Method, Path: profile.Path}}
 		if profile.RequestBodyBytes > 0 {
 			const bodyEnv = "DAMOCLINE_TEST_MATRIX_BODY"
