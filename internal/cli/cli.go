@@ -669,11 +669,14 @@ func campaignCmd(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "invalid campaign: %v\n", err)
 		return 2
 	}
-	if options.SpikeUsers > 0 && validated.ProfileAuthContexts {
-		if _, err := config.ResolveProfileSessions(scenario.Profiles, options.SpikeUsers); err != nil {
-			fmt.Fprintf(stderr, "spike session validation error: %v\n", err)
-			return 2
-		}
+	actorCount := max(validated.Scenario.Users, options.SpikeUsers)
+	actorCounts := make([]int, options.Repeats)
+	for index := range actorCounts {
+		actorCounts[index] = actorCount
+	}
+	if _, err := config.ResolveTrialCookieSets(scenario.PerVUCookieEnvPrefix, scenario.Profiles, actorCounts); err != nil {
+		fmt.Fprintf(stderr, "campaign session validation error: %v\n", err)
+		return 2
 	}
 	fmt.Fprintf(stdout, "Campaign: %s | %s://%s | warm-up %s | stabilization %s | observation %s | spike %d VUs for %s | recovery %s | final soak %s | repeats %d | cooldown %s | wall-time cap %s\n", validated.Scenario.Name, validated.Base.Scheme, validated.Base.Host, options.Warmup, options.Stabilization, options.Observation, options.SpikeUsers, options.SpikeDuration, options.Recovery, options.Soak, options.Repeats, options.Cooldown, campaign.PlannedBudget(options))
 	fmt.Fprintf(stdout, "Drift screen: >=%d windows, >=%d samples/window, p95 increase >%.1f%% and >%.1fms, throughput decrease >%.1f%%\n", options.Stability.MinimumWindows, options.Stability.MinimumSamplesPerWindow, options.Stability.MaxP95IncreasePercent, options.Stability.MaxP95IncreaseMS, options.Stability.MaxThroughputDropPercent)

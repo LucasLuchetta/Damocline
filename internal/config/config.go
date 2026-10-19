@@ -95,20 +95,21 @@ type Options struct {
 }
 
 type Validated struct {
-	Scenario            Scenario
-	WorkloadFingerprint string
-	Base                *url.URL
-	Duration            time.Duration
-	RampUp              time.Duration
-	ThinkTime           time.Duration
-	Timeout             time.Duration
-	Window              time.Duration
-	Steps               []PreparedStep
-	Profiles            []PreparedProfile
-	Cookies             []string
-	ProfileAuthContexts bool
-	SyntheticDataPrefix string
-	GeneratorGuardrails generatorhealth.Guardrails
+	Scenario                   Scenario
+	WorkloadFingerprint        string
+	Base                       *url.URL
+	Duration                   time.Duration
+	RampUp                     time.Duration
+	ThinkTime                  time.Duration
+	Timeout                    time.Duration
+	Window                     time.Duration
+	Steps                      []PreparedStep
+	Profiles                   []PreparedProfile
+	Cookies                    []string
+	ProfileAuthContexts        bool
+	AuthenticationSessionScope string
+	SyntheticDataPrefix        string
+	GeneratorGuardrails        generatorhealth.Guardrails
 }
 
 // PreparedProfile contains the safe, resolved workflow selected by the
@@ -376,6 +377,14 @@ func Parse(s Scenario, o Options) (Validated, error) {
 	if profileAuthContexts && s.PerVUCookieEnvPrefix != "" {
 		return v, errors.New("per-profile and scenario-level per_vu_cookie_env_prefix cannot be combined")
 	}
+	if s.PerVUCookieEnvPrefix != "" && !validCookieEnvPrefix(s.PerVUCookieEnvPrefix) {
+		return v, errors.New("per_vu_cookie_env_prefix must be uppercase, end with an underscore, and contain at most one {trial} token")
+	}
+	for _, profile := range profiles {
+		if profile.PerVUCookieEnvPrefix != "" && !validCookieEnvPrefix(profile.PerVUCookieEnvPrefix) {
+			return v, fmt.Errorf("profile %q per_vu_cookie_env_prefix must be uppercase, end with an underscore, and contain at most one {trial} token", profile.Name)
+		}
+	}
 	if s.PerVUCookieEnvPrefix != "" {
 		for _, profile := range profiles {
 			if containsCookieHeader(profile.Steps) {
@@ -390,7 +399,10 @@ func Parse(s Scenario, o Options) (Validated, error) {
 			}
 		}
 	}
-	profileSessions, err := ResolveProfileSessions(profiles, s.Users)
+	profileSessions := make([][]string, len(profiles))
+	if !strings.Contains(s.PerVUCookieEnvPrefix, trialCookiePrefixToken) {
+		profileSessions, err = ResolveProfileSessions(profiles, s.Users)
+	}
 	if err != nil {
 		return v, err
 	}
@@ -579,7 +591,10 @@ func Parse(s Scenario, o Options) (Validated, error) {
 	if s.WorkloadSeed == 0 && hasVariableThinkTime(preparedProfiles) {
 		s.WorkloadSeed = 1
 	}
-	cookies, err := ResolveSessions(s.PerVUCookieEnvPrefix, s.Users)
+	var cookies []string
+	if !strings.Contains(s.PerVUCookieEnvPrefix, trialCookiePrefixToken) {
+		cookies, err = ResolveSessions(s.PerVUCookieEnvPrefix, s.Users)
+	}
 	if err != nil {
 		return v, err
 	}

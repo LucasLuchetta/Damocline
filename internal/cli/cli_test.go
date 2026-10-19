@@ -239,6 +239,34 @@ func TestCampaignOutputCannotOverwriteScenarioFile(t *testing.T) {
 	}
 }
 
+func TestCampaignDryRunPreflightsFutureTrialSessions(t *testing.T) {
+	for _, mode := range []string{"closed", "arrival"} {
+		t.Run(mode, func(t *testing.T) {
+			scenario := config.Scenario{Name: "trial-session-preflight", BaseURL: "http://127.0.0.1", Users: 1, Duration: "10s", MaxRPS: 10, P95LimitMS: 1000, PerVUCookieEnvPrefix: "CLI_TRIAL_{trial}_VU_", Steps: []config.Step{{Name: "read", Path: "/"}}}
+			if mode == "arrival" {
+				scenario.Mode = "arrival"
+				scenario.ArrivalRate = 1
+			}
+			path := filepath.Join(t.TempDir(), "scenario.json")
+			data, err := json.Marshal(scenario)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, data, 0600); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("CLI_TRIAL_1_VU_1", "sid=first")
+			args := []string{"campaign", "--config", path, "--warmup", "0s", "--observation", "10s", "--recovery", "10s", "--repeats", "2", "--dry-run"}
+			if mode == "arrival" {
+				args[0] = "arrival-campaign"
+			}
+			var stdout, stderr bytes.Buffer
+			if code := Run(args, &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "session validation error") || strings.Contains(stdout.String(), "DRY RUN") {
+				t.Fatalf("%s dry run did not preflight future sessions: code=%d stdout=%s stderr=%s", mode, code, stdout.String(), stderr.String())
+			}
+		})
+	}
+}
 func TestCampaignDryRunsShowLocalGeneratorGuardrails(t *testing.T) {
 	for _, tc := range []struct {
 		name string

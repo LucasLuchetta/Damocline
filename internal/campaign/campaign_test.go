@@ -71,6 +71,52 @@ func TestProfileCookieContextsScaleForCampaignSpikeUsers(t *testing.T) {
 	}
 }
 
+func TestCampaignRotatesCookieSetsAcrossTrialsAndKeepsEachTrialStable(t *testing.T) {
+	for trial := 1; trial <= 2; trial++ {
+		for actor := 1; actor <= 2; actor++ {
+			t.Setenv(fmt.Sprintf("CAMPAIGN_TRIAL_%d_VU_%d", trial, actor), fmt.Sprintf("sid=trial-%d-actor-%d", trial, actor))
+		}
+	}
+	base, err := config.Parse(config.Scenario{Name: "trial auth", BaseURL: "http://127.0.0.1:8080", Users: 1, Duration: "10s", MaxRPS: 10, P95LimitMS: 1000,
+		PerVUCookieEnvPrefix: "CAMPAIGN_TRIAL_{trial}_VU_", Steps: []config.Step{{Name: "read", Path: "/"}}}, config.Options{Authorized: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var trialCookies [2]string
+	calls := 0
+	result, err := WithRunner(context.Background(), base, Options{Observation: 10 * time.Second, Recovery: 10 * time.Second, Repeats: 2}, func(_ context.Context, v config.Validated) report.Result {
+		trialIndex := calls / 2
+		if len(v.Cookies) != 1 || v.AuthenticationSessionScope != "trial_scoped_cookie_sets" {
+			t.Errorf("trial phase did not receive scoped auth metadata: cookies=%v scope=%q", len(v.Cookies), v.AuthenticationSessionScope)
+		} else if trialCookies[trialIndex] == "" {
+			trialCookies[trialIndex] = v.Cookies[0]
+		} else if trialCookies[trialIndex] != v.Cookies[0] {
+			t.Errorf("credentials changed within trial %d", trialIndex+1)
+		}
+		calls++
+		return stableResult(v)
+	})
+	if err != nil || calls != 4 || trialCookies[0] == "" || trialCookies[0] == trialCookies[1] || result.Outcome != "PASS" {
+		t.Fatalf("campaign rotation failed: calls=%d cookies=%v result=%+v err=%v", calls, trialCookies, result, err)
+	}
+}
+
+func TestCampaignMissingFutureTrialCookieFailsBeforeRunner(t *testing.T) {
+	t.Setenv("CAMPAIGN_MISSING_TRIAL_1_VU_1", "sid=first")
+	base, err := config.Parse(config.Scenario{Name: "trial auth", BaseURL: "http://127.0.0.1:8080", Users: 1, Duration: "10s", MaxRPS: 10, P95LimitMS: 1000,
+		PerVUCookieEnvPrefix: "CAMPAIGN_MISSING_TRIAL_{trial}_VU_", Steps: []config.Step{{Name: "read", Path: "/"}}}, config.Options{Authorized: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	if _, err := WithRunner(context.Background(), base, Options{Observation: 10 * time.Second, Recovery: 10 * time.Second, Repeats: 2}, func(context.Context, config.Validated) report.Result {
+		calls++
+		return report.Result{}
+	}); err == nil || calls != 0 {
+		t.Fatalf("missing future-trial cookie did not fail closed: calls=%d err=%v", calls, err)
+	}
+}
+
 func TestStabilizationRunsBeforeObservationAndDriftStopsCampaign(t *testing.T) {
 	options := Options{Warmup: 10 * time.Second, Stabilization: 10 * time.Second, Observation: 10 * time.Second, Recovery: 10 * time.Second, Repeats: 2}
 	var phases []string

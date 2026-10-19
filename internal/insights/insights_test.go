@@ -515,6 +515,24 @@ func TestReadRunRejectsUnknownFutureSchema(t *testing.T) {
 	}
 }
 
+func TestReadRunRejectsUnsafeOrMisversionedAuthenticationSessionScope(t *testing.T) {
+	r := synthetic()
+	r.SchemaVersion = 29
+	r.Config.AuthenticationSessionScope = "trial_scoped_cookie_sets"
+	if err := ValidateRunReport(r); err == nil || strings.Contains(err.Error(), "session scope") {
+		t.Fatalf("known schema-v29 auth scope was rejected by scope validation: %v", err)
+	}
+	r.SchemaVersion = 28
+	if err := ValidateRunReport(r); err == nil {
+		t.Fatal("pre-v29 auth scope should be rejected")
+	}
+	r.SchemaVersion = 29
+	r.Config.AuthenticationSessionScope = "private-value"
+	if err := ValidateRunReport(r); err == nil || err.Error() != "not a valid Damocline HTTP run report" {
+		t.Fatalf("invalid report fixture was not rejected: %v", err)
+	}
+}
+
 func TestReadRunRequiresSchema20FailureClassificationMarker(t *testing.T) {
 	r := synthetic()
 	r.SchemaVersion = 20
@@ -661,6 +679,10 @@ func TestSupportedReportSchemaGoldensRoundTrip(t *testing.T) {
 			case 28:
 				if got.Config.MaxConnectionsPerHost != 1 {
 					t.Fatal("schema-v28 per-host connection limit was not preserved")
+				}
+			case 29:
+				if got.Config.AuthenticationSessionScope != "trial_scoped_cookie_sets" {
+					t.Fatal("schema-v29 authentication session scope was not preserved")
 				}
 			}
 		})

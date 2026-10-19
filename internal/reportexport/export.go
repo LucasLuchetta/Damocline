@@ -81,28 +81,29 @@ type Phase struct {
 }
 
 type Run struct {
-	Outcome               string      `json:"outcome"`
-	ElapsedSeconds        float64     `json:"elapsed_seconds"`
-	ObservationSeconds    float64     `json:"observation_seconds,omitempty"`
-	Mode                  string      `json:"mode"`
-	VirtualUsers          int         `json:"virtual_users"`
-	JourneyStartsPS       int         `json:"scheduled_journey_starts_per_second,omitempty"`
-	RequestCeiling        int         `json:"max_request_starts_per_second"`
-	P95LimitMS            float64     `json:"p95_limit_ms"`
-	MaxErrorRate          float64     `json:"max_error_rate"`
-	ConnectionPolicy      string      `json:"connection_policy,omitempty"`
-	MaxConnectionsPerHost int         `json:"max_connections_per_host,omitempty"`
-	ProfileSelection      string      `json:"profile_selection,omitempty"`
-	Metrics               Metrics     `json:"requests"`
-	Journeys              Metrics     `json:"completed_journeys"`
-	Steps                 []Step      `json:"steps,omitempty"`
-	Profiles              []Profile   `json:"workflows,omitempty"`
-	Windows               []Window    `json:"windows,omitempty"`
-	Arrivals              *Arrivals   `json:"arrival_accounting,omitempty"`
-	Scheduler             *Scheduler  `json:"scheduler,omitempty"`
-	Generator             *Generator  `json:"generator,omitempty"`
-	ApplicationMetrics    *AppMetrics `json:"application_metrics,omitempty"`
-	MeasurementQuality    string      `json:"measurement_quality,omitempty"`
+	Outcome                    string      `json:"outcome"`
+	ElapsedSeconds             float64     `json:"elapsed_seconds"`
+	ObservationSeconds         float64     `json:"observation_seconds,omitempty"`
+	Mode                       string      `json:"mode"`
+	VirtualUsers               int         `json:"virtual_users"`
+	JourneyStartsPS            int         `json:"scheduled_journey_starts_per_second,omitempty"`
+	RequestCeiling             int         `json:"max_request_starts_per_second"`
+	P95LimitMS                 float64     `json:"p95_limit_ms"`
+	MaxErrorRate               float64     `json:"max_error_rate"`
+	ConnectionPolicy           string      `json:"connection_policy,omitempty"`
+	MaxConnectionsPerHost      int         `json:"max_connections_per_host,omitempty"`
+	AuthenticationSessionScope string      `json:"authentication_session_scope,omitempty"`
+	ProfileSelection           string      `json:"profile_selection,omitempty"`
+	Metrics                    Metrics     `json:"requests"`
+	Journeys                   Metrics     `json:"completed_journeys"`
+	Steps                      []Step      `json:"steps,omitempty"`
+	Profiles                   []Profile   `json:"workflows,omitempty"`
+	Windows                    []Window    `json:"windows,omitempty"`
+	Arrivals                   *Arrivals   `json:"arrival_accounting,omitempty"`
+	Scheduler                  *Scheduler  `json:"scheduler,omitempty"`
+	Generator                  *Generator  `json:"generator,omitempty"`
+	ApplicationMetrics         *AppMetrics `json:"application_metrics,omitempty"`
+	MeasurementQuality         string      `json:"measurement_quality,omitempty"`
 }
 
 type Metrics struct {
@@ -302,7 +303,7 @@ func redactRun(r report.Result) *Run {
 	out := &Run{Outcome: safeOutcome(r.Outcome), ElapsedSeconds: r.ElapsedSeconds, ObservationSeconds: r.ObservationSeconds,
 		Mode: safeMode(r.Config.Mode), VirtualUsers: r.Config.Users, JourneyStartsPS: r.Config.ArrivalRate,
 		RequestCeiling: r.Config.MaxRPS, P95LimitMS: r.Config.P95LimitMS, MaxErrorRate: r.Config.MaxErrorRate,
-		ConnectionPolicy: safeConnectionPolicy(r.Config.ConnectionPolicy), MaxConnectionsPerHost: r.Config.MaxConnectionsPerHost, ProfileSelection: safeProfileSelection(r.Config.ProfileSelection), Metrics: safeMetrics(r.Metrics), Journeys: safeMetrics(r.Journeys)}
+		ConnectionPolicy: safeConnectionPolicy(r.Config.ConnectionPolicy), MaxConnectionsPerHost: r.Config.MaxConnectionsPerHost, AuthenticationSessionScope: safeAuthenticationSessionScope(r.Config.AuthenticationSessionScope), ProfileSelection: safeProfileSelection(r.Config.ProfileSelection), Metrics: safeMetrics(r.Metrics), Journeys: safeMetrics(r.Journeys)}
 	for _, s := range r.Steps {
 		key := stepKey(s.Profile, s.Name)
 		out.Steps = append(out.Steps, Step{ID: stepIDs[key], Method: safeMethod(s.Method), Cleanup: s.Cleanup, Metrics: safeMetrics(s.Metrics), ConnectionWaitCount: s.HTTPTrace.ConnectionWaitCount, ConnectionWaitMS: s.HTTPTrace.ConnectionWaitMS})
@@ -463,6 +464,13 @@ func safeConnectionPolicy(v string) string {
 		return v
 	}
 	return "unknown"
+}
+
+func safeAuthenticationSessionScope(v string) string {
+	if v == "trial_scoped_cookie_sets" {
+		return v
+	}
+	return ""
 }
 func safeProfileSelection(v string) string {
 	if v == "per_journey_start" {

@@ -20,7 +20,7 @@ func TestRedactedRunExportOmitsUncontrolledStringsAndPreservesEvidence(t *testin
 	run := report.Result{
 		SchemaVersion: 28, Name: secret, Target: "https://user:token@" + secret + "/private/route?customer=731", Outcome: "PASS",
 		StartedAt: start, ElapsedSeconds: 8.5, ObservationSeconds: 8,
-		Config: report.RunConfig{WorkloadRevision: secret, ApplicationRevision: secret, WorkloadFingerprint: secret,
+		Config: report.RunConfig{WorkloadRevision: secret, ApplicationRevision: secret, WorkloadFingerprint: secret, AuthenticationSessionScope: "trial_scoped_cookie_sets",
 			Environment: secret, ProfileMixReference: secret, Users: 4, Duration: "8s", RequestTimeout: "1s",
 			ConnectionPolicy: "reuse", MaxRPS: 50, P95LimitMS: 250, MaxErrorRate: .01, Mode: "arrival", ArrivalRate: 8,
 			WindowDuration: secret, ProfileSelection: "per_journey_start", SeparateSessions: true, MaxConnectionsPerHost: 4, Profiles: []report.ProfileConfig{{Name: "private-workflow", Weight: 2, AuthenticationContext: "per_actor_workflow_cookie"}}},
@@ -62,6 +62,9 @@ func TestRedactedRunExportOmitsUncontrolledStringsAndPreservesEvidence(t *testin
 	}
 	if exported.Run.ProfileSelection != "per_journey_start" || exported.Run.Profiles[0].SelectedStarts != 8 || exported.Run.Profiles[0].ActorsObserved != 4 {
 		t.Fatalf("redacted workflow selection evidence was not preserved: %+v", exported.Run)
+	}
+	if exported.Run.AuthenticationSessionScope != "trial_scoped_cookie_sets" {
+		t.Fatalf("safe trial-scoped authentication enum was not preserved: %+v", exported.Run)
 	}
 	if exported.Run.Profiles[0].AuthenticationContext != "per_actor_workflow_cookie" {
 		t.Fatalf("safe workflow authentication-context enum was not preserved: %+v", exported.Run.Profiles[0])

@@ -117,6 +117,14 @@ func arrivalCampaignCmd(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "invalid arrival campaign: %v\n", err)
 		return 2
 	}
+	actorCounts := make([]int, options.Repeats)
+	for index := range actorCounts {
+		actorCounts[index] = validated.Scenario.Users
+	}
+	if _, err := config.ResolveTrialCookieSets(scenario.PerVUCookieEnvPrefix, scenario.Profiles, actorCounts); err != nil {
+		fmt.Fprintf(stderr, "arrival campaign session validation error: %v\n", err)
+		return 2
+	}
 	if scenario.WindowDuration == "" {
 		shortest := min(*observation, *recovery)
 		if *stabilization > 0 {

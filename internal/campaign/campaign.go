@@ -343,21 +343,17 @@ func WithRunnerProgress(ctx context.Context, base config.Validated, options Opti
 	if options.SpikeUsers > 0 && options.SpikeUsers <= base.Scenario.Users {
 		return Result{}, fmt.Errorf("spike-users must exceed the base scenario users")
 	}
-	var spikeCookies []string
-	if options.SpikeUsers > 0 && base.Scenario.PerVUCookieEnvPrefix != "" {
-		var err error
-		spikeCookies, err = config.ResolveSessions(base.Scenario.PerVUCookieEnvPrefix, options.SpikeUsers)
-		if err != nil {
-			return Result{}, err
-		}
+	actorCount := base.Scenario.Users
+	if options.SpikeUsers > actorCount {
+		actorCount = options.SpikeUsers
 	}
-	spikeProfileCookies := make([][]string, len(base.Profiles))
-	if options.SpikeUsers > 0 && base.ProfileAuthContexts {
-		var err error
-		spikeProfileCookies, err = config.ResolveProfileSessions(base.Scenario.Profiles, options.SpikeUsers)
-		if err != nil {
-			return Result{}, err
-		}
+	actorCounts := make([]int, options.Repeats)
+	for index := range actorCounts {
+		actorCounts[index] = actorCount
+	}
+	trialCookies, err := config.ResolveTrialCookieSets(base.Scenario.PerVUCookieEnvPrefix, base.Scenario.Profiles, actorCounts)
+	if err != nil {
+		return Result{}, err
 	}
 	options.Budget = PlannedBudget(options)
 	options.Stability = effectiveStabilityPolicy(options.Stability)
@@ -403,6 +399,9 @@ func WithRunnerProgress(ctx context.Context, base config.Validated, options Opti
 			"Warm-up runs establish workload state but are excluded from capacity conclusions.",
 			"Active stabilization, observation, configured spike, recovery, and the optional final soak require complete bounded evidence; passing phases do not establish universal capacity certification.",
 		},
+	}
+	if trialCookies.Rotated {
+		result.Notes = append(result.Notes, "Independent trials use distinct configured cookie sets. This does not verify account identity, permissions, or session freshness.")
 	}
 	if options.LongRun {
 		result.Notes = append(result.Notes, "Long-run mode was explicitly enabled for a user-declared staging environment with a bounded wall-time budget; Damocline does not verify the environment designation.")
@@ -460,18 +459,24 @@ func WithRunnerProgress(ctx context.Context, base config.Validated, options Opti
 			v.Duration = phase.Duration
 			v.Scenario.Duration = phase.Duration.String()
 			v.Scenario.Users = phase.Users
-			if phase.Name == "spike" && v.ProfileAuthContexts {
+			cookies := trialCookies.Trials[number-1]
+			if v.ProfileAuthContexts {
 				v.Profiles = append([]config.PreparedProfile(nil), base.Profiles...)
 				for index := range v.Profiles {
-					v.Profiles[index].Cookies = spikeProfileCookies[index]
+					profileCookies := cookies.Profiles[index]
+					if len(profileCookies) > 0 {
+						v.Profiles[index].Cookies = profileCookies[:phase.Users]
+					}
 				}
+			} else if len(cookies.Scenario) > 0 {
+				v.Cookies = cookies.Scenario[:phase.Users]
 			}
 			if phase.Name != "warmup" && v.Window == 0 && phase.Duration >= 4*time.Second {
 				v.Window = min(30*time.Second, phase.Duration/4)
 				v.Scenario.WindowDuration = v.Window.String()
 			}
-			if len(spikeCookies) > 0 && phase.Users == options.SpikeUsers {
-				v.Cookies = spikeCookies
+			if trialCookies.Rotated {
+				v.AuthenticationSessionScope = "trial_scoped_cookie_sets"
 			}
 			run := runner(ctx, v)
 			state, reason := ClassifyEvidence(run)

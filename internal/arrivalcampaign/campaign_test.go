@@ -2,6 +2,7 @@ package arrivalcampaign
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -39,6 +40,48 @@ func TestWithRunnerKeepsArrivalScheduleAndAbortsWithinBudget(t *testing.T) {
 	})
 	if err != nil || result.Outcome != "ABORTED" || calls != 1 || len(result.Trials) != 1 {
 		t.Fatalf("campaign = outcome %s, calls %d, err %v", result.Outcome, calls, err)
+	}
+}
+
+func TestArrivalCampaignRotatesCookiesAcrossTrials(t *testing.T) {
+	for trial := 1; trial <= 2; trial++ {
+		for actor := 1; actor <= 2; actor++ {
+			t.Setenv(fmt.Sprintf("ARRIVAL_TRIAL_%d_VU_%d", trial, actor), fmt.Sprintf("sid=arrival-%d-%d", trial, actor))
+		}
+	}
+	base := validatedArrival(t)
+	base.Scenario.PerVUCookieEnvPrefix = "ARRIVAL_TRIAL_{trial}_VU_"
+	base.Cookies = []string{"sid=arrival-1-1", "sid=arrival-1-2"}
+	calls := 0
+	var trials [2]string
+	result, err := WithRunner(context.Background(), base, Options{Observation: 10 * time.Second, Recovery: 10 * time.Second, Repeats: 2}, func(_ context.Context, v config.Validated) report.Result {
+		trialIndex := calls / 2
+		if v.AuthenticationSessionScope != "trial_scoped_cookie_sets" || len(v.Cookies) != 2 {
+			t.Errorf("arrival phase auth state = scope %q cookies %d", v.AuthenticationSessionScope, len(v.Cookies))
+		} else if trials[trialIndex] == "" {
+			trials[trialIndex] = v.Cookies[0]
+		} else if trials[trialIndex] != v.Cookies[0] {
+			t.Errorf("arrival credentials changed within trial %d", trialIndex+1)
+		}
+		calls++
+		return syntheticArrivalPhase(v, "PASS")
+	})
+	if err != nil || result.Outcome != "PASS" || calls != 4 || trials[0] == "" || trials[0] == trials[1] {
+		t.Fatalf("arrival cookie rotation failed: calls=%d trials=%v result=%+v err=%v", calls, trials, result, err)
+	}
+}
+
+func TestArrivalCampaignMissingFutureCookieFailsBeforeRunner(t *testing.T) {
+	t.Setenv("ARRIVAL_MISSING_TRIAL_1_VU_1", "sid=arrival-first")
+	base := validatedArrival(t)
+	base.Scenario.PerVUCookieEnvPrefix = "ARRIVAL_MISSING_TRIAL_{trial}_VU_"
+	base.Cookies = []string{"sid=arrival-first", "sid=arrival-actor-2"}
+	calls := 0
+	if _, err := WithRunner(context.Background(), base, Options{Observation: 10 * time.Second, Recovery: 10 * time.Second, Repeats: 2}, func(context.Context, config.Validated) report.Result {
+		calls++
+		return report.Result{}
+	}); err == nil || calls != 0 {
+		t.Fatalf("arrival missing future cookie did not fail closed: calls=%d err=%v", calls, err)
 	}
 }
 
