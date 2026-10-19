@@ -308,7 +308,7 @@ This intentionally produces `INCONCLUSIVE` for application-capacity readiness: t
 
 ## Run the repeated G0 acceptance lab
 
-The acceptance lab runs bounded, independent calibrator processes against fresh loopback reference servers, then runs the local HTTP transport fixture matrix. It checks exact profile/rate pairs, planned and completed arrivals, response sizes, independent server request and byte counters, the 30-second controlled soak, overload and HTTP-failure controls, and persisted quality recomputation. Two repeats are required; three are allowed for the baseline matrix. Each repeat has a 235-second default deadline, and every requested run is recorded.
+The acceptance lab runs bounded, independent calibrator processes against fresh loopback reference servers, then runs the local HTTP transport fixture matrix. It checks 30 exact HTTP shape/connection/rate profiles plus three trusted HTTPS reuse profiles, planned and completed arrivals, response sizes, client TLS handshakes, independent server request/body/TCP counters, the 30-second controlled soak, overload and HTTP-failure controls, and persisted quality recomputation. Two repeats are required; three are allowed for the baseline matrix. Each repeat has a 240-second default deadline, and every requested run is recorded.
 
 Build both local commands first:
 

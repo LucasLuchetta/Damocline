@@ -17,7 +17,7 @@ import (
 
 // The preflight record is embedded in the existing calibration JSON. It
 // identifies the tested loopback fixture, never a customer target or session.
-const SchemaVersion = 7
+const SchemaVersion = 8
 const minimumSupportedSchemaVersion = 1
 
 // Healthy response latency bounds are the fixed coarse guardrail used by the
@@ -90,6 +90,7 @@ type WorkloadObservation struct {
 	Dropped                        int64  `json:"dropped"`
 	Outcome                        string `json:"outcome"`
 	ClientCompleteBodyObservations int64  `json:"client_complete_body_observations"`
+	ClientTLSHandshakes            int64  `json:"client_tls_handshakes,omitempty"`
 	ClientResponseMinBytes         int64  `json:"client_response_min_bytes"`
 	ClientResponseMaxBytes         int64  `json:"client_response_max_bytes"`
 	ClientResponseTotalBytes       int64  `json:"client_response_total_bytes"`
@@ -131,12 +132,16 @@ const WorkloadMatrixArrivalRate = 10
 func WorkloadMatrixArrivalRates() []int { return []int{2, 5, 10} }
 
 func ReferenceWorkloadProfiles() []WorkloadProfile {
-	return referenceWorkloadProfilesV5()
+	profiles := referenceWorkloadProfilesV5()
+	tlsShapes := []WorkloadProfile{{ID: "https-get-4k-response-shape", Mode: "arrival", TransportScheme: "https", Method: "GET", Path: "/matrix/https-4k", ResponseBodyBytes: ReferenceHealthyResponseBytes,
+		MaxRPS: 50, Users: 10, Duration: "5s", Timeout: "1s", ConnectionPolicy: "reuse"}}
+	profiles = append(profiles, workloadProfilesForPolicy(tlsShapes, "reuse", "5s", "")...)
+	return profiles
 }
 
 func referenceWorkloadProfilesV5() []WorkloadProfile {
-	profiles := workloadProfilesForPolicy(referenceWorkloadShapes(), "reuse", "5s", "")
-	profiles = append(profiles, workloadProfilesForPolicy(referenceWorkloadShapes(), "new_per_request", "2s", "-new-connection")...)
+	profiles := workloadProfilesForPolicy(referenceWorkloadShapesV7(), "reuse", "5s", "")
+	profiles = append(profiles, workloadProfilesForPolicy(referenceWorkloadShapesV7(), "new_per_request", "2s", "-new-connection")...)
 	return profiles
 }
 
@@ -157,6 +162,19 @@ func ExpectedReferenceTCPConnections(profile WorkloadProfile, planned int64) (in
 	default:
 		return 0, false
 	}
+}
+
+func ExpectedReferenceTLSHandshakes(profile WorkloadProfile, planned int64) (int64, bool) {
+	if planned < 1 {
+		return 0, false
+	}
+	if profile.TransportScheme == "http" {
+		return 0, true
+	}
+	if profile.TransportScheme == "https" && profile.ConnectionPolicy == "reuse" {
+		return 1, true
+	}
+	return 0, false
 }
 
 // referenceWorkloadProfilesV3 preserves the exact schema-v3 matrix for archived
@@ -195,6 +213,10 @@ func workloadProfilesForPolicy(shapes []WorkloadProfile, connectionPolicy, durat
 }
 
 func referenceWorkloadShapes() []WorkloadProfile {
+	return referenceWorkloadShapesV7()
+}
+
+func referenceWorkloadShapesV7() []WorkloadProfile {
 	return []WorkloadProfile{
 		{ID: "get-4k-response-shape", Mode: "arrival", TransportScheme: "http", Method: "GET", Path: "/work", ResponseBodyBytes: ReferenceHealthyResponseBytes,
 			MaxRPS: 50, Users: 10, Duration: "5s", Timeout: "1s", ConnectionPolicy: "reuse"},
@@ -436,7 +458,7 @@ func validateWorkloadMatrix(rec Record) error {
 		expectedProfiles = referenceWorkloadProfilesV3()
 	} else if rec.SchemaVersion == 4 {
 		expectedProfiles = referenceWorkloadProfilesV4()
-	} else if rec.SchemaVersion == 5 {
+	} else if rec.SchemaVersion >= 5 && rec.SchemaVersion <= 7 {
 		expectedProfiles = referenceWorkloadProfilesV5()
 	}
 	profilesMatch := len(rec.Fixture.WorkloadProfiles) == len(expectedProfiles)
@@ -464,6 +486,7 @@ func validateWorkloadMatrix(rec Record) error {
 		countersAreBounded := observation.Scheduled >= 0 && observation.Admitted >= 0 &&
 			observation.Started >= 0 && observation.Completed >= 0 && observation.Dropped >= 0 &&
 			observation.ClientCompleteBodyObservations >= 0 && observation.ClientResponseMinBytes >= 0 &&
+			observation.ClientTLSHandshakes >= 0 && observation.ClientTLSHandshakes <= observation.Started &&
 			observation.ClientResponseMaxBytes >= observation.ClientResponseMinBytes &&
 			observation.ClientResponseTotalBytes >= 0 && observation.ServerReceived >= 0 &&
 			observation.ServerCompleted >= 0 && observation.ServerTCPConnections >= 0 &&
@@ -495,6 +518,12 @@ func validateWorkloadMatrix(rec Record) error {
 			expectedConnections, supported := ExpectedReferenceTCPConnections(profile, planned)
 			if !supported || observation.ServerTCPConnections != expectedConnections {
 				return errors.New("passing calibration has inconsistent profile TCP connection counts")
+			}
+		}
+		if rec.SchemaVersion >= 8 && rec.Status == "REFERENCE_SMOKE_PASSED" {
+			expectedHandshakes, supported := ExpectedReferenceTLSHandshakes(profile, planned)
+			if !supported || observation.ClientTLSHandshakes != expectedHandshakes {
+				return errors.New("passing calibration has inconsistent profile TLS handshake counts")
 			}
 		}
 	}

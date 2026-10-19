@@ -23,14 +23,14 @@ import (
 )
 
 const (
-	SchemaVersion       = 3
-	calibratedProfiles  = 30
+	SchemaVersion       = 4
+	calibratedProfiles  = 33
 	MinRepeats          = 2
 	MaxRepeats          = 3
 	MaxExtendedRepeats  = 2
 	MaxArtifactBytes    = 16 << 20
 	MaxProcessLogBytes  = 1 << 20
-	DefaultRunTimeout   = 235 * time.Second
+	DefaultRunTimeout   = 240 * time.Second
 	MaximumRunTimeout   = 240 * time.Second
 	calibratorStageTime = 5 * time.Second
 )
@@ -519,6 +519,7 @@ type workloadObservation struct {
 	Dropped                        int64  `json:"dropped"`
 	Outcome                        string `json:"outcome"`
 	ClientCompleteBodyObservations int64  `json:"client_complete_body_observations"`
+	ClientTLSHandshakes            int64  `json:"client_tls_handshakes"`
 	ClientResponseMinBytes         int64  `json:"client_response_min_bytes"`
 	ClientResponseMaxBytes         int64  `json:"client_response_max_bytes"`
 	ClientResponseTotalBytes       int64  `json:"client_response_total_bytes"`
@@ -550,13 +551,13 @@ func assessCalibrationArtifact(path string, attempt *Attempt, extended bool, qua
 	}
 	recomputedQuality := qualityAssessor(document.SoakRun)
 	gates := []Gate{
-		gate("calibration_schema", document.SchemaVersion == 1 && document.Preflight.SchemaVersion == 7, "calibration report v1 with preflight schema v7", fmt.Sprintf("report=%d preflight=%d", document.SchemaVersion, document.Preflight.SchemaVersion)),
+		gate("calibration_schema", document.SchemaVersion == 1 && document.Preflight.SchemaVersion == 8, "calibration report v1 with preflight schema v8", fmt.Sprintf("report=%d preflight=%d", document.SchemaVersion, document.Preflight.SchemaVersion)),
 		gate("requested_run_matrix", document.Preflight.Fixture.Extended == extended, fmt.Sprintf("extended=%t", extended), fmt.Sprintf("extended=%t", document.Preflight.Fixture.Extended)),
 		gate("calibration_status", document.Status == "REFERENCE_SMOKE_PASSED", "REFERENCE_SMOKE_PASSED", document.Status),
 		gate("calibration_checklist", len(document.Checks) == 0, "zero failed checks", fmt.Sprintf("%d failed checks", len(document.Checks))),
-		gate("exact_profile_matrix", validProfileMatrix(document.Preflight.Fixture.WorkloadProfiles), "30 unique HTTP loopback shape/connection/rate pairs at exact rates 2, 5, and 10 arrivals/s", fmt.Sprintf("%d profiles", len(document.Preflight.Fixture.WorkloadProfiles))),
+		gate("exact_profile_matrix", validProfileMatrix(document.Preflight.Fixture.WorkloadProfiles), "30 exact HTTP shape/connection/rate profiles and 3 trusted HTTPS reuse profiles at 2, 5, and 10 arrivals/s", fmt.Sprintf("%d profiles", len(document.Preflight.Fixture.WorkloadProfiles))),
 		gate("native_engine_profile_reports", workloadRunsMatch(document.Preflight.Fixture.WorkloadProfiles, document.WorkloadRuns), "every profile report reconciles configured arrival controls, client outcomes, response size, and HTTP status counters", fmt.Sprintf("%d reports for %d profiles", len(document.WorkloadRuns), len(document.Preflight.Fixture.WorkloadProfiles))),
-		gate("independent_profile_ledgers", profileLedgersMatch(document.Preflight.Fixture.WorkloadProfiles, document.WorkloadObservations), "every planned arrival, complete body, independent request/byte ledger, and accepted TCP connection count reconciles per profile", fmt.Sprintf("%d observations for %d profiles", len(document.WorkloadObservations), len(document.Preflight.Fixture.WorkloadProfiles))),
+		gate("independent_profile_ledgers", profileLedgersMatch(document.Preflight.Fixture.WorkloadProfiles, document.WorkloadObservations), "every planned arrival, body, request/byte ledger, accepted TCP connection and client TLS handshake count reconciles per profile", fmt.Sprintf("%d observations for %d profiles", len(document.WorkloadObservations), len(document.Preflight.Fixture.WorkloadProfiles))),
 		gate("healthy_stage_delivery", healthyStagesMatch(document.Preflight.Fixture.HealthyRates, document.Runs, extended), "all required exact-rate stages deliver every planned request with zero drops", fmt.Sprintf("%d rates, %d stages", len(document.Preflight.Fixture.HealthyRates), len(document.Runs))),
 		gate("aggregate_healthy_server_ledger", aggregateServerLedgerMatches(document), "aggregate reference receipt, completion, success, and body-byte counters reconcile with healthy stages, profile matrix, and soak", serverDescription(document.Server)),
 		gate("persisted_quality_recomputes", document.SoakRun.Quality != nil && reflect.DeepEqual(recomputedQuality, document.SoakRun.Quality), "persisted soak quality exactly matches quality recalculated from the stored report", "persisted="+qualityState(document.SoakRun.Quality)+" recomputed="+qualityState(recomputedQuality)),
@@ -589,14 +590,18 @@ func validProfileMatrix(profiles []calibratedProfile) bool {
 		"GET|/matrix/get-1k|0|1024":      true,
 		"GET|/matrix/get-64k|0|65536":    true,
 		"POST|/matrix/post-4k|4096|4096": true,
+		"GET|/matrix/https-4k|0|4096":    true,
 	}
 	rates := map[int]bool{2: true, 5: true, 10: true}
 	for _, profile := range profiles {
-		if profile.ID == "" || seen[profile.ID] || !rates[profile.ArrivalRate] || profile.Mode != "arrival" || profile.TransportScheme != "http" || profile.MaxRPS != 50 || profile.Users != 10 || profile.Duration != profileDurations[profile.ConnectionPolicy] || profile.Timeout != "1s" {
+		if profile.ID == "" || seen[profile.ID] || !rates[profile.ArrivalRate] || profile.Mode != "arrival" || (profile.TransportScheme != "http" && profile.TransportScheme != "https") || profile.MaxRPS != 50 || profile.Users != 10 || profile.Duration != profileDurations[profile.ConnectionPolicy] || profile.Timeout != "1s" {
 			return false
 		}
 		shape := fmt.Sprintf("%s|%s|%d|%d", profile.Method, profile.Path, profile.RequestBodyBytes, profile.ResponseBodyBytes)
 		if !shapes[shape] {
+			return false
+		}
+		if profile.TransportScheme == "https" && (profile.Path != "/matrix/https-4k" || profile.ConnectionPolicy != "reuse" || profile.Method != "GET") {
 			return false
 		}
 		key := fmt.Sprintf("%s|%s|%d", shape, profile.ConnectionPolicy, profile.ArrivalRate)
@@ -612,6 +617,12 @@ func validProfileMatrix(profiles []calibratedProfile) bool {
 	for shape := range shapes {
 		for policy := range profileDurations {
 			for rate := range rates {
+				if shape == "GET|/matrix/https-4k|0|4096" {
+					if policy == "reuse" && !shapeRates[fmt.Sprintf("%s|%s|%d", shape, policy, rate)] {
+						return false
+					}
+					continue
+				}
 				if !shapeRates[fmt.Sprintf("%s|%s|%d", shape, policy, rate)] {
 					return false
 				}
@@ -638,8 +649,10 @@ func profileLedgersMatch(profiles []calibratedProfile, observations []workloadOb
 		if planned < 0 {
 			return false
 		}
-		expectedConnections, supported := calibration.ExpectedReferenceTCPConnections(calibration.WorkloadProfile{ConnectionPolicy: profile.ConnectionPolicy}, planned)
-		if !ok || !supported || observation.ServerTCPConnections != expectedConnections || observation.Scheduled != planned || observation.Admitted != planned || observation.Started != planned || observation.Completed != planned || observation.Dropped != 0 || observation.Outcome != "PASS" ||
+		workloadProfile := calibration.WorkloadProfile{TransportScheme: profile.TransportScheme, ConnectionPolicy: profile.ConnectionPolicy}
+		expectedConnections, supported := calibration.ExpectedReferenceTCPConnections(workloadProfile, planned)
+		expectedHandshakes, tlsSupported := calibration.ExpectedReferenceTLSHandshakes(workloadProfile, planned)
+		if !ok || !supported || !tlsSupported || observation.ServerTCPConnections != expectedConnections || observation.ClientTLSHandshakes != expectedHandshakes || observation.Scheduled != planned || observation.Admitted != planned || observation.Started != planned || observation.Completed != planned || observation.Dropped != 0 || observation.Outcome != "PASS" ||
 			observation.ClientCompleteBodyObservations != planned || observation.ClientResponseMinBytes != int64(profile.ResponseBodyBytes) || observation.ClientResponseMaxBytes != int64(profile.ResponseBodyBytes) || observation.ClientResponseTotalBytes != planned*int64(profile.ResponseBodyBytes) ||
 			observation.ServerReceived != planned || observation.ServerCompleted != planned || observation.ServerRequestBodyBytes != planned*int64(profile.RequestBodyBytes) || observation.ServerResponseBodyBytes != planned*int64(profile.ResponseBodyBytes) {
 			return false
@@ -658,13 +671,16 @@ func workloadRunsMatch(profiles []calibratedProfile, runs []report.Result) bool 
 		if planned < 0 {
 			return false
 		}
+		expectedHandshakes, tlsSupported := calibration.ExpectedReferenceTLSHandshakes(calibration.WorkloadProfile{
+			TransportScheme: profile.TransportScheme, ConnectionPolicy: profile.ConnectionPolicy,
+		}, planned)
 		body := run.Metrics.ResponseBody
-		if run.ArrivalsScheduled != planned || run.ArrivalsAdmitted == nil || *run.ArrivalsAdmitted != planned || run.ArrivalsDropped != 0 || run.IterationsStarted != planned || run.IterationsCompleted != planned || run.Outcome != "PASS" ||
+		if !tlsSupported || len(run.Steps) != 1 || int64(run.Steps[0].HTTPTrace.TLSCount) != expectedHandshakes || run.ArrivalsScheduled != planned || run.ArrivalsAdmitted == nil || *run.ArrivalsAdmitted != planned || run.ArrivalsDropped != 0 || run.IterationsStarted != planned || run.IterationsCompleted != planned || run.Outcome != "PASS" ||
 			run.Metrics.Total != int(planned) || run.Metrics.Success != int(planned) || run.Metrics.Failures != 0 || run.Metrics.Cancelled != 0 ||
 			body.CompleteObservations != planned || body.IncompleteObservations != 0 || body.OversizedObservations != 0 || body.MinBytes != int64(profile.ResponseBodyBytes) || body.MaxBytes != int64(profile.ResponseBodyBytes) || body.TotalBytes != planned*int64(profile.ResponseBodyBytes) ||
 			run.Metrics.HTTP.StatusCodes[200] != int(planned) || run.Metrics.HTTP.Status2xx != int(planned) ||
 			run.Config.Mode != profile.Mode || run.Config.ArrivalRate != profile.ArrivalRate || run.Config.MaxRPS != profile.MaxRPS || run.Config.Users != profile.Users || run.Config.Duration != profile.Duration || run.Config.RequestTimeout != profile.Timeout || run.Config.ConnectionPolicy != profile.ConnectionPolicy ||
-			len(run.Steps) != 1 || run.Steps[0].Method != profile.Method || run.Steps[0].Path != profile.Path || run.Steps[0].Metrics.Total != int(planned) || run.Steps[0].Metrics.Success != int(planned) || run.Steps[0].Metrics.HTTP.StatusCodes[200] != int(planned) {
+			run.Steps[0].Method != profile.Method || run.Steps[0].Path != profile.Path || run.Steps[0].Metrics.Total != int(planned) || run.Steps[0].Metrics.Success != int(planned) || run.Steps[0].Metrics.HTTP.StatusCodes[200] != int(planned) {
 			return false
 		}
 	}

@@ -263,9 +263,13 @@ func passingWorkloadProfileFixture(profile calibration.WorkloadProfile) (report.
 		},
 	}
 	tcpConnections, _ := calibration.ExpectedReferenceTCPConnections(profile, planned)
+	tlsHandshakes, _ := calibration.ExpectedReferenceTLSHandshakes(profile, planned)
+	if tlsHandshakes > 0 {
+		run.Steps[0].HTTPTrace.TLSCount = int(tlsHandshakes)
+	}
 	observation := calibration.WorkloadObservation{
 		Scheduled: planned, Admitted: planned, Started: planned, Completed: planned,
-		Outcome: "PASS", ClientCompleteBodyObservations: planned,
+		Outcome: "PASS", ClientCompleteBodyObservations: planned, ClientTLSHandshakes: tlsHandshakes,
 		ClientResponseMinBytes: responseBytes, ClientResponseMaxBytes: responseBytes,
 		ClientResponseTotalBytes: planned * responseBytes,
 		ServerReceived:           planned, ServerCompleted: planned,

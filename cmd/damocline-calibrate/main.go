@@ -5,12 +5,20 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"math"
+	"math/big"
 	"net"
 	"net/http"
 	"os"
@@ -33,8 +41,8 @@ import (
 
 const stageDuration = 5 * time.Second
 const soakDuration = 30 * time.Second
-const campaignDeadline = 220 * time.Second
-const referenceFixtureLifetime = 210 * time.Second
+const campaignDeadline = 240 * time.Second
+const referenceFixtureLifetime = 235 * time.Second
 
 type assessment struct {
 	SchemaVersion        int                               `json:"schema_version"`
@@ -142,6 +150,17 @@ func runFixture() error {
 	if err != nil {
 		return err
 	}
+	tlsListener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		_ = listener.Close()
+		return err
+	}
+	certificate, certificatePEM, err := newLoopbackCertificate()
+	if err != nil {
+		_ = listener.Close()
+		_ = tlsListener.Close()
+		return err
+	}
 	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/__damocline_snapshot" {
 			reference.ServeReferenceControl(current.Load())(w, r)
@@ -149,9 +168,13 @@ func runFixture() error {
 		}
 		current.Load().ServeHTTP(w, r)
 	}), ConnContext: h.ConnContext, ReadHeaderTimeout: 2 * time.Second, IdleTimeout: 5 * time.Second, MaxHeaderBytes: 8 << 10}
-	finished := make(chan error, 1)
+	tlsServer := &http.Server{Handler: server.Handler, ConnContext: h.ConnContext, ReadHeaderTimeout: 2 * time.Second,
+		IdleTimeout: 5 * time.Second, MaxHeaderBytes: 8 << 10, TLSConfig: &tls.Config{Certificates: []tls.Certificate{certificate},
+			MinVersion: tls.VersionTLS12, NextProtos: []string{"http/1.1"}}}
+	finished := make(chan error, 2)
 	go func() { finished <- server.Serve(listener) }()
-	fmt.Println("READY " + listener.Addr().String())
+	go func() { finished <- tlsServer.Serve(tls.NewListener(tlsListener, tlsServer.TLSConfig)) }()
+	fmt.Printf("READY %s %s %s\n", listener.Addr(), tlsListener.Addr(), base64.StdEncoding.EncodeToString(certificatePEM))
 	input := make(chan string, 2)
 	go func() {
 		scanner := bufio.NewScanner(os.Stdin)
@@ -185,8 +208,14 @@ func runFixture() error {
 		_ = server.Close()
 		return err
 	}
-	if err := <-finished; !errors.Is(err, http.ErrServerClosed) {
+	if err := tlsServer.Shutdown(ctx); err != nil {
+		_ = tlsServer.Close()
 		return err
+	}
+	for range 2 {
+		if err := <-finished; !errors.Is(err, http.ErrServerClosed) {
+			return err
+		}
 	}
 	data, err := json.Marshal(struct {
 		Baseline reference.Snapshot `json:"baseline"`
@@ -198,6 +227,33 @@ func runFixture() error {
 	}
 	fmt.Println("SNAPSHOT " + string(data))
 	return nil
+}
+
+func newLoopbackCertificate() (tls.Certificate, []byte, error) {
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return tls.Certificate{}, nil, err
+	}
+	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		return tls.Certificate{}, nil, err
+	}
+	now := time.Now()
+	template := x509.Certificate{SerialNumber: serial, Subject: pkix.Name{CommonName: "Damocline local calibration fixture"},
+		NotBefore: now.Add(-time.Minute), NotAfter: now.Add(10 * time.Minute), KeyUsage: x509.KeyUsageDigitalSignature,
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, BasicConstraintsValid: true,
+		IPAddresses: []net.IP{net.ParseIP("127.0.0.1")}}
+	der, err := x509.CreateCertificate(rand.Reader, &template, &template, publicKey, privateKey)
+	if err != nil {
+		return tls.Certificate{}, nil, err
+	}
+	certificatePEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	privateKeyPEM, err := x509.MarshalPKCS8PrivateKey(privateKey)
+	if err != nil {
+		return tls.Certificate{}, nil, err
+	}
+	certificate, err := tls.X509KeyPair(certificatePEM, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: privateKeyPEM}))
+	return certificate, certificatePEM, err
 }
 
 func run(path string, repeats int) error {
@@ -253,13 +309,35 @@ func runMatrix(path string, repeats int, extended bool) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	}
-	if !strings.HasPrefix(ready, "READY 127.0.0.1:") {
+	readyFields := strings.Fields(ready)
+	if len(readyFields) != 4 || readyFields[0] != "READY" || !strings.HasPrefix(readyFields[1], "127.0.0.1:") || !strings.HasPrefix(readyFields[2], "127.0.0.1:") {
 		return fmt.Errorf("reference fixture did not start: %q: %s", ready, stderr.String())
 	}
-	address := strings.TrimPrefix(ready, "READY ")
+	address, tlsAddress := readyFields[1], readyFields[2]
 	if _, port, err := net.SplitHostPort(address); err != nil || port == "" {
 		return fmt.Errorf("invalid local fixture address: %q", address)
 	}
+	if _, port, err := net.SplitHostPort(tlsAddress); err != nil || port == "" {
+		return fmt.Errorf("invalid local TLS fixture address: %q", tlsAddress)
+	}
+	rootCertificate, err := base64.StdEncoding.DecodeString(readyFields[3])
+	if err != nil {
+		return fmt.Errorf("decode local TLS fixture certificate: %w", err)
+	}
+	rootPool := x509.NewCertPool()
+	if !rootPool.AppendCertsFromPEM(rootCertificate) {
+		return errors.New("local TLS fixture certificate could not be trusted")
+	}
+	previousTransport := http.DefaultTransport
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.Proxy = nil
+	transport.ForceAttemptHTTP2 = false
+	transport.TLSClientConfig = &tls.Config{RootCAs: rootPool, MinVersion: tls.VersionTLS12}
+	http.DefaultTransport = transport
+	defer func() {
+		transport.CloseIdleConnections()
+		http.DefaultTransport = previousTransport
+	}()
 	var rates []int
 	for range repeats {
 		rates = append(rates, 2, 5, 10)
@@ -285,7 +363,11 @@ func runMatrix(path string, repeats int, extended bool) error {
 	result.WorkloadRuns = make([]report.Result, 0, len(workloadProfiles))
 	result.WorkloadObservations = make([]calibration.WorkloadObservation, 0, len(workloadProfiles))
 	for _, profile := range workloadProfiles {
-		v, err := calibratedWorkloadScenario("http://"+address, profile)
+		baseURL := "http://" + address
+		if profile.TransportScheme == "https" {
+			baseURL = "https://" + tlsAddress
+		}
+		v, err := calibratedWorkloadScenario(baseURL, profile)
 		if err != nil {
 			return fmt.Errorf("construct workload profile %s: %w", profile.ID, err)
 		}
@@ -651,6 +733,7 @@ func workloadProfileObservation(profile calibration.WorkloadProfile, run report.
 		Started: run.IterationsStarted, Completed: run.IterationsCompleted,
 		Dropped: run.ArrivalsDropped, Outcome: run.Outcome,
 		ClientCompleteBodyObservations: body.CompleteObservations,
+		ClientTLSHandshakes:            totalTLSHandshakes(run),
 		ClientResponseMinBytes:         body.MinBytes, ClientResponseMaxBytes: body.MaxBytes,
 		ClientResponseTotalBytes: body.TotalBytes,
 		ServerReceived:           after.Received - before.Received,
@@ -659,6 +742,14 @@ func workloadProfileObservation(profile calibration.WorkloadProfile, run report.
 		ServerRequestBodyBytes:   after.RequestBodyBytes - before.RequestBodyBytes,
 		ServerResponseBodyBytes:  after.ResponseBodyBytes - before.ResponseBodyBytes,
 	}
+}
+
+func totalTLSHandshakes(run report.Result) int64 {
+	var handshakes int64
+	for _, step := range run.Steps {
+		handshakes += int64(step.HTTPTrace.TLSCount)
+	}
+	return handshakes
 }
 
 func checkWorkloadProfile(profile calibration.WorkloadProfile, run report.Result, observation calibration.WorkloadObservation) []string {
@@ -684,6 +775,8 @@ func checkWorkloadProfile(profile calibration.WorkloadProfile, run report.Result
 		observation.ServerRequestBodyBytes == expectedRequestBytes && observation.ServerResponseBodyBytes == expectedResponseBytes
 	expectedTCPConnections, hasExpectedTCPConnections := calibration.ExpectedReferenceTCPConnections(profile, planned)
 	tcpConnectionLedgerMatches := hasExpectedTCPConnections && observation.ServerTCPConnections == expectedTCPConnections
+	expectedTLSHandshakes, hasExpectedTLSHandshakes := calibration.ExpectedReferenceTLSHandshakes(profile, planned)
+	tlsHandshakeLedgerMatches := hasExpectedTLSHandshakes && observation.ClientTLSHandshakes == expectedTLSHandshakes
 	var issues []string
 	if !hasRecognizedMeasurementQuality(run.Quality) {
 		state := "missing"
@@ -692,7 +785,7 @@ func checkWorkloadProfile(profile calibration.WorkloadProfile, run report.Result
 		}
 		issues = append(issues, fmt.Sprintf("workload profile %s measurement quality: expected VALID_WITHIN_ENVELOPE or LIMITED, got %s", profile.ID, state))
 	}
-	if !arrivalsMatch || !requestMetricsMatch || !responseMetricsMatch || !serverLedgerMatches || !tcpConnectionLedgerMatches || run.Outcome != "PASS" {
+	if !arrivalsMatch || !requestMetricsMatch || !responseMetricsMatch || !serverLedgerMatches || !tcpConnectionLedgerMatches || !tlsHandshakeLedgerMatches || run.Outcome != "PASS" {
 		issues = append(issues, fmt.Sprintf(
 			"workload profile %s did not reconcile: planned=%d arrivals=%d/%d/%d dropped=%d lag_samples=%d requests=%d/%d failures=%d client_body=%+v server=%+v tcp_connections=%d expected_tcp_connections=%d outcome=%s",
 			profile.ID, planned, run.ArrivalsScheduled, run.IterationsStarted, run.IterationsCompleted,
