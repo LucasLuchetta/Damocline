@@ -1,4 +1,4 @@
-﻿# HTTP run report schemas
+# HTTP run report schemas
 
 ## Supported versions
 

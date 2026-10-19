@@ -1,4 +1,4 @@
-﻿# Architecture
+# Architecture
 
 This document describes the current architecture and planned extensions. The measurement contract and roadmap identify which capabilities are implemented and which remain unvalidated or planned.
 
