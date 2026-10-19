@@ -2,6 +2,7 @@ package capacitygoal
 
 import (
 	"bytes"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -52,6 +53,20 @@ func EvaluateJourneyCampaign(saved arrivalcampaign.Result, goal JourneyStartGoal
 	if len(saved.Trials) > saved.Repeats {
 		return JourneyStartAssessment{}, errors.New("campaign contains more trials than declared")
 	}
+	if saved.SchemaVersion >= 5 {
+		seenRunIDs := make(map[string]bool, len(saved.Trials))
+		for _, trial := range saved.Trials {
+			if len(trial.RunID) != 32 || seenRunIDs[trial.RunID] {
+				return JourneyStartAssessment{}, errors.New("campaign trials must have distinct run IDs")
+			}
+			if _, decodeErr := hex.DecodeString(trial.RunID); decodeErr != nil {
+				return JourneyStartAssessment{}, errors.New("campaign trial run ID is malformed")
+			}
+			seenRunIDs[trial.RunID] = true
+		}
+	} else if saved.Cooldown != "" {
+		return JourneyStartAssessment{}, errors.New("cooldown is unsupported by this campaign schema")
+	}
 	if saved.BaseStartsPerSecond != target {
 		assessment.State = "TARGET_NOT_DIRECTLY_TESTED"
 		assessment.Findings = append(assessment.Findings, fmt.Sprintf("Campaign tested %d scheduled starts/s; required demand is %d/s. This assessor does not interpolate between rates.", saved.BaseStartsPerSecond, target))
@@ -65,10 +80,16 @@ func EvaluateJourneyCampaign(saved arrivalcampaign.Result, goal JourneyStartGoal
 	observedSLOFailure := false
 	var baselineConfig []byte
 	for index, trial := range saved.Trials {
-		if trial.Number != index+1 || len(trial.Phases) > len(arrivalcampaign.PlannedPhases(options, saved.BaseStartsPerSecond, trial.Number)) || len(trial.Phases) == 0 {
+		if trial.Number != index+1 || len(trial.Phases) > len(arrivalcampaign.PlannedPhases(options, saved.BaseStartsPerSecond, trial.Number)) || len(trial.Phases) == 0 && trial.Outcome != "ABORTED" {
 			return JourneyStartAssessment{}, errors.New("campaign trial numbering or phase count is invalid")
 		}
+		if trial.Outcome == "ABORTED" && trial.AbortReason == "" {
+			return JourneyStartAssessment{}, errors.New("aborted trial has no saved reason")
+		}
 		planned := arrivalcampaign.PlannedPhases(options, saved.BaseStartsPerSecond, trial.Number)
+		if trial.Outcome == "ABORTED" && len(trial.Phases) == 0 && index != len(saved.Trials)-1 {
+			return JourneyStartAssessment{}, errors.New("campaign continued after an aborted cooldown trial")
+		}
 		phasePass := len(trial.Phases) == len(planned)
 		for phaseIndex, phase := range trial.Phases {
 			expected := planned[phaseIndex]
@@ -218,11 +239,15 @@ func savedOptions(saved arrivalcampaign.Result) (arrivalcampaign.Options, error)
 	if err != nil {
 		return arrivalcampaign.Options{}, err
 	}
+	cooldown, err := parse(saved.Cooldown, saved.SchemaVersion < 5)
+	if err != nil {
+		return arrivalcampaign.Options{}, err
+	}
 	budget, err := parse(saved.Budget, false)
 	if err != nil {
 		return arrivalcampaign.Options{}, err
 	}
-	options := arrivalcampaign.Options{Warmup: warmup, Observation: observation, SpikeRate: saved.SpikeStartsPerSecond, SpikeDuration: spikeDuration, Recovery: recovery, Soak: soak, Repeats: saved.Repeats, Budget: budget, LongRun: saved.LongRun, StagingConfirmed: saved.LongRun}
+	options := arrivalcampaign.Options{Warmup: warmup, Observation: observation, SpikeRate: saved.SpikeStartsPerSecond, SpikeDuration: spikeDuration, Recovery: recovery, Soak: soak, Cooldown: cooldown, Repeats: saved.Repeats, Budget: budget, LongRun: saved.LongRun, StagingConfirmed: saved.LongRun}
 	if saved.SchemaVersion >= 3 && saved.GeneratorGuardrails != nil {
 		options.Guardrails = *saved.GeneratorGuardrails
 	}
@@ -262,7 +287,7 @@ func validateSavedOptions(saved arrivalcampaign.Result, options arrivalcampaign.
 		options.Observation < 10*time.Second || options.Observation > phaseLimit || options.Repeats < 2 || options.Repeats > 5 ||
 		options.SpikeRate < 0 || options.SpikeRate > 100 || (options.SpikeRate == 0) != (options.SpikeDuration == 0) ||
 		options.SpikeRate > 0 && (options.SpikeRate <= saved.BaseStartsPerSecond || options.SpikeDuration < 10*time.Second || options.SpikeDuration > 3*time.Minute) ||
-		options.Soak < 0 || options.Soak > soakLimit || options.Soak > 0 && options.Soak < 10*time.Second {
+		options.Soak < 0 || options.Soak > soakLimit || options.Soak > 0 && options.Soak < 10*time.Second || options.Cooldown < 0 || options.Cooldown > 5*time.Minute {
 		return errors.New("saved campaign phase schedule is invalid")
 	}
 	steps, err := time.ParseDuration(saved.RequestTimeout)
@@ -279,7 +304,7 @@ func validateSavedOptions(saved arrivalcampaign.Result, options arrivalcampaign.
 	if options.SpikeDuration > 0 {
 		phases++
 	}
-	total := time.Duration(options.Repeats)*(options.Warmup+options.Observation+options.SpikeDuration+options.Recovery) + options.Soak
+	total := time.Duration(options.Repeats)*(options.Warmup+options.Observation+options.SpikeDuration+options.Recovery) + options.Soak + time.Duration(options.Repeats-1)*options.Cooldown
 	soakDrain := 0
 	if options.Soak > 0 {
 		soakDrain = 1

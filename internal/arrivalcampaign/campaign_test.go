@@ -42,6 +42,49 @@ func TestWithRunnerKeepsArrivalScheduleAndAbortsWithinBudget(t *testing.T) {
 	}
 }
 
+func TestCooldownSeparatesArrivalTrialsAndPersistsRunIDs(t *testing.T) {
+	base := validatedArrival(t)
+	cooldown := 25 * time.Millisecond
+	var trialStarts []time.Time
+	calls := 0
+	result, err := WithRunner(context.Background(), base, Options{
+		Observation: 10 * time.Second, Recovery: 10 * time.Second, Repeats: 2, Cooldown: cooldown,
+	}, func(_ context.Context, v config.Validated) report.Result {
+		calls++
+		if calls%2 == 1 {
+			trialStarts = append(trialStarts, time.Now())
+		}
+		return syntheticArrivalPhase(v, "PASS")
+	})
+	if err != nil || result.Outcome != "PASS" || result.Cooldown != cooldown.String() || len(result.Trials) != 2 ||
+		result.Trials[0].RunID == "" || result.Trials[0].RunID == result.Trials[1].RunID || len(trialStarts) != 2 || trialStarts[1].Sub(trialStarts[0]) < cooldown {
+		t.Fatalf("arrival cooldown or independent trial identity was not preserved: starts=%v result=%+v err=%v", trialStarts, result, err)
+	}
+}
+
+func TestArrivalCancellationDuringCooldownPersistsAbortedTrial(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	firstTrialDone := make(chan struct{})
+	go func() {
+		<-firstTrialDone
+		time.Sleep(10 * time.Millisecond)
+		cancel()
+	}()
+	base := validatedArrival(t)
+	calls := 0
+	result, err := WithRunner(ctx, base, Options{Observation: 10 * time.Second, Recovery: 10 * time.Second, Repeats: 3, Cooldown: 100 * time.Millisecond}, func(_ context.Context, v config.Validated) report.Result {
+		calls++
+		if calls%2 == 0 {
+			close(firstTrialDone)
+		}
+		return syntheticArrivalPhase(v, "PASS")
+	})
+	if err != nil || result.Outcome != "ABORTED" || len(result.Trials) != 2 || result.Trials[1].Outcome != "ABORTED" || result.Trials[1].AbortReason == "" || len(result.Trials[1].Phases) != 0 || calls != 2 {
+		t.Fatalf("arrival cooldown cancellation was not retained as an aborted trial: %+v calls=%d err=%v", result, calls, err)
+	}
+}
+
 func TestWithRunnerRejectsCalculatedDemandMismatch(t *testing.T) {
 	base := validatedArrival(t)
 	_, err := WithRunner(context.Background(), base, Options{Observation: 10 * time.Second, Recovery: 10 * time.Second,

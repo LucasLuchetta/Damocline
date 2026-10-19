@@ -68,6 +68,12 @@ func TestFirstObservedFailureSurvivesPersistenceAndCannotBeHiddenByLaterPass(t *
 	if forgedAudit.State != "INVALID_EVIDENCE" {
 		t.Fatalf("a later passing trial hid the earlier failure: %+v", forgedAudit)
 	}
+
+	duplicateIDs := auditFixture()
+	duplicateIDs.Trials[1].RunID = duplicateIDs.Trials[0].RunID
+	if audit := AuditCampaign(duplicateIDs); audit.State != "INVALID_EVIDENCE" {
+		t.Fatalf("duplicate trial run IDs were accepted: %+v", audit)
+	}
 }
 
 func TestCampaignRunGuardrailsMustMatchOfflinePolicy(t *testing.T) {

@@ -2,6 +2,7 @@
 package capacityplan
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -337,6 +338,29 @@ func validateEvidence(evidence campaign.Result) error {
 	if evidence.SchemaVersion < 7 && evidence.GeneratorGuardrails != nil {
 		return errors.New("generator resource guardrails are unsupported by this campaign schema")
 	}
+	if evidence.SchemaVersion < 9 && evidence.Cooldown != "" {
+		return errors.New("cooldown is unsupported by this campaign schema")
+	}
+	if evidence.SchemaVersion < 9 {
+		for _, trial := range evidence.Trials {
+			if trial.RunID != "" {
+				return errors.New("trial run IDs are unsupported by this campaign schema")
+			}
+		}
+	}
+	if evidence.SchemaVersion >= 9 {
+		cooldown, err := time.ParseDuration(evidence.Cooldown)
+		if err != nil || cooldown < 0 || cooldown > 5*time.Minute {
+			return errors.New("invalid saved inter-trial cooldown")
+		}
+		seenRunIDs := make(map[string]bool, len(evidence.Trials))
+		for _, trial := range evidence.Trials {
+			if !validCampaignRunID(trial.RunID) || seenRunIDs[trial.RunID] {
+				return errors.New("campaign trials must have distinct valid run IDs")
+			}
+			seenRunIDs[trial.RunID] = true
+		}
+	}
 	if evidence.Outcome == "PASS" && len(evidence.Trials) != evidence.Repeats {
 		return errors.New("a passing campaign must contain every configured trial")
 	}
@@ -553,6 +577,13 @@ func validateStageEvidence(evidence campaign.Result) error {
 			return errors.New("invalid soak stage")
 		}
 	}
+	cooldown := time.Duration(0)
+	if evidence.SchemaVersion >= 9 {
+		cooldown, err = time.ParseDuration(evidence.Cooldown)
+		if err != nil || cooldown < 0 || cooldown > 5*time.Minute {
+			return errors.New("invalid cooldown stage")
+		}
+	}
 	budget := time.Duration(0)
 	if evidence.Budget != "" {
 		budget, err = parsePhaseDuration("budget", evidence.Budget)
@@ -567,7 +598,7 @@ func validateStageEvidence(evidence campaign.Result) error {
 			return errors.New("spike load does not exceed base load")
 		}
 	}
-	options := campaign.Options{Warmup: warmup, Observation: observation, SpikeUsers: evidence.SpikeUsers, SpikeDuration: spike, Recovery: recovery, Soak: soak, Repeats: evidence.Repeats, LongRun: longRun, StagingConfirmed: longRun}
+	options := campaign.Options{Warmup: warmup, Observation: observation, SpikeUsers: evidence.SpikeUsers, SpikeDuration: spike, Recovery: recovery, Soak: soak, Cooldown: cooldown, Repeats: evidence.Repeats, LongRun: longRun, StagingConfirmed: longRun}
 	if evidence.SchemaVersion >= 7 && evidence.GeneratorGuardrails != nil {
 		options.Guardrails = *evidence.GeneratorGuardrails
 	}
@@ -603,6 +634,14 @@ func validateStageEvidence(evidence campaign.Result) error {
 		}
 	}
 	return nil
+}
+
+func validCampaignRunID(value string) bool {
+	if len(value) != 32 {
+		return false
+	}
+	_, err := hex.DecodeString(value)
+	return err == nil
 }
 
 func campaignRunGuardrailsMatch(evidence campaign.Result, run report.Result) bool {

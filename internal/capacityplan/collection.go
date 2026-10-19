@@ -55,6 +55,7 @@ type campaignLevelShape struct {
 	SpikeRatio          string                      `json:"spike_ratio"`
 	Recovery            string                      `json:"recovery"`
 	Soak                string                      `json:"soak,omitempty"`
+	Cooldown            string                      `json:"cooldown,omitempty"`
 	LongRun             bool                        `json:"long_run,omitempty"`
 	Environment         string                      `json:"declared_environment,omitempty"`
 	StabilityPolicy     campaign.StabilityPolicy    `json:"stability_policy"`
@@ -218,7 +219,7 @@ func campaignCollectionShape(e campaign.Result) (string, error) {
 	shape := campaignLevelShape{
 		SchemaVersion: e.SchemaVersion, Scenario: e.Scenario, Target: e.Target,
 		Warmup: e.Warmup, Observation: e.Observation,
-		SpikeDuration: e.SpikeDuration, Recovery: e.Recovery, Soak: e.Soak, StabilityPolicy: e.EffectiveStabilityPolicy(), Budget: e.Budget, Repeats: e.Repeats,
+		SpikeDuration: e.SpikeDuration, Recovery: e.Recovery, Soak: e.Soak, Cooldown: e.Cooldown, StabilityPolicy: e.EffectiveStabilityPolicy(), Budget: e.Budget, Repeats: e.Repeats,
 		LongRun: e.LongRun, Environment: e.DeclaredEnvironment,
 		GeneratorGuardrails: e.GeneratorGuardrails,
 	}
@@ -344,6 +345,15 @@ func campaignLevelSchedule(e campaign.Result) (campaign.Options, []campaign.Plan
 	if err != nil {
 		return campaign.Options{}, nil, errors.New("invalid campaign soak schedule")
 	}
+	cooldown := time.Duration(0)
+	if e.SchemaVersion >= 9 {
+		cooldown, err = time.ParseDuration(e.Cooldown)
+	} else if e.Cooldown != "" {
+		return campaign.Options{}, nil, errors.New("cooldown is unsupported by this campaign schema")
+	}
+	if err != nil || cooldown < 0 || cooldown > 5*time.Minute {
+		return campaign.Options{}, nil, errors.New("invalid campaign cooldown schedule")
+	}
 	budget := time.Duration(0)
 	if e.Budget != "" {
 		budget, err = time.ParseDuration(e.Budget)
@@ -352,7 +362,7 @@ func campaignLevelSchedule(e campaign.Result) (campaign.Options, []campaign.Plan
 		return campaign.Options{}, nil, errors.New("invalid campaign budget")
 	}
 	options := campaign.Options{Warmup: warmup, Observation: observation, SpikeUsers: e.SpikeUsers,
-		SpikeDuration: spike, Recovery: recovery, Soak: soak, Repeats: e.Repeats, Budget: budget,
+		SpikeDuration: spike, Recovery: recovery, Soak: soak, Cooldown: cooldown, Repeats: e.Repeats, Budget: budget,
 		Stability: e.EffectiveStabilityPolicy(), LongRun: e.LongRun, StagingConfirmed: e.LongRun}
 	if e.SchemaVersion >= 7 && e.GeneratorGuardrails != nil {
 		options.Guardrails = *e.GeneratorGuardrails

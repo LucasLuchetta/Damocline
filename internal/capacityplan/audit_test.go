@@ -49,7 +49,7 @@ func auditFixtureAtUsers(users int) campaign.Result {
 	a, b := phaseRun(), phaseRun()
 	e := campaign.Result{
 		SchemaVersion: campaign.CurrentSchemaVersion, Scenario: "synthetic", Target: a.Target,
-		BaseUsers: users, Warmup: "0s", Observation: "10s", SpikeDuration: "0s", Recovery: "10s",
+		BaseUsers: users, Warmup: "0s", Observation: "10s", SpikeDuration: "0s", Recovery: "10s", Cooldown: "0s",
 		Budget: "3m20s", Repeats: 2, Outcome: "PASS", Soak: "10s", StabilityPolicy: &stabilityPolicy,
 	}
 	for n := 1; n <= 2; n++ {
@@ -60,7 +60,11 @@ func auditFixtureAtUsers(users int) campaign.Result {
 		if n == 2 {
 			phases = append(phases, campaign.Phase{Name: "soak", EvidenceState: "PASS_OBSERVED", Stability: campaign.AssessStability(a), Run: a})
 		}
-		e.Trials = append(e.Trials, campaign.Trial{Number: n, Outcome: "PASS", Phases: phases})
+		runID := strings.Repeat("a", 32)
+		if n == 2 {
+			runID = strings.Repeat("b", 32)
+		}
+		e.Trials = append(e.Trials, campaign.Trial{RunID: runID, Number: n, Outcome: "PASS", Phases: phases})
 	}
 	return e
 }
@@ -79,6 +83,7 @@ func TestAuditCampaignObservationalPassDoesNotCertifyCapacity(t *testing.T) {
 func TestSchemaEightRequiresRecoveryAfterObservedSpikeFailure(t *testing.T) {
 	evidence := auditFixture()
 	evidence.SchemaVersion = 8
+	evidence.Cooldown = ""
 	evidence.Outcome = "FAIL"
 	evidence.SpikeUsers = 4
 	evidence.SpikeDuration = "10s"

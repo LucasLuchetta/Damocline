@@ -135,9 +135,23 @@ func TestArrivalCampaignDemandRequiresExactBaseAndConsistentArtifact(t *testing.
 	}
 }
 
-func TestSavedLongRunCampaignRequiresStagingAndExplicitBoundedBudget(t *testing.T) {
+func TestCurrentArrivalCampaignRejectsDuplicateTrialRunIDs(t *testing.T) {
 	saved := arrivalcampaign.Result{
 		SchemaVersion: arrivalcampaign.CurrentSchemaVersion, Scenario: "synthetic", Target: "https://app.example.com",
+		StartedAt: time.Now().UTC().Format(time.RFC3339), WorkloadFingerprint: "fingerprint", WorkerLimit: 2,
+		RequestTimeout: "2s", RequestRateCeiling: 10, P95LimitMS: 500, MaxErrorRate: .1, MinSamplesPerStep: 1,
+		WindowDuration: "10s", BaseStartsPerSecond: 2, Warmup: "0s", Observation: "30s", Recovery: "10s",
+		Cooldown: "0s", Budget: "4m", Repeats: 2, Outcome: "PASS",
+		Trials: []arrivalcampaign.Trial{{Number: 1, RunID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}, {Number: 2, RunID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}},
+	}
+	if _, err := EvaluateJourneyCampaign(saved, JourneyStartGoal{PeakStartsPerSecond: 2}); err == nil || !strings.Contains(err.Error(), "distinct run IDs") {
+		t.Fatalf("duplicate trial run IDs accepted: %v", err)
+	}
+}
+
+func TestSavedLongRunCampaignRequiresStagingAndExplicitBoundedBudget(t *testing.T) {
+	saved := arrivalcampaign.Result{
+		SchemaVersion: arrivalcampaign.CurrentSchemaVersion, Scenario: "synthetic", Target: "https://app.example.com", Cooldown: "0s",
 		DeclaredEnvironment: "staging", LongRun: true, BaseStartsPerSecond: 1, RequestRateCeiling: 100,
 		RequestTimeout: "2s", Warmup: "0s", Observation: "30m", Recovery: "45s", Budget: "70m", Repeats: 2,
 	}

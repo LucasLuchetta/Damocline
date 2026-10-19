@@ -27,6 +27,7 @@ func arrivalCampaignCmd(args []string, stdout, stderr io.Writer) int {
 	spikeDuration := fs.Duration("spike-duration", 0, "optional spike duration (10s-3m)")
 	recovery := fs.Duration("recovery", 30*time.Second, "recovery duration (10s-3m)")
 	soak := fs.Duration("soak", 0, "optional final soak duration (10s-3m; long-run up to 30m)")
+	cooldown := fs.Duration("cooldown", 0, "optional bounded wait between independent trials (0-5m)")
 	longRun := fs.Bool("allow-long-run", false, "opt in to observation/soak up to 30m and a wall budget up to 2h")
 	stagingConfirmed := fs.Bool("staging-confirmed", false, "confirm the scenario environment is staging for a long-run campaign")
 	maxGeneratorCPU := fs.Float64("max-generator-cpu-percent", 0, "abort when sampled generator process CPU exceeds this percent of detected capacity (0 disables)")
@@ -83,7 +84,7 @@ func arrivalCampaignCmd(args []string, stdout, stderr io.Writer) int {
 		guardrails.ConsecutiveSamples = *guardrailSamples
 	}
 	options := arrivalcampaign.Options{Warmup: *warmup, Observation: *observation, SpikeRate: *spikeRate, SpikeDuration: *spikeDuration,
-		Recovery: *recovery, Soak: *soak, Repeats: *repeats, Budget: *budget, PeakRate: *peak, GrowthPercent: *growth, ReservePercent: *reserve,
+		Recovery: *recovery, Soak: *soak, Cooldown: *cooldown, Repeats: *repeats, Budget: *budget, PeakRate: *peak, GrowthPercent: *growth, ReservePercent: *reserve,
 		Guardrails: guardrails,
 		LongRun:    *longRun, StagingConfirmed: *stagingConfirmed}
 	if err := arrivalcampaign.Validate(config.Validated{Scenario: scenario}, options); err != nil {
@@ -112,8 +113,8 @@ func arrivalCampaignCmd(args []string, stdout, stderr io.Writer) int {
 		}
 		validated.Scenario.WindowDuration = validated.Window.String()
 	}
-	fmt.Fprintf(stdout, "Arrival campaign: %s | %s://%s | base %d scheduled starts/s | worker limit %d | observation %s | repeats %d | wall-time cap %s\n",
-		validated.Scenario.Name, validated.Base.Scheme, validated.Base.Host, validated.Scenario.ArrivalRate, validated.Scenario.Users, options.Observation, options.Repeats, arrivalcampaign.PlannedBudget(options))
+	fmt.Fprintf(stdout, "Arrival campaign: %s | %s://%s | base %d scheduled starts/s | worker limit %d | observation %s | repeats %d | cooldown %s | wall-time cap %s\n",
+		validated.Scenario.Name, validated.Base.Scheme, validated.Base.Host, validated.Scenario.ArrivalRate, validated.Scenario.Users, options.Observation, options.Repeats, options.Cooldown, arrivalcampaign.PlannedBudget(options))
 	if options.LongRun {
 		fmt.Fprintln(stdout, "LONG-RUN MODE: explicit opt-in; environment declared staging (user-provided, not independently verified).")
 	}
@@ -128,6 +129,9 @@ func arrivalCampaignCmd(args []string, stdout, stderr io.Writer) int {
 		for trial := 1; trial <= options.Repeats; trial++ {
 			for _, phase := range arrivalcampaign.PlannedPhases(options, validated.Scenario.ArrivalRate, trial) {
 				fmt.Fprintf(stdout, "  Trial %d %s: %s at %d scheduled starts/s\n", trial, phase.Name, phase.Duration, phase.Rate)
+			}
+			if trial < options.Repeats && options.Cooldown > 0 {
+				fmt.Fprintf(stdout, "  Cool-down between independent trials: %s\n", options.Cooldown)
 			}
 		}
 		fmt.Fprintln(stdout, "DRY RUN: no traffic generated. Rates are scheduled journey starts/s; completed journeys/s and HTTP requests/s are separate measurements.")

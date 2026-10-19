@@ -4,6 +4,8 @@ package arrivalcampaign
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"math"
 	"time"
@@ -15,7 +17,7 @@ import (
 	"github.com/LucasLuchetta/Damocline/internal/report"
 )
 
-const CurrentSchemaVersion = 4
+const CurrentSchemaVersion = 5
 const maximumCampaignDuration = 15 * time.Minute
 const LongRunWallTimeLimit = 2 * time.Hour
 const LongRunPhaseLimit = 30 * time.Minute
@@ -30,6 +32,7 @@ type Options struct {
 	SpikeDuration    time.Duration
 	Recovery         time.Duration
 	Soak             time.Duration
+	Cooldown         time.Duration
 	Repeats          int
 	Budget           time.Duration
 	Guardrails       generatorhealth.Guardrails
@@ -72,6 +75,7 @@ type Phase struct {
 }
 
 type Trial struct {
+	RunID       string  `json:"run_id,omitempty"`
 	Number      int     `json:"number"`
 	Phases      []Phase `json:"phases"`
 	Outcome     string  `json:"outcome"`
@@ -101,6 +105,7 @@ type Result struct {
 	SpikeDuration        string                      `json:"spike_duration,omitempty"`
 	Recovery             string                      `json:"recovery"`
 	Soak                 string                      `json:"soak,omitempty"`
+	Cooldown             string                      `json:"cooldown,omitempty"`
 	LongRun              bool                        `json:"long_run,omitempty"`
 	DeclaredEnvironment  string                      `json:"declared_environment,omitempty"`
 	GeneratorGuardrails  *generatorhealth.Guardrails `json:"generator_guardrails,omitempty"`
@@ -178,6 +183,9 @@ func Validate(base config.Validated, options Options) error {
 	if options.Soak < 0 || options.Soak > soakLimit || (options.Soak > 0 && options.Soak < 10*time.Second) {
 		return fmt.Errorf("soak must be 10s-%s when enabled", soakLimit)
 	}
+	if options.Cooldown < 0 || options.Cooldown > 5*time.Minute {
+		return fmt.Errorf("cooldown must be between 0 and 5m")
+	}
 	if options.Repeats < 2 || options.Repeats > 5 {
 		return fmt.Errorf("repeats must be 2-5")
 	}
@@ -230,10 +238,10 @@ func Validate(base config.Validated, options Options) error {
 	if options.SpikeDuration > 0 {
 		phases++
 	}
-	total := time.Duration(options.Repeats)*(options.Warmup+options.Observation+options.SpikeDuration+options.Recovery) + options.Soak
+	total := time.Duration(options.Repeats)*(options.Warmup+options.Observation+options.SpikeDuration+options.Recovery) + options.Soak + time.Duration(options.Repeats-1)*options.Cooldown
 	withDrain := total + time.Duration(options.Repeats*phases+boolInt(options.Soak > 0))*maximumPhaseDrain
 	if total > campaignLimit || withDrain > campaignLimit || options.Budget != 0 && (options.Budget < withDrain || options.Budget > campaignLimit) {
-		return fmt.Errorf("campaign phases and bounded drains must fit the %s wall-time safety budget", campaignLimit)
+		return fmt.Errorf("campaign phases, cooldowns and bounded drains must fit the %s wall-time safety budget", campaignLimit)
 	}
 	return nil
 }
@@ -262,7 +270,7 @@ func boolInt(value bool) int {
 func PlannedBudget(options Options) time.Duration {
 	requested := options.Budget
 	phases := 2 + boolInt(options.Warmup > 0) + boolInt(options.SpikeDuration > 0)
-	minimum := time.Duration(options.Repeats)*(options.Warmup+options.Observation+options.SpikeDuration+options.Recovery) + options.Soak
+	minimum := time.Duration(options.Repeats)*(options.Warmup+options.Observation+options.SpikeDuration+options.Recovery) + options.Soak + time.Duration(options.Repeats-1)*options.Cooldown
 	withDrain := minimum +
 		time.Duration(options.Repeats*phases+boolInt(options.Soak > 0))*maximumPhaseDrain
 	if requested > withDrain {
@@ -297,7 +305,8 @@ func WithRunner(parent context.Context, base config.Validated, options Options, 
 		PeakStartsPerSecond: options.PeakRate, GrowthPercent: options.GrowthPercent, ReservePercent: options.ReservePercent,
 		Warmup: options.Warmup.String(), Observation: options.Observation.String(), SpikeStartsPerSecond: options.SpikeRate,
 		SpikeDuration: options.SpikeDuration.String(), Recovery: options.Recovery.String(), Soak: options.Soak.String(),
-		LongRun: options.LongRun, DeclaredEnvironment: base.Scenario.Environment,
+		Cooldown: options.Cooldown.String(),
+		LongRun:  options.LongRun, DeclaredEnvironment: base.Scenario.Environment,
 		GeneratorGuardrails: generatorGuardrails,
 		Repeats:             options.Repeats, Trials: []Trial{}, Outcome: "INCONCLUSIVE",
 		Notes: []string{
@@ -309,7 +318,11 @@ func WithRunner(parent context.Context, base config.Validated, options Options, 
 		result.Notes = append(result.Notes, "Long-run mode was explicitly enabled for a user-declared staging environment with a bounded wall-time budget; Damocline does not verify the environment designation.")
 	}
 	for number := 1; number <= options.Repeats; number++ {
-		trial := Trial{Number: number, Phases: []Phase{}, Outcome: "PASS"}
+		runID, err := newRunID()
+		if err != nil {
+			return result, fmt.Errorf("create trial run ID: %w", err)
+		}
+		trial := Trial{RunID: runID, Number: number, Phases: []Phase{}, Outcome: "PASS"}
 		spikeFailed := false
 		for _, phase := range PlannedPhases(options, base.Scenario.ArrivalRate, number) {
 			if ctx.Err() != nil {
@@ -399,9 +412,25 @@ func WithRunner(parent context.Context, base config.Validated, options Options, 
 			}
 			return result, nil
 		}
+		if number < options.Repeats && options.Cooldown > 0 {
+			timer := time.NewTimer(options.Cooldown)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+			case <-timer.C:
+			}
+		}
 	}
 	result.Outcome = "PASS"
 	return result, nil
+}
+
+func newRunID() (string, error) {
+	var id [16]byte
+	if _, err := rand.Read(id[:]); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(id[:]), nil
 }
 
 func abortReason(err, parentErr error) string {
