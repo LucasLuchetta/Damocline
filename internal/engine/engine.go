@@ -886,6 +886,24 @@ func interpolateURL(base *url.URL, pathTemplate string, variables map[string]str
 	}
 	resolvedPath := strings.Join(segments, "/")
 	if hasQuery {
+		if strings.Contains(query, "{{") {
+			values, err := url.ParseQuery(query)
+			if err != nil {
+				return "", fmt.Errorf("parse query template: %w", err)
+			}
+			for key, items := range values {
+				if strings.Contains(key, "{{") || strings.Contains(key, "}}") {
+					return "", fmt.Errorf("query templates are supported only in parameter values")
+				}
+				for i, item := range items {
+					values[key][i], err = interpolateChecked(item, variables)
+					if err != nil {
+						return "", err
+					}
+				}
+			}
+			query = values.Encode()
+		}
 		resolvedPath += "?" + query
 	}
 	parsed, err := url.Parse(resolvedPath)
@@ -893,6 +911,23 @@ func interpolateURL(base *url.URL, pathTemplate string, variables map[string]str
 		return "", err
 	}
 	return base.ResolveReference(parsed).String(), nil
+}
+
+func interpolateChecked(value string, variables map[string]string) (string, error) {
+	var missing string
+	result := variablePattern.ReplaceAllStringFunc(value, func(match string) string {
+		name := strings.TrimSuffix(strings.TrimPrefix(match, "{{"), "}}")
+		resolved, ok := variables[name]
+		if !ok {
+			missing = name
+			return match
+		}
+		return resolved
+	})
+	if missing != "" {
+		return "", fmt.Errorf("missing variable %q", missing)
+	}
+	return result, nil
 }
 
 func interpolate(value string, variables map[string]string) string {

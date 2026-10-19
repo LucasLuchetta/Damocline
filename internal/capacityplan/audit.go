@@ -274,7 +274,7 @@ func AuditCampaign(e campaign.Result) CampaignAudit {
 			state, reason := campaign.ClassifyEvidence(phase.Run)
 			quality := report.AssessQuality(phase.Run)
 			stability := ""
-			if phase.Name == "observation" {
+			if phase.Name == "observation" || phase.Name == "soak" {
 				stability = campaign.AssessStability(phase.Run)
 			}
 			a.Phases = append(a.Phases, PhaseAudit{

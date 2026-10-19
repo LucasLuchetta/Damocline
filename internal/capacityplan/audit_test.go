@@ -48,13 +48,17 @@ func auditFixtureAtUsers(users int) campaign.Result {
 	e := campaign.Result{
 		SchemaVersion: campaign.CurrentSchemaVersion, Scenario: "synthetic", Target: a.Target,
 		BaseUsers: users, Warmup: "0s", Observation: "10s", SpikeDuration: "0s", Recovery: "10s",
-		Budget: "2m20s", Repeats: 2, Outcome: "PASS",
+		Budget: "3m20s", Repeats: 2, Outcome: "PASS", Soak: "10s",
 	}
 	for n := 1; n <= 2; n++ {
-		e.Trials = append(e.Trials, campaign.Trial{Number: n, Outcome: "PASS", Phases: []campaign.Phase{
+		phases := []campaign.Phase{
 			{Name: "observation", EvidenceState: "PASS_OBSERVED", Stability: campaign.AssessStability(a), Run: a},
 			{Name: "recovery", EvidenceState: "PASS_OBSERVED", Run: b},
-		}})
+		}
+		if n == 2 {
+			phases = append(phases, campaign.Phase{Name: "soak", EvidenceState: "PASS_OBSERVED", Stability: campaign.AssessStability(a), Run: a})
+		}
+		e.Trials = append(e.Trials, campaign.Trial{Number: n, Outcome: "PASS", Phases: phases})
 	}
 	return e
 }
@@ -62,7 +66,7 @@ func auditFixtureAtUsers(users int) campaign.Result {
 func TestAuditCampaignObservationalPassDoesNotCertifyCapacity(t *testing.T) {
 	e := auditFixture()
 	a := AuditCampaign(e)
-	if a.State != "OBSERVED_PASS_ONLY" || a.MeasurementQuality != report.QualityLimited || a.RequiredPhases != 4 {
+	if a.State != "OBSERVED_PASS_ONLY" || a.MeasurementQuality != report.QualityLimited || a.RequiredPhases != 5 {
 		t.Fatalf("unexpected conservative verdict: %+v", a)
 	}
 	if !strings.Contains(strings.Join(a.Findings, " "), "not a validated capacity ceiling") {
@@ -83,7 +87,7 @@ func TestAssessmentBindsDigestsAndOptionalDemand(t *testing.T) {
 	if first.Audit.EvidenceID == "" || first.Audit.EvidenceID != second.Audit.EvidenceID || first.Audit.Phases[0].EvidenceID != second.Audit.Phases[0].EvidenceID {
 		t.Fatalf("evidence digests must be stable and present: %+v", first.Audit)
 	}
-	if first.Audit.TestedDuration != "40s" || first.Audit.Confidence != "NOT_ESTABLISHED" || first.Demand == nil || first.Audit.DemandTargetUsers != 2 {
+	if first.Audit.TestedDuration != "50s" || first.Audit.Confidence != "NOT_ESTABLISHED" || first.Demand == nil || first.Audit.DemandTargetUsers != 2 {
 		t.Fatalf("assessment is missing campaign and demand summary: %+v", first)
 	}
 	if first.Confidence.Measurement != "LIMITED" || first.Confidence.WorkloadRepresentativeness != "NOT_ASSESSED" || first.Confidence.Decision != "NOT_ESTABLISHED" {

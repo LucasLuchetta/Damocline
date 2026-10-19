@@ -63,6 +63,23 @@ func TestProcessGeneratorSaturationBlocksBusinessClaim(t *testing.T) {
 		t.Fatalf("process-level generator saturation must block the business claim: %+v %v", a, err)
 	}
 }
+
+func TestCancelledArrivalsAndJourneysBlockExactTargetClaim(t *testing.T) {
+	cancelled := int64(1)
+	for _, mutate := range []func(*report.Result){
+		func(r *report.Result) { r.ArrivalsCancelledBeforeAdmission = &cancelled },
+		func(r *report.Result) { r.Journeys.Cancelled = 1 },
+		func(r *report.Result) { r.Quality = &report.Quality{State: report.QualityInvalid} },
+		func(r *report.Result) { r.SchemaVersion = report.CurrentSchemaVersion },
+	} {
+		ex := exploration(20)
+		mutate(&ex.Probes[0].Runs[1])
+		a, err := Evaluate(ex, Goal{PeakUsers: 20})
+		if err != nil || a.State != "INSUFFICIENT_EVIDENCE" {
+			t.Fatalf("incomplete or invalid delivery supported an exact-target claim: %+v err=%v", a, err)
+		}
+	}
+}
 func TestClientRateCeilingBlocksClaim(t *testing.T) {
 	ex := exploration(20)
 	for i := range ex.Probes[0].Runs {

@@ -36,4 +36,6 @@ Golden JSON fixtures in `internal/insights/testdata/reports/` cover every curren
 
 No automatic migration rewrites historical artifacts. Consumers must use the report version to determine whether a field was recorded. A reader update must add support and a fixture for a new schema version before increasing the accepted ceiling.
 
-Campaign reports use an independent schema counter. The campaign runner now emits schema v2 with an effective wall-time cap, a per-phase evidence classification, and an observation drift-screen state. The offline `plan` reader still reads schema v1, but cannot draw a positive demand conclusion from it because its stage provenance is incomplete. Schema v2 additionally requires an exact phase schedule and recomputes the drift-screen state before a positive assessment.
+Campaign reports use an independent schema counter. Schema v3 records successful journey throughput spread. Schema v4 adds an optional final 10-second to 3-minute soak after all independent trials, with exact schedule validation and a recomputed coarse journey/window drift screen. Schemas v1-v3 retain their historical schedules; older evidence cannot claim a soak that was not recorded.
+
+Closed-loop exploration reports use a separate schema counter. Schema v2 persists probe and overall termination reasons, including invalid delivery, request-rate binding, wall-time exhaustion and caller interruption. The offline capacity-goal reader continues to accept schema-v1 and schema-v2 explorations.

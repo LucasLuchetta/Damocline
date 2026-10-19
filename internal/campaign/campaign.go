@@ -12,7 +12,7 @@ import (
 	"github.com/LucasLuchetta/Damocline/internal/report"
 )
 
-const CurrentSchemaVersion = 3
+const CurrentSchemaVersion = 4
 
 type Options struct {
 	Warmup        time.Duration
@@ -20,6 +20,7 @@ type Options struct {
 	SpikeUsers    int
 	SpikeDuration time.Duration
 	Recovery      time.Duration
+	Soak          time.Duration
 	Repeats       int
 	Budget        time.Duration
 }
@@ -44,6 +45,16 @@ func PlannedPhases(options Options, baseUsers int) []PlannedPhase {
 	}
 	if options.Recovery > 0 {
 		phases = append(phases, PlannedPhase{Name: "recovery", Duration: options.Recovery, Users: baseUsers, Required: true})
+	}
+	return phases
+}
+
+// PlannedTrialPhases returns the regular trial schedule and appends a single
+// bounded soak after recovery on the final independent trial.
+func PlannedTrialPhases(options Options, baseUsers, trial int) []PlannedPhase {
+	phases := PlannedPhases(options, baseUsers)
+	if options.Soak > 0 && trial == options.Repeats {
+		phases = append(phases, PlannedPhase{Name: "soak", Duration: options.Soak, Users: baseUsers, Required: true})
 	}
 	return phases
 }
@@ -74,6 +85,7 @@ type Result struct {
 	SpikeUsers             int          `json:"spike_users,omitempty"`
 	SpikeDuration          string       `json:"spike_duration,omitempty"`
 	Recovery               string       `json:"recovery"`
+	Soak                   string       `json:"soak,omitempty"`
 	Budget                 string       `json:"budget,omitempty"`
 	Repeats                int          `json:"repeats"`
 	Trials                 []Trial      `json:"trials"`
@@ -105,6 +117,9 @@ func Validate(options Options) error {
 	if options.Observation < 10*time.Second || options.Observation > 10*time.Minute {
 		return fmt.Errorf("observation must be between 10s and 10m")
 	}
+	if options.Soak < 0 || options.Soak > 3*time.Minute || (options.Soak > 0 && options.Soak < 10*time.Second) {
+		return fmt.Errorf("soak must be between 10s and 3m when enabled")
+	}
 	if (options.SpikeUsers == 0) != (options.SpikeDuration == 0) {
 		return fmt.Errorf("spike-users and spike-duration must be set together")
 	}
@@ -114,9 +129,14 @@ func Validate(options Options) error {
 	if options.Repeats < 2 || options.Repeats > 5 {
 		return fmt.Errorf("repeats must be between 2 and 5")
 	}
-	minimum := time.Duration(options.Repeats) * (options.Warmup + options.Observation + options.SpikeDuration + options.Recovery)
+	minimum := time.Duration(options.Repeats)*(options.Warmup+options.Observation+options.SpikeDuration+options.Recovery) + options.Soak
 	if options.Budget != 0 && (options.Budget < minimum || options.Budget > 15*time.Minute) {
 		return fmt.Errorf("budget must cover every phase and be at most 15m")
+	}
+	if options.Budget != 0 && options.Soak > 0 {
+		if options.Budget < defaultBudget(options) {
+			return fmt.Errorf("budget must reserve bounded drain allowance for every phase")
+		}
 	}
 	if minimum > 15*time.Minute {
 		return fmt.Errorf("configured phases exceed the 15m campaign safety budget")
@@ -128,7 +148,12 @@ func Validate(options Options) error {
 }
 
 func defaultBudget(options Options) time.Duration {
-	return time.Duration(options.Repeats) * (options.Warmup + options.Observation + options.SpikeDuration + options.Recovery + time.Duration(len(PlannedPhases(options, 0)))*30*time.Second)
+	phases := len(PlannedPhases(options, 0))
+	soakDrain := time.Duration(0)
+	if options.Soak > 0 {
+		soakDrain = 30 * time.Second
+	}
+	return time.Duration(options.Repeats)*(options.Warmup+options.Observation+options.SpikeDuration+options.Recovery+time.Duration(phases)*30*time.Second) + options.Soak + soakDrain
 }
 
 // PlannedBudget returns the explicit wall-time cap or the bounded default.
@@ -162,6 +187,10 @@ func WithRunner(ctx context.Context, base config.Validated, options Options, run
 	parent := ctx
 	ctx, cancel := context.WithTimeout(ctx, options.Budget)
 	defer cancel()
+	soakDuration := ""
+	if options.Soak > 0 {
+		soakDuration = options.Soak.String()
+	}
 	result := Result{
 		SchemaVersion: CurrentSchemaVersion,
 		Scenario:      base.Scenario.Name,
@@ -173,18 +202,19 @@ func WithRunner(ctx context.Context, base config.Validated, options Options, run
 		SpikeUsers:    options.SpikeUsers,
 		SpikeDuration: options.SpikeDuration.String(),
 		Recovery:      options.Recovery.String(),
+		Soak:          soakDuration,
 		Budget:        options.Budget.String(),
 		Repeats:       options.Repeats,
 		Trials:        []Trial{},
 		Outcome:       "INCONCLUSIVE",
 		Notes: []string{
 			"Warm-up runs establish workload state but are excluded from capacity conclusions.",
-			"Observation, configured spike, and recovery all require PASS in every independent trial; this is evidence under the configured workload, not a universal capacity certification.",
+			"Observation, configured spike, recovery, and the optional final soak all require PASS; this is evidence under the configured workload, not a universal capacity certification.",
 		},
 	}
 	for number := 1; number <= options.Repeats; number++ {
 		trial := Trial{Number: number, Phases: []Phase{}, Outcome: "PASS"}
-		for _, phase := range PlannedPhases(options, base.Scenario.Users) {
+		for _, phase := range PlannedTrialPhases(options, base.Scenario.Users, number) {
 			if ctx.Err() != nil {
 				trial.Outcome = "ABORTED"
 				trial.AbortReason = abortReason(ctx.Err(), parent.Err())
@@ -204,7 +234,7 @@ func WithRunner(ctx context.Context, base config.Validated, options Options, run
 			run := runner(ctx, v)
 			state, reason := ClassifyEvidence(run)
 			stability := ""
-			if phase.Name == "observation" {
+			if phase.Name == "observation" || phase.Name == "soak" {
 				stability = AssessStability(run)
 			}
 			trial.Phases = append(trial.Phases, Phase{Name: phase.Name, EvidenceState: state, Reason: reason, Stability: stability, Run: run})
@@ -217,7 +247,7 @@ func WithRunner(ctx context.Context, base config.Validated, options Options, run
 				trial.Outcome = "INCONCLUSIVE"
 				break
 			}
-			if phase.Name == "observation" && state == "PASS_OBSERVED" && stability != "NO_LARGE_DRIFT_DETECTED" {
+			if (phase.Name == "observation" || phase.Name == "soak") && state == "PASS_OBSERVED" && stability != "NO_LARGE_DRIFT_DETECTED" {
 				trial.Outcome = "INCONCLUSIVE"
 				break
 			}

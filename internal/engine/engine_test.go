@@ -802,6 +802,41 @@ func TestJourneyExtractsResponseValuesForLaterSteps(t *testing.T) {
 	}
 }
 
+func TestExtractedQueryValueIsEscapedAndCannotChangeRequestStructure(t *testing.T) {
+	const extracted = "alpha&admin=true+percent%/value"
+	var gotID string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/session":
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": extracted})
+		case "/records":
+			if r.URL.Query().Get("id") != extracted || r.URL.Query().Get("admin") != "" {
+				t.Errorf("query substitution changed query structure: raw=%q parsed=%v", r.URL.RawQuery, r.URL.Query())
+			}
+			gotID = r.URL.Query().Get("id")
+			_, _ = w.Write([]byte("record found"))
+		default:
+			t.Errorf("template escaped the configured origin/path: %s", r.URL.String())
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	s := config.Scenario{Name: "encoded query workflow", BaseURL: srv.URL, Users: 1, Duration: "1s", MaxRPS: 20, P95LimitMS: 1000, MaxErrorRate: 0,
+		Steps: []config.Step{
+			{Name: "session", Path: "/session", Extract: map[string]config.Extract{"record_id": {JSONPointer: "/id"}}},
+			{Name: "record", Path: "/records?id={{record_id}}", MustContain: "record found"},
+		}}
+	v, err := config.Parse(s, config.Options{Authorized: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	v.Duration = 250 * time.Millisecond
+	r := Run(context.Background(), v)
+	if r.Outcome != "PASS" || gotID != extracted || r.Steps[1].Metrics.Success == 0 {
+		t.Fatalf("query value did not survive a safe encoded round trip: id=%q result=%+v", gotID, r)
+	}
+}
+
 func TestFailedExtractionFailsStep(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"missing":true}`))

@@ -67,7 +67,7 @@ func evaluateWithQuality(evidence campaign.Result, goal capacitygoal.Goal, asses
 		return result, nil
 	}
 	if evidence.SchemaVersion >= 3 && !validSuccessfulJourneyVariability(evidence.ObservationVariability) {
-		result.Findings = append(result.Findings, "Successful journey throughput spread is missing or malformed in this schema-v3 campaign; demand remains INSUFFICIENT_EVIDENCE.")
+		result.Findings = append(result.Findings, fmt.Sprintf("Successful journey throughput spread is missing or malformed in this schema-v%d campaign; demand remains INSUFFICIENT_EVIDENCE.", evidence.SchemaVersion))
 		return result, nil
 	}
 	if evidence.SchemaVersion < 2 {
@@ -382,11 +382,15 @@ func validatePartialStageEvidence(evidence campaign.Result) error {
 		}
 		return nil
 	}
-	_, expected, err := campaignLevelSchedule(evidence)
+	options, _, err := campaignLevelSchedule(evidence)
 	if err != nil {
 		return err
 	}
 	for trialIndex, trial := range evidence.Trials {
+		expected := campaign.PlannedPhases(options, evidence.BaseUsers)
+		if evidence.SchemaVersion >= 4 {
+			expected = campaign.PlannedTrialPhases(options, evidence.BaseUsers, trialIndex+1)
+		}
 		if trial.Number != trialIndex+1 {
 			return errors.New("partial campaign trials are not in declared order")
 		}
@@ -408,13 +412,13 @@ func validatePartialStageEvidence(evidence campaign.Result) error {
 			}
 			state, _ := campaign.ClassifyEvidence(phase.Run)
 			stability := ""
-			if phase.Name == "observation" {
+			if phase.Name == "observation" || phase.Name == "soak" {
 				stability = campaign.AssessStability(phase.Run)
 			}
-			if phase.EvidenceState != state || phase.Name == "observation" && phase.Stability != stability {
+			if phase.EvidenceState != state || (phase.Name == "observation" || phase.Name == "soak") && phase.Stability != stability {
 				return fmt.Errorf("trial %d has stale or altered %s phase evidence", trial.Number, phase.Name)
 			}
-			if want.Required && (phase.Run.Outcome == "FAIL" || state == "FAIL_OBSERVED") || phase.Run.Outcome == "ABORTED" || phase.Run.Outcome == "INCONCLUSIVE" || state == "INVALID_DELIVERY" || state == "INSUFFICIENT_EVIDENCE" || phase.Name == "observation" && stability != "NO_LARGE_DRIFT_DETECTED" {
+			if want.Required && (phase.Run.Outcome == "FAIL" || state == "FAIL_OBSERVED") || phase.Run.Outcome == "ABORTED" || phase.Run.Outcome == "INCONCLUSIVE" || state == "INVALID_DELIVERY" || state == "INSUFFICIENT_EVIDENCE" || (phase.Name == "observation" || phase.Name == "soak") && stability != "NO_LARGE_DRIFT_DETECTED" {
 				if phaseIndex != len(trial.Phases)-1 {
 					return errors.New("terminal phase evidence is followed by additional phases")
 				}
@@ -512,8 +516,22 @@ func validateStageEvidence(evidence campaign.Result) error {
 	if err != nil || recovery == 0 || recovery > 3*time.Minute {
 		return errors.New("a passing campaign requires recovery duration")
 	}
-	budget, err := parsePhaseDuration("budget", evidence.Budget)
-	if err != nil || budget == 0 || budget > 15*time.Minute || budget < time.Duration(evidence.Repeats)*(warmup+observation+spike+recovery) || evidence.Target == "" || evidence.BaseUsers > 50 {
+	soak := time.Duration(0)
+	if evidence.SchemaVersion >= 4 {
+		if evidence.Soak != "" {
+			soak, err = parsePhaseDuration("soak", evidence.Soak)
+		}
+		if err != nil || (soak > 0 && (soak < 10*time.Second || soak > 3*time.Minute)) {
+			return errors.New("invalid soak stage")
+		}
+	}
+	budget := time.Duration(0)
+	if evidence.Budget != "" {
+		budget, err = parsePhaseDuration("budget", evidence.Budget)
+	} else if evidence.SchemaVersion < 4 {
+		budget = campaign.PlannedBudget(campaign.Options{Warmup: warmup, Observation: observation, SpikeUsers: evidence.SpikeUsers, SpikeDuration: spike, Recovery: recovery, Repeats: evidence.Repeats})
+	}
+	if err != nil || budget == 0 || budget > 15*time.Minute || budget < time.Duration(evidence.Repeats)*(warmup+observation+spike+recovery)+soak || evidence.Target == "" || evidence.BaseUsers > 50 {
 		return errors.New("invalid campaign wall-time budget")
 	}
 	if spike > 0 {
@@ -521,8 +539,12 @@ func validateStageEvidence(evidence campaign.Result) error {
 			return errors.New("spike load does not exceed base load")
 		}
 	}
-	expected := campaign.PlannedPhases(campaign.Options{Warmup: warmup, Observation: observation, SpikeUsers: evidence.SpikeUsers, SpikeDuration: spike, Recovery: recovery}, evidence.BaseUsers)
+	options := campaign.Options{Warmup: warmup, Observation: observation, SpikeUsers: evidence.SpikeUsers, SpikeDuration: spike, Recovery: recovery, Soak: soak, Repeats: evidence.Repeats}
+	if evidence.SchemaVersion >= 4 && budget < campaign.PlannedBudget(options) {
+		return errors.New("campaign wall-time budget omits bounded phase drain allowance")
+	}
 	for i, trial := range evidence.Trials {
+		expected := campaign.PlannedTrialPhases(options, evidence.BaseUsers, i+1)
 		if trial.Number != i+1 || trial.Outcome != "PASS" || len(trial.Phases) != len(expected) {
 			return errors.New("campaign trial sequence is incomplete")
 		}
@@ -535,7 +557,7 @@ func validateStageEvidence(evidence campaign.Result) error {
 			if phase.EvidenceState != state || phase.EvidenceState == "INVALID_DELIVERY" || (phase.Name != "warmup" && phase.EvidenceState != "PASS_OBSERVED") {
 				return fmt.Errorf("trial %d has inconsistent %s phase classification", i+1, want.Name)
 			}
-			if phase.Name == "observation" && (phase.Stability != "NO_LARGE_DRIFT_DETECTED" || phase.Stability != campaign.AssessStability(phase.Run)) {
+			if (phase.Name == "observation" || phase.Name == "soak") && (phase.Stability != "NO_LARGE_DRIFT_DETECTED" || phase.Stability != campaign.AssessStability(phase.Run)) {
 				return fmt.Errorf("trial %d lacks reproducible stable-window evidence", i+1)
 			}
 		}

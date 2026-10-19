@@ -23,11 +23,43 @@ const (
 	QualityValid   = "VALID_WITHIN_ENVELOPE"
 	QualityLimited = "LIMITED"
 	QualityInvalid = "INVALID"
+	// GeneratorUtilizationGuard is a conservative short-trial evidence screen,
+	// not a universal generator or application capacity threshold.
+	GeneratorUtilizationGuard = 0.90
 	// SamplerCollectionWallLimit is a conservative screening threshold, not a
 	// calibrated estimate of CPU overhead. Collection wall time at or above 5%
 	// of the observation window is material enough to limit the measurement.
 	SamplerCollectionWallLimit = 0.05
 )
+
+// GeneratorEvidenceIssue reports whether a short workload-level comparison
+// lacks delivery, process-health, or headroom evidence. A nonempty result means
+// a failed stage cannot be attributed to the application from this report.
+func GeneratorEvidenceIssue(r Result) string {
+	if r.Quality != nil && r.Quality.State == QualityInvalid ||
+		r.SchemaVersion >= 16 && AssessQuality(r).State == QualityInvalid {
+		return "Report accounting or generator evidence is invalid."
+	}
+	if r.Metrics.Total <= 0 || r.Generator == nil || r.Generator.Samples < 2 || !r.Generator.GoCPUValid ||
+		r.Generator.ProcessSamples < 2 || !r.Generator.ProcessCPUValid || r.Generator.PeakProcessRSSBytes == 0 {
+		return "Generator process health evidence is incomplete."
+	}
+	if r.ArrivalsDropped > 0 || r.ArrivalsDroppedLate > 0 || r.ArrivalsDroppedBusy > 0 ||
+		r.ArrivalsCancelledBeforeAdmission != nil && *r.ArrivalsCancelledBeforeAdmission > 0 ||
+		r.Metrics.Cancelled > 0 || r.Journeys.Cancelled > 0 {
+		return "Planned arrivals or configured journeys were dropped or cancelled."
+	}
+	if r.Config.MaxRPS <= 0 || r.WindowSeconds() <= 0 {
+		return "Configured request ceiling or observation duration is missing."
+	}
+	if r.Generator.GoCPUUtilizationRatio >= GeneratorUtilizationGuard || r.Generator.PeakProcessCPUUtilizationRatio >= GeneratorUtilizationGuard {
+		return "Generator CPU reached the project's conservative utilization guardrail."
+	}
+	if float64(r.Metrics.Total)/r.WindowSeconds() >= GeneratorUtilizationGuard*float64(r.Config.MaxRPS) {
+		return "Observed request rate reached the configured client rate ceiling guardrail."
+	}
+	return ""
+}
 
 // AssessQuality uses only aggregate invariants and reported generator
 // observations. It does NOT infer network quality or target saturation.

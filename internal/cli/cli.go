@@ -269,10 +269,11 @@ func campaignCmd(args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	filename := fs.String("config", "", "scenario JSON")
 	warmup := fs.Duration("warmup", 30*time.Second, "warm-up duration (0s-3m)")
-	observation := fs.Duration("observation", 2*time.Minute, "steady observation duration (10s-3m)")
+	observation := fs.Duration("observation", 2*time.Minute, "steady observation duration (10s-10m)")
 	spikeUsers := fs.Int("spike-users", 0, "optional peak virtual users above the base scenario")
 	spikeDuration := fs.Duration("spike-duration", 0, "optional spike duration (10s-3m)")
 	recovery := fs.Duration("recovery", 30*time.Second, "recovery duration after observation (0s-3m)")
+	soak := fs.Duration("soak", 0, "optional final sustained observation after all repeated trials (10s-3m)")
 	repeats := fs.Int("repeats", 2, "independent trials (2-5)")
 	budget := fs.Duration("budget", 0, "maximum campaign wall time (up to 15m)")
 	authorized := fs.Bool("authorized", false, "confirm authorization to benchmark the target")
@@ -287,7 +288,7 @@ func campaignCmd(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "--config is required and positional arguments are not accepted")
 		return 2
 	}
-	options := campaign.Options{Warmup: *warmup, Observation: *observation, SpikeUsers: *spikeUsers, SpikeDuration: *spikeDuration, Recovery: *recovery, Repeats: *repeats, Budget: *budget}
+	options := campaign.Options{Warmup: *warmup, Observation: *observation, SpikeUsers: *spikeUsers, SpikeDuration: *spikeDuration, Recovery: *recovery, Soak: *soak, Repeats: *repeats, Budget: *budget}
 	if err := campaign.Validate(options); err != nil {
 		fmt.Fprintf(stderr, "invalid campaign: %v\n", err)
 		return 2
@@ -302,14 +303,14 @@ func campaignCmd(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "configuration error: %v\n", err)
 		return 2
 	}
-	fmt.Fprintf(stdout, "Campaign: %s | %s://%s | warm-up %s | observation %s | spike %d VUs for %s | recovery %s | repeats %d | wall-time cap %s\n", validated.Scenario.Name, validated.Base.Scheme, validated.Base.Host, options.Warmup, options.Observation, options.SpikeUsers, options.SpikeDuration, options.Recovery, options.Repeats, campaign.PlannedBudget(options))
+	fmt.Fprintf(stdout, "Campaign: %s | %s://%s | warm-up %s | observation %s | spike %d VUs for %s | recovery %s | final soak %s | repeats %d | wall-time cap %s\n", validated.Scenario.Name, validated.Base.Scheme, validated.Base.Host, options.Warmup, options.Observation, options.SpikeUsers, options.SpikeDuration, options.Recovery, options.Soak, options.Repeats, campaign.PlannedBudget(options))
 	if *dry {
 		for trial := 1; trial <= options.Repeats; trial++ {
-			for _, phase := range campaign.PlannedPhases(options, validated.Scenario.Users) {
+			for _, phase := range campaign.PlannedTrialPhases(options, validated.Scenario.Users, trial) {
 				fmt.Fprintf(stdout, "  Trial %d %s: %s at %d VUs\n", trial, phase.Name, phase.Duration, phase.Users)
 			}
 		}
-		fmt.Fprintln(stdout, "DRY RUN: no traffic generated. Warm-up is excluded from the conclusion; observation and recovery must pass in every trial.")
+		fmt.Fprintln(stdout, "DRY RUN: no traffic generated. Warm-up is excluded from the conclusion; observation, recovery, and any final soak must pass.")
 		return 0
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -327,7 +328,7 @@ func campaignCmd(args []string, stdout, stderr io.Writer) int {
 		for _, phase := range trial.Phases {
 			fmt.Fprintf(stdout, "  %s: %s (%s) | p95 %.0fms | errors %.2f%% | requests %d | successful journeys %.2f/s (%d complete, %d failed, %d cancelled)\n", phase.Name, phase.Run.Outcome, phase.EvidenceState, phase.Run.Metrics.P95MS, phase.Run.ErrorsRate*100, phase.Run.Metrics.Total, report.SuccessfulJourneysPerSecond(phase.Run), phase.Run.Journeys.Total, phase.Run.Journeys.Failures, phase.Run.Journeys.Cancelled)
 			if phase.Stability != "" {
-				fmt.Fprintf(stdout, "    observation drift screen: %s\n", phase.Stability)
+				fmt.Fprintf(stdout, "    %s drift screen: %s\n", phase.Name, phase.Stability)
 			}
 			if phase.EvidenceState == "INVALID_DELIVERY" || phase.EvidenceState == "INSUFFICIENT_EVIDENCE" {
 				fmt.Fprintf(stdout, "    %s\n", phase.Reason)
@@ -475,8 +476,14 @@ func explore(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stdout, "  [p95 %.0fms, errors %.2f%%, requests %d]", r.Metrics.P95MS, r.ErrorsRate*100, r.Metrics.Total)
 		}
 		fmt.Fprintln(stdout)
+		if p.Reason != "" {
+			fmt.Fprintf(stdout, "  %s\n", p.Reason)
+		}
 	}
 	fmt.Fprintf(stdout, "Outcome: %s\n", result.Outcome)
+	if result.Reason != "" {
+		fmt.Fprintf(stdout, "Reason: %s\n", result.Reason)
+	}
 	fmt.Fprintln(stdout, "Server upgrade recommendation: NOT ESTABLISHED. Explore measures workload-specific passing levels, not server headroom; collect host/container/database metrics before sizing infrastructure.")
 	if result.HighestPassingUsers != nil {
 		fmt.Fprintf(stdout, "Highest repeatedly passing tested level: %d VUs (not a universal server limit)\n", *result.HighestPassingUsers)

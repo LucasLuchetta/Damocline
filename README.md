@@ -153,6 +153,12 @@ verdict still requires a campaign at that precise VU level. It never fills in
 untested levels or turns observed passes/failures into a capacity curve. See
 [Campaign evidence audit](docs/CAMPAIGN_AUDIT.md).
 
+Campaigns can include a bounded final soak with `--soak 30s`. It runs once at
+the configured base workload only after every independent trial passes, uses
+the existing journey and observation-window gates, and counts toward the
+15-minute campaign limit. This short soak is not a long-duration stability
+test or a sustainable-capacity certification.
+
 The command calculates the demand to validate and reports
 **GOAL_MET_UNDER_TESTED_CONDITIONS** only when a complete, passing, supported-schema
 repeated campaign exercised that exact base VU level and every required phase

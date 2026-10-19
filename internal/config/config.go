@@ -585,7 +585,20 @@ func containsCookieHeader(steps []Step) bool {
 func validatePathTemplate(path string, available map[string]bool) error {
 	pathOnly, query, hasQuery := strings.Cut(path, "?")
 	if hasQuery && strings.Contains(query, "{{") {
-		return errors.New("variables are only supported as complete path segments, headers, or body_env content")
+		values, err := url.ParseQuery(query)
+		if err != nil {
+			return fmt.Errorf("invalid query string: %w", err)
+		}
+		for key, items := range values {
+			if strings.Contains(key, "{{") || strings.Contains(key, "}}") {
+				return errors.New("query templates are supported only in parameter values")
+			}
+			for _, value := range items {
+				if err := validateTemplate(value, available); err != nil {
+					return fmt.Errorf("query template: %w", err)
+				}
+			}
+		}
 	}
 	for _, segment := range strings.Split(pathOnly, "/") {
 		if !strings.Contains(segment, "{{") {

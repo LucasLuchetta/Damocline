@@ -32,6 +32,55 @@ func TestCampaignSeparatesWarmupObservationAndRecovery(t *testing.T) {
 	}
 }
 
+func TestCampaignRunsStableSoakOnceAfterIndependentTrials(t *testing.T) {
+	var phases []string
+	result, err := WithRunner(context.Background(), scenario(t), Options{Observation: 10 * time.Second, Recovery: 10 * time.Second, Soak: 10 * time.Second, Repeats: 2}, func(_ context.Context, v config.Validated) report.Result {
+		phases = append(phases, v.Duration.String())
+		return stableResult(v)
+	})
+	if err != nil || result.Outcome != "PASS" || len(phases) != 5 || len(result.Trials[1].Phases) != 3 || result.Trials[1].Phases[2].Name != "soak" || result.Trials[1].Phases[2].Stability != "NO_LARGE_DRIFT_DETECTED" {
+		t.Fatalf("expected one final stable soak after four repeated phases (durations %v): outcome=%s err=%v", phases, result.Outcome, err)
+	}
+}
+
+func TestCampaignSkipsSoakWhenAnyRepeatedTrialFails(t *testing.T) {
+	calls := 0
+	result, err := WithRunner(context.Background(), scenario(t), Options{Observation: 10 * time.Second, Recovery: 10 * time.Second, Soak: 10 * time.Second, Repeats: 2}, func(_ context.Context, v config.Validated) report.Result {
+		calls++
+		if calls == 3 { // the first recovery phase follows one passing observation
+			return report.Result{Outcome: "FAIL", Config: report.RunConfig{Users: 1, Duration: v.Duration.String()}, Target: "http://127.0.0.1:8080"}
+		}
+		return stableResult(v)
+	})
+	if err != nil || result.Outcome != "FAIL" || len(result.Trials) != 2 || calls != 3 || len(result.Trials[1].Phases) != 1 || result.Trials[1].Phases[0].Name != "observation" {
+		t.Fatalf("soak should not run after an earlier required phase fails: outcome=%s trials=%d calls=%d err=%v", result.Outcome, len(result.Trials), calls, err)
+	}
+}
+
+func TestCampaignSoakDriftPreventsPassing(t *testing.T) {
+	calls := 0
+	result, err := WithRunner(context.Background(), scenario(t), Options{Observation: 10 * time.Second, Recovery: 10 * time.Second, Soak: 10 * time.Second, Repeats: 2}, func(_ context.Context, v config.Validated) report.Result {
+		calls++
+		run := stableResult(v)
+		if calls == 5 { // final soak follows two passing observation/recovery pairs
+			run.Windows[3].Metrics.P95MS = 140
+			run.Windows[3].Journeys.P95MS = 140
+		}
+		return run
+	})
+	if err != nil || result.Outcome != "INCONCLUSIVE" || len(result.Trials) != 2 || result.Trials[1].Phases[2].Name != "soak" || result.Trials[1].Phases[2].Stability != "NON_STATIONARY" {
+		t.Fatalf("soak latency drift did not prevent a passing outcome: outcome=%s trials=%+v err=%v", result.Outcome, result.Trials, err)
+	}
+}
+
+func TestCampaignSoakMustFitBoundedBudget(t *testing.T) {
+	for _, soak := range []time.Duration{time.Second, 4 * time.Minute} {
+		if err := Validate(Options{Observation: 10 * time.Second, Recovery: 10 * time.Second, Soak: soak, Repeats: 2}); err == nil {
+			t.Fatalf("unsafe soak duration accepted: %s", soak)
+		}
+	}
+}
+
 func TestCampaignFailsObservationAndStops(t *testing.T) {
 	calls := 0
 	result, err := WithRunner(context.Background(), scenario(t), Options{Observation: 10 * time.Second, Recovery: 10 * time.Second, Repeats: 2}, func(_ context.Context, v config.Validated) report.Result {
@@ -71,6 +120,17 @@ func TestDefaultCampaignBudgetIncludesBoundedDrain(t *testing.T) {
 	options.Observation = 7 * time.Minute
 	if err := Validate(options); err == nil {
 		t.Fatal("default cap above 15m accepted")
+	}
+}
+
+func TestSoakBudgetIncludesOneFinalPhaseDrain(t *testing.T) {
+	options := Options{Observation: 10 * time.Second, Recovery: 10 * time.Second, Soak: 30 * time.Second, Repeats: 2}
+	if got, want := PlannedBudget(options), 3*time.Minute+40*time.Second; got != want {
+		t.Fatalf("final soak drain missing from wall-time cap: got %s want %s", got, want)
+	}
+	options.Budget = 2*time.Minute + 30*time.Second
+	if err := Validate(options); err == nil {
+		t.Fatal("explicit budget without final soak drain was accepted")
 	}
 }
 

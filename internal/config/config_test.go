@@ -430,8 +430,8 @@ func TestRejectInvalidDynamicWorkflowReferences(t *testing.T) {
 			steps: []Step{{Name: "record", Path: "/records/{{id}}"}},
 		},
 		{
-			name:  "query reference",
-			steps: []Step{{Name: "session", Path: "/session", Extract: map[string]Extract{"id": {JSONPointer: "/id"}}}, {Name: "record", Path: "/records?id={{id}}"}},
+			name:  "unknown query reference",
+			steps: []Step{{Name: "session", Path: "/session", Extract: map[string]Extract{"id": {JSONPointer: "/id"}}}, {Name: "record", Path: "/records?id={{missing}}"}},
 		},
 		{
 			name:  "invalid extractor",
@@ -446,6 +446,25 @@ func TestRejectInvalidDynamicWorkflowReferences(t *testing.T) {
 				t.Fatal("invalid dynamic workflow was accepted")
 			}
 		})
+	}
+}
+
+func TestQueryTemplateRequiresAnEarlierExtractedValue(t *testing.T) {
+	s := good()
+	s.Steps = []Step{
+		{Name: "session", Path: "/session", Extract: map[string]Extract{"id": {JSONPointer: "/id"}}},
+		{Name: "record", Path: "/records?filter={{id}}&fixed=one"},
+	}
+	if _, err := Parse(s, Options{Authorized: true}); err != nil {
+		t.Fatalf("valid extracted query template rejected: %v", err)
+	}
+	s.Steps[1].Path = "/records?filter={{id"
+	if _, err := Parse(s, Options{Authorized: true}); err == nil {
+		t.Fatal("malformed query template accepted")
+	}
+	s.Steps[1].Path = "/records?{{id}}=value"
+	if _, err := Parse(s, Options{Authorized: true}); err == nil {
+		t.Fatal("query key template accepted")
 	}
 }
 

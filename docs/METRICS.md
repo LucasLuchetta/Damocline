@@ -109,7 +109,7 @@ Closed-loop and open-loop models answer different questions and should be select
 
 - Authorized target identifiers and sanitized scenario revision.
 - Environment assumptions (machine size, application version, data size, deployment topology where known).
-- Test duration and configured ramp-up. Campaign reports additionally preserve warm-up, observation, optional spike, and recovery phases; their bounded duration is not a substitute for a predeclared long soak protocol.
+- Test duration and configured ramp-up. Campaign reports preserve warm-up, observation, optional spike and recovery; schema-v4 can add one 10-second to 3-minute soak after all independent trials pass. Its coarse window screen is not a predeclared long soak or a stationarity test.
 - Requested and achieved load; scheduled, started, completed, and dropped work.
 - Request and journey p50/p95/p99 latency, counts, error rates, and timeouts.
 - Criteria for passing, including latency and business-operation error budgets.

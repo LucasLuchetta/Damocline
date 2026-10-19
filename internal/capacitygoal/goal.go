@@ -62,9 +62,9 @@ func Evaluate(ex explorer.Result, g Goal) (Assessment, error) {
 	if err != nil {
 		return Assessment{}, err
 	}
-	if ex.SchemaVersion != 1 || ex.Scenario == "" || ex.MaxUsers < ex.MinUsers || ex.MinUsers < 1 || ex.MaxUsers < 1 ||
+	if ex.SchemaVersion < 1 || ex.SchemaVersion > 2 || ex.Scenario == "" || ex.MaxUsers < ex.MinUsers || ex.MinUsers < 1 || ex.MaxUsers < 1 ||
 		ex.Repeats < 2 || len(ex.Probes) == 0 {
-		return Assessment{}, errors.New("invalid or empty capacity exploration: expected repeated schema-v1 probes")
+		return Assessment{}, errors.New("invalid or empty capacity exploration: expected repeated schema-v1 or schema-v2 probes")
 	}
 	stage, err := time.ParseDuration(ex.StageDuration)
 	if err != nil || stage <= 0 {
@@ -149,13 +149,5 @@ func Evaluate(ex explorer.Result, g Goal) (Assessment, error) {
 }
 
 func adequateGenerator(r report.Result) bool {
-	if r.Metrics.Total <= 0 || r.Generator == nil || r.Generator.Samples < 2 || !r.Generator.GoCPUValid ||
-		r.Generator.ProcessSamples < 2 || !r.Generator.ProcessCPUValid || r.Generator.PeakProcessRSSBytes == 0 ||
-		r.ArrivalsDropped > 0 || r.ArrivalsDroppedLate > 0 || r.Metrics.Cancelled > 0 ||
-		r.Config.MaxRPS <= 0 || r.WindowSeconds() <= 0 ||
-		r.Generator.GoCPUUtilizationRatio >= 0.90 || r.Generator.PeakProcessCPUUtilizationRatio >= 0.90 {
-		return false
-	}
-	// Client-side limit binding can hide any potential server capacity.
-	return float64(r.Metrics.Total)/r.WindowSeconds() < 0.90*float64(r.Config.MaxRPS)
+	return report.GeneratorEvidenceIssue(r) == ""
 }

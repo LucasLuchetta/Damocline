@@ -102,12 +102,17 @@ func TestAuditCommandAcceptsMultipleCampaignsAndKeepsExactDemandUnknown(t *testi
 	if exit := Run(args, &stdout, &stderr); exit != 0 {
 		t.Fatalf("multi-level audit exit: %d %s", exit, stderr.String())
 	}
-	for _, expected := range []string{"CAMPAIGN LEVEL AUDIT (OFFLINE)", "NOT_COMPARABLE", "2 VUs", "4 VUs", "not interpolated", "No traffic was generated"} {
+	for _, expected := range []string{"CAMPAIGN LEVEL AUDIT (OFFLINE)", "INCONCLUSIVE", "2 VUs", "4 VUs", "not interpolated", "No traffic was generated"} {
 		if !strings.Contains(stdout.String(), expected) {
 			t.Fatalf("missing %q in output: %s", expected, stdout.String())
 		}
 	}
 	rendered := strings.Replace(stdout.String(), "Audit JSON: "+out+"\n", "", 1)
+	if os.Getenv("UPDATE_GOLDEN") == "1" {
+		if err := os.WriteFile(filepath.Join("testdata", "audit_collection.golden.txt"), []byte(rendered), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	golden, err := os.ReadFile(filepath.Join("testdata", "audit_collection.golden.txt"))
 	if err != nil {
 		t.Fatal(err)
@@ -134,7 +139,7 @@ func TestAuditCommandAcceptsMultipleCampaignsAndKeepsExactDemandUnknown(t *testi
 	if err := json.Unmarshal(raw, &assessment); err != nil {
 		t.Fatal(err)
 	}
-	if assessment.AssessmentType != "CAMPAIGN_LEVEL_COLLECTION" || assessment.State != "NOT_COMPARABLE" || len(assessment.Levels) != 2 || assessment.Levels[0].TestedUsers != 2 || assessment.Levels[1].TestedUsers != 4 {
+	if assessment.AssessmentType != "CAMPAIGN_LEVEL_COLLECTION" || assessment.State != "INCONCLUSIVE" || len(assessment.Levels) != 2 || assessment.Levels[0].TestedUsers != 2 || assessment.Levels[1].TestedUsers != 4 {
 		t.Fatalf("machine-readable level collection is malformed: %+v", assessment)
 	}
 	if assessment.Demand == nil || assessment.Demand.TargetUsers != 3 || assessment.Demand.State != "INSUFFICIENT_EVIDENCE" {

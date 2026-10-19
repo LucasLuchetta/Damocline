@@ -53,6 +53,7 @@ type campaignLevelShape struct {
 	SpikeDuration string            `json:"spike_duration"`
 	SpikeRatio    string            `json:"spike_ratio"`
 	Recovery      string            `json:"recovery"`
+	Soak          string            `json:"soak,omitempty"`
 	Budget        string            `json:"budget,omitempty"`
 	Repeats       int               `json:"repeats"`
 	Controls      *campaignRunShape `json:"controls,omitempty"`
@@ -212,7 +213,7 @@ func campaignCollectionShape(e campaign.Result) (string, error) {
 	shape := campaignLevelShape{
 		SchemaVersion: e.SchemaVersion, Scenario: e.Scenario, Target: e.Target,
 		Warmup: e.Warmup, Observation: e.Observation,
-		SpikeDuration: e.SpikeDuration, Recovery: e.Recovery, Budget: e.Budget, Repeats: e.Repeats,
+		SpikeDuration: e.SpikeDuration, Recovery: e.Recovery, Soak: e.Soak, Budget: e.Budget, Repeats: e.Repeats,
 	}
 	if e.SpikeUsers == 0 {
 		shape.SpikeRatio = "none"
@@ -222,7 +223,7 @@ func campaignCollectionShape(e campaign.Result) (string, error) {
 		gcd := greatestCommonDivisor(e.SpikeUsers, e.BaseUsers)
 		shape.SpikeRatio = fmt.Sprintf("%d/%d", e.SpikeUsers/gcd, e.BaseUsers/gcd)
 	}
-	_, planned, err := campaignLevelSchedule(e)
+	options, _, err := campaignLevelSchedule(e)
 	if err != nil {
 		return "", err
 	}
@@ -230,11 +231,15 @@ func campaignCollectionShape(e campaign.Result) (string, error) {
 	controlSet := false
 	seenRequiredPhases := 0
 	for _, trial := range e.Trials {
-		if trial.Number < 1 || trial.Number > e.Repeats || len(trial.Phases) > len(planned) || trial.Outcome == "PASS" && len(trial.Phases) != len(planned) {
+		trialPlanned := campaign.PlannedPhases(options, e.BaseUsers)
+		if e.SchemaVersion >= 4 {
+			trialPlanned = campaign.PlannedTrialPhases(options, e.BaseUsers, trial.Number)
+		}
+		if trial.Number < 1 || trial.Number > e.Repeats || len(trial.Phases) > len(trialPlanned) || trial.Outcome == "PASS" && len(trial.Phases) != len(trialPlanned) {
 			return "", errors.New("campaign trial phases do not match the declared schedule")
 		}
 		for phaseIndex, phase := range trial.Phases {
-			want := planned[phaseIndex]
+			want := trialPlanned[phaseIndex]
 			if phase.Name != want.Name || phase.Run.Config.Users != want.Users || phase.Run.Config.Duration != want.Duration.String() || phase.Run.Target != e.Target {
 				return "", errors.New("campaign phase does not match its declared workload schedule")
 			}
@@ -284,9 +289,13 @@ func campaignCollectionShape(e campaign.Result) (string, error) {
 			}
 		}
 	}
-	if seenRequiredPhases == 0 || !controlSet {
+	if seenRequiredPhases > 0 && !controlSet {
 		return "", errors.New("no required phase controls")
 	}
+	return digestCampaignShape(shape)
+}
+
+func digestCampaignShape(shape campaignLevelShape) (string, error) {
 	data, err := json.Marshal(shape)
 	if err != nil {
 		return "", err
@@ -312,14 +321,29 @@ func campaignLevelSchedule(e campaign.Result) (campaign.Options, []campaign.Plan
 	if err != nil {
 		return campaign.Options{}, nil, errors.New("invalid campaign recovery schedule")
 	}
-	budget, err := time.ParseDuration(e.Budget)
+	soak := time.Duration(0)
+	if e.SchemaVersion >= 4 && e.Soak != "" {
+		soak, err = time.ParseDuration(e.Soak)
+	}
+	if err != nil {
+		return campaign.Options{}, nil, errors.New("invalid campaign soak schedule")
+	}
+	budget := time.Duration(0)
+	if e.Budget != "" {
+		budget, err = time.ParseDuration(e.Budget)
+	}
 	if err != nil {
 		return campaign.Options{}, nil, errors.New("invalid campaign budget")
 	}
 	options := campaign.Options{Warmup: warmup, Observation: observation, SpikeUsers: e.SpikeUsers,
-		SpikeDuration: spike, Recovery: recovery, Repeats: e.Repeats, Budget: budget}
+		SpikeDuration: spike, Recovery: recovery, Soak: soak, Repeats: e.Repeats, Budget: budget}
 	if err := campaign.Validate(options); err != nil {
-		return campaign.Options{}, nil, fmt.Errorf("invalid campaign schedule: %w", err)
+		if !(e.SchemaVersion < 4 && options.Budget > 0 && options.Budget <= 15*time.Minute && options.Budget >= time.Duration(options.Repeats)*(options.Warmup+options.Observation+options.SpikeDuration+options.Recovery)) {
+			return campaign.Options{}, nil, fmt.Errorf("invalid campaign schedule: %w", err)
+		}
+	}
+	if options.Budget == 0 {
+		options.Budget = campaign.PlannedBudget(options)
 	}
 	return options, campaign.PlannedPhases(options, e.BaseUsers), nil
 }

@@ -152,10 +152,10 @@ func TestEvaluateRejectsIncompletePassingCampaign(t *testing.T) {
 	}
 }
 
-func TestSchemaTwoRequiresExactStageSequenceAndClassification(t *testing.T) {
+func TestSchemaThreeRequiresExactStageSequenceAndClassification(t *testing.T) {
 	makeEvidence := func() campaign.Result {
 		evidence := campaign.Result{
-			SchemaVersion: 2, Scenario: "synthetic", Target: "http://127.0.0.1", Outcome: "PASS",
+			SchemaVersion: 3, Scenario: "synthetic", Target: "http://127.0.0.1", Outcome: "PASS",
 			BaseUsers: 10, Repeats: 2, Warmup: "0s", Observation: "10s", SpikeDuration: "0s", Recovery: "10s", Budget: "2m20s",
 			Trials: passingTrials(), ObservationVariability: validVariability(),
 		}
@@ -244,6 +244,42 @@ func TestSchemaTwoRequiresExactStageSequenceAndClassification(t *testing.T) {
 				t.Fatal("malformed campaign accepted")
 			}
 		})
+	}
+}
+
+func TestSchemaFourRequiresFinalSoakEvidence(t *testing.T) {
+	evidence := campaign.Result{SchemaVersion: 4, Scenario: "synthetic", Target: "http://127.0.0.1", Outcome: "PASS", BaseUsers: 10, Repeats: 2, Warmup: "0s", Observation: "10s", SpikeDuration: "0s", Recovery: "10s", Soak: "10s", Budget: "3m20s", Trials: passingTrials(), ObservationVariability: validVariability()}
+	for i := range evidence.Trials {
+		for j := range evidence.Trials[i].Phases {
+			p := &evidence.Trials[i].Phases[j]
+			p.Run.Config.Users, p.Run.Config.Duration, p.Run.Config.WindowDuration = 10, "10s", "2.5s"
+			p.Run.Target = evidence.Target
+			p.Run.Outcome = "PASS"
+			p.EvidenceState = "PASS_OBSERVED"
+			p.Run.Metrics, p.Run.Journeys = validStatisticalRun().Metrics, validStatisticalRun().Metrics
+			p.Run.Steps = []report.StepResult{{Name: "step", Metrics: validStatisticalRun().Metrics}}
+			p.Run.Windows = nil
+			for k := 0; k < 4; k++ {
+				m := validStatisticalRun().Metrics
+				m.Total, m.Success = 300, 300
+				p.Run.Windows = append(p.Run.Windows, report.WindowResult{StartSeconds: float64(k) * 2.5, EndSeconds: float64(k+1) * 2.5, Metrics: m, Journeys: m, Steps: []report.WindowMetric{{Name: "step", Metrics: m}}})
+			}
+			if p.Name == "observation" || p.Name == "soak" {
+				p.Stability = "NO_LARGE_DRIFT_DETECTED"
+			}
+		}
+	}
+	soak := campaign.Phase{Name: "soak", EvidenceState: "PASS_OBSERVED", Stability: "NO_LARGE_DRIFT_DETECTED", Run: evidence.Trials[1].Phases[0].Run}
+	soak.Run.Config.Duration = "10s"
+	evidence.Trials[1].Phases = append(evidence.Trials[1].Phases, soak)
+	if err := validateEvidence(evidence); err != nil {
+		t.Fatalf("valid schema-v4 soak evidence rejected: %v", err)
+	}
+	missing := evidence
+	missing.Trials = append([]campaign.Trial(nil), evidence.Trials...)
+	missing.Trials[1].Phases = append([]campaign.Phase(nil), evidence.Trials[1].Phases[:2]...)
+	if err := validateEvidence(missing); err == nil {
+		t.Fatal("passing schema-v4 campaign without final soak accepted")
 	}
 }
 
