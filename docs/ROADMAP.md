@@ -182,8 +182,8 @@ See the [G0 acceptance matrix](G0_STATUS.md) for the implementation, test, valid
 
 ### G3-B — Reporting that an owner can use
 
-- [ ] **G3-11:** Introduce a typed evidence record linking a capacity conclusion to immutable local run IDs, scenario fingerprint, host type, measured time windows and quality findings. **Verify:** every conclusion traceable to underlying JSON.
-- [ ] **G3-12:** Build a single offline summary over the entire campaign: demand target, observed passing/failing levels, tested duration, confidence, limiting workflow and known unknowns. **Verify:** golden human-readable + machine-readable outputs.
+- [ ] **G3-11 (partial):** Offline assessment now content-addresses saved campaign and phase reports, includes recorded workload fingerprints, run timestamps, observation durations, and quality findings. Host type is explicitly `NOT_RECORDED`; local immutable storage/authenticity and signed provenance remain open. **Verify:** content changes alter evidence IDs and repeated serialization yields stable IDs.
+- [ ] **G3-12 (partial):** `audit` can combine the campaign verdict with an exact optional business-demand goal and emits observed levels, sum of required phase durations, known unknowns, and visible journey failures in human/machine output. Confidence is explicitly `NOT_ESTABLISHED`; multi-level campaign aggregation, deeper limiting-workflow diagnosis, and golden CLI output coverage remain open.
 - [ ] **G3-13:** Explain latency as user-relevant journey times; distinguish HTTP step time from browser rendering, network setup and think time. **Verify:** no combined "page load time" inferred from one HTTP request.
 - [ ] **G3-14:** Display achieved request and **useful business transaction** throughput separately from configured max RPS, offered arrivals and incomplete work. **Verify:** artificially binding rate limit cannot appear as validated server capacity.
 - [ ] **G3-15:** Add timeline views of P95/P99, errors, success/completion, dropped starts and resource samples aligned to stages. **Verify:** regression fixtures demonstrate intermittent failures are not hidden by overall averages.

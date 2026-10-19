@@ -135,8 +135,13 @@ recovery evidence, assess the same business target without generating more
 traffic:
 
 ```powershell
-damocline plan --campaign reports/campaign.json --peak-users 200 --growth-percent 30 --reserve-percent 30
+damocline audit --campaign reports/campaign.json --peak-users 200 --growth-percent 30 --reserve-percent 30 --out reports/assessment.json
 ```
+
+`audit` replays each saved phase and writes one assessment that includes the
+campaign verdict, demand calculation, content digests, workload fingerprints,
+tested duration, visible workflow breaches and known unknowns. `plan` remains
+available when only the demand calculation is needed.
 
 The command calculates the demand to validate and reports
 **GOAL_MET_UNDER_TESTED_CONDITIONS** only when a complete, passing, supported-schema

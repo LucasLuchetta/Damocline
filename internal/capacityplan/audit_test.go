@@ -1,10 +1,12 @@
 package capacityplan
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
 	"github.com/LucasLuchetta/Damocline/internal/campaign"
+	"github.com/LucasLuchetta/Damocline/internal/capacitygoal"
 	"github.com/LucasLuchetta/Damocline/internal/report"
 )
 
@@ -52,6 +54,53 @@ func TestAuditCampaignObservationalPassDoesNotCertifyCapacity(t *testing.T) {
 	}
 }
 
+func TestAssessmentBindsDigestsAndOptionalDemand(t *testing.T) {
+	e := auditFixture()
+	first, err := BuildAssessment(e, &capacitygoal.Goal{PeakUsers: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := BuildAssessment(e, &capacitygoal.Goal{PeakUsers: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Audit.EvidenceID == "" || first.Audit.EvidenceID != second.Audit.EvidenceID || first.Audit.Phases[0].EvidenceID != second.Audit.Phases[0].EvidenceID {
+		t.Fatalf("evidence digests must be stable and present: %+v", first.Audit)
+	}
+	if first.Audit.TestedDuration != "40s" || first.Audit.Confidence != "NOT_ESTABLISHED" || first.Demand == nil || first.Audit.DemandTargetUsers != 2 {
+		t.Fatalf("assessment is missing campaign and demand summary: %+v", first)
+	}
+	var roundTrip Assessment
+	data, err := json.Marshal(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &roundTrip); err != nil || roundTrip.Audit.EvidenceID != first.Audit.EvidenceID || roundTrip.Demand == nil {
+		t.Fatalf("assessment JSON lost evidence links: %v %+v", err, roundTrip)
+	}
+	e.Trials[0].Phases[0].Run.Metrics.Success--
+	changed := AuditCampaign(e)
+	if changed.EvidenceID == first.Audit.EvidenceID {
+		t.Fatal("changed campaign content must produce a different evidence ID")
+	}
+}
+
+func TestAuditListsOnlyObservedFailingWorkflow(t *testing.T) {
+	e := auditFixture()
+	for i := range e.Trials {
+		for j := range e.Trials[i].Phases {
+			phase := &e.Trials[i].Phases[j]
+			if phase.Name == "observation" {
+				phase.Run.Profiles = []report.ProfileResult{{Name: "checkout", Journeys: report.MetricSet{Total: 10, Success: 8, Failures: 2}}}
+			}
+		}
+	}
+	a := AuditCampaign(e)
+	if len(a.LimitingWorkflows) != 1 || a.LimitingWorkflows[0] != "checkout" {
+		t.Fatalf("expected named observed workflow failures: %+v", a.LimitingWorkflows)
+	}
+}
+
 func TestAuditCampaignRejectsAlteredQualityAndStageLabels(t *testing.T) {
 	e := auditFixture()
 	e.Trials[0].Phases[0].Run.Quality = &report.Quality{State: report.QualityValid}
@@ -67,6 +116,18 @@ func TestAuditCampaignRejectsAlteredQualityAndStageLabels(t *testing.T) {
 	e.Trials[0].Phases[0].Run.Windows[1].Metrics.P95MS = 200
 	if got := AuditCampaign(e); got.State != "INVALID_EVIDENCE" {
 		t.Fatalf("altered stability evidence accepted: %+v", got)
+	}
+}
+
+func TestAssessmentPreservesInvalidEvidenceStateWithDemandGoal(t *testing.T) {
+	e := auditFixture()
+	e.Trials[0].Phases[0].EvidenceState = "ALTERED"
+	assessment, err := BuildAssessment(e, &capacitygoal.Goal{PeakUsers: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if assessment.State != "INVALID_EVIDENCE" || assessment.Audit.State != "INVALID_EVIDENCE" || assessment.Demand == nil || assessment.Demand.State != "INSUFFICIENT_EVIDENCE" {
+		t.Fatalf("demand assessment must not mask invalid source evidence: %+v", assessment)
 	}
 }
 
