@@ -9,7 +9,7 @@ The native engine supports both closed-loop virtual users and open-loop schedule
 
 ## Decision
 
-Provide a separate `explore-arrival` CLI command and `internal/arrivalexplorer` package. Search scheduled journey starts/s with bounded doubling and bracket refinement, explicit worker and HTTP request ceilings, repeated passing probes, and optional exact-target insertion. Preserve each native run in a separate schema-v1 exploration artifact. Mark dropped or cancelled workload, inadequate sample coverage, invalid data quality, generator pressure, and a binding client request-rate ceiling inconclusive; never infer an application failure from invalid delivery.
+Provide a separate `explore-arrival` CLI command and `internal/arrivalexplorer` package. Search scheduled journey starts/s with bounded doubling and bracket refinement, explicit worker and HTTP request ceilings, repeated passing probes, and optional exact-target insertion. Preserve each native run in a separate schema-v1 exploration artifact. Reuse the campaign evidence classifier to distinguish observed pass/fail from invalid delivery, insufficient evidence, and aborts. Require every configured step and weighted profile to have adequate sample evidence. Treat dropped or cancelled workload, invalid accounting, generator pressure, a binding client request-rate ceiling, and an explicit shared-cookie identity as evidence that cannot establish an application ceiling.
 
 ## Consequences and limits
 

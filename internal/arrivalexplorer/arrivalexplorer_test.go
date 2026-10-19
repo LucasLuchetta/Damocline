@@ -40,6 +40,9 @@ func TestArrivalRateSearchUsesJourneyStartsAndExactTarget(t *testing.T) {
 	if result.WorkerLimit != 10 || result.Probes[0].Runs[0].Config.Users != 10 || result.Probes[0].Runs[0].Config.ArrivalRate != 2 {
 		t.Fatalf("worker limit and scheduled rate were conflated: %+v", result)
 	}
+	if !result.TargetTested {
+		t.Fatal("the explicitly configured journey-start target was not recorded as tested")
+	}
 }
 
 func TestUnderdeliveryAndGeneratorBindingAreInconclusive(t *testing.T) {
@@ -63,7 +66,7 @@ func TestUnderdeliveryAndGeneratorBindingAreInconclusive(t *testing.T) {
 				tc.mutate(&r)
 				return r
 			})
-			if err != nil || result.Outcome != "INCONCLUSIVE" || result.FirstFailingJourneysPerSecond != nil || len(result.Probes) != 1 {
+			if err != nil || (result.Outcome != "INVALID_DELIVERY" && result.Outcome != "INSUFFICIENT_EVIDENCE") || result.FirstFailingJourneysPerSecond != nil || len(result.Probes) != 1 {
 				t.Fatalf("generator-bound or underdelivered load formed an application bracket: %+v err=%v", result, err)
 			}
 		})
@@ -87,6 +90,30 @@ func TestArrivalRateBoundsPreserveWorkerAndRequestCeilings(t *testing.T) {
 	wrongMode.Mode = "closed"
 	if err := Validate(valid, wrongMode); err == nil {
 		t.Fatal("arrival exploration accepted a closed-loop scenario")
+	}
+}
+
+func TestSharedExplicitCookieCannotEstablishIndependentSessions(t *testing.T) {
+	base := arrivalScenario(t, 100, 10)
+	base.Steps[0].ResolvedHeaders = map[string]string{"Cookie": "synthetic-session"}
+	run := completeRun(base, "PASS", 1)
+	run.Warnings = []string{"Multiple virtual users may share one login identity; configure per_vu_cookie_env_prefix to test independent authenticated sessions."}
+	if status, _ := classify(run, base); status != "INSUFFICIENT_EVIDENCE" {
+		t.Fatalf("shared authenticated identity was treated as independent session evidence: %s", status)
+	}
+}
+
+func TestMissingStepLedgerIsInsufficientEvidence(t *testing.T) {
+	base := arrivalScenario(t, 100, 10)
+	result, err := WithRunner(context.Background(), base, Options{
+		MinJourneysPerSecond: 1, MaxJourneysPerSecond: 2, Repeats: 2, StageDuration: 10 * time.Second,
+	}, func(_ context.Context, v config.Validated) report.Result {
+		r := completeRun(v, "PASS", 1)
+		r.Steps = nil
+		return r
+	})
+	if err != nil || result.Outcome != "INSUFFICIENT_EVIDENCE" || len(result.Probes) != 1 || result.Probes[0].Status != "INSUFFICIENT_EVIDENCE" {
+		t.Fatalf("missing step evidence was accepted as passing: result=%+v err=%v", result, err)
 	}
 }
 
@@ -145,8 +172,24 @@ func TestAbortAndInsufficientSamplesDoNotBecomeFailingRates(t *testing.T) {
 		r.Config.MinSamplesPerStep = 20
 		return r
 	})
-	if err != nil || result.Outcome != "INCONCLUSIVE" || result.FirstFailingJourneysPerSecond != nil {
+	if err != nil || result.Outcome != "INSUFFICIENT_EVIDENCE" || result.FirstFailingJourneysPerSecond != nil {
 		t.Fatalf("insufficient sample coverage became an application failure: %+v err=%v", result, err)
+	}
+}
+
+func TestInterruptionBetweenLevelsNeverCreatesAFailureBracket(t *testing.T) {
+	base := arrivalScenario(t, 100, 10)
+	ctx, cancel := context.WithCancel(context.Background())
+	calls := 0
+	result, err := WithRunner(ctx, base, Options{
+		MinJourneysPerSecond: 1, MaxJourneysPerSecond: 4, Repeats: 2, StageDuration: 10 * time.Second,
+	}, func(_ context.Context, v config.Validated) report.Result {
+		calls++
+		cancel()
+		return completeRun(v, "PASS", v.Scenario.ArrivalRate)
+	})
+	if err != nil || result.Outcome != "ABORTED" || result.FirstFailingJourneysPerSecond != nil || calls != 1 {
+		t.Fatalf("interruption between levels was interpreted as a ceiling: result=%+v calls=%d err=%v", result, calls, err)
 	}
 }
 

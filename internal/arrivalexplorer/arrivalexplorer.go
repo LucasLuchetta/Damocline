@@ -5,8 +5,10 @@ package arrivalexplorer
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
+	"github.com/LucasLuchetta/Damocline/internal/campaign"
 	"github.com/LucasLuchetta/Damocline/internal/config"
 	"github.com/LucasLuchetta/Damocline/internal/engine"
 	"github.com/LucasLuchetta/Damocline/internal/report"
@@ -117,7 +119,7 @@ func WithRunner(parent context.Context, base config.Validated, opt Options, runn
 	}
 
 	probe := func(rate int) string {
-		p := Probe{JourneysPerSecond: rate, Status: "PASS", Runs: []report.Result{}}
+		p := Probe{JourneysPerSecond: rate, Status: "PASS_OBSERVED", Runs: []report.Result{}}
 		for repeat := 0; repeat < opt.Repeats; repeat++ {
 			if ctx.Err() != nil {
 				p.Status = "ABORTED"
@@ -133,8 +135,8 @@ func WithRunner(parent context.Context, base config.Validated, opt Options, runn
 			v.RampUp = 0
 			run := runner(ctx, v)
 			p.Runs = append(p.Runs, run)
-			status, reason := classify(run)
-			if status != "PASS" {
+			status, reason := classify(run, v)
+			if status != "PASS_OBSERVED" {
 				p.Status = status
 				p.Reason = reason
 				break
@@ -151,12 +153,12 @@ func WithRunner(parent context.Context, base config.Validated, opt Options, runn
 	candidate := opt.MinJourneysPerSecond
 	for {
 		status := probe(candidate)
-		if status == "ABORTED" || status == "INCONCLUSIVE" {
+		if status == "ABORTED" || status == "INVALID_DELIVERY" || status == "INSUFFICIENT_EVIDENCE" {
 			result.Outcome = status
 			result.Reason = result.Probes[len(result.Probes)-1].Reason
 			return result, nil
 		}
-		if status == "FAIL" {
+		if status == "FAIL_OBSERVED" {
 			high = candidate
 			if low == 0 {
 				result.FirstFailingJourneysPerSecond = &high
@@ -186,12 +188,12 @@ func WithRunner(parent context.Context, base config.Validated, opt Options, runn
 		}
 		mid := low + (high-low)/2
 		status := probe(mid)
-		if status == "ABORTED" || status == "INCONCLUSIVE" {
+		if status == "ABORTED" || status == "INVALID_DELIVERY" || status == "INSUFFICIENT_EVIDENCE" {
 			result.Outcome = status
 			result.Reason = result.Probes[len(result.Probes)-1].Reason
 			return result, nil
 		}
-		if status == "PASS" {
+		if status == "PASS_OBSERVED" {
 			low = mid
 		} else {
 			high = mid
@@ -203,47 +205,43 @@ func WithRunner(parent context.Context, base config.Validated, opt Options, runn
 	return result, nil
 }
 
-func classify(r report.Result) (string, string) {
+func classify(r report.Result, scenario config.Validated) (string, string) {
 	if r.Outcome == "ABORTED" {
 		return "ABORTED", "The native run was interrupted or exhausted its wall-time budget."
 	}
-	if r.Outcome == "INCONCLUSIVE" {
-		return "INCONCLUSIVE", "The native run did not produce decisive SLO evidence."
-	}
 	if r.Quality != nil && r.Quality.State == report.QualityInvalid || r.SchemaVersion >= 16 && report.AssessQuality(r).State == report.QualityInvalid {
-		return "INCONCLUSIVE", "Report accounting or generator evidence is invalid."
+		return "INVALID_DELIVERY", "Report accounting or generator evidence is invalid."
 	}
 	if r.ArrivalsDropped > 0 || r.ArrivalsDroppedLate > 0 || r.ArrivalsDroppedBusy > 0 ||
 		r.ArrivalsCancelledBeforeAdmission != nil && *r.ArrivalsCancelledBeforeAdmission > 0 ||
 		r.Metrics.Cancelled > 0 || r.Journeys.Cancelled > 0 {
-		return "INCONCLUSIVE", "Scheduled starts or configured journeys were dropped or cancelled; offered workload was not fully delivered."
+		return "INVALID_DELIVERY", "Scheduled starts or configured journeys were dropped or cancelled; offered workload was not fully delivered."
 	}
 	if r.Metrics.Total <= 0 || r.Config.MaxRPS <= 0 || r.WindowSeconds() <= 0 || r.Generator == nil ||
 		r.Generator.Samples < 2 || !r.Generator.GoCPUValid || r.Generator.ProcessSamples < 2 ||
 		!r.Generator.ProcessCPUValid || r.Generator.PeakProcessRSSBytes == 0 {
-		return "INCONCLUSIVE", "The probe lacks request, duration, or generator process-health evidence."
+		return "INSUFFICIENT_EVIDENCE", "The probe lacks request, duration, or generator process-health evidence."
 	}
 	if r.Generator.GoCPUUtilizationRatio >= generatorUtilizationGuard ||
 		r.Generator.MeanProcessCPUUtilizationRatio >= generatorUtilizationGuard {
-		return "INCONCLUSIVE", "Generator CPU reached the conservative utilization guardrail."
+		return "INVALID_DELIVERY", "Generator CPU reached the conservative utilization guardrail."
 	}
 	if float64(r.Metrics.Total)/r.WindowSeconds() >= generatorUtilizationGuard*float64(r.Config.MaxRPS) {
-		return "INCONCLUSIVE", "Observed HTTP request rate reached the configured client rate-ceiling guardrail."
+		return "INVALID_DELIVERY", "Observed HTTP request rate reached the configured client rate-ceiling guardrail."
 	}
-	if reason := sampleCoverageIssue(r); reason != "" {
-		return "INCONCLUSIVE", reason
+	for _, warning := range r.Warnings {
+		if strings.Contains(warning, "may share one login identity") && hasExplicitSharedCookie(scenario) {
+			return "INSUFFICIENT_EVIDENCE", "The configured workers may share one authenticated identity; independent session coverage is not established."
+		}
 	}
-	switch r.Outcome {
-	case "PASS":
-		return "PASS", ""
-	case "FAIL":
-		return "FAIL", "The configured application latency or error objective failed."
-	default:
-		return "INCONCLUSIVE", "The run returned an unknown outcome and cannot define an application limit."
+	if reason := sampleCoverageIssue(r, scenario); reason != "" {
+		return "INSUFFICIENT_EVIDENCE", reason
 	}
+	state, reason := campaign.ClassifyEvidence(r)
+	return state, reason
 }
 
-func sampleCoverageIssue(r report.Result) string {
+func sampleCoverageIssue(r report.Result, scenario config.Validated) string {
 	minimum := r.Config.MinSamplesPerStep
 	if minimum < 1 {
 		return "The run does not declare a valid minimum sample requirement."
@@ -251,27 +249,98 @@ func sampleCoverageIssue(r report.Result) string {
 	if r.Metrics.Total < minimum || r.Metrics.Success == 0 || r.Journeys.Total == 0 {
 		return "The probe lacks minimum request or completed-journey samples."
 	}
+	expectedSteps := make(map[string]bool, len(scenario.Steps))
+	expectedWindowSteps := make(map[string]bool, len(scenario.Steps))
+	for _, step := range scenario.Steps {
+		profile := step.Profile
+		if len(scenario.Scenario.Profiles) == 0 {
+			profile = ""
+		}
+		expectedSteps[profile+"\x00"+step.Name] = false
+		expectedWindowSteps[step.Name] = false
+	}
 	for _, step := range r.Steps {
+		key := step.Profile + "\x00" + step.Name
+		if _, ok := expectedSteps[key]; !ok || expectedSteps[key] {
+			return "The probe has duplicate or unexpected named-step evidence."
+		}
+		expectedSteps[key] = true
 		if step.Metrics.Total < minimum || step.Metrics.Success == 0 {
 			return "A workflow step lacks the configured minimum successful samples."
+		}
+	}
+	for _, observed := range expectedSteps {
+		if !observed {
+			return "The probe is missing named-step evidence for the configured workflow."
+		}
+	}
+	expectedProfiles := make(map[string]bool, len(scenario.Profiles))
+	if len(scenario.Scenario.Profiles) > 0 {
+		for _, profile := range scenario.Profiles {
+			expectedProfiles[profile.Name] = false
+		}
+	}
+	for _, profile := range r.Profiles {
+		observed, ok := expectedProfiles[profile.Name]
+		if !ok || observed {
+			return "The probe has duplicate or unexpected workflow-profile evidence."
+		}
+		expectedProfiles[profile.Name] = true
+		if profile.Journeys.Total < minimum || profile.Journeys.Success == 0 {
+			return "A workflow profile lacks the configured minimum successful journey samples."
+		}
+	}
+	for _, observed := range expectedProfiles {
+		if !observed {
+			return "The probe is missing workflow-profile evidence."
 		}
 	}
 	for _, window := range r.Windows {
 		if window.Metrics.Total < minimum || window.Journeys.Total == 0 {
 			return "An observation window lacks the configured minimum request or journey samples."
 		}
+		windowSteps := make(map[string]bool, len(scenario.Steps))
 		for _, step := range window.Steps {
+			if _, ok := expectedWindowSteps[step.Name]; !ok || windowSteps[step.Name] {
+				return "An observation window has duplicate or unexpected named-step evidence."
+			}
+			windowSteps[step.Name] = true
 			if step.Metrics.Total < minimum || step.Metrics.Success == 0 {
 				return "A workflow step observation window lacks the configured minimum successful samples."
 			}
 		}
+		if len(windowSteps) != len(expectedSteps) {
+			return "An observation window is missing named-step evidence."
+		}
+		windowProfiles := make(map[string]bool, len(scenario.Profiles))
 		for _, profile := range window.Profiles {
+			if _, ok := expectedProfiles[profile.Name]; !ok || windowProfiles[profile.Name] {
+				return "An observation window has duplicate or unexpected workflow-profile evidence."
+			}
+			windowProfiles[profile.Name] = true
 			if profile.Metrics.Total < minimum || profile.Metrics.Success == 0 {
 				return "A workflow profile observation window lacks the configured minimum successful journeys."
 			}
 		}
+		if len(windowProfiles) != len(expectedProfiles) {
+			return "An observation window is missing workflow-profile evidence."
+		}
 	}
 	return ""
+}
+
+func hasExplicitSharedCookie(scenario config.Validated) bool {
+	if len(scenario.Cookies) > 0 {
+		return false
+	}
+	for _, step := range scenario.Steps {
+		for name := range step.ResolvedHeaders {
+			if strings.EqualFold(name, "Cookie") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func abortReason(err error) string {
