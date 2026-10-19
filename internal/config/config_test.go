@@ -313,6 +313,43 @@ func TestSeparateSessionsRequiredAndUnique(t *testing.T) {
 		t.Fatal("duplicate cookie accepted")
 	}
 }
+
+func TestWorkflowSessionsAreDistinctCompleteAndFingerprintSafe(t *testing.T) {
+	for actor := 1; actor <= 2; actor++ {
+		t.Setenv("DAMO_BROWSE_"+string(rune('0'+actor)), "sid=browse"+string(rune('0'+actor))+"; theme=light")
+		t.Setenv("DAMO_EDIT_"+string(rune('0'+actor)), "theme=light; sid=edit"+string(rune('0'+actor)))
+	}
+	s := good()
+	s.Steps = nil
+	s.Profiles = []Profile{
+		{Name: "browse", Weight: 1, Steps: []Step{{Name: "browse-home", Path: "/browse"}}},
+		{Name: "edit", Weight: 1, Steps: []Step{{Name: "edit-home", Path: "/edit"}}},
+	}
+	s.ProfileCookieEnvPrefixes = map[string]string{"browse": "DAMO_BROWSE_", "edit": "DAMO_EDIT_"}
+	v, err := Parse(s, Options{Authorized: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.Profiles[0].Cookies[0] == v.Profiles[1].Cookies[0] || len(v.ProfileCookies["browse"]) != 2 || len(v.ProfileCookies["edit"]) != 2 {
+		t.Fatal("per-workflow actor sessions were not resolved independently")
+	}
+	if strings.Contains(v.WorkloadFingerprint, "browse1") || strings.Contains(v.WorkloadFingerprint, "edit1") {
+		t.Fatal("resolved authentication values leaked into workload fingerprint")
+	}
+	s.ProfileCookieEnvPrefixes["unknown"] = "DAMO_UNKNOWN_"
+	if _, err := Parse(s, Options{Authorized: true}); err == nil {
+		t.Fatal("unknown workflow session mapping accepted")
+	}
+	s.ProfileCookieEnvPrefixes = map[string]string{"browse": "DAMO_BROWSE_"}
+	if _, err := Parse(s, Options{Authorized: true}); err == nil {
+		t.Fatal("incomplete workflow session mapping accepted")
+	}
+	s.ProfileCookieEnvPrefixes = map[string]string{"browse": "DAMO_BROWSE_", "edit": "DAMO_BROWSE_"}
+	if _, err := Parse(s, Options{Authorized: true}); err == nil {
+		t.Fatal("equivalent cookie sets with reordered pairs accepted across workflows")
+	}
+}
+
 func TestArrivalValidation(t *testing.T) {
 	s := good()
 	s.Mode = "arrival"
