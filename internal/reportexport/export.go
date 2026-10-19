@@ -22,13 +22,19 @@ import (
 const Format = "damocline-redacted-evidence-v1"
 
 type Evidence struct {
-	Format   string   `json:"format"`
-	Kind     string   `json:"kind"`
-	Outcome  string   `json:"outcome"`
-	Workload Workload `json:"workload"`
-	Trials   []Trial  `json:"trials,omitempty"`
-	Probes   []Probe  `json:"probes,omitempty"`
-	Run      *Run     `json:"run,omitempty"`
+	Format      string       `json:"format"`
+	Kind        string       `json:"kind"`
+	Outcome     string       `json:"outcome"`
+	Workload    Workload     `json:"workload"`
+	Trials      []Trial      `json:"trials,omitempty"`
+	Probes      []Probe      `json:"probes,omitempty"`
+	Run         *Run         `json:"run,omitempty"`
+	Calibration *Calibration `json:"generator_calibration,omitempty"`
+}
+
+type Calibration struct {
+	Required bool   `json:"required"`
+	Status   string `json:"status"`
 }
 
 type Workload struct {
@@ -241,6 +247,9 @@ func FromClosedCampaign(c campaign.Result) Evidence {
 		Mode: "closed", LoadUnit: "virtual_users", VirtualUsers: c.BaseUsers, Observation: safeDuration(c.Observation), Warmup: safeDuration(c.Warmup),
 		SpikeDuration: safeDuration(c.SpikeDuration), Recovery: safeDuration(c.Recovery), Soak: safeDuration(c.Soak), Cooldown: safeDuration(c.Cooldown), Repeats: c.Repeats,
 	}}
+	if c.Calibration != nil {
+		e.Calibration = &Calibration{Required: c.CalibrationRequired, Status: safeCalibrationStatus(c.Calibration.Status)}
+	}
 	e.Trials = make([]Trial, 0, len(c.Trials)+1)
 	for _, trial := range c.Trials {
 		e.Trials = append(e.Trials, redactClosedTrial(trial))
@@ -249,6 +258,13 @@ func FromClosedCampaign(c campaign.Result) Evidence {
 		e.Trials = append(e.Trials, redactClosedTrial(*c.PendingTrial))
 	}
 	return e
+}
+
+func safeCalibrationStatus(status string) string {
+	if status == "READY" || status == "BLOCKED" {
+		return status
+	}
+	return "UNKNOWN"
 }
 
 func FromArrivalCampaign(c arrivalcampaign.Result) Evidence {

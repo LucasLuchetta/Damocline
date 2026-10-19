@@ -6,6 +6,7 @@ This project follows a human-maintained changelog. No release exists yet.
 
 - Recompute closed-loop campaign observation spread from saved phases during offline audit, expose per-trial request/journey SLO and useful-throughput evidence, and reject a persisted spread that does not reconcile with its source observations.
 - Add optional per-workflow/per-actor authentication cookie sessions for weighted journeys in both closed-loop and open-arrival runs; keep credentials and environment-variable names out of reports and workload fingerprints, and persist only the selected workflow session scopes in report schema v27.
+- Add opt-in closed-loop campaign calibration preflight, persist exact VU-level coverage and required-policy metadata in campaign schema v12, and block before execution when requested coverage is unavailable. Arrival-mode calibration profiles do not qualify closed-loop VUs.
 - Select weighted workflows at every journey start in both closed-loop and open-arrival runs. Persist schema-v26 profile selection semantics, per-profile selected/start/drop counters and observed actors, validate their conservation, and keep historical actor-assignment reports readable.
 
 - Add an optional bounded `--stabilization` stage before campaign observation in closed-loop and open-arrival modes; persist schema v11/v7 evidence, screen it with the saved drift policy, budget its drain, and validate it during offline audit.

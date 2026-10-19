@@ -190,6 +190,12 @@ and the observations do not identify a bottleneck. See
 [advanced testing](docs/ADVANCED_TESTING.md#9-collect-application-metrics-explicitly)
 for bounds and limitations.
 
+Closed-loop campaigns accept `--calibration FILE` to retain local generator
+preflight evidence. `--require-calibration` fails before any phase unless every
+planned base and spike VU level has exact closed-loop coverage. The current
+reference matrix contains arrival-mode profiles only, so it reports closed-loop
+coverage as blocked; arrival-rate profiles never stand in for VU evidence.
+
 Open a saved run or campaign without generating traffic:
 
 ```powershell

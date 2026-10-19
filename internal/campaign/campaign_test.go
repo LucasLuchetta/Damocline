@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/LucasLuchetta/Damocline/internal/calibration"
 	"github.com/LucasLuchetta/Damocline/internal/config"
 	"github.com/LucasLuchetta/Damocline/internal/generatorhealth"
 	"github.com/LucasLuchetta/Damocline/internal/report"
@@ -34,6 +35,19 @@ func TestCampaignSeparatesWarmupObservationAndRecovery(t *testing.T) {
 	})
 	if err != nil || result.Outcome != "PASS" || len(result.Trials) != 2 || len(durations) != 6 || result.ObservationVariability == nil || result.ObservationVariability.Runs != 2 || result.ObservationVariability.SuccessfulJourneysMinPerSec != 8 || result.ObservationVariability.SuccessfulJourneysMaxPerSec != 8 {
 		t.Fatalf("unexpected campaign: %+v err=%v durations=%v", result, err, durations)
+	}
+}
+
+func TestCampaignRequiredCalibrationBlocksBeforeRunner(t *testing.T) {
+	calls := 0
+	envelope := &calibration.ClosedLoopEnvelope{Status: "BLOCKED", Levels: []calibration.ClosedLoopAssessment{{Users: 1, Status: "BLOCKED", Reason: "no closed-loop profile"}}}
+	_, err := WithRunner(context.Background(), scenario(t), Options{Observation: 10 * time.Second, Recovery: 10 * time.Second, Repeats: 2,
+		RequireCalibration: true, Calibration: envelope, CalibrationSource: "reference.json"}, func(context.Context, config.Validated) report.Result {
+		calls++
+		return report.Result{}
+	})
+	if err == nil || calls != 0 {
+		t.Fatalf("required calibration did not block before runner: calls=%d err=%v", calls, err)
 	}
 }
 

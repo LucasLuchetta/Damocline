@@ -126,6 +126,18 @@ func TestArrivalEnvelopeRequiresExactHealthyMatrixAndRuntime(t *testing.T) {
 		t.Fatalf("changed runtime must block: %+v", got)
 	}
 }
+
+func TestClosedLoopEnvelopeNeverTreatsArrivalProfilesAsVUs(t *testing.T) {
+	record := passingArtifact(t).Preflight
+	got := AssessClosedLoopEnvelope([]int{2, 5, 2}, record, testRuntime(), time.Now().UTC())
+	if got.Status != "BLOCKED" || len(got.Levels) != 3 || got.Levels[0].Status != "BLOCKED" || got.Levels[2].Status != "BLOCKED" {
+		t.Fatalf("arrival matrix or duplicate VU levels were accepted: %+v", got)
+	}
+	if got.Levels[0].Dimensions[0].Name != "workload_model" {
+		t.Fatalf("missing closed-loop model reason: %+v", got.Levels[0])
+	}
+}
+
 func TestConnectionPolicyRequiresExactProfileControls(t *testing.T) {
 	a := passingArtifact(t)
 	local := testRuntime()

@@ -118,7 +118,7 @@ Usage:
   damocline run --config scenario.json --dry-run
   damocline explore --config scenario.json --min-users 2 --max-users 20 --stage-duration 20s --repeats 2 --authorized
   damocline explore-arrival --config arrival.json --min-journeys-per-second 2 --max-journeys-per-second 20 [--calibration reference.json --require-calibration] --authorized
-	  damocline campaign --config scenario.json --warmup 30s --observation 2m --recovery 30s --repeats 2 --app-metrics-endpoint https://app.example.com/metrics --authorized
+	  damocline campaign --config scenario.json --warmup 30s --observation 2m --recovery 30s --repeats 2 --calibration reports/reference.json --require-calibration --app-metrics-endpoint https://app.example.com/metrics --authorized
 	  damocline campaign --config staging.json --observation 30m --allow-long-run --staging-confirmed --budget 70m --authorized
 	  damocline arrival-campaign --config arrival.json --observation 2m --recovery 30s --repeats 2 --calibration reports/reference.json --app-metrics-endpoint https://app.example.com/metrics --authorized
 	  damocline arrival-campaign --config staging-arrival.json --observation 30m --allow-long-run --staging-confirmed --budget 70m --authorized
@@ -365,6 +365,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "application metrics configuration error: %v\n", err)
 		return 2
 	}
+	if *requireCalibration && *calibrationFile == "" {
+		fmt.Fprintln(stderr, "--require-calibration requires --calibration")
+		return 2
+	}
 	if *filename == "" {
 		fmt.Fprintln(stderr, "--config is required")
 		return 2
@@ -377,10 +381,6 @@ func run(args []string, stdout, stderr io.Writer) int {
 	validated, err := config.Parse(raw, config.Options{Authorized: *authorized || *dry, AllowWrites: *writes, AllowInsecureHTTP: *insecure})
 	if err != nil {
 		fmt.Fprintf(stderr, "configuration error: %v\n", err)
-		return 2
-	}
-	if *requireCalibration && *calibrationFile == "" {
-		fmt.Fprintln(stderr, "--require-calibration requires --calibration")
 		return 2
 	}
 	if *requireCalibration {
@@ -551,6 +551,8 @@ func campaignCmd(args []string, stdout, stderr io.Writer) int {
 	out := fs.String("out", "", "JSON campaign report output path")
 	applicationMetricsEndpoint := fs.String("app-metrics-endpoint", "", "optionally sample an authorized Prometheus-text endpoint during every phase")
 	applicationMetricsInterval := fs.Duration("app-metrics-interval", 10*time.Second, "application-metrics sampling interval (1s-1m)")
+	calibrationFile := fs.String("calibration", "", "optional local generator calibration record for closed-loop preflight evidence")
+	requireCalibration := fs.Bool("require-calibration", false, "require exact closed-loop VU calibration coverage before execution")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -601,6 +603,30 @@ func campaignCmd(args []string, stdout, stderr io.Writer) int {
 	if err := campaign.ValidateForScenario(validated, options); err != nil {
 		fmt.Fprintf(stderr, "invalid campaign: %v\n", err)
 		return 2
+	}
+	if *requireCalibration && *calibrationFile == "" {
+		fmt.Fprintln(stderr, "--require-calibration requires --calibration")
+		return 2
+	}
+	if *calibrationFile != "" {
+		record, calibrationErr := loadCalibration(*calibrationFile)
+		if calibrationErr != nil {
+			fmt.Fprintf(stderr, "calibration error: %v\n", calibrationErr)
+			return 2
+		}
+		levels := []int{validated.Scenario.Users}
+		if options.SpikeUsers > 0 {
+			levels = append(levels, options.SpikeUsers)
+		}
+		envelope := calibration.AssessClosedLoopEnvelope(levels, record, currentCalibrationRuntime(), time.Now().UTC())
+		options.Calibration = &envelope
+		options.CalibrationSource = *calibrationFile
+		options.RequireCalibration = *requireCalibration
+		fmt.Fprintf(stdout, "Closed-loop generator preflight: %s across %d planned VU levels. The current arrival-mode matrix cannot certify VU capacity.\n", envelope.Status, len(envelope.Levels))
+		if *requireCalibration && envelope.Status != "READY" {
+			fmt.Fprintln(stderr, "required calibration does not cover every planned closed-loop VU level")
+			return 2
+		}
 	}
 	fmt.Fprintf(stdout, "Campaign: %s | %s://%s | warm-up %s | stabilization %s | observation %s | spike %d VUs for %s | recovery %s | final soak %s | repeats %d | cooldown %s | wall-time cap %s\n", validated.Scenario.Name, validated.Base.Scheme, validated.Base.Host, options.Warmup, options.Stabilization, options.Observation, options.SpikeUsers, options.SpikeDuration, options.Recovery, options.Soak, options.Repeats, options.Cooldown, campaign.PlannedBudget(options))
 	fmt.Fprintf(stdout, "Drift screen: >=%d windows, >=%d samples/window, p95 increase >%.1f%% and >%.1fms, throughput decrease >%.1f%%\n", options.Stability.MinimumWindows, options.Stability.MinimumSamplesPerWindow, options.Stability.MaxP95IncreasePercent, options.Stability.MaxP95IncreaseMS, options.Stability.MaxThroughputDropPercent)
