@@ -9,6 +9,7 @@ This project follows a human-maintained changelog. No release exists yet.
 - Add optional bounded Prometheus-text sampling during runs and both campaign modes; retain per-phase timestamps and partial collection status in run schema v25 without folding auxiliary scrapes into load counters.
 - Extend the loopback-only report dashboard to render bounded application-metric observations and saved closed-loop/open-arrival campaign phases, preserving each workload unit and pending-checkpoint state.
 - Overlay HTTP-window p95 points and external metric observations per phase on a shared UTC axis with independent scales; retain subsecond start-time precision in new run reports.
+- Add opt-in `report export` for allowlisted, anonymized run, campaign, and exploration summaries; omit destinations, private names/free text, absolute timestamps, and custom metric names/values.
 
 ### Fixed
 - Enforce the configured observation boundary for scheduler arrivals and closed-loop journey starts even when timer delivery is delayed; late open-loop slots remain explicitly reconciled as generator drops while admitted work drains.

@@ -16,6 +16,8 @@ func reportCmd(args []string, stdout, stderr io.Writer) int {
 		switch args[0] {
 		case "history", "save", "delete", "prune":
 			return reportHistoryCmd(args[0], args[1:], stdout, stderr)
+		case "export":
+			return reportExportCmd(args[1:], stdout, stderr)
 		}
 	}
 	fs := flag.NewFlagSet("report", flag.ContinueOnError)

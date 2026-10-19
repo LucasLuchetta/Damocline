@@ -105,6 +105,7 @@ Usage:
   damocline /history # select and repeat a previous saved scenario
   damocline start    # original guided wizard
   damocline report --file run.json [--compare previous.json] [--host host.json]
+	  damocline report export --file run-or-campaign.json --out redacted.json
 	  damocline report save --file artifact.json [--dir .damocline/reports]
 	  damocline report history [--dir .damocline/reports]
 	  damocline report prune --keep 50 [--dir .damocline/reports]

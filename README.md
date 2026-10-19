@@ -101,6 +101,12 @@ It distinguishes **meeting your p95/error objectives** from **proving user capac
 
 See [Understand your results](docs/REPORT_EXPLAINER.md) for interpretation, sample-size and comparison warnings. The command never sends traffic.
 
+To share aggregate evidence, use `damocline report export --file run-campaign-or-exploration.json --out redacted.json`.
+This opt-in export aliases workflow and step names, removes destinations, routes,
+free text, fingerprints and absolute timestamps, and emits a separate descriptive
+format that is not accepted for native capacity assessment. External metric
+names and values are omitted because custom telemetry may contain identifiers.
+
 Saved run and campaign artifacts can be inspected with the loopback-only
 `dashboard --file` view. For each phase it overlays HTTP-window p95 at each
 window's UTC midpoint with timestamped external metric observations on a shared
