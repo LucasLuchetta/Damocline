@@ -55,6 +55,55 @@ type ClosedLoopEnvelope struct {
 	Levels []ClosedLoopAssessment `json:"levels"`
 }
 
+// ValidateClosedLoopEnvelope verifies the internal consistency of a saved
+// closed-loop assessment and that it covers exactly the planned VU levels.
+// It does not authenticate the source calibration file.
+func ValidateClosedLoopEnvelope(envelope ClosedLoopEnvelope, expectedUsers []int) error {
+	if (envelope.Status != "BLOCKED" && envelope.Status != "READY") || len(expectedUsers) == 0 || len(expectedUsers) > 2 || len(envelope.Levels) != len(expectedUsers) {
+		return fmt.Errorf("closed-loop calibration envelope has an invalid status or level count")
+	}
+	expected := make(map[int]bool, len(expectedUsers))
+	for _, users := range expectedUsers {
+		if users < 1 || users > 10000 || expected[users] {
+			return fmt.Errorf("planned closed-loop calibration levels are invalid")
+		}
+		expected[users] = true
+	}
+	seen := make(map[int]bool, len(envelope.Levels))
+	allReady := true
+	for _, level := range envelope.Levels {
+		if !expected[level.Users] || seen[level.Users] || level.Reason == "" || len(level.Dimensions) == 0 {
+			return fmt.Errorf("closed-loop calibration VU assessments do not match the planned levels")
+		}
+		seen[level.Users] = true
+		allMatched := true
+		dimensionNames := make(map[string]bool, len(level.Dimensions))
+		for _, dimension := range level.Dimensions {
+			if dimension.Name == "" || dimension.Reason == "" || dimensionNames[dimension.Name] {
+				return fmt.Errorf("closed-loop calibration dimensions are malformed")
+			}
+			dimensionNames[dimension.Name] = true
+			switch dimension.Status {
+			case "MATCHED":
+			case "OUTSIDE_REFERENCE", "UNVERIFIED", "INVALID":
+				allMatched = false
+			default:
+				return fmt.Errorf("closed-loop calibration dimension has an unsupported status")
+			}
+		}
+		if (level.Status == "READY") != allMatched || (level.Status != "READY" && level.Status != "BLOCKED") {
+			return fmt.Errorf("closed-loop calibration VU status does not match its dimensions")
+		}
+		if level.Status != "READY" {
+			allReady = false
+		}
+	}
+	if (envelope.Status == "READY") != allReady {
+		return fmt.Errorf("closed-loop calibration envelope status does not match its VU assessments")
+	}
+	return nil
+}
+
 // AssessClosedLoopEnvelope checks each distinct planned VU level against exact
 // closed-loop profiles. Arrival profiles never stand in for virtual users.
 func AssessClosedLoopEnvelope(s config.Scenario, users []int, rec Record, local Runtime, now time.Time) ClosedLoopEnvelope {
@@ -152,7 +201,7 @@ func assessClosedLoopLevel(s config.Scenario, users int, rec Record, local Runti
 	if think == "" {
 		think = "0s"
 	}
-	if s.MaxConnectionsPerHost != 0 || ramp != "0s" || think != "0s" || s.ThinkTimeRange != nil || len(s.ThinkTimeSamples) > 0 {
+	if ramp != "0s" || think != "0s" || s.ThinkTimeRange != nil || len(s.ThinkTimeSamples) > 0 {
 		add("timing_controls", "OUTSIDE_REFERENCE", "Closed-loop profiles cover zero ramp-up, fixed zero think time, and the default connection pool only.")
 	} else {
 		add("timing_controls", "MATCHED", "Ramp-up, think-time and connection-cap controls match the closed-loop fixture.")

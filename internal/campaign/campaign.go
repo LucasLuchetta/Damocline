@@ -358,14 +358,22 @@ func WithRunnerProgress(ctx context.Context, base config.Validated, options Opti
 			return Result{}, err
 		}
 	}
-	if options.RequireCalibration && (options.Calibration == nil || options.Calibration.Status != "READY" || options.CalibrationSource == "") {
+	plannedUsers := []int{base.Scenario.Users}
+	if options.SpikeUsers > 0 {
+		plannedUsers = append(plannedUsers, options.SpikeUsers)
+	}
+	if options.Calibration != nil {
+		if options.CalibrationSource == "" {
+			return Result{}, fmt.Errorf("closed-loop calibration source is required when calibration evidence is attached")
+		}
+		if err := calibration.ValidateClosedLoopEnvelope(*options.Calibration, plannedUsers); err != nil {
+			return Result{}, err
+		}
+	} else if options.CalibrationSource != "" {
+		return Result{}, fmt.Errorf("closed-loop calibration evidence is required when a calibration source is attached")
+	}
+	if options.RequireCalibration && (options.Calibration == nil || options.Calibration.Status != "READY") {
 		return Result{}, fmt.Errorf("required closed-loop calibration does not cover every planned VU level")
-	}
-	if options.Calibration != nil && options.Calibration.Status != "BLOCKED" && options.Calibration.Status != "READY" {
-		return Result{}, fmt.Errorf("closed-loop calibration envelope has an unsupported status")
-	}
-	if options.Calibration != nil && options.Calibration.Status == "READY" {
-		return Result{}, fmt.Errorf("closed-loop calibration READY evidence requires a supported exact VU profile")
 	}
 	options.Budget = PlannedBudget(options)
 	options.Stability = effectiveStabilityPolicy(options.Stability)

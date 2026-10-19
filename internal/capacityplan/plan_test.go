@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/LucasLuchetta/Damocline/internal/appmetrics"
+	"github.com/LucasLuchetta/Damocline/internal/calibration"
 	"github.com/LucasLuchetta/Damocline/internal/campaign"
 	"github.com/LucasLuchetta/Damocline/internal/capacitygoal"
 	"github.com/LucasLuchetta/Damocline/internal/config"
@@ -411,6 +412,40 @@ func TestSchemaFiveRecomputesPersistedStabilityPolicy(t *testing.T) {
 	evidence.StabilityPolicy.MinimumSamplesPerWindow = 21
 	if err := validateEvidence(evidence); err == nil {
 		t.Fatal("schema-v5 campaign with invalid saved window threshold was accepted")
+	}
+}
+
+func TestSchemaTwelveAcceptsConsistentClosedLoopCalibrationAndRejectsMismatch(t *testing.T) {
+	evidence := auditFixtureAtUsers(2)
+	evidence.SchemaVersion = campaign.CurrentSchemaVersion
+	evidence.CalibrationRequired = true
+	evidence.CalibrationSource = "reference.json"
+	evidence.Calibration = &calibration.ClosedLoopEnvelope{Status: "READY", Levels: []calibration.ClosedLoopAssessment{{
+		Users: 2, Status: "READY", Reason: "exact local profile", Dimensions: []calibration.Dimension{{Name: "exact_profile", Status: "MATCHED", Reason: "exact tested tuple"}},
+	}}}
+	if err := validateEvidence(evidence); err != nil {
+		t.Fatalf("consistent READY calibration was rejected by offline audit: %v", err)
+	}
+	for name, mutate := range map[string]func(*campaign.Result){
+		"level differs from tested users": func(e *campaign.Result) { e.Calibration.Levels[0].Users = 4 },
+		"ready level contains blocker":    func(e *campaign.Result) { e.Calibration.Levels[0].Dimensions[0].Status = "OUTSIDE_REFERENCE" },
+		"required policy has blocked envelope": func(e *campaign.Result) {
+			e.Calibration.Status = "BLOCKED"
+			e.Calibration.Levels[0].Status = "BLOCKED"
+			e.Calibration.Levels[0].Dimensions[0].Status = "OUTSIDE_REFERENCE"
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			candidate := evidence
+			copyEnvelope := *evidence.Calibration
+			copyEnvelope.Levels = append([]calibration.ClosedLoopAssessment(nil), evidence.Calibration.Levels...)
+			copyEnvelope.Levels[0].Dimensions = append([]calibration.Dimension(nil), evidence.Calibration.Levels[0].Dimensions...)
+			candidate.Calibration = &copyEnvelope
+			mutate(&candidate)
+			if err := validateEvidence(candidate); err == nil {
+				t.Fatal("inconsistent persisted calibration was trusted")
+			}
+		})
 	}
 }
 

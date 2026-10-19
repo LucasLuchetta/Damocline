@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/LucasLuchetta/Damocline/internal/appmetrics"
+	"github.com/LucasLuchetta/Damocline/internal/calibration"
 	"github.com/LucasLuchetta/Damocline/internal/campaign"
 	"github.com/LucasLuchetta/Damocline/internal/capacitygoal"
 	"github.com/LucasLuchetta/Damocline/internal/generatorhealth"
@@ -365,42 +366,22 @@ func validateEvidence(evidence campaign.Result) error {
 		}
 	}
 	if evidence.SchemaVersion >= 12 {
-		if evidence.CalibrationRequired && (evidence.Calibration == nil || evidence.Calibration.Status != "READY" || evidence.CalibrationSource == "") {
-			return errors.New("required closed-loop calibration evidence is missing or blocked")
-		}
 		if (evidence.Calibration == nil) != (evidence.CalibrationSource == "") {
 			return errors.New("closed-loop calibration metadata is incomplete")
 		}
 		if evidence.Calibration != nil {
-			if evidence.Calibration.Status != "BLOCKED" && evidence.Calibration.Status != "READY" || len(evidence.Calibration.Levels) == 0 || len(evidence.Calibration.Levels) > 2 {
-				return errors.New("closed-loop calibration envelope is malformed")
+			plannedUsers := []int{evidence.BaseUsers}
+			if evidence.SpikeUsers > 0 {
+				plannedUsers = append(plannedUsers, evidence.SpikeUsers)
 			}
-			seenLevels := map[int]bool{}
-			for _, level := range evidence.Calibration.Levels {
-				if level.Users < 1 || level.Users > 10000 || seenLevels[level.Users] || level.Status != "BLOCKED" && level.Status != "READY" || level.Reason == "" || len(level.Dimensions) == 0 {
-					return errors.New("closed-loop calibration VU assessment is malformed")
-				}
-				seenLevels[level.Users] = true
-				if level.Status == "READY" {
-					return errors.New("closed-loop calibration READY evidence is unsupported until exact VU profiles are implemented")
-				}
-				if level.Status == "BLOCKED" && level.Dimensions[0].Status != "OUTSIDE_REFERENCE" && level.Dimensions[0].Status != "UNVERIFIED" && level.Dimensions[0].Status != "INVALID" {
-					return errors.New("closed-loop calibration blocker is malformed")
-				}
+			if err := calibration.ValidateClosedLoopEnvelope(*evidence.Calibration, plannedUsers); err != nil {
+				return fmt.Errorf("closed-loop calibration envelope is malformed: %w", err)
 			}
-			if evidence.Calibration.Status == "READY" {
-				for _, level := range evidence.Calibration.Levels {
-					if level.Status != "READY" {
-						return errors.New("READY envelope contains a blocked VU level")
-					}
-				}
-			} else {
-				for _, level := range evidence.Calibration.Levels {
-					if level.Status != "BLOCKED" {
-						return errors.New("BLOCKED envelope contains a READY VU level")
-					}
-				}
+			if evidence.CalibrationRequired && evidence.Calibration.Status != "READY" {
+				return errors.New("required closed-loop calibration evidence is blocked")
 			}
+		} else if evidence.CalibrationRequired {
+			return errors.New("required closed-loop calibration evidence is missing")
 		}
 	} else if evidence.CalibrationRequired || evidence.Calibration != nil || evidence.CalibrationSource != "" {
 		return errors.New("closed-loop calibration metadata is unsupported by this campaign schema")

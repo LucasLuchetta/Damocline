@@ -8,6 +8,43 @@ import (
 	"github.com/LucasLuchetta/Damocline/internal/config"
 )
 
+func TestValidateClosedLoopEnvelopeMatchesExactPlanAndDimensionStates(t *testing.T) {
+	matched := Dimension{Name: "exact_profile", Status: "MATCHED", Reason: "exact tested tuple"}
+	ready := ClosedLoopEnvelope{Status: "READY", Levels: []ClosedLoopAssessment{{
+		Users: 2, Status: "READY", Reason: "exact local profile", Dimensions: []Dimension{matched},
+	}}}
+	if err := ValidateClosedLoopEnvelope(ready, []int{2}); err != nil {
+		t.Fatalf("consistent exact READY envelope rejected: %v", err)
+	}
+	mixed := ClosedLoopEnvelope{Status: "BLOCKED", Levels: []ClosedLoopAssessment{
+		{Users: 2, Status: "READY", Reason: "exact local profile", Dimensions: []Dimension{matched}},
+		{Users: 4, Status: "BLOCKED", Reason: "no exact profile", Dimensions: []Dimension{{Name: "exact_profile", Status: "OUTSIDE_REFERENCE", Reason: "not measured"}}},
+	}}
+	if err := ValidateClosedLoopEnvelope(mixed, []int{2, 4}); err != nil {
+		t.Fatalf("valid mixed base/spike coverage was rejected: %v", err)
+	}
+	missingSpike := mixed
+	missingSpike.Levels = missingSpike.Levels[:1]
+	if err := ValidateClosedLoopEnvelope(missingSpike, []int{2, 4}); err == nil {
+		t.Fatal("envelope missing a planned spike level was accepted")
+	}
+	for name, mutate := range map[string]func(*ClosedLoopEnvelope){
+		"wrong planned VU level": func(e *ClosedLoopEnvelope) { e.Levels[0].Users = 3 },
+		"READY with blocker":     func(e *ClosedLoopEnvelope) { e.Levels[0].Dimensions[0].Status = "OUTSIDE_REFERENCE" },
+		"duplicate dimension": func(e *ClosedLoopEnvelope) {
+			e.Levels[0].Dimensions = append(e.Levels[0].Dimensions, e.Levels[0].Dimensions[0])
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			envelope := ready
+			mutate(&envelope)
+			if err := ValidateClosedLoopEnvelope(envelope, []int{2}); err == nil {
+				t.Fatal("malformed closed-loop calibration envelope was accepted")
+			}
+		})
+	}
+}
+
 func TestAssessmentMatchesOnlyDeclaredFixtureDimensionsAndKeepsUnknowns(t *testing.T) {
 	a := passingArtifact(t)
 	local := testRuntime()
