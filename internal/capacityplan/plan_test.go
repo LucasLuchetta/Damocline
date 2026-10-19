@@ -12,6 +12,19 @@ import (
 	"github.com/LucasLuchetta/Damocline/internal/report"
 )
 
+func TestCampaignRunGuardrailsMustMatchOfflinePolicy(t *testing.T) {
+	policy := generatorhealth.Guardrails{MaxProcessRSSBytes: 512 * 1024 * 1024, ConsecutiveSamples: 3}
+	evidence := campaign.Result{SchemaVersion: 7, GeneratorGuardrails: &policy}
+	run := report.Result{Generator: &generatorhealth.Summary{Guardrails: &policy}}
+	if !campaignRunGuardrailsMatch(evidence, run) {
+		t.Fatal("matching campaign and phase guardrails were rejected")
+	}
+	run.Generator.Guardrails = nil
+	if campaignRunGuardrailsMatch(evidence, run) {
+		t.Fatal("missing phase guardrails were accepted")
+	}
+}
+
 func TestEvaluateRequiresExactSustainedEvidence(t *testing.T) {
 	goal := capacitygoal.Goal{PeakUsers: 100, GrowthPercent: 20, ReservePercent: 25}
 	passing := campaign.Result{SchemaVersion: 1, Scenario: "synthetic", Outcome: "PASS", BaseUsers: 100, Repeats: 2, Trials: passingTrials(), ObservationVariability: validVariability()}

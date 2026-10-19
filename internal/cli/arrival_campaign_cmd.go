@@ -13,6 +13,7 @@ import (
 	"github.com/LucasLuchetta/Damocline/internal/arrivalcampaign"
 	"github.com/LucasLuchetta/Damocline/internal/capacitygoal"
 	"github.com/LucasLuchetta/Damocline/internal/config"
+	"github.com/LucasLuchetta/Damocline/internal/generatorhealth"
 	"github.com/LucasLuchetta/Damocline/internal/report"
 )
 
@@ -28,6 +29,9 @@ func arrivalCampaignCmd(args []string, stdout, stderr io.Writer) int {
 	soak := fs.Duration("soak", 0, "optional final soak duration (10s-3m; long-run up to 30m)")
 	longRun := fs.Bool("allow-long-run", false, "opt in to observation/soak up to 30m and a wall budget up to 2h")
 	stagingConfirmed := fs.Bool("staging-confirmed", false, "confirm the scenario environment is staging for a long-run campaign")
+	maxGeneratorCPU := fs.Float64("max-generator-cpu-percent", 0, "abort when sampled generator process CPU exceeds this percent of detected capacity (0 disables)")
+	maxGeneratorRSSMB := fs.Uint64("max-generator-rss-mb", 0, "abort when sampled generator process RSS exceeds this MiB limit (0 disables)")
+	guardrailSamples := fs.Int("resource-guardrail-samples", 2, "consecutive process samples required to trigger resource aborts (2-20)")
 	repeats := fs.Int("repeats", 2, "independent trials (2-5)")
 	budget := fs.Duration("budget", 0, "maximum wall-time cap including drains (15m; long-run mode up to 2h)")
 	peak := fs.Int("peak-journeys-per-second", 0, "business peak scheduled journey-start demand/s")
@@ -66,9 +70,18 @@ func arrivalCampaignCmd(args []string, stdout, stderr io.Writer) int {
 		}
 		scenario.ArrivalRate = rate
 	}
+	if *maxGeneratorRSSMB > (1<<64-1)/(1024*1024) {
+		fmt.Fprintln(stderr, "--max-generator-rss-mb is too large")
+		return 2
+	}
+	guardrails := generatorhealth.Guardrails{MaxProcessCPUPercent: *maxGeneratorCPU, MaxProcessRSSBytes: *maxGeneratorRSSMB * 1024 * 1024}
+	if guardrails.Enabled() {
+		guardrails.ConsecutiveSamples = *guardrailSamples
+	}
 	options := arrivalcampaign.Options{Warmup: *warmup, Observation: *observation, SpikeRate: *spikeRate, SpikeDuration: *spikeDuration,
 		Recovery: *recovery, Soak: *soak, Repeats: *repeats, Budget: *budget, PeakRate: *peak, GrowthPercent: *growth, ReservePercent: *reserve,
-		LongRun: *longRun, StagingConfirmed: *stagingConfirmed}
+		Guardrails: guardrails,
+		LongRun:    *longRun, StagingConfirmed: *stagingConfirmed}
 	if err := arrivalcampaign.Validate(config.Validated{Scenario: scenario}, options); err != nil {
 		fmt.Fprintf(stderr, "invalid arrival campaign: %v\n", err)
 		return 2
@@ -99,6 +112,9 @@ func arrivalCampaignCmd(args []string, stdout, stderr io.Writer) int {
 		validated.Scenario.Name, validated.Base.Scheme, validated.Base.Host, validated.Scenario.ArrivalRate, validated.Scenario.Users, options.Observation, options.Repeats, arrivalcampaign.PlannedBudget(options))
 	if options.LongRun {
 		fmt.Fprintln(stdout, "LONG-RUN MODE: explicit opt-in; environment declared staging (user-provided, not independently verified).")
+	}
+	if options.Guardrails.Enabled() {
+		fmt.Fprintf(stdout, "Generator abort guardrails: CPU %.1f%% | RSS %.1f MiB | %d consecutive samples. These limits apply to the local generator, not the target application.\n", guardrails.MaxProcessCPUPercent, float64(guardrails.MaxProcessRSSBytes)/(1024*1024), guardrails.ConsecutiveSamples)
 	}
 	if options.PeakRate > 0 {
 		rate, _ := capacitygoal.EvaluatedJourneyStarts(capacitygoal.JourneyStartGoal{PeakStartsPerSecond: options.PeakRate, GrowthPercent: options.GrowthPercent, ReservePercent: options.ReservePercent})

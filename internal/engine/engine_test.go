@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/LucasLuchetta/Damocline/internal/config"
+	"github.com/LucasLuchetta/Damocline/internal/generatorhealth"
 	"github.com/LucasLuchetta/Damocline/internal/reference"
 	"github.com/LucasLuchetta/Damocline/internal/report"
 )
@@ -1527,6 +1528,41 @@ func TestRunIncludesLocalGeneratorHealth(t *testing.T) {
 	}
 	if result.Outcome != "PASS" {
 		t.Fatalf("monitoring changed successful workload: %+v", result)
+	}
+}
+
+func TestRunAbortsOnConsecutiveGeneratorRSSGuardrail(t *testing.T) {
+	var arrived, cancelled atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		arrived.Add(1)
+		<-r.Context().Done()
+		cancelled.Add(1)
+	}))
+	defer srv.Close()
+	v := scenario(t, srv.URL, []config.Step{{Name: "slow", Path: "/work"}})
+	v.Scenario.Users = 4
+	v.Duration = 5 * time.Second
+	v.Scenario.Duration = v.Duration.String()
+	v.GeneratorGuardrails = generatorhealth.Guardrails{MaxProcessRSSBytes: 1, ConsecutiveSamples: 2}
+	started := time.Now()
+	result := Run(context.Background(), v)
+	if result.Outcome != "ABORTED" || result.Generator == nil || result.Generator.GuardrailTrigger == nil {
+		t.Fatalf("resource threshold did not abort the phase with evidence: outcome=%s generator=%+v", result.Outcome, result.Generator)
+	}
+	trigger := result.Generator.GuardrailTrigger
+	if trigger.Resource != "generator_process_rss" || trigger.LimitRSSBytes != 1 || trigger.ConsecutiveSamples != 2 ||
+		result.Generator.Guardrails == nil || *result.Generator.Guardrails != v.GeneratorGuardrails {
+		t.Fatalf("resource trigger or policy was not persisted: %+v", result.Generator)
+	}
+	deadline := time.Now().Add(time.Second)
+	for cancelled.Load() < arrived.Load() && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if time.Since(started) > 3*time.Second || arrived.Load() == 0 || cancelled.Load() != arrived.Load() {
+		t.Fatalf("guardrail failed to stop and account for in-flight work promptly: elapsed=%s arrived=%d cancelled=%d", time.Since(started), arrived.Load(), cancelled.Load())
+	}
+	if quality := report.AssessQuality(result); quality.State == report.QualityInvalid {
+		t.Fatalf("guardrail abort report is malformed: %+v", quality)
 	}
 }
 

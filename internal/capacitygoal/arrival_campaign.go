@@ -9,6 +9,7 @@ import (
 
 	"github.com/LucasLuchetta/Damocline/internal/arrivalcampaign"
 	"github.com/LucasLuchetta/Damocline/internal/campaign"
+	"github.com/LucasLuchetta/Damocline/internal/generatorhealth"
 	"github.com/LucasLuchetta/Damocline/internal/report"
 )
 
@@ -78,6 +79,9 @@ func EvaluateJourneyCampaign(saved arrivalcampaign.Result, goal JourneyStartGoal
 				run.Config.P95LimitMS != saved.P95LimitMS || run.Config.MaxErrorRate != saved.MaxErrorRate || run.Config.MinSamplesPerStep != saved.MinSamplesPerStep ||
 				run.Config.RequestTimeout != saved.RequestTimeout || run.StartedAt == "" || seenStarted[run.StartedAt] {
 				return JourneyStartAssessment{}, errors.New("native phase controls disagree with the campaign manifest or timestamps are duplicated")
+			}
+			if !arrivalCampaignRunGuardrailsMatch(saved, run) {
+				return JourneyStartAssessment{}, errors.New("native phase generator guardrails disagree with the campaign manifest")
 			}
 			seenStarted[run.StartedAt] = true
 			runStartedAt, timeErr := time.Parse(time.RFC3339, run.StartedAt)
@@ -214,6 +218,12 @@ func savedOptions(saved arrivalcampaign.Result) (arrivalcampaign.Options, error)
 		return arrivalcampaign.Options{}, err
 	}
 	options := arrivalcampaign.Options{Warmup: warmup, Observation: observation, SpikeRate: saved.SpikeStartsPerSecond, SpikeDuration: spikeDuration, Recovery: recovery, Soak: soak, Repeats: saved.Repeats, Budget: budget, LongRun: saved.LongRun, StagingConfirmed: saved.LongRun}
+	if saved.SchemaVersion >= 3 && saved.GeneratorGuardrails != nil {
+		options.Guardrails = *saved.GeneratorGuardrails
+	}
+	if saved.SchemaVersion < 3 && saved.GeneratorGuardrails != nil {
+		return arrivalcampaign.Options{}, errors.New("generator resource guardrails are unsupported by this campaign schema")
+	}
 	if saved.SchemaVersion < 2 && saved.LongRun {
 		return arrivalcampaign.Options{}, errors.New("long-run declaration is unsupported by this campaign schema")
 	}
@@ -221,6 +231,18 @@ func savedOptions(saved arrivalcampaign.Result) (arrivalcampaign.Options, error)
 		return arrivalcampaign.Options{}, err
 	}
 	return options, nil
+}
+
+func arrivalCampaignRunGuardrailsMatch(saved arrivalcampaign.Result, run report.Result) bool {
+	want := generatorhealth.Guardrails{}
+	if saved.SchemaVersion >= 3 && saved.GeneratorGuardrails != nil {
+		want = *saved.GeneratorGuardrails
+	}
+	got := generatorhealth.Guardrails{}
+	if run.Generator != nil && run.Generator.Guardrails != nil {
+		got = *run.Generator.Guardrails
+	}
+	return want.Equal(got)
 }
 
 func validateSavedOptions(saved arrivalcampaign.Result, options arrivalcampaign.Options) error {

@@ -8,6 +8,7 @@ import (
 
 	"github.com/LucasLuchetta/Damocline/internal/calibration"
 	"github.com/LucasLuchetta/Damocline/internal/config"
+	"github.com/LucasLuchetta/Damocline/internal/generatorhealth"
 )
 
 // Quality describes whether arithmetic delivery/accounting evidence can be
@@ -170,6 +171,25 @@ func AssessQuality(r Result) *Quality {
 		limit("Generator process measurements are missing or unsupported.")
 	}
 	if r.Generator != nil {
+		if r.SchemaVersion < 23 && (r.Generator.Guardrails != nil || r.Generator.GuardrailTrigger != nil) {
+			invalidate("Pre-v23 reports cannot carry generator resource guardrail evidence.")
+		}
+		if r.SchemaVersion >= 23 {
+			if r.Generator.Guardrails != nil {
+				policy := *r.Generator.Guardrails
+				if !policy.Validate() || !policy.Enabled() {
+					invalidate("Generator resource guardrail policy is malformed.")
+				} else if policy.MaxProcessCPUPercent > 0 && r.Generator.ProcessCPUSamples < policy.ConsecutiveSamples ||
+					policy.MaxProcessRSSBytes > 0 && r.Generator.ProcessSamples < policy.ConsecutiveSamples {
+					limit("Configured generator resource guardrails lack enough valid samples to establish that the limits were not exceeded.")
+				}
+			}
+			if trigger := r.Generator.GuardrailTrigger; trigger != nil {
+				if r.Generator.Guardrails == nil || !validGuardrailTrigger(*r.Generator.Guardrails, *trigger) || r.Outcome != "ABORTED" {
+					invalidate("Generator resource guardrail trigger is missing its valid policy or aborted outcome.")
+				}
+			}
+		}
 		if r.Generator.InvalidProcessSamples < 0 {
 			invalidate("Generator process sample invalidation count is negative.")
 		} else if r.Generator.InvalidProcessSamples > 0 {
@@ -562,6 +582,24 @@ func AssessQuality(r Result) *Quality {
 		q.State = QualityValid
 	}
 	return q
+}
+
+func validGuardrailTrigger(policy generatorhealth.Guardrails, trigger generatorhealth.GuardrailTrigger) bool {
+	if !policy.Validate() || !policy.Enabled() || trigger.SampleNumber < policy.ConsecutiveSamples ||
+		trigger.ConsecutiveSamples != policy.ConsecutiveSamples || math.IsNaN(trigger.ElapsedMS) || math.IsInf(trigger.ElapsedMS, 0) || trigger.ElapsedMS < 0 {
+		return false
+	}
+	switch trigger.Resource {
+	case "generator_process_cpu":
+		return policy.MaxProcessCPUPercent > 0 && trigger.LimitCPUPercent == policy.MaxProcessCPUPercent &&
+			!math.IsNaN(trigger.ObservedCPUPercent) && !math.IsInf(trigger.ObservedCPUPercent, 0) &&
+			trigger.ObservedCPUPercent > trigger.LimitCPUPercent && trigger.ObservedRSSBytes == 0 && trigger.LimitRSSBytes == 0
+	case "generator_process_rss":
+		return policy.MaxProcessRSSBytes > 0 && trigger.LimitRSSBytes == policy.MaxProcessRSSBytes &&
+			trigger.ObservedRSSBytes > trigger.LimitRSSBytes && trigger.ObservedCPUPercent == 0 && trigger.LimitCPUPercent == 0
+	default:
+		return false
+	}
 }
 
 func validFailureClassificationEvidence(r Result) bool {

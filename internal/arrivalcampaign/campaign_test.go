@@ -4,10 +4,12 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/LucasLuchetta/Damocline/internal/config"
+	"github.com/LucasLuchetta/Damocline/internal/generatorhealth"
 	"github.com/LucasLuchetta/Damocline/internal/report"
 )
 
@@ -101,6 +103,31 @@ func TestLongRunRequiresStagingDeclarationExplicitApprovalAndBoundedBudget(t *te
 	base.Window = time.Second
 	if err := Validate(base, options); err == nil {
 		t.Fatal("long-run phase accepted a report with unbounded window count")
+	}
+}
+
+func TestArrivalCampaignPersistsGeneratorGuardrailsAndAbortReason(t *testing.T) {
+	base := validatedArrival(t)
+	policy := generatorhealth.Guardrails{MaxProcessRSSBytes: 1, ConsecutiveSamples: 2}
+	result, err := WithRunner(context.Background(), base, Options{
+		Observation: 10 * time.Second, Recovery: 10 * time.Second, Repeats: 2, Guardrails: policy,
+	}, func(_ context.Context, v config.Validated) report.Result {
+		if v.GeneratorGuardrails != policy {
+			t.Fatalf("guardrails were not attached to phase execution: %+v", v.GeneratorGuardrails)
+		}
+		return report.Result{Outcome: "ABORTED", Generator: &generatorhealth.Summary{
+			Guardrails: &policy, GuardrailTrigger: &generatorhealth.GuardrailTrigger{
+				Resource: "generator_process_rss", ObservedRSSBytes: 2, LimitRSSBytes: 1,
+				ConsecutiveSamples: 2, SampleNumber: 3, ElapsedMS: 250,
+			},
+		}}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.SchemaVersion != 3 || result.Outcome != "ABORTED" || result.GeneratorGuardrails == nil || *result.GeneratorGuardrails != policy ||
+		len(result.Trials) != 1 || !strings.Contains(result.Trials[0].AbortReason, "RSS") {
+		t.Fatalf("arrival campaign lost resource abort evidence: %+v", result)
 	}
 }
 

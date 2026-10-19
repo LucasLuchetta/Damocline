@@ -11,10 +11,11 @@ import (
 	"github.com/LucasLuchetta/Damocline/internal/campaign"
 	"github.com/LucasLuchetta/Damocline/internal/config"
 	"github.com/LucasLuchetta/Damocline/internal/engine"
+	"github.com/LucasLuchetta/Damocline/internal/generatorhealth"
 	"github.com/LucasLuchetta/Damocline/internal/report"
 )
 
-const CurrentSchemaVersion = 2
+const CurrentSchemaVersion = 3
 const maximumCampaignDuration = 15 * time.Minute
 const LongRunWallTimeLimit = 2 * time.Hour
 const LongRunPhaseLimit = 30 * time.Minute
@@ -31,6 +32,7 @@ type Options struct {
 	Soak             time.Duration
 	Repeats          int
 	Budget           time.Duration
+	Guardrails       generatorhealth.Guardrails
 	PeakRate         int
 	GrowthPercent    float64
 	ReservePercent   float64
@@ -77,35 +79,36 @@ type Trial struct {
 }
 
 type Result struct {
-	SchemaVersion        int      `json:"arrival_campaign_schema_version"`
-	Scenario             string   `json:"scenario"`
-	Target               string   `json:"target"`
-	StartedAt            string   `json:"started_at"`
-	WorkerLimit          int      `json:"journey_worker_limit"`
-	WorkloadFingerprint  string   `json:"workload_fingerprint"`
-	RequestTimeout       string   `json:"request_timeout"`
-	RequestRateCeiling   int      `json:"max_rps"`
-	P95LimitMS           float64  `json:"p95_limit_ms"`
-	MaxErrorRate         float64  `json:"max_error_rate"`
-	MinSamplesPerStep    int      `json:"min_samples_per_step"`
-	WindowDuration       string   `json:"window_duration"`
-	BaseStartsPerSecond  int      `json:"base_scheduled_journey_starts_per_second"`
-	PeakStartsPerSecond  int      `json:"peak_scheduled_journey_starts_per_second,omitempty"`
-	GrowthPercent        float64  `json:"growth_percent,omitempty"`
-	ReservePercent       float64  `json:"reserve_percent,omitempty"`
-	Warmup               string   `json:"warmup"`
-	Observation          string   `json:"observation"`
-	SpikeStartsPerSecond int      `json:"spike_scheduled_journey_starts_per_second,omitempty"`
-	SpikeDuration        string   `json:"spike_duration,omitempty"`
-	Recovery             string   `json:"recovery"`
-	Soak                 string   `json:"soak,omitempty"`
-	LongRun              bool     `json:"long_run,omitempty"`
-	DeclaredEnvironment  string   `json:"declared_environment,omitempty"`
-	Budget               string   `json:"budget"`
-	Repeats              int      `json:"repeats"`
-	Trials               []Trial  `json:"trials"`
-	Outcome              string   `json:"outcome"`
-	Notes                []string `json:"notes"`
+	SchemaVersion        int                         `json:"arrival_campaign_schema_version"`
+	Scenario             string                      `json:"scenario"`
+	Target               string                      `json:"target"`
+	StartedAt            string                      `json:"started_at"`
+	WorkerLimit          int                         `json:"journey_worker_limit"`
+	WorkloadFingerprint  string                      `json:"workload_fingerprint"`
+	RequestTimeout       string                      `json:"request_timeout"`
+	RequestRateCeiling   int                         `json:"max_rps"`
+	P95LimitMS           float64                     `json:"p95_limit_ms"`
+	MaxErrorRate         float64                     `json:"max_error_rate"`
+	MinSamplesPerStep    int                         `json:"min_samples_per_step"`
+	WindowDuration       string                      `json:"window_duration"`
+	BaseStartsPerSecond  int                         `json:"base_scheduled_journey_starts_per_second"`
+	PeakStartsPerSecond  int                         `json:"peak_scheduled_journey_starts_per_second,omitempty"`
+	GrowthPercent        float64                     `json:"growth_percent,omitempty"`
+	ReservePercent       float64                     `json:"reserve_percent,omitempty"`
+	Warmup               string                      `json:"warmup"`
+	Observation          string                      `json:"observation"`
+	SpikeStartsPerSecond int                         `json:"spike_scheduled_journey_starts_per_second,omitempty"`
+	SpikeDuration        string                      `json:"spike_duration,omitempty"`
+	Recovery             string                      `json:"recovery"`
+	Soak                 string                      `json:"soak,omitempty"`
+	LongRun              bool                        `json:"long_run,omitempty"`
+	DeclaredEnvironment  string                      `json:"declared_environment,omitempty"`
+	GeneratorGuardrails  *generatorhealth.Guardrails `json:"generator_guardrails,omitempty"`
+	Budget               string                      `json:"budget"`
+	Repeats              int                         `json:"repeats"`
+	Trials               []Trial                     `json:"trials"`
+	Outcome              string                      `json:"outcome"`
+	Notes                []string                    `json:"notes"`
 }
 
 type Runner func(context.Context, config.Validated) report.Result
@@ -123,6 +126,9 @@ func RequiredStartsPerSecond(peak int, growth, reserve float64) (int, error) {
 }
 
 func Validate(base config.Validated, options Options) error {
+	if err := validateGeneratorGuardrails(effectiveGeneratorGuardrails(options.Guardrails)); err != nil {
+		return err
+	}
 	scenario := base.Scenario
 	if options.LongRun != options.StagingConfirmed {
 		return fmt.Errorf("long-run campaigns require both --allow-long-run and --staging-confirmed")
@@ -232,6 +238,20 @@ func Validate(base config.Validated, options Options) error {
 	return nil
 }
 
+func effectiveGeneratorGuardrails(policy generatorhealth.Guardrails) generatorhealth.Guardrails {
+	if policy.Enabled() && policy.ConsecutiveSamples == 0 {
+		policy.ConsecutiveSamples = 2
+	}
+	return policy
+}
+
+func validateGeneratorGuardrails(policy generatorhealth.Guardrails) error {
+	if !policy.Validate() {
+		return fmt.Errorf("generator guardrails require a CPU limit from 1-100%% and/or an RSS limit, with 2-20 consecutive samples")
+	}
+	return nil
+}
+
 func boolInt(value bool) int {
 	if value {
 		return 1
@@ -260,6 +280,12 @@ func WithRunner(parent context.Context, base config.Validated, options Options, 
 		return Result{}, err
 	}
 	options.Budget = PlannedBudget(options)
+	options.Guardrails = effectiveGeneratorGuardrails(options.Guardrails)
+	var generatorGuardrails *generatorhealth.Guardrails
+	if options.Guardrails.Enabled() {
+		policy := options.Guardrails
+		generatorGuardrails = &policy
+	}
 	ctx, cancel := context.WithTimeout(parent, options.Budget)
 	defer cancel()
 	result := Result{
@@ -272,7 +298,8 @@ func WithRunner(parent context.Context, base config.Validated, options Options, 
 		Warmup: options.Warmup.String(), Observation: options.Observation.String(), SpikeStartsPerSecond: options.SpikeRate,
 		SpikeDuration: options.SpikeDuration.String(), Recovery: options.Recovery.String(), Soak: options.Soak.String(),
 		LongRun: options.LongRun, DeclaredEnvironment: base.Scenario.Environment,
-		Repeats: options.Repeats, Trials: []Trial{}, Outcome: "INCONCLUSIVE",
+		GeneratorGuardrails: generatorGuardrails,
+		Repeats:             options.Repeats, Trials: []Trial{}, Outcome: "INCONCLUSIVE",
 		Notes: []string{
 			"All phase rates are scheduled open-loop journey starts/s. They are not VUs, scheduler admissions, completed journeys/s, or HTTP requests/s.",
 			"Every observation phase is a bounded repeated load stage with configured SLO windows. Passing phases do not establish universal or long-term sustainable capacity.",
@@ -290,6 +317,7 @@ func WithRunner(parent context.Context, base config.Validated, options Options, 
 				break
 			}
 			validated := base
+			validated.GeneratorGuardrails = options.Guardrails
 			validated.Scenario.ArrivalRate = phase.Rate
 			validated.Scenario.Duration = phase.Duration.String()
 			validated.Scenario.RampUp = "0s"
@@ -333,15 +361,23 @@ func WithRunner(parent context.Context, base config.Validated, options Options, 
 				trial.Outcome = "FAIL"
 				break
 			}
-			if phase.Required && run.Outcome != "PASS" {
-				trial.Outcome = "FAIL"
-				break
-			}
 			if run.Outcome == "ABORTED" || run.Outcome == "INCONCLUSIVE" {
 				trial.Outcome = run.Outcome
 				if run.Outcome == "ABORTED" {
 					trial.AbortReason = "The native phase run was aborted."
+					if run.Generator != nil && run.Generator.GuardrailTrigger != nil {
+						trigger := run.Generator.GuardrailTrigger
+						if trigger.Resource == "generator_process_cpu" {
+							trial.AbortReason = fmt.Sprintf("Generator process CPU reached %.1f%% (limit %.1f%%) for %d consecutive samples.", trigger.ObservedCPUPercent, trigger.LimitCPUPercent, trigger.ConsecutiveSamples)
+						} else {
+							trial.AbortReason = fmt.Sprintf("Generator process RSS reached %d bytes (limit %d bytes) for %d consecutive samples.", trigger.ObservedRSSBytes, trigger.LimitRSSBytes, trigger.ConsecutiveSamples)
+						}
+					}
 				}
+				break
+			}
+			if phase.Required && run.Outcome != "PASS" {
+				trial.Outcome = "FAIL"
 				break
 			}
 		}

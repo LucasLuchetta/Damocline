@@ -31,6 +31,27 @@ func validSyntheticQualityRun() Result {
 	}
 }
 
+func TestGeneratorGuardrailTriggerRequiresMatchingPolicyAndConsecutiveSamples(t *testing.T) {
+	policy := generatorhealth.Guardrails{MaxProcessCPUPercent: 75, MaxProcessRSSBytes: 512 * 1024 * 1024, ConsecutiveSamples: 3}
+	cpu := generatorhealth.GuardrailTrigger{Resource: "generator_process_cpu", ObservedCPUPercent: 80, LimitCPUPercent: 75, ConsecutiveSamples: 3, SampleNumber: 5, ElapsedMS: 1000}
+	rss := generatorhealth.GuardrailTrigger{Resource: "generator_process_rss", ObservedRSSBytes: policy.MaxProcessRSSBytes + 1, LimitRSSBytes: policy.MaxProcessRSSBytes, ConsecutiveSamples: 3, SampleNumber: 5, ElapsedMS: 1000}
+	for _, trigger := range []generatorhealth.GuardrailTrigger{cpu, rss} {
+		if !validGuardrailTrigger(policy, trigger) {
+			t.Fatalf("valid trigger rejected: %+v", trigger)
+		}
+	}
+	bad := cpu
+	bad.ConsecutiveSamples = 2
+	if validGuardrailTrigger(policy, bad) {
+		t.Fatal("trigger with a different consecutive sample count was accepted")
+	}
+	bad = rss
+	bad.ObservedRSSBytes = bad.LimitRSSBytes
+	if validGuardrailTrigger(policy, bad) {
+		t.Fatal("trigger at, rather than above, the RSS limit was accepted")
+	}
+}
+
 func qualityTestRuntime() calibration.Runtime {
 	runtime := calibration.CurrentRuntime()
 	if runtime.LogicalCPUs < 1 {

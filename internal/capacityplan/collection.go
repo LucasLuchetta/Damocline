@@ -13,6 +13,7 @@ import (
 
 	"github.com/LucasLuchetta/Damocline/internal/campaign"
 	"github.com/LucasLuchetta/Damocline/internal/capacitygoal"
+	"github.com/LucasLuchetta/Damocline/internal/generatorhealth"
 	"github.com/LucasLuchetta/Damocline/internal/report"
 )
 
@@ -45,21 +46,22 @@ type CampaignLevelAssessment struct {
 }
 
 type campaignLevelShape struct {
-	SchemaVersion   int                      `json:"schema_version"`
-	Scenario        string                   `json:"scenario"`
-	Target          string                   `json:"target"`
-	Warmup          string                   `json:"warmup"`
-	Observation     string                   `json:"observation"`
-	SpikeDuration   string                   `json:"spike_duration"`
-	SpikeRatio      string                   `json:"spike_ratio"`
-	Recovery        string                   `json:"recovery"`
-	Soak            string                   `json:"soak,omitempty"`
-	LongRun         bool                     `json:"long_run,omitempty"`
-	Environment     string                   `json:"declared_environment,omitempty"`
-	StabilityPolicy campaign.StabilityPolicy `json:"stability_policy"`
-	Budget          string                   `json:"budget,omitempty"`
-	Repeats         int                      `json:"repeats"`
-	Controls        *campaignRunShape        `json:"controls,omitempty"`
+	SchemaVersion       int                         `json:"schema_version"`
+	Scenario            string                      `json:"scenario"`
+	Target              string                      `json:"target"`
+	Warmup              string                      `json:"warmup"`
+	Observation         string                      `json:"observation"`
+	SpikeDuration       string                      `json:"spike_duration"`
+	SpikeRatio          string                      `json:"spike_ratio"`
+	Recovery            string                      `json:"recovery"`
+	Soak                string                      `json:"soak,omitempty"`
+	LongRun             bool                        `json:"long_run,omitempty"`
+	Environment         string                      `json:"declared_environment,omitempty"`
+	StabilityPolicy     campaign.StabilityPolicy    `json:"stability_policy"`
+	GeneratorGuardrails *generatorhealth.Guardrails `json:"generator_guardrails,omitempty"`
+	Budget              string                      `json:"budget,omitempty"`
+	Repeats             int                         `json:"repeats"`
+	Controls            *campaignRunShape           `json:"controls,omitempty"`
 }
 
 type campaignRunShape struct {
@@ -218,6 +220,7 @@ func campaignCollectionShape(e campaign.Result) (string, error) {
 		Warmup: e.Warmup, Observation: e.Observation,
 		SpikeDuration: e.SpikeDuration, Recovery: e.Recovery, Soak: e.Soak, StabilityPolicy: e.EffectiveStabilityPolicy(), Budget: e.Budget, Repeats: e.Repeats,
 		LongRun: e.LongRun, Environment: e.DeclaredEnvironment,
+		GeneratorGuardrails: e.GeneratorGuardrails,
 	}
 	if e.SpikeUsers == 0 {
 		shape.SpikeRatio = "none"
@@ -309,6 +312,9 @@ func digestCampaignShape(shape campaignLevelShape) (string, error) {
 }
 
 func campaignLevelSchedule(e campaign.Result) (campaign.Options, []campaign.PlannedPhase, error) {
+	if e.SchemaVersion < 7 && e.GeneratorGuardrails != nil {
+		return campaign.Options{}, nil, errors.New("generator resource guardrails are unsupported by this campaign schema")
+	}
 	if e.SchemaVersion < 6 && e.LongRun {
 		return campaign.Options{}, nil, errors.New("long-run declaration is unsupported by this campaign schema")
 	}
@@ -348,6 +354,9 @@ func campaignLevelSchedule(e campaign.Result) (campaign.Options, []campaign.Plan
 	options := campaign.Options{Warmup: warmup, Observation: observation, SpikeUsers: e.SpikeUsers,
 		SpikeDuration: spike, Recovery: recovery, Soak: soak, Repeats: e.Repeats, Budget: budget,
 		Stability: e.EffectiveStabilityPolicy(), LongRun: e.LongRun, StagingConfirmed: e.LongRun}
+	if e.SchemaVersion >= 7 && e.GeneratorGuardrails != nil {
+		options.Guardrails = *e.GeneratorGuardrails
+	}
 	if err := campaign.Validate(options); err != nil {
 		if !(e.SchemaVersion < 4 && options.Budget > 0 && options.Budget <= 15*time.Minute && options.Budget >= time.Duration(options.Repeats)*(options.Warmup+options.Observation+options.SpikeDuration+options.Recovery)) {
 			return campaign.Options{}, nil, fmt.Errorf("invalid campaign schedule: %w", err)

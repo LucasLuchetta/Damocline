@@ -9,10 +9,11 @@ import (
 
 	"github.com/LucasLuchetta/Damocline/internal/config"
 	"github.com/LucasLuchetta/Damocline/internal/engine"
+	"github.com/LucasLuchetta/Damocline/internal/generatorhealth"
 	"github.com/LucasLuchetta/Damocline/internal/report"
 )
 
-const CurrentSchemaVersion = 6
+const CurrentSchemaVersion = 7
 
 const (
 	DefaultWallTimeLimit = 15 * time.Minute
@@ -75,6 +76,7 @@ type Options struct {
 	Repeats          int
 	Budget           time.Duration
 	Stability        StabilityPolicy
+	Guardrails       generatorhealth.Guardrails
 	LongRun          bool
 	StagingConfirmed bool
 }
@@ -129,26 +131,27 @@ type Trial struct {
 }
 
 type Result struct {
-	SchemaVersion          int              `json:"schema_version"`
-	Scenario               string           `json:"scenario"`
-	BaseUsers              int              `json:"base_users"`
-	Target                 string           `json:"target"`
-	StartedAt              string           `json:"started_at"`
-	Warmup                 string           `json:"warmup"`
-	Observation            string           `json:"observation"`
-	SpikeUsers             int              `json:"spike_users,omitempty"`
-	SpikeDuration          string           `json:"spike_duration,omitempty"`
-	Recovery               string           `json:"recovery"`
-	Soak                   string           `json:"soak,omitempty"`
-	LongRun                bool             `json:"long_run,omitempty"`
-	DeclaredEnvironment    string           `json:"declared_environment,omitempty"`
-	StabilityPolicy        *StabilityPolicy `json:"stability_policy,omitempty"`
-	Budget                 string           `json:"budget,omitempty"`
-	Repeats                int              `json:"repeats"`
-	Trials                 []Trial          `json:"trials"`
-	ObservationVariability *Variability     `json:"observation_variability,omitempty"`
-	Outcome                string           `json:"outcome"`
-	Notes                  []string         `json:"notes"`
+	SchemaVersion          int                         `json:"schema_version"`
+	Scenario               string                      `json:"scenario"`
+	BaseUsers              int                         `json:"base_users"`
+	Target                 string                      `json:"target"`
+	StartedAt              string                      `json:"started_at"`
+	Warmup                 string                      `json:"warmup"`
+	Observation            string                      `json:"observation"`
+	SpikeUsers             int                         `json:"spike_users,omitempty"`
+	SpikeDuration          string                      `json:"spike_duration,omitempty"`
+	Recovery               string                      `json:"recovery"`
+	Soak                   string                      `json:"soak,omitempty"`
+	LongRun                bool                        `json:"long_run,omitempty"`
+	DeclaredEnvironment    string                      `json:"declared_environment,omitempty"`
+	StabilityPolicy        *StabilityPolicy            `json:"stability_policy,omitempty"`
+	GeneratorGuardrails    *generatorhealth.Guardrails `json:"generator_guardrails,omitempty"`
+	Budget                 string                      `json:"budget,omitempty"`
+	Repeats                int                         `json:"repeats"`
+	Trials                 []Trial                     `json:"trials"`
+	ObservationVariability *Variability                `json:"observation_variability,omitempty"`
+	Outcome                string                      `json:"outcome"`
+	Notes                  []string                    `json:"notes"`
 }
 
 // EffectiveStabilityPolicy returns the policy recorded in current campaign
@@ -180,6 +183,9 @@ type Variability struct {
 type Runner func(context.Context, config.Validated) report.Result
 
 func Validate(options Options) error {
+	if err := validateGeneratorGuardrails(effectiveGeneratorGuardrails(options.Guardrails)); err != nil {
+		return err
+	}
 	if options.LongRun != options.StagingConfirmed {
 		return fmt.Errorf("long-run campaigns require both --allow-long-run and --staging-confirmed")
 	}
@@ -226,6 +232,20 @@ func Validate(options Options) error {
 	}
 	if options.Budget == 0 && defaultBudget(options) > budgetLimit {
 		return fmt.Errorf("configured phases and bounded drain allowance exceed the %s campaign safety budget", budgetLimit)
+	}
+	return nil
+}
+
+func effectiveGeneratorGuardrails(policy generatorhealth.Guardrails) generatorhealth.Guardrails {
+	if policy.Enabled() && policy.ConsecutiveSamples == 0 {
+		policy.ConsecutiveSamples = 2
+	}
+	return policy
+}
+
+func validateGeneratorGuardrails(policy generatorhealth.Guardrails) error {
+	if !policy.Validate() {
+		return fmt.Errorf("generator guardrails require a CPU limit from 1-100%% and/or an RSS limit, with 2-20 consecutive samples")
 	}
 	return nil
 }
@@ -296,7 +316,13 @@ func WithRunner(ctx context.Context, base config.Validated, options Options, run
 	}
 	options.Budget = PlannedBudget(options)
 	options.Stability = effectiveStabilityPolicy(options.Stability)
+	options.Guardrails = effectiveGeneratorGuardrails(options.Guardrails)
 	stabilityPolicy := options.Stability
+	var generatorGuardrails *generatorhealth.Guardrails
+	if options.Guardrails.Enabled() {
+		policy := options.Guardrails
+		generatorGuardrails = &policy
+	}
 	parent := ctx
 	ctx, cancel := context.WithTimeout(ctx, options.Budget)
 	defer cancel()
@@ -319,6 +345,7 @@ func WithRunner(ctx context.Context, base config.Validated, options Options, run
 		LongRun:             options.LongRun,
 		DeclaredEnvironment: base.Scenario.Environment,
 		StabilityPolicy:     &stabilityPolicy,
+		GeneratorGuardrails: generatorGuardrails,
 		Budget:              options.Budget.String(),
 		Repeats:             options.Repeats,
 		Trials:              []Trial{},
@@ -340,6 +367,7 @@ func WithRunner(ctx context.Context, base config.Validated, options Options, run
 				break
 			}
 			v := base
+			v.GeneratorGuardrails = options.Guardrails
 			v.Duration = phase.Duration
 			v.Scenario.Duration = phase.Duration.String()
 			v.Scenario.Users = phase.Users
@@ -374,6 +402,14 @@ func WithRunner(ctx context.Context, base config.Validated, options Options, run
 				trial.Outcome = run.Outcome
 				if run.Outcome == "ABORTED" {
 					trial.AbortReason = "The native phase run was aborted."
+					if run.Generator != nil && run.Generator.GuardrailTrigger != nil {
+						trigger := run.Generator.GuardrailTrigger
+						if trigger.Resource == "generator_process_cpu" {
+							trial.AbortReason = fmt.Sprintf("Generator process CPU reached %.1f%% (limit %.1f%%) for %d consecutive samples.", trigger.ObservedCPUPercent, trigger.LimitCPUPercent, trigger.ConsecutiveSamples)
+						} else {
+							trial.AbortReason = fmt.Sprintf("Generator process RSS reached %d bytes (limit %d bytes) for %d consecutive samples.", trigger.ObservedRSSBytes, trigger.LimitRSSBytes, trigger.ConsecutiveSamples)
+						}
+					}
 				}
 				break
 			}

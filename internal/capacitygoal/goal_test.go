@@ -17,6 +17,19 @@ import (
 	"github.com/LucasLuchetta/Damocline/internal/report"
 )
 
+func TestArrivalCampaignRunGuardrailsMustMatchOfflinePolicy(t *testing.T) {
+	policy := generatorhealth.Guardrails{MaxProcessCPUPercent: 80, ConsecutiveSamples: 2}
+	saved := arrivalcampaign.Result{SchemaVersion: 3, GeneratorGuardrails: &policy}
+	run := report.Result{Generator: &generatorhealth.Summary{Guardrails: &policy}}
+	if !arrivalCampaignRunGuardrailsMatch(saved, run) {
+		t.Fatal("matching arrival campaign and phase guardrails were rejected")
+	}
+	run.Generator.Guardrails = nil
+	if arrivalCampaignRunGuardrailsMatch(saved, run) {
+		t.Fatal("missing phase guardrails were accepted")
+	}
+}
+
 func passed(users int) report.Result {
 	return report.Result{
 		SchemaVersion: 3, Outcome: "PASS", ElapsedSeconds: 30,

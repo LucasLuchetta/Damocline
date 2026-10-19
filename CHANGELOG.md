@@ -5,6 +5,7 @@ This project follows a human-maintained changelog. No release exists yet.
 ## [Unreleased]
 
 ### Added
+- Add optional consecutive-sample CPU and RSS abort guardrails for the local generator to closed-loop and open-arrival campaigns; persist the policy and trigger observation in run and campaign evidence and validate it during offline assessment.
 - Add an explicit staging long-run mode to closed-loop and open-arrival campaigns: 30-minute observation/soak phases, a required operator-supplied budget capped at two hours, retained JSON output, and a 120-window limit. Existing default run and campaign ceilings remain unchanged.
 - Add a concurrent loopback fixture that cross-checks each actor's cookie against the response-derived ID used by that actor's next request.
 - Mark every non-GET/HEAD route as `MUTATING` in CLI previews, prove synthetic IDs are unique per journey, and test that configured cleanup still runs after a failed business postcondition.

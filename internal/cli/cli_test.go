@@ -47,6 +47,32 @@ func TestArrivalCampaignDryRunShowsOpenArrivalSchedule(t *testing.T) {
 	}
 }
 
+func TestCampaignDryRunsShowLocalGeneratorGuardrails(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{name: "closed", args: []string{"campaign", "--config", filepath.Join("..", "..", "examples", "advanced-readonly.json"), "--warmup", "0s", "--observation", "10s", "--recovery", "10s", "--repeats", "2"}},
+		{name: "arrival", args: []string{"arrival-campaign", "--config", filepath.Join("..", "..", "examples", "arrival-rate-readonly.json"), "--observation", "10s", "--recovery", "10s", "--repeats", "2"}},
+	} {
+		args := append(append([]string(nil), tc.args...), "--max-generator-cpu-percent", "75", "--max-generator-rss-mb", "512", "--resource-guardrail-samples", "3", "--dry-run")
+		var stdout, stderr bytes.Buffer
+		if code := Run(args, &stdout, &stderr); code != 0 {
+			t.Fatalf("%s guardrail preview failed: code=%d stderr=%s", tc.name, code, stderr.String())
+		}
+		for _, expected := range []string{"Generator abort guardrails: CPU 75.0% | RSS 512.0 MiB | 3 consecutive samples", "local generator, not the target application"} {
+			if !strings.Contains(stdout.String(), expected) {
+				t.Fatalf("%s guardrail preview omitted %q: %s", tc.name, expected, stdout.String())
+			}
+		}
+	}
+	var stdout, stderr bytes.Buffer
+	args := []string{"campaign", "--config", filepath.Join("..", "..", "examples", "advanced-readonly.json"), "--max-generator-rss-mb", "18446744073709551615", "--dry-run"}
+	if code := Run(args, &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "too large") {
+		t.Fatalf("overflowing RSS MiB limit accepted: code=%d stderr=%s", code, stderr.String())
+	}
+}
+
 func TestLongRunCampaignDryRunsRequireExplicitStagingAndBudget(t *testing.T) {
 	closed := config.Scenario{
 		Name: "staging-long-run", BaseURL: "https://app.example.com", Environment: "staging",

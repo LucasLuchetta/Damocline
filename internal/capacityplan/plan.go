@@ -13,6 +13,7 @@ import (
 
 	"github.com/LucasLuchetta/Damocline/internal/campaign"
 	"github.com/LucasLuchetta/Damocline/internal/capacitygoal"
+	"github.com/LucasLuchetta/Damocline/internal/generatorhealth"
 	"github.com/LucasLuchetta/Damocline/internal/report"
 	"github.com/LucasLuchetta/Damocline/internal/statistics"
 )
@@ -333,6 +334,9 @@ func validateEvidence(evidence campaign.Result) error {
 	if evidence.SchemaVersion < 6 && evidence.LongRun {
 		return errors.New("long-run declaration is unsupported by this campaign schema")
 	}
+	if evidence.SchemaVersion < 7 && evidence.GeneratorGuardrails != nil {
+		return errors.New("generator resource guardrails are unsupported by this campaign schema")
+	}
 	if evidence.Outcome == "PASS" && len(evidence.Trials) != evidence.Repeats {
 		return errors.New("a passing campaign must contain every configured trial")
 	}
@@ -556,6 +560,9 @@ func validateStageEvidence(evidence campaign.Result) error {
 		}
 	}
 	options := campaign.Options{Warmup: warmup, Observation: observation, SpikeUsers: evidence.SpikeUsers, SpikeDuration: spike, Recovery: recovery, Soak: soak, Repeats: evidence.Repeats, LongRun: longRun, StagingConfirmed: longRun}
+	if evidence.SchemaVersion >= 7 && evidence.GeneratorGuardrails != nil {
+		options.Guardrails = *evidence.GeneratorGuardrails
+	}
 	if evidence.SchemaVersion >= 4 && budget < campaign.PlannedBudget(options) {
 		return errors.New("campaign wall-time budget omits bounded phase drain allowance")
 	}
@@ -575,6 +582,9 @@ func validateStageEvidence(evidence campaign.Result) error {
 			if phase.Name != want.Name || phase.Run.Config.Users != want.Users || phase.Run.Config.Duration != want.Duration.String() || phase.Run.Target != evidence.Target || (phase.Run.Outcome != "PASS" && (phase.Name != "warmup" || phase.Run.Outcome != "FAIL")) {
 				return fmt.Errorf("trial %d has mismatched %s phase evidence", i+1, want.Name)
 			}
+			if !campaignRunGuardrailsMatch(evidence, phase.Run) {
+				return fmt.Errorf("trial %d has mismatched %s generator guardrails", i+1, want.Name)
+			}
 			state, _ := campaign.ClassifyEvidence(phase.Run)
 			if phase.EvidenceState != state || phase.EvidenceState == "INVALID_DELIVERY" || (phase.Name != "warmup" && phase.EvidenceState != "PASS_OBSERVED") {
 				return fmt.Errorf("trial %d has inconsistent %s phase classification", i+1, want.Name)
@@ -585,4 +595,16 @@ func validateStageEvidence(evidence campaign.Result) error {
 		}
 	}
 	return nil
+}
+
+func campaignRunGuardrailsMatch(evidence campaign.Result, run report.Result) bool {
+	want := generatorhealth.Guardrails{}
+	if evidence.SchemaVersion >= 7 && evidence.GeneratorGuardrails != nil {
+		want = *evidence.GeneratorGuardrails
+	}
+	got := generatorhealth.Guardrails{}
+	if run.Generator != nil && run.Generator.Guardrails != nil {
+		got = *run.Generator.Guardrails
+	}
+	return want.Equal(got)
 }

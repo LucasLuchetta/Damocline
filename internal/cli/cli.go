@@ -22,6 +22,7 @@ import (
 	"github.com/LucasLuchetta/Damocline/internal/dockermon"
 	"github.com/LucasLuchetta/Damocline/internal/engine"
 	"github.com/LucasLuchetta/Damocline/internal/explorer"
+	"github.com/LucasLuchetta/Damocline/internal/generatorhealth"
 	"github.com/LucasLuchetta/Damocline/internal/hostmon"
 	"github.com/LucasLuchetta/Damocline/internal/insights"
 	"github.com/LucasLuchetta/Damocline/internal/report"
@@ -444,6 +445,9 @@ func campaignCmd(args []string, stdout, stderr io.Writer) int {
 	soak := fs.Duration("soak", 0, "optional final sustained observation after all repeated trials (10s-3m; long-run up to 30m)")
 	longRun := fs.Bool("allow-long-run", false, "opt in to campaign phases up to 30m and a wall budget up to 2h")
 	stagingConfirmed := fs.Bool("staging-confirmed", false, "confirm the scenario environment is staging for a long-run campaign")
+	maxGeneratorCPU := fs.Float64("max-generator-cpu-percent", 0, "abort when sampled generator process CPU exceeds this percent of detected capacity (0 disables)")
+	maxGeneratorRSSMB := fs.Uint64("max-generator-rss-mb", 0, "abort when sampled generator process RSS exceeds this MiB limit (0 disables)")
+	guardrailSamples := fs.Int("resource-guardrail-samples", 2, "consecutive process samples required to trigger resource aborts (2-20)")
 	minWindows := fs.Int("stability-min-windows", 3, "minimum complete observation windows for the drift screen (3-20)")
 	minSamples := fs.Int("stability-min-samples", 20, "minimum completed samples in each aggregate and named window (20-100000)")
 	maxP95IncreasePercent := fs.Float64("stability-max-p95-increase-percent", 20, "maximum p95 increase from the first window before drift is reported (>0-100)")
@@ -463,8 +467,17 @@ func campaignCmd(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "--config is required and positional arguments are not accepted")
 		return 2
 	}
+	if *maxGeneratorRSSMB > (1<<64-1)/(1024*1024) {
+		fmt.Fprintln(stderr, "--max-generator-rss-mb is too large")
+		return 2
+	}
+	guardrails := generatorhealth.Guardrails{MaxProcessCPUPercent: *maxGeneratorCPU, MaxProcessRSSBytes: *maxGeneratorRSSMB * 1024 * 1024}
+	if guardrails.Enabled() {
+		guardrails.ConsecutiveSamples = *guardrailSamples
+	}
 	options := campaign.Options{Warmup: *warmup, Observation: *observation, SpikeUsers: *spikeUsers, SpikeDuration: *spikeDuration, Recovery: *recovery, Soak: *soak, Repeats: *repeats, Budget: *budget,
-		LongRun: *longRun, StagingConfirmed: *stagingConfirmed,
+		Guardrails: guardrails,
+		LongRun:    *longRun, StagingConfirmed: *stagingConfirmed,
 		Stability: campaign.StabilityPolicy{MinimumWindows: *minWindows, MinimumSamplesPerWindow: *minSamples, MaxP95IncreasePercent: *maxP95IncreasePercent, MaxP95IncreaseMS: *maxP95IncreaseMS, MaxThroughputDropPercent: *maxThroughputDropPercent}}
 	if err := campaign.Validate(options); err != nil {
 		fmt.Fprintf(stderr, "invalid campaign: %v\n", err)
@@ -488,6 +501,9 @@ func campaignCmd(args []string, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stdout, "Drift screen: >=%d windows, >=%d samples/window, p95 increase >%.1f%% and >%.1fms, throughput decrease >%.1f%%\n", options.Stability.MinimumWindows, options.Stability.MinimumSamplesPerWindow, options.Stability.MaxP95IncreasePercent, options.Stability.MaxP95IncreaseMS, options.Stability.MaxThroughputDropPercent)
 	if options.LongRun {
 		fmt.Fprintln(stdout, "LONG-RUN MODE: explicit opt-in; environment declared staging (user-provided, not independently verified).")
+	}
+	if options.Guardrails.Enabled() {
+		fmt.Fprintf(stdout, "Generator abort guardrails: CPU %.1f%% | RSS %.1f MiB | %d consecutive samples. These limits apply to the local generator, not the target application.\n", guardrails.MaxProcessCPUPercent, float64(guardrails.MaxProcessRSSBytes)/(1024*1024), guardrails.ConsecutiveSamples)
 	}
 	if *dry {
 		for trial := 1; trial <= options.Repeats; trial++ {

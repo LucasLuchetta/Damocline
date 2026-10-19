@@ -13,6 +13,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/LucasLuchetta/Damocline/internal/generatorhealth"
 )
 
 type Scenario struct {
@@ -100,6 +102,7 @@ type Validated struct {
 	Profiles            []PreparedProfile
 	Cookies             []string
 	SyntheticDataPrefix string
+	GeneratorGuardrails generatorhealth.Guardrails
 }
 
 // PreparedProfile contains the safe, resolved workflow selected by the

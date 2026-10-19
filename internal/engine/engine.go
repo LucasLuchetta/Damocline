@@ -204,13 +204,15 @@ func Run(parent context.Context, v config.Validated) report.Result {
 
 func runWithTransport(parent context.Context, v config.Validated, transport *http.Transport) report.Result {
 	started := time.Now()
-	generatorMonitor := generatorhealth.Start(250 * time.Millisecond)
 	// Stop admitting new work at the configured boundary, then allow any
 	// already-started journey a bounded time to finish.
 	drainAllowance := drainDuration(v)
 	ctx, cancel := context.WithTimeout(parent, v.Duration+drainAllowance)
 	defer cancel()
-	scheduleCtx, cancelSchedule := context.WithTimeout(parent, v.Duration)
+	generatorMonitor := generatorhealth.StartWithGuardrails(250*time.Millisecond, v.GeneratorGuardrails, func(generatorhealth.GuardrailTrigger) {
+		cancel()
+	})
+	scheduleCtx, cancelSchedule := context.WithTimeout(ctx, v.Duration)
 	defer cancelSchedule()
 	coll := newCollector(v, started)
 	ticker := time.NewTicker(time.Second / time.Duration(v.Scenario.MaxRPS))
@@ -542,6 +544,22 @@ func runWithTransport(parent context.Context, v config.Validated, transport *htt
 	}
 	if errors.Is(parent.Err(), context.Canceled) || errors.Is(parent.Err(), context.DeadlineExceeded) {
 		result.Outcome = "ABORTED"
+	}
+	if generatorSnapshot.GuardrailTrigger != nil {
+		result.Outcome = "ABORTED"
+		trigger := generatorSnapshot.GuardrailTrigger
+		if trigger.Resource == "generator_process_cpu" {
+			result.Warnings = append(result.Warnings, fmt.Sprintf("Generator process CPU guardrail triggered at %.1f%% (limit %.1f%%) for %d consecutive samples; this run is aborted and cannot be attributed to the target application.", trigger.ObservedCPUPercent, trigger.LimitCPUPercent, trigger.ConsecutiveSamples))
+		} else {
+			result.Warnings = append(result.Warnings, fmt.Sprintf("Generator process RSS guardrail triggered at %d bytes (limit %d bytes) for %d consecutive samples; this run is aborted and cannot be attributed to the target application.", trigger.ObservedRSSBytes, trigger.LimitRSSBytes, trigger.ConsecutiveSamples))
+		}
+	} else if v.GeneratorGuardrails.Enabled() &&
+		((v.GeneratorGuardrails.MaxProcessRSSBytes > 0 && generatorSnapshot.ProcessSamples < v.GeneratorGuardrails.ConsecutiveSamples) ||
+			(v.GeneratorGuardrails.MaxProcessCPUPercent > 0 && generatorSnapshot.ProcessCPUSamples < v.GeneratorGuardrails.ConsecutiveSamples)) {
+		if result.Outcome == "PASS" {
+			result.Outcome = "INCONCLUSIVE"
+		}
+		result.Warnings = append(result.Warnings, "Configured generator resource guardrails lacked enough valid process samples to establish that the limits were not exceeded.")
 	}
 	if len(v.Cookies) == 0 && v.Scenario.Users > 1 {
 		result.Warnings = append(result.Warnings, "Multiple virtual users may share one login identity; configure per_vu_cookie_env_prefix to test independent authenticated sessions.")
