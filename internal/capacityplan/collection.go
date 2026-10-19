@@ -45,18 +45,19 @@ type CampaignLevelAssessment struct {
 }
 
 type campaignLevelShape struct {
-	SchemaVersion int               `json:"schema_version"`
-	Scenario      string            `json:"scenario"`
-	Target        string            `json:"target"`
-	Warmup        string            `json:"warmup"`
-	Observation   string            `json:"observation"`
-	SpikeDuration string            `json:"spike_duration"`
-	SpikeRatio    string            `json:"spike_ratio"`
-	Recovery      string            `json:"recovery"`
-	Soak          string            `json:"soak,omitempty"`
-	Budget        string            `json:"budget,omitempty"`
-	Repeats       int               `json:"repeats"`
-	Controls      *campaignRunShape `json:"controls,omitempty"`
+	SchemaVersion   int                      `json:"schema_version"`
+	Scenario        string                   `json:"scenario"`
+	Target          string                   `json:"target"`
+	Warmup          string                   `json:"warmup"`
+	Observation     string                   `json:"observation"`
+	SpikeDuration   string                   `json:"spike_duration"`
+	SpikeRatio      string                   `json:"spike_ratio"`
+	Recovery        string                   `json:"recovery"`
+	Soak            string                   `json:"soak,omitempty"`
+	StabilityPolicy campaign.StabilityPolicy `json:"stability_policy"`
+	Budget          string                   `json:"budget,omitempty"`
+	Repeats         int                      `json:"repeats"`
+	Controls        *campaignRunShape        `json:"controls,omitempty"`
 }
 
 type campaignRunShape struct {
@@ -213,7 +214,7 @@ func campaignCollectionShape(e campaign.Result) (string, error) {
 	shape := campaignLevelShape{
 		SchemaVersion: e.SchemaVersion, Scenario: e.Scenario, Target: e.Target,
 		Warmup: e.Warmup, Observation: e.Observation,
-		SpikeDuration: e.SpikeDuration, Recovery: e.Recovery, Soak: e.Soak, Budget: e.Budget, Repeats: e.Repeats,
+		SpikeDuration: e.SpikeDuration, Recovery: e.Recovery, Soak: e.Soak, StabilityPolicy: e.EffectiveStabilityPolicy(), Budget: e.Budget, Repeats: e.Repeats,
 	}
 	if e.SpikeUsers == 0 {
 		shape.SpikeRatio = "none"
@@ -336,7 +337,8 @@ func campaignLevelSchedule(e campaign.Result) (campaign.Options, []campaign.Plan
 		return campaign.Options{}, nil, errors.New("invalid campaign budget")
 	}
 	options := campaign.Options{Warmup: warmup, Observation: observation, SpikeUsers: e.SpikeUsers,
-		SpikeDuration: spike, Recovery: recovery, Soak: soak, Repeats: e.Repeats, Budget: budget}
+		SpikeDuration: spike, Recovery: recovery, Soak: soak, Repeats: e.Repeats, Budget: budget,
+		Stability: e.EffectiveStabilityPolicy()}
 	if err := campaign.Validate(options); err != nil {
 		if !(e.SchemaVersion < 4 && options.Budget > 0 && options.Budget <= 15*time.Minute && options.Budget >= time.Duration(options.Repeats)*(options.Warmup+options.Observation+options.SpikeDuration+options.Recovery)) {
 			return campaign.Options{}, nil, fmt.Errorf("invalid campaign schedule: %w", err)

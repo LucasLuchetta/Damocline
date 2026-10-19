@@ -12,7 +12,51 @@ import (
 	"github.com/LucasLuchetta/Damocline/internal/report"
 )
 
-const CurrentSchemaVersion = 4
+const CurrentSchemaVersion = 5
+
+// StabilityPolicy sets bounded thresholds for the campaign window drift
+// screen. It is a coarse screening policy, not a stationarity test.
+type StabilityPolicy struct {
+	MinimumWindows           int     `json:"minimum_windows"`
+	MinimumSamplesPerWindow  int     `json:"minimum_samples_per_window"`
+	MaxP95IncreasePercent    float64 `json:"max_p95_increase_percent"`
+	MaxP95IncreaseMS         float64 `json:"max_p95_increase_ms"`
+	MaxThroughputDropPercent float64 `json:"max_throughput_drop_percent"`
+}
+
+func DefaultStabilityPolicy() StabilityPolicy {
+	return StabilityPolicy{
+		MinimumWindows: 3, MinimumSamplesPerWindow: 20,
+		MaxP95IncreasePercent: 20, MaxP95IncreaseMS: 5,
+		MaxThroughputDropPercent: 20,
+	}
+}
+
+func ValidateStabilityPolicy(policy StabilityPolicy) error {
+	if policy.MinimumWindows < 3 || policy.MinimumWindows > 20 {
+		return fmt.Errorf("stability minimum-windows must be between 3 and 20")
+	}
+	if policy.MinimumSamplesPerWindow < 20 || policy.MinimumSamplesPerWindow > 100000 {
+		return fmt.Errorf("stability minimum-samples must be between 20 and 100000")
+	}
+	if math.IsNaN(policy.MaxP95IncreasePercent) || math.IsInf(policy.MaxP95IncreasePercent, 0) || policy.MaxP95IncreasePercent <= 0 || policy.MaxP95IncreasePercent > 100 {
+		return fmt.Errorf("stability max-p95-increase-percent must be greater than 0 and at most 100")
+	}
+	if math.IsNaN(policy.MaxP95IncreaseMS) || math.IsInf(policy.MaxP95IncreaseMS, 0) || policy.MaxP95IncreaseMS < 0 || policy.MaxP95IncreaseMS > 10000 {
+		return fmt.Errorf("stability max-p95-increase-ms must be between 0 and 10000")
+	}
+	if math.IsNaN(policy.MaxThroughputDropPercent) || math.IsInf(policy.MaxThroughputDropPercent, 0) || policy.MaxThroughputDropPercent <= 0 || policy.MaxThroughputDropPercent > 100 {
+		return fmt.Errorf("stability max-throughput-drop-percent must be greater than 0 and at most 100")
+	}
+	return nil
+}
+
+func effectiveStabilityPolicy(policy StabilityPolicy) StabilityPolicy {
+	if policy == (StabilityPolicy{}) {
+		return DefaultStabilityPolicy()
+	}
+	return policy
+}
 
 type Options struct {
 	Warmup        time.Duration
@@ -23,6 +67,7 @@ type Options struct {
 	Soak          time.Duration
 	Repeats       int
 	Budget        time.Duration
+	Stability     StabilityPolicy
 }
 
 // PlannedPhase is one bounded stage in each campaign trial.
@@ -75,23 +120,36 @@ type Trial struct {
 }
 
 type Result struct {
-	SchemaVersion          int          `json:"schema_version"`
-	Scenario               string       `json:"scenario"`
-	BaseUsers              int          `json:"base_users"`
-	Target                 string       `json:"target"`
-	StartedAt              string       `json:"started_at"`
-	Warmup                 string       `json:"warmup"`
-	Observation            string       `json:"observation"`
-	SpikeUsers             int          `json:"spike_users,omitempty"`
-	SpikeDuration          string       `json:"spike_duration,omitempty"`
-	Recovery               string       `json:"recovery"`
-	Soak                   string       `json:"soak,omitempty"`
-	Budget                 string       `json:"budget,omitempty"`
-	Repeats                int          `json:"repeats"`
-	Trials                 []Trial      `json:"trials"`
-	ObservationVariability *Variability `json:"observation_variability,omitempty"`
-	Outcome                string       `json:"outcome"`
-	Notes                  []string     `json:"notes"`
+	SchemaVersion          int              `json:"schema_version"`
+	Scenario               string           `json:"scenario"`
+	BaseUsers              int              `json:"base_users"`
+	Target                 string           `json:"target"`
+	StartedAt              string           `json:"started_at"`
+	Warmup                 string           `json:"warmup"`
+	Observation            string           `json:"observation"`
+	SpikeUsers             int              `json:"spike_users,omitempty"`
+	SpikeDuration          string           `json:"spike_duration,omitempty"`
+	Recovery               string           `json:"recovery"`
+	Soak                   string           `json:"soak,omitempty"`
+	StabilityPolicy        *StabilityPolicy `json:"stability_policy,omitempty"`
+	Budget                 string           `json:"budget,omitempty"`
+	Repeats                int              `json:"repeats"`
+	Trials                 []Trial          `json:"trials"`
+	ObservationVariability *Variability     `json:"observation_variability,omitempty"`
+	Outcome                string           `json:"outcome"`
+	Notes                  []string         `json:"notes"`
+}
+
+// EffectiveStabilityPolicy returns the policy recorded in current campaign
+// evidence or the historical default for campaign schemas before v5.
+func (r Result) EffectiveStabilityPolicy() StabilityPolicy {
+	if r.SchemaVersion >= 5 {
+		if r.StabilityPolicy != nil {
+			return *r.StabilityPolicy
+		}
+		return StabilityPolicy{}
+	}
+	return DefaultStabilityPolicy()
 }
 
 // Variability summarizes the spread observed across independent observation
@@ -111,6 +169,9 @@ type Variability struct {
 type Runner func(context.Context, config.Validated) report.Result
 
 func Validate(options Options) error {
+	if err := ValidateStabilityPolicy(effectiveStabilityPolicy(options.Stability)); err != nil {
+		return err
+	}
 	if options.Warmup < 0 || options.Warmup > 3*time.Minute || options.Recovery < 0 || options.Recovery > 3*time.Minute {
 		return fmt.Errorf("warmup and recovery must be between 0 and 3m")
 	}
@@ -147,6 +208,28 @@ func Validate(options Options) error {
 	return nil
 }
 
+// ValidateForScenario rejects a policy that cannot receive its configured
+// minimum number of windows from the observation and optional soak phases.
+func ValidateForScenario(base config.Validated, options Options) error {
+	if err := Validate(options); err != nil {
+		return err
+	}
+	policy := effectiveStabilityPolicy(options.Stability)
+	for _, duration := range []time.Duration{options.Observation, options.Soak} {
+		if duration == 0 {
+			continue
+		}
+		window := base.Window
+		if window == 0 {
+			window = min(30*time.Second, duration/4)
+		}
+		if window <= 0 || int(math.Ceil(duration.Seconds()/window.Seconds())) < policy.MinimumWindows {
+			return fmt.Errorf("stability minimum-windows exceeds the observation or soak window coverage")
+		}
+	}
+	return nil
+}
+
 func defaultBudget(options Options) time.Duration {
 	phases := len(PlannedPhases(options, 0))
 	soakDrain := time.Duration(0)
@@ -169,7 +252,7 @@ func Run(ctx context.Context, base config.Validated, options Options) (Result, e
 }
 
 func WithRunner(ctx context.Context, base config.Validated, options Options, runner Runner) (Result, error) {
-	if err := Validate(options); err != nil {
+	if err := ValidateForScenario(base, options); err != nil {
 		return Result{}, err
 	}
 	if options.SpikeUsers > 0 && options.SpikeUsers <= base.Scenario.Users {
@@ -184,6 +267,8 @@ func WithRunner(ctx context.Context, base config.Validated, options Options, run
 		}
 	}
 	options.Budget = PlannedBudget(options)
+	options.Stability = effectiveStabilityPolicy(options.Stability)
+	stabilityPolicy := options.Stability
 	parent := ctx
 	ctx, cancel := context.WithTimeout(ctx, options.Budget)
 	defer cancel()
@@ -192,21 +277,22 @@ func WithRunner(ctx context.Context, base config.Validated, options Options, run
 		soakDuration = options.Soak.String()
 	}
 	result := Result{
-		SchemaVersion: CurrentSchemaVersion,
-		Scenario:      base.Scenario.Name,
-		BaseUsers:     base.Scenario.Users,
-		Target:        base.Base.Scheme + "://" + base.Base.Host,
-		StartedAt:     time.Now().UTC().Format(time.RFC3339),
-		Warmup:        options.Warmup.String(),
-		Observation:   options.Observation.String(),
-		SpikeUsers:    options.SpikeUsers,
-		SpikeDuration: options.SpikeDuration.String(),
-		Recovery:      options.Recovery.String(),
-		Soak:          soakDuration,
-		Budget:        options.Budget.String(),
-		Repeats:       options.Repeats,
-		Trials:        []Trial{},
-		Outcome:       "INCONCLUSIVE",
+		SchemaVersion:   CurrentSchemaVersion,
+		Scenario:        base.Scenario.Name,
+		BaseUsers:       base.Scenario.Users,
+		Target:          base.Base.Scheme + "://" + base.Base.Host,
+		StartedAt:       time.Now().UTC().Format(time.RFC3339),
+		Warmup:          options.Warmup.String(),
+		Observation:     options.Observation.String(),
+		SpikeUsers:      options.SpikeUsers,
+		SpikeDuration:   options.SpikeDuration.String(),
+		Recovery:        options.Recovery.String(),
+		Soak:            soakDuration,
+		StabilityPolicy: &stabilityPolicy,
+		Budget:          options.Budget.String(),
+		Repeats:         options.Repeats,
+		Trials:          []Trial{},
+		Outcome:         "INCONCLUSIVE",
 		Notes: []string{
 			"Warm-up runs establish workload state but are excluded from capacity conclusions.",
 			"Observation, configured spike, recovery, and the optional final soak all require PASS; this is evidence under the configured workload, not a universal capacity certification.",
@@ -235,7 +321,7 @@ func WithRunner(ctx context.Context, base config.Validated, options Options, run
 			state, reason := ClassifyEvidence(run)
 			stability := ""
 			if phase.Name == "observation" || phase.Name == "soak" {
-				stability = AssessStability(run)
+				stability = AssessStabilityWithPolicy(run, options.Stability)
 			}
 			trial.Phases = append(trial.Phases, Phase{Name: phase.Name, EvidenceState: state, Reason: reason, Stability: stability, Run: run})
 			if ctx.Err() != nil {
@@ -286,7 +372,13 @@ func abortReason(err, parentErr error) string {
 // or throughput loss relative to the first window. Its deliberately coarse
 // threshold is not a test of statistical stationarity.
 func AssessStability(run report.Result) string {
-	if len(run.Windows) < 3 || run.ObservationSeconds <= 0 || math.IsNaN(run.ObservationSeconds) || math.IsInf(run.ObservationSeconds, 0) {
+	return AssessStabilityWithPolicy(run, DefaultStabilityPolicy())
+}
+
+// AssessStabilityWithPolicy applies the saved, bounded policy to every
+// observation window and named series in a run.
+func AssessStabilityWithPolicy(run report.Result, policy StabilityPolicy) string {
+	if ValidateStabilityPolicy(policy) != nil || len(run.Windows) < policy.MinimumWindows || run.ObservationSeconds <= 0 || math.IsNaN(run.ObservationSeconds) || math.IsInf(run.ObservationSeconds, 0) {
 		return "INSUFFICIENT_WINDOWS"
 	}
 	expectedStart := 0.0
@@ -294,14 +386,14 @@ func AssessStability(run report.Result) string {
 	for _, window := range run.Windows {
 		if math.IsNaN(window.StartSeconds) || math.IsInf(window.StartSeconds, 0) || math.IsNaN(window.EndSeconds) || math.IsInf(window.EndSeconds, 0) ||
 			math.Abs(window.StartSeconds-expectedStart) > 0.001 || window.EndSeconds <= window.StartSeconds ||
-			window.EndSeconds > run.ObservationSeconds+0.001 || !stableScreenMetric(window.Metrics) || !stableScreenMetric(window.Journeys) {
+			window.EndSeconds > run.ObservationSeconds+0.001 || !stableScreenMetric(window.Metrics, policy.MinimumSamplesPerWindow) || !stableScreenMetric(window.Journeys, policy.MinimumSamplesPerWindow) {
 			return "INSUFFICIENT_WINDOWS"
 		}
 		if len(window.Steps) != len(first.Steps) || len(window.Profiles) != len(first.Profiles) {
 			return "INSUFFICIENT_WINDOWS"
 		}
-		if !stableNamedWindows(first.Steps, window.Steps, first.EndSeconds-first.StartSeconds, window.EndSeconds-window.StartSeconds) ||
-			!stableNamedWindows(first.Profiles, window.Profiles, first.EndSeconds-first.StartSeconds, window.EndSeconds-window.StartSeconds) {
+		if !stableNamedWindows(first.Steps, window.Steps, first.EndSeconds-first.StartSeconds, window.EndSeconds-window.StartSeconds, policy.MinimumSamplesPerWindow) ||
+			!stableNamedWindows(first.Profiles, window.Profiles, first.EndSeconds-first.StartSeconds, window.EndSeconds-window.StartSeconds, policy.MinimumSamplesPerWindow) {
 			return "INSUFFICIENT_WINDOWS"
 		}
 		expectedStart = window.EndSeconds
@@ -312,8 +404,8 @@ func AssessStability(run report.Result) string {
 	firstDuration := first.EndSeconds - first.StartSeconds
 	for _, window := range run.Windows[1:] {
 		duration := window.EndSeconds - window.StartSeconds
-		if largeWindowDrift(first.Metrics, window.Metrics, firstDuration, duration) ||
-			largeWindowDrift(first.Journeys, window.Journeys, firstDuration, duration) {
+		if largeWindowDrift(first.Metrics, window.Metrics, firstDuration, duration, policy) ||
+			largeWindowDrift(first.Journeys, window.Journeys, firstDuration, duration, policy) {
 			return "NON_STATIONARY"
 		}
 		for _, pair := range []struct{ baseline, observed []report.WindowMetric }{
@@ -325,7 +417,7 @@ func AssessStability(run report.Result) string {
 				byName[entry.Name] = entry.Metrics
 			}
 			for _, entry := range pair.observed {
-				if largeWindowDrift(byName[entry.Name], entry.Metrics, firstDuration, duration) {
+				if largeWindowDrift(byName[entry.Name], entry.Metrics, firstDuration, duration, policy) {
 					return "NON_STATIONARY"
 				}
 			}
@@ -334,8 +426,8 @@ func AssessStability(run report.Result) string {
 	return "NO_LARGE_DRIFT_DETECTED"
 }
 
-func stableScreenMetric(m report.MetricSet) bool {
-	return m.Total >= 20 && m.Success > 0 && m.Success <= m.Total &&
+func stableScreenMetric(m report.MetricSet, minimumSamples int) bool {
+	return m.Total >= minimumSamples && m.Success > 0 && m.Success <= m.Total &&
 		m.Failures == m.Total-m.Success && m.Cancelled == 0 &&
 		!math.IsNaN(m.P95MS) && !math.IsInf(m.P95MS, 0) && m.P95MS >= 0
 }
@@ -343,20 +435,20 @@ func stableScreenMetric(m report.MetricSet) bool {
 // stableNamedWindows requires name uniqueness and at least 20 completed
 // requests/journeys per named series in every compared window. Low-sample
 // minority workflows must not silently disappear into an aggregate PASS.
-func stableNamedWindows(base, observed []report.WindowMetric, baseDuration, duration float64) bool {
+func stableNamedWindows(base, observed []report.WindowMetric, baseDuration, duration float64, minimumSamples int) bool {
 	if baseDuration <= 0 || duration <= 0 || len(base) != len(observed) {
 		return false
 	}
 	names := make(map[string]bool, len(base))
 	for _, item := range base {
-		if item.Name == "" || names[item.Name] || !stableScreenMetric(item.Metrics) {
+		if item.Name == "" || names[item.Name] || !stableScreenMetric(item.Metrics, minimumSamples) {
 			return false
 		}
 		names[item.Name] = true
 	}
 	seen := make(map[string]bool, len(observed))
 	for _, item := range observed {
-		if !names[item.Name] || seen[item.Name] || !stableScreenMetric(item.Metrics) {
+		if !names[item.Name] || seen[item.Name] || !stableScreenMetric(item.Metrics, minimumSamples) {
 			return false
 		}
 		seen[item.Name] = true
@@ -364,10 +456,12 @@ func stableNamedWindows(base, observed []report.WindowMetric, baseDuration, dura
 	return true
 }
 
-func largeWindowDrift(first, observed report.MetricSet, firstDuration, duration float64) bool {
+func largeWindowDrift(first, observed report.MetricSet, firstDuration, duration float64, policy StabilityPolicy) bool {
 	firstRate := float64(first.Total) / firstDuration
 	currentRate := float64(observed.Total) / duration
-	return (observed.P95MS > first.P95MS*1.2 && observed.P95MS-first.P95MS > 5) || currentRate < firstRate*0.8
+	latencyThreshold := first.P95MS * (1 + policy.MaxP95IncreasePercent/100)
+	throughputFloor := firstRate * (1 - policy.MaxThroughputDropPercent/100)
+	return (observed.P95MS > latencyThreshold && observed.P95MS-first.P95MS > policy.MaxP95IncreaseMS) || currentRate < throughputFloor
 }
 
 // ClassifyEvidence separates observed SLO results from invalid delivery and

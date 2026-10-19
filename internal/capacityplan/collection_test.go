@@ -73,6 +73,14 @@ func TestCampaignCollectionRejectsMismatchesInvalidEvidenceAndDuplicateLevels(t 
 		t.Fatalf("mismatched controls must remain visible per level but out of aggregate: %+v %v", assessment, err)
 	}
 	second = auditFixtureAtUsers(4)
+	stricterPolicy := *second.StabilityPolicy
+	stricterPolicy.MaxP95IncreasePercent = 15
+	second.StabilityPolicy = &stricterPolicy
+	assessment, err = BuildCampaignCollectionAssessment([]campaign.Result{first, second}, nil)
+	if err != nil || assessment.State != "NOT_COMPARABLE" {
+		t.Fatalf("different saved drift policies were combined: %+v %v", assessment, err)
+	}
+	second = auditFixtureAtUsers(4)
 	second.Trials[0].Phases[0].Run.SchemaVersion = 10
 	assessment, err = BuildCampaignCollectionAssessment([]campaign.Result{first, second}, nil)
 	if err != nil || assessment.State != "NOT_COMPARABLE" {

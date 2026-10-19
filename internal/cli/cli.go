@@ -278,6 +278,11 @@ func campaignCmd(args []string, stdout, stderr io.Writer) int {
 	spikeDuration := fs.Duration("spike-duration", 0, "optional spike duration (10s-3m)")
 	recovery := fs.Duration("recovery", 30*time.Second, "recovery duration after observation (0s-3m)")
 	soak := fs.Duration("soak", 0, "optional final sustained observation after all repeated trials (10s-3m)")
+	minWindows := fs.Int("stability-min-windows", 3, "minimum complete observation windows for the drift screen (3-20)")
+	minSamples := fs.Int("stability-min-samples", 20, "minimum completed samples in each aggregate and named window (20-100000)")
+	maxP95IncreasePercent := fs.Float64("stability-max-p95-increase-percent", 20, "maximum p95 increase from the first window before drift is reported (>0-100)")
+	maxP95IncreaseMS := fs.Float64("stability-max-p95-increase-ms", 5, "minimum absolute p95 increase in milliseconds before drift is reported (0-10000)")
+	maxThroughputDropPercent := fs.Float64("stability-max-throughput-drop-percent", 20, "maximum throughput decrease from the first window before drift is reported (>0-100)")
 	repeats := fs.Int("repeats", 2, "independent trials (2-5)")
 	budget := fs.Duration("budget", 0, "maximum campaign wall time (up to 15m)")
 	authorized := fs.Bool("authorized", false, "confirm authorization to benchmark the target")
@@ -292,7 +297,8 @@ func campaignCmd(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "--config is required and positional arguments are not accepted")
 		return 2
 	}
-	options := campaign.Options{Warmup: *warmup, Observation: *observation, SpikeUsers: *spikeUsers, SpikeDuration: *spikeDuration, Recovery: *recovery, Soak: *soak, Repeats: *repeats, Budget: *budget}
+	options := campaign.Options{Warmup: *warmup, Observation: *observation, SpikeUsers: *spikeUsers, SpikeDuration: *spikeDuration, Recovery: *recovery, Soak: *soak, Repeats: *repeats, Budget: *budget,
+		Stability: campaign.StabilityPolicy{MinimumWindows: *minWindows, MinimumSamplesPerWindow: *minSamples, MaxP95IncreasePercent: *maxP95IncreasePercent, MaxP95IncreaseMS: *maxP95IncreaseMS, MaxThroughputDropPercent: *maxThroughputDropPercent}}
 	if err := campaign.Validate(options); err != nil {
 		fmt.Fprintf(stderr, "invalid campaign: %v\n", err)
 		return 2
@@ -307,7 +313,12 @@ func campaignCmd(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "configuration error: %v\n", err)
 		return 2
 	}
+	if err := campaign.ValidateForScenario(validated, options); err != nil {
+		fmt.Fprintf(stderr, "invalid campaign: %v\n", err)
+		return 2
+	}
 	fmt.Fprintf(stdout, "Campaign: %s | %s://%s | warm-up %s | observation %s | spike %d VUs for %s | recovery %s | final soak %s | repeats %d | wall-time cap %s\n", validated.Scenario.Name, validated.Base.Scheme, validated.Base.Host, options.Warmup, options.Observation, options.SpikeUsers, options.SpikeDuration, options.Recovery, options.Soak, options.Repeats, campaign.PlannedBudget(options))
+	fmt.Fprintf(stdout, "Drift screen: >=%d windows, >=%d samples/window, p95 increase >%.1f%% and >%.1fms, throughput decrease >%.1f%%\n", options.Stability.MinimumWindows, options.Stability.MinimumSamplesPerWindow, options.Stability.MaxP95IncreasePercent, options.Stability.MaxP95IncreaseMS, options.Stability.MaxThroughputDropPercent)
 	if *dry {
 		for trial := 1; trial <= options.Repeats; trial++ {
 			for _, phase := range campaign.PlannedTrialPhases(options, validated.Scenario.Users, trial) {

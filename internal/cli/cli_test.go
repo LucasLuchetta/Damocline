@@ -80,9 +80,18 @@ func TestJourneyP95DescriptionDoesNotInventLatencyWhenNoneCompleted(t *testing.T
 func TestCampaignDryRunShowsBoundedWallTime(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	path := filepath.Join("..", "..", "examples", "seeded-weighted-readonly.json")
-	code := Run([]string{"campaign", "--config", path, "--warmup", "0s", "--observation", "10s", "--recovery", "10s", "--repeats", "2", "--dry-run"}, &stdout, &stderr)
-	if code != 0 || !strings.Contains(stdout.String(), "wall-time cap 2m40s") || !strings.Contains(stdout.String(), "Trial 1 observation: 10s at 10 VUs") || !strings.Contains(stdout.String(), "Trial 2 recovery: 10s at 10 VUs") || !strings.Contains(stdout.String(), "DRY RUN: no traffic generated") {
+	code := Run([]string{"campaign", "--config", path, "--warmup", "0s", "--observation", "10s", "--recovery", "10s", "--repeats", "2", "--stability-min-windows", "4", "--stability-min-samples", "25", "--stability-max-p95-increase-percent", "15", "--stability-max-p95-increase-ms", "7", "--stability-max-throughput-drop-percent", "10", "--dry-run"}, &stdout, &stderr)
+	if code != 0 || !strings.Contains(stdout.String(), "wall-time cap 2m40s") || !strings.Contains(stdout.String(), "Trial 1 observation: 10s at 10 VUs") || !strings.Contains(stdout.String(), "Trial 2 recovery: 10s at 10 VUs") || !strings.Contains(stdout.String(), "Drift screen: >=4 windows, >=25 samples/window, p95 increase >15.0% and >7.0ms, throughput decrease >10.0%") || !strings.Contains(stdout.String(), "DRY RUN: no traffic generated") {
 		t.Fatalf("campaign preview did not show its effective cap: code=%d out=%s err=%s", code, stdout.String(), stderr.String())
+	}
+}
+
+func TestCampaignRejectsUnachievableStabilityWindowsBeforeDryRun(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	path := filepath.Join("..", "..", "examples", "seeded-weighted-readonly.json")
+	code := Run([]string{"campaign", "--config", path, "--warmup", "0s", "--observation", "10s", "--recovery", "10s", "--repeats", "2", "--stability-min-windows", "5", "--dry-run"}, &stdout, &stderr)
+	if code != 2 || !strings.Contains(stderr.String(), "minimum-windows exceeds") || strings.Contains(stdout.String(), "DRY RUN") {
+		t.Fatalf("unachievable policy reached dry run: code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 	}
 }
 

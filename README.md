@@ -159,12 +159,24 @@ the existing journey and observation-window gates, and counts toward the
 15-minute campaign limit. This short soak is not a long-duration stability
 test or a sustainable-capacity certification.
 
+The campaign drift screen is configurable with bounded `--stability-*` options
+for minimum windows and samples, p95 increase, and throughput loss. Defaults
+retain the existing coarse 3-window, 20-sample, 20%/5 ms p95, and 20% throughput
+screen. Campaign schema v5 saves the effective policy and the offline `plan`
+reader recomputes phase stability from it; schemas v1-v4 retain their historical
+defaults. A screen pass means only that the selected large-drift limits were not
+crossed. It does not prove stationarity or sustained capacity.
+
 The command calculates the demand to validate and reports
 **GOAL_MET_UNDER_TESTED_CONDITIONS** only when a complete, passing, supported-schema
 repeated campaign exercised that exact base VU level and every required phase
 has `VALID_WITHIN_ENVELOPE` data quality, adequate conditional p95/error
 bounds for aggregates, steps and every SLO window, continuous window coverage,
-and variability for every independent trial. Schema-v2/v3 campaigns additionally retain phase classification and a coarse observation-window drift screen, then require the exact saved schedule to reconcile. Schema v3 also records the observed successful journey throughput range. Missing or insufficient evidence
+and variability for every independent trial. Schema-v2 through v5 campaigns
+retain phase classification and a coarse observation-window drift screen, then
+require the exact saved schedule to reconcile. Schema v3 records successful
+journey throughput spread, schema v4 adds the final bounded soak, and schema v5
+persists the configurable drift policy. Missing or insufficient evidence
 returns `INSUFFICIENT_EVIDENCE`; 50 error-free requests cannot substantiate a
 1% error budget at 95% under the stated binomial assumptions. Ordinary external run reports remain `LIMITED` while workload-specific generator equivalence and controlled endpoint identity are unavailable. The local calibrator can qualify only its own fixed loopback soak; that does not certify application capacity. Existing statistical bounds assume independent, stationary
 observations; that assumption is not established, so the result is not a

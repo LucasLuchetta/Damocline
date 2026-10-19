@@ -17,6 +17,7 @@ func auditFixture() campaign.Result {
 }
 
 func auditFixtureAtUsers(users int) campaign.Result {
+	stabilityPolicy := campaign.DefaultStabilityPolicy()
 	phaseRun := func() report.Result {
 		metricSet := func(total int) report.MetricSet {
 			return report.MetricSet{
@@ -48,7 +49,7 @@ func auditFixtureAtUsers(users int) campaign.Result {
 	e := campaign.Result{
 		SchemaVersion: campaign.CurrentSchemaVersion, Scenario: "synthetic", Target: a.Target,
 		BaseUsers: users, Warmup: "0s", Observation: "10s", SpikeDuration: "0s", Recovery: "10s",
-		Budget: "3m20s", Repeats: 2, Outcome: "PASS", Soak: "10s",
+		Budget: "3m20s", Repeats: 2, Outcome: "PASS", Soak: "10s", StabilityPolicy: &stabilityPolicy,
 	}
 	for n := 1; n <= 2; n++ {
 		phases := []campaign.Phase{

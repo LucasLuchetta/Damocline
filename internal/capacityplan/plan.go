@@ -325,6 +325,11 @@ func validateEvidence(evidence campaign.Result) error {
 	if evidence.SchemaVersion < 1 || evidence.SchemaVersion > campaign.CurrentSchemaVersion || evidence.Scenario == "" || evidence.BaseUsers < 1 || evidence.Repeats < 2 || evidence.Repeats > 5 || len(evidence.Trials) == 0 || len(evidence.Trials) > evidence.Repeats {
 		return errors.New("expected a complete supported repeated campaign")
 	}
+	if evidence.SchemaVersion >= 5 {
+		if err := campaign.ValidateStabilityPolicy(evidence.EffectiveStabilityPolicy()); err != nil {
+			return fmt.Errorf("invalid persisted stability policy: %w", err)
+		}
+	}
 	if evidence.Outcome == "PASS" && len(evidence.Trials) != evidence.Repeats {
 		return errors.New("a passing campaign must contain every configured trial")
 	}
@@ -413,7 +418,7 @@ func validatePartialStageEvidence(evidence campaign.Result) error {
 			state, _ := campaign.ClassifyEvidence(phase.Run)
 			stability := ""
 			if phase.Name == "observation" || phase.Name == "soak" {
-				stability = campaign.AssessStability(phase.Run)
+				stability = campaign.AssessStabilityWithPolicy(phase.Run, evidence.EffectiveStabilityPolicy())
 			}
 			if phase.EvidenceState != state || (phase.Name == "observation" || phase.Name == "soak") && phase.Stability != stability {
 				return fmt.Errorf("trial %d has stale or altered %s phase evidence", trial.Number, phase.Name)
@@ -557,7 +562,7 @@ func validateStageEvidence(evidence campaign.Result) error {
 			if phase.EvidenceState != state || phase.EvidenceState == "INVALID_DELIVERY" || (phase.Name != "warmup" && phase.EvidenceState != "PASS_OBSERVED") {
 				return fmt.Errorf("trial %d has inconsistent %s phase classification", i+1, want.Name)
 			}
-			if (phase.Name == "observation" || phase.Name == "soak") && (phase.Stability != "NO_LARGE_DRIFT_DETECTED" || phase.Stability != campaign.AssessStability(phase.Run)) {
+			if (phase.Name == "observation" || phase.Name == "soak") && (phase.Stability != "NO_LARGE_DRIFT_DETECTED" || phase.Stability != campaign.AssessStabilityWithPolicy(phase.Run, evidence.EffectiveStabilityPolicy())) {
 				return fmt.Errorf("trial %d lacks reproducible stable-window evidence", i+1)
 			}
 		}

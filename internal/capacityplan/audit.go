@@ -275,7 +275,7 @@ func AuditCampaign(e campaign.Result) CampaignAudit {
 			quality := report.AssessQuality(phase.Run)
 			stability := ""
 			if phase.Name == "observation" || phase.Name == "soak" {
-				stability = campaign.AssessStability(phase.Run)
+				stability = campaign.AssessStabilityWithPolicy(phase.Run, e.EffectiveStabilityPolicy())
 			}
 			a.Phases = append(a.Phases, PhaseAudit{
 				Trial: trial.Number, Name: phase.Name, EvidenceState: state,
@@ -298,7 +298,7 @@ func AuditCampaign(e campaign.Result) CampaignAudit {
 				a.Findings = append(a.Findings, fmt.Sprintf("Trial %d %s claims %s measurement quality but recomputes to %s.", trial.Number, phase.Name, phase.Run.Quality.State, quality.State))
 			}
 			if e.SchemaVersion >= 2 {
-				if phase.EvidenceState != state || (phase.Name == "observation" && phase.Stability != stability) {
+				if phase.EvidenceState != state || ((phase.Name == "observation" || phase.Name == "soak") && phase.Stability != stability) {
 					invalid = true
 					a.Findings = append(a.Findings, fmt.Sprintf("Trial %d %s has stale or altered stage evidence.", trial.Number, phase.Name))
 				}

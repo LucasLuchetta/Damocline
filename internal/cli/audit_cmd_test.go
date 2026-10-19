@@ -12,10 +12,15 @@ import (
 	"github.com/LucasLuchetta/Damocline/internal/report"
 )
 
+func defaultCampaignStabilityPolicy() *campaign.StabilityPolicy {
+	policy := campaign.DefaultStabilityPolicy()
+	return &policy
+}
+
 func TestAuditCommandIsOfflineAndProducesMachineReadableEvidence(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "campaign.json")
 	out := filepath.Join(t.TempDir(), "audit.json")
-	evidence := campaign.Result{SchemaVersion: campaign.CurrentSchemaVersion,
+	evidence := campaign.Result{SchemaVersion: campaign.CurrentSchemaVersion, StabilityPolicy: defaultCampaignStabilityPolicy(),
 		Scenario: "offline", BaseUsers: 2, Repeats: 2, Outcome: "INCONCLUSIVE",
 		Trials: []campaign.Trial{{Number: 1, Outcome: "INCONCLUSIVE"}, {Number: 2, Outcome: "INCONCLUSIVE"}},
 	}
@@ -70,7 +75,7 @@ func TestAuditCommandRejectsMissingCampaign(t *testing.T) {
 
 func TestAuditCommandRequiresPeakWhenDemandOptionsAreSupplied(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "campaign.json")
-	evidence := campaign.Result{SchemaVersion: campaign.CurrentSchemaVersion, Scenario: "offline", BaseUsers: 2, Repeats: 2, Outcome: "INCONCLUSIVE"}
+	evidence := campaign.Result{SchemaVersion: campaign.CurrentSchemaVersion, Scenario: "offline", BaseUsers: 2, Repeats: 2, Outcome: "INCONCLUSIVE", StabilityPolicy: defaultCampaignStabilityPolicy()}
 	if err := report.WriteAnyJSON(path, evidence); err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +92,7 @@ func TestAuditCommandAcceptsMultipleCampaignsAndKeepsExactDemandUnknown(t *testi
 	out := filepath.Join(directory, "collection.json")
 	for i, path := range []string{firstPath, secondPath} {
 		evidence := campaign.Result{
-			SchemaVersion: campaign.CurrentSchemaVersion, Scenario: "offline", BaseUsers: []int{2, 4}[i],
+			SchemaVersion: campaign.CurrentSchemaVersion, Scenario: "offline", BaseUsers: []int{2, 4}[i], StabilityPolicy: defaultCampaignStabilityPolicy(),
 			Target: "http://127.0.0.1:18080", Warmup: "0s", Observation: "10s", SpikeDuration: "0s", Recovery: "10s", Budget: "2m20s",
 			Repeats: 2, Outcome: "ABORTED", Trials: []campaign.Trial{
 				{Number: 1, Outcome: "ABORTED", AbortReason: "The campaign was interrupted by its caller."},

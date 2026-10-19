@@ -2,6 +2,8 @@ package campaign
 
 import (
 	"context"
+	"encoding/json"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -114,7 +116,7 @@ func TestDefaultCampaignBudgetIncludesBoundedDrain(t *testing.T) {
 	result, err := WithRunner(context.Background(), scenario(t), options, func(_ context.Context, v config.Validated) report.Result {
 		return stableResult(v)
 	})
-	if err != nil || result.Budget != "4m20s" || result.SchemaVersion != CurrentSchemaVersion {
+	if err != nil || result.Budget != "4m20s" || result.SchemaVersion != CurrentSchemaVersion || result.StabilityPolicy == nil || *result.StabilityPolicy != DefaultStabilityPolicy() {
 		t.Fatalf("effective cap or schema missing: %+v %v", result, err)
 	}
 	options.Observation = 7 * time.Minute
@@ -122,6 +124,35 @@ func TestDefaultCampaignBudgetIncludesBoundedDrain(t *testing.T) {
 		t.Fatal("default cap above 15m accepted")
 	}
 }
+
+func TestStabilityPolicySchemaCompatibility(t *testing.T) {
+	current := Result{SchemaVersion: CurrentSchemaVersion, StabilityPolicy: ptrStabilityPolicy(DefaultStabilityPolicy())}
+	encoded, err := json.Marshal(current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded Result
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.StabilityPolicy == nil || *decoded.StabilityPolicy != DefaultStabilityPolicy() {
+		t.Fatalf("schema-v5 stability policy failed JSON round trip: %s", encoded)
+	}
+
+	historical := Result{SchemaVersion: 4}
+	encoded, err = json.Marshal(historical)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(encoded) != `{"schema_version":4,"scenario":"","base_users":0,"target":"","started_at":"","warmup":"","observation":"","recovery":"","repeats":0,"trials":null,"outcome":"","notes":null}` {
+		t.Fatalf("historical campaign unexpectedly gained a stability policy: %s", encoded)
+	}
+	if got := historical.EffectiveStabilityPolicy(); got != DefaultStabilityPolicy() {
+		t.Fatalf("historical campaign lost default screen: %+v", got)
+	}
+}
+
+func ptrStabilityPolicy(policy StabilityPolicy) *StabilityPolicy { return &policy }
 
 func TestSoakBudgetIncludesOneFinalPhaseDrain(t *testing.T) {
 	options := Options{Observation: 10 * time.Second, Recovery: 10 * time.Second, Soak: 30 * time.Second, Repeats: 2}
@@ -166,6 +197,87 @@ func TestStabilityScreenDetectsThroughputLossAndMissingCoverage(t *testing.T) {
 	run.Windows[3].StartSeconds += 0.5
 	if got := AssessStability(run); got != "INSUFFICIENT_WINDOWS" {
 		t.Fatalf("gapped windows: %s", got)
+	}
+}
+
+func TestStabilityPolicyConfiguresLatencyAndWindowEvidence(t *testing.T) {
+	run := stableResult(scenario(t))
+	run.Windows[3].Metrics.P95MS = 115
+	if got := AssessStability(run); got != "NO_LARGE_DRIFT_DETECTED" {
+		t.Fatalf("default policy unexpectedly changed: %s", got)
+	}
+	policy := DefaultStabilityPolicy()
+	policy.MaxP95IncreasePercent = 10
+	if got := AssessStabilityWithPolicy(run, policy); got != "NON_STATIONARY" {
+		t.Fatalf("configured tighter latency threshold was ignored: %s", got)
+	}
+	policy.MaxP95IncreaseMS = 20
+	if got := AssessStabilityWithPolicy(run, policy); got != "NO_LARGE_DRIFT_DETECTED" {
+		t.Fatalf("configured absolute latency floor was ignored: %s", got)
+	}
+	policy = DefaultStabilityPolicy()
+	policy.MinimumWindows = 5
+	if got := AssessStabilityWithPolicy(run, policy); got != "INSUFFICIENT_WINDOWS" {
+		t.Fatalf("configured minimum window count was ignored: %s", got)
+	}
+	rateRun := stableResult(scenario(t))
+	rateRun.Windows[0].Metrics.Total, rateRun.Windows[0].Metrics.Success = 40, 40
+	for i := 1; i < len(rateRun.Windows); i++ {
+		rateRun.Windows[i].Metrics.Total, rateRun.Windows[i].Metrics.Success = 35, 35
+	}
+	if got := AssessStability(rateRun); got != "NO_LARGE_DRIFT_DETECTED" {
+		t.Fatalf("default throughput threshold unexpectedly changed: %s", got)
+	}
+	policy = DefaultStabilityPolicy()
+	policy.MaxThroughputDropPercent = 10
+	if got := AssessStabilityWithPolicy(rateRun, policy); got != "NON_STATIONARY" {
+		t.Fatalf("configured throughput threshold was ignored: %s", got)
+	}
+}
+
+func TestCampaignPersistsConfiguredStabilityAndStopsOnItsThreshold(t *testing.T) {
+	policy := DefaultStabilityPolicy()
+	policy.MaxP95IncreasePercent = 10
+	result, err := WithRunner(context.Background(), scenario(t), Options{Observation: 10 * time.Second, Repeats: 2, Stability: policy}, func(_ context.Context, v config.Validated) report.Result {
+		run := stableResult(v)
+		run.Windows[3].Metrics.P95MS = 115
+		return run
+	})
+	if err != nil || result.Outcome != "INCONCLUSIVE" || result.StabilityPolicy == nil || *result.StabilityPolicy != policy || len(result.Trials) != 1 || result.Trials[0].Phases[0].Stability != "NON_STATIONARY" {
+		t.Fatalf("campaign did not apply and persist configured drift limits: %+v %v", result, err)
+	}
+}
+
+func TestStabilityPolicyValidationIsBounded(t *testing.T) {
+	base := DefaultStabilityPolicy()
+	for name, mutate := range map[string]func(*StabilityPolicy){
+		"too few windows":      func(p *StabilityPolicy) { p.MinimumWindows = 2 },
+		"too many windows":     func(p *StabilityPolicy) { p.MinimumWindows = 21 },
+		"too few samples":      func(p *StabilityPolicy) { p.MinimumSamplesPerWindow = 19 },
+		"negative p95 floor":   func(p *StabilityPolicy) { p.MaxP95IncreaseMS = -1 },
+		"non-finite threshold": func(p *StabilityPolicy) { p.MaxP95IncreasePercent = math.Inf(1) },
+		"zero throughput drop": func(p *StabilityPolicy) { p.MaxThroughputDropPercent = 0 },
+	} {
+		t.Run(name, func(t *testing.T) {
+			policy := base
+			mutate(&policy)
+			if err := ValidateStabilityPolicy(policy); err == nil {
+				t.Fatalf("invalid stability policy accepted: %+v", policy)
+			}
+		})
+	}
+}
+
+func TestValidateForScenarioRequiresEnoughDeclaredWindows(t *testing.T) {
+	base := scenario(t)
+	options := Options{Observation: 10 * time.Second, Repeats: 2}
+	if err := ValidateForScenario(base, options); err != nil {
+		t.Fatalf("default generated window coverage rejected: %v", err)
+	}
+	options.Stability = DefaultStabilityPolicy()
+	options.Stability.MinimumWindows = 5
+	if err := ValidateForScenario(base, options); err == nil {
+		t.Fatal("unachievable minimum window count accepted before traffic")
 	}
 }
 

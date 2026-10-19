@@ -284,6 +284,25 @@ func TestSchemaFourRequiresFinalSoakEvidence(t *testing.T) {
 	}
 }
 
+func TestSchemaFiveRecomputesPersistedStabilityPolicy(t *testing.T) {
+	evidence := auditFixture()
+	observation := &evidence.Trials[0].Phases[0]
+	observation.Run.Windows[3].Metrics.P95MS = 115
+	if err := validateEvidence(evidence); err != nil {
+		t.Fatalf("default policy evidence should remain stable at this drift: %v", err)
+	}
+	evidence.StabilityPolicy.MaxP95IncreasePercent = 10
+	if err := validateEvidence(evidence); err == nil {
+		t.Fatal("campaign with drift under its saved stricter policy was accepted")
+	}
+	defaultPolicy := campaign.DefaultStabilityPolicy()
+	evidence.StabilityPolicy = &defaultPolicy
+	evidence.StabilityPolicy.MinimumSamplesPerWindow = 21
+	if err := validateEvidence(evidence); err == nil {
+		t.Fatal("schema-v5 campaign with invalid saved window threshold was accepted")
+	}
+}
+
 func TestWeightedProfilesRequirePerWindowJourneyEvidence(t *testing.T) {
 	evidence := campaign.Result{SchemaVersion: 1, Scenario: "synthetic", Outcome: "PASS", BaseUsers: 10, Repeats: 2, Trials: passingTrials(), ObservationVariability: validVariability()}
 	for trialIndex := range evidence.Trials {
