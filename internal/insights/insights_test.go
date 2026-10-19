@@ -654,6 +654,10 @@ func TestSupportedReportSchemaGoldensRoundTrip(t *testing.T) {
 				if got.ApplicationMetrics == nil || got.ApplicationMetrics.State() != "COLLECTED" || got.ApplicationMetrics.Samples[0].Samples[0].Name != "queue_depth" {
 					t.Fatal("schema-v25 application-metrics timeline was not preserved")
 				}
+			case 28:
+				if got.Config.MaxConnectionsPerHost != 1 {
+					t.Fatal("schema-v28 per-host connection limit was not preserved")
+				}
 			}
 		})
 	}

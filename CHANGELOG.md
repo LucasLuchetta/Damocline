@@ -4,6 +4,8 @@ This project follows a human-maintained changelog. No release exists yet.
 
 ## [Unreleased]
 
+- Add an optional per-host connection cap and schema-v28 transport acquisition diagnostics. A delayed reused-connection acquisition is surfaced as a client-side queue symptom without claiming proven pool exhaustion.
+
 - Add explicit scenario version 1 with named workflows and a non-overwriting `migrate-scenario` command that converts legacy flat steps or weighted profiles while preserving the source file.
 
 - Validate configured session cookies as non-empty, uniquely named `name=value` sets before counting them as independent workflow sessions; cookie values remain in-memory only.

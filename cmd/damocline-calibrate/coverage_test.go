@@ -98,6 +98,17 @@ func TestOfflineConnectionPolicyOutsideReferenceIsExplicit(t *testing.T) {
 	findDimension(t, got, "connection_policy", coverageOutside)
 }
 
+func TestOfflineExplicitConnectionCapIsOutsideReference(t *testing.T) {
+	scenario := referenceShapedScenario()
+	scenario.MaxConnectionsPerHost = 1
+	got := compareScenarioToReference(scenario, validCoverageCalibration(t, true), nil)
+	if got.Status != "INCONCLUSIVE" || got.Shape == "DECLARED_SHAPE_RESEMBLES_REFERENCE" {
+		t.Fatalf("explicit client connection cap must not be qualified by the default transport matrix: %+v", got)
+	}
+	findDimension(t, got, "declared_workload_shape", coverageOutside)
+	findDimension(t, got, "connection_policy", coverageOutside)
+}
+
 func TestUnobservedRateMustNotInterpolateOrBorrowExtendedEnvelope(t *testing.T) {
 	for _, tc := range []struct {
 		rate     int

@@ -276,6 +276,9 @@ func compareScenarioToReference(s config.Scenario, a assessment, calibrationErr 
 }
 
 func exactProfileControlsMatch(profiles []calibration.WorkloadProfile, s config.Scenario, connectionPolicy string) bool {
+	if s.MaxConnectionsPerHost != 0 {
+		return false
+	}
 	for _, profile := range profiles {
 		if profile.ArrivalRate == s.ArrivalRate && profile.MaxRPS == s.MaxRPS && profile.Users == s.Users &&
 			profile.Duration == s.Duration && profile.Timeout == s.Timeout && profile.ConnectionPolicy == connectionPolicy {

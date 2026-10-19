@@ -38,32 +38,33 @@ type Calibration struct {
 }
 
 type Workload struct {
-	Mode               string  `json:"mode,omitempty"`
-	VirtualUsers       int     `json:"virtual_users,omitempty"`
-	JourneyStartsPS    int     `json:"scheduled_journey_starts_per_second,omitempty"`
-	WorkerLimit        int     `json:"journey_worker_limit,omitempty"`
-	RequestCeiling     int     `json:"max_request_starts_per_second,omitempty"`
-	P95LimitMS         float64 `json:"p95_limit_ms,omitempty"`
-	MaxErrorRate       float64 `json:"max_error_rate,omitempty"`
-	Observation        string  `json:"observation_duration,omitempty"`
-	Warmup             string  `json:"warmup_duration,omitempty"`
-	SpikeDuration      string  `json:"spike_duration,omitempty"`
-	Recovery           string  `json:"recovery_duration,omitempty"`
-	Soak               string  `json:"soak_duration,omitempty"`
-	Cooldown           string  `json:"cooldown_duration,omitempty"`
-	Repeats            int     `json:"repeats,omitempty"`
-	WindowDuration     string  `json:"observation_window,omitempty"`
-	ConnectionPolicy   string  `json:"connection_policy,omitempty"`
-	LoadUnit           string  `json:"load_unit,omitempty"`
-	MinimumLoad        int     `json:"minimum_tested_load,omitempty"`
-	MaximumLoad        int     `json:"maximum_tested_load,omitempty"`
-	TargetLoad         int     `json:"exact_target_load,omitempty"`
-	TargetTested       bool    `json:"exact_target_tested,omitempty"`
-	HighestPassingLoad *int    `json:"highest_passing_tested_load,omitempty"`
-	FirstFailingLoad   *int    `json:"first_failing_tested_load,omitempty"`
-	RequestedMinimum   int     `json:"requested_minimum_load,omitempty"`
-	RequestedMaximum   int     `json:"requested_maximum_load,omitempty"`
-	CalibratedLoads    []int   `json:"calibrated_probe_loads,omitempty"`
+	Mode                  string  `json:"mode,omitempty"`
+	VirtualUsers          int     `json:"virtual_users,omitempty"`
+	JourneyStartsPS       int     `json:"scheduled_journey_starts_per_second,omitempty"`
+	WorkerLimit           int     `json:"journey_worker_limit,omitempty"`
+	RequestCeiling        int     `json:"max_request_starts_per_second,omitempty"`
+	P95LimitMS            float64 `json:"p95_limit_ms,omitempty"`
+	MaxErrorRate          float64 `json:"max_error_rate,omitempty"`
+	Observation           string  `json:"observation_duration,omitempty"`
+	Warmup                string  `json:"warmup_duration,omitempty"`
+	SpikeDuration         string  `json:"spike_duration,omitempty"`
+	Recovery              string  `json:"recovery_duration,omitempty"`
+	Soak                  string  `json:"soak_duration,omitempty"`
+	Cooldown              string  `json:"cooldown_duration,omitempty"`
+	Repeats               int     `json:"repeats,omitempty"`
+	WindowDuration        string  `json:"observation_window,omitempty"`
+	ConnectionPolicy      string  `json:"connection_policy,omitempty"`
+	MaxConnectionsPerHost int     `json:"max_connections_per_host,omitempty"`
+	LoadUnit              string  `json:"load_unit,omitempty"`
+	MinimumLoad           int     `json:"minimum_tested_load,omitempty"`
+	MaximumLoad           int     `json:"maximum_tested_load,omitempty"`
+	TargetLoad            int     `json:"exact_target_load,omitempty"`
+	TargetTested          bool    `json:"exact_target_tested,omitempty"`
+	HighestPassingLoad    *int    `json:"highest_passing_tested_load,omitempty"`
+	FirstFailingLoad      *int    `json:"first_failing_tested_load,omitempty"`
+	RequestedMinimum      int     `json:"requested_minimum_load,omitempty"`
+	RequestedMaximum      int     `json:"requested_maximum_load,omitempty"`
+	CalibratedLoads       []int   `json:"calibrated_probe_loads,omitempty"`
 }
 
 type Probe struct {
@@ -86,27 +87,28 @@ type Phase struct {
 }
 
 type Run struct {
-	Outcome            string      `json:"outcome"`
-	ElapsedSeconds     float64     `json:"elapsed_seconds"`
-	ObservationSeconds float64     `json:"observation_seconds,omitempty"`
-	Mode               string      `json:"mode"`
-	VirtualUsers       int         `json:"virtual_users"`
-	JourneyStartsPS    int         `json:"scheduled_journey_starts_per_second,omitempty"`
-	RequestCeiling     int         `json:"max_request_starts_per_second"`
-	P95LimitMS         float64     `json:"p95_limit_ms"`
-	MaxErrorRate       float64     `json:"max_error_rate"`
-	ConnectionPolicy   string      `json:"connection_policy,omitempty"`
-	ProfileSelection   string      `json:"profile_selection,omitempty"`
-	Metrics            Metrics     `json:"requests"`
-	Journeys           Metrics     `json:"completed_journeys"`
-	Steps              []Step      `json:"steps,omitempty"`
-	Profiles           []Profile   `json:"workflows,omitempty"`
-	Windows            []Window    `json:"windows,omitempty"`
-	Arrivals           *Arrivals   `json:"arrival_accounting,omitempty"`
-	Scheduler          *Scheduler  `json:"scheduler,omitempty"`
-	Generator          *Generator  `json:"generator,omitempty"`
-	ApplicationMetrics *AppMetrics `json:"application_metrics,omitempty"`
-	MeasurementQuality string      `json:"measurement_quality,omitempty"`
+	Outcome               string      `json:"outcome"`
+	ElapsedSeconds        float64     `json:"elapsed_seconds"`
+	ObservationSeconds    float64     `json:"observation_seconds,omitempty"`
+	Mode                  string      `json:"mode"`
+	VirtualUsers          int         `json:"virtual_users"`
+	JourneyStartsPS       int         `json:"scheduled_journey_starts_per_second,omitempty"`
+	RequestCeiling        int         `json:"max_request_starts_per_second"`
+	P95LimitMS            float64     `json:"p95_limit_ms"`
+	MaxErrorRate          float64     `json:"max_error_rate"`
+	ConnectionPolicy      string      `json:"connection_policy,omitempty"`
+	MaxConnectionsPerHost int         `json:"max_connections_per_host,omitempty"`
+	ProfileSelection      string      `json:"profile_selection,omitempty"`
+	Metrics               Metrics     `json:"requests"`
+	Journeys              Metrics     `json:"completed_journeys"`
+	Steps                 []Step      `json:"steps,omitempty"`
+	Profiles              []Profile   `json:"workflows,omitempty"`
+	Windows               []Window    `json:"windows,omitempty"`
+	Arrivals              *Arrivals   `json:"arrival_accounting,omitempty"`
+	Scheduler             *Scheduler  `json:"scheduler,omitempty"`
+	Generator             *Generator  `json:"generator,omitempty"`
+	ApplicationMetrics    *AppMetrics `json:"application_metrics,omitempty"`
+	MeasurementQuality    string      `json:"measurement_quality,omitempty"`
 }
 
 type Metrics struct {
@@ -131,10 +133,12 @@ type Metrics struct {
 }
 
 type Step struct {
-	ID      string  `json:"id"`
-	Method  string  `json:"method"`
-	Cleanup bool    `json:"cleanup,omitempty"`
-	Metrics Metrics `json:"metrics"`
+	ID                  string  `json:"id"`
+	Method              string  `json:"method"`
+	Cleanup             bool    `json:"cleanup,omitempty"`
+	Metrics             Metrics `json:"metrics"`
+	ConnectionWaitCount int     `json:"connection_wait_count,omitempty"`
+	ConnectionWaitMS    float64 `json:"connection_wait_ms,omitempty"`
 }
 
 type Profile struct {
@@ -202,7 +206,7 @@ func FromRun(r report.Result) Evidence {
 	return Evidence{Format: Format, Kind: "run", Outcome: safeOutcome(r.Outcome), Workload: Workload{
 		Mode: safeMode(r.Config.Mode), VirtualUsers: r.Config.Users, JourneyStartsPS: r.Config.ArrivalRate,
 		RequestCeiling: r.Config.MaxRPS, P95LimitMS: r.Config.P95LimitMS, MaxErrorRate: r.Config.MaxErrorRate,
-		Observation: safeDuration(r.Config.Duration), WindowDuration: safeDuration(r.Config.WindowDuration), ConnectionPolicy: safeConnectionPolicy(r.Config.ConnectionPolicy),
+		Observation: safeDuration(r.Config.Duration), WindowDuration: safeDuration(r.Config.WindowDuration), ConnectionPolicy: safeConnectionPolicy(r.Config.ConnectionPolicy), MaxConnectionsPerHost: r.Config.MaxConnectionsPerHost,
 		LoadUnit: safeLoadUnit(r.Config.Mode),
 	}, Run: redactRun(r)}
 }
@@ -313,10 +317,10 @@ func redactRun(r report.Result) *Run {
 	out := &Run{Outcome: safeOutcome(r.Outcome), ElapsedSeconds: r.ElapsedSeconds, ObservationSeconds: r.ObservationSeconds,
 		Mode: safeMode(r.Config.Mode), VirtualUsers: r.Config.Users, JourneyStartsPS: r.Config.ArrivalRate,
 		RequestCeiling: r.Config.MaxRPS, P95LimitMS: r.Config.P95LimitMS, MaxErrorRate: r.Config.MaxErrorRate,
-		ConnectionPolicy: safeConnectionPolicy(r.Config.ConnectionPolicy), ProfileSelection: safeProfileSelection(r.Config.ProfileSelection), Metrics: safeMetrics(r.Metrics), Journeys: safeMetrics(r.Journeys)}
+		ConnectionPolicy: safeConnectionPolicy(r.Config.ConnectionPolicy), MaxConnectionsPerHost: r.Config.MaxConnectionsPerHost, ProfileSelection: safeProfileSelection(r.Config.ProfileSelection), Metrics: safeMetrics(r.Metrics), Journeys: safeMetrics(r.Journeys)}
 	for _, s := range r.Steps {
 		key := stepKey(s.Profile, s.Name)
-		out.Steps = append(out.Steps, Step{ID: stepIDs[key], Method: safeMethod(s.Method), Cleanup: s.Cleanup, Metrics: safeMetrics(s.Metrics)})
+		out.Steps = append(out.Steps, Step{ID: stepIDs[key], Method: safeMethod(s.Method), Cleanup: s.Cleanup, Metrics: safeMetrics(s.Metrics), ConnectionWaitCount: s.HTTPTrace.ConnectionWaitCount, ConnectionWaitMS: s.HTTPTrace.ConnectionWaitMS})
 	}
 	for _, p := range r.Profiles {
 		out.Profiles = append(out.Profiles, Profile{ID: profileIDs[p.Name], Weight: p.Weight, SelectedStarts: p.SelectedStarts, ActorsObserved: p.ActorsObserved, Journeys: safeMetrics(p.Journeys)})

@@ -83,6 +83,14 @@ func AssessQuality(r Result) *Quality {
 	if r.SchemaVersion >= 20 && !validFailureClassificationEvidence(r) {
 		invalidate("HTTP failure-classification evidence is missing or inconsistent for schema 20.")
 	}
+	if r.Config.MaxConnectionsPerHost < 0 || r.Config.MaxConnectionsPerHost > 100 {
+		invalidate("Configured per-host connection limit is outside its supported range.")
+	}
+	if r.SchemaVersion < 28 {
+		if r.Config.MaxConnectionsPerHost != 0 {
+			invalidate("Pre-v28 reports cannot carry a per-host connection limit.")
+		}
+	}
 	if r.SchemaVersion >= 26 {
 		wantSelection := ""
 		if len(r.Config.Profiles) > 0 {
@@ -326,6 +334,10 @@ func AssessQuality(r Result) *Quality {
 		t := s.HTTPTrace
 		if !validHTTPTrace(t) {
 			invalidate("HTTP client phase timing counters or totals are invalid.")
+			break
+		}
+		if r.SchemaVersion < 28 && (t.ConnectionAcquireCount != 0 || t.ConnectionAcquireMS != 0 || t.ConnectionReusedCount != 0 || t.ConnectionWaitCount != 0 || t.ConnectionWaitMS != 0) {
+			invalidate("Pre-v28 reports cannot carry connection-acquisition observations.")
 			break
 		}
 		if t.CompleteCount != t.RequestAttemptCount {
@@ -990,19 +1002,19 @@ func validWindowProfileTotals(r Result) bool {
 }
 
 func validHTTPTrace(t HTTPTrace) bool {
-	counts := []int{t.RequestAttemptCount, t.WriteCount, t.WriteFailedCount, t.DNSStartCount, t.RateWaitCount, t.RateWaitCancelledCount, t.DNSCount, t.ConnectCount, t.ConnectStartCount, t.TLSCount, t.TLSStartCount, t.FirstByteCount, t.BodyCount, t.BodyIncompleteCount, t.CompleteCount}
+	counts := []int{t.RequestAttemptCount, t.WriteCount, t.WriteFailedCount, t.DNSStartCount, t.RateWaitCount, t.RateWaitCancelledCount, t.DNSCount, t.ConnectCount, t.ConnectStartCount, t.ConnectionAcquireCount, t.ConnectionReusedCount, t.ConnectionWaitCount, t.TLSCount, t.TLSStartCount, t.FirstByteCount, t.BodyCount, t.BodyIncompleteCount, t.CompleteCount}
 	for _, count := range counts {
 		if count < 0 {
 			return false
 		}
 	}
-	values := []float64{t.WriteMS, t.RateWaitMS, t.DNSMS, t.ConnectMS, t.TLSMS, t.FirstByteMS, t.BodyMS, t.CompleteMS}
+	values := []float64{t.WriteMS, t.RateWaitMS, t.DNSMS, t.ConnectMS, t.ConnectionAcquireMS, t.ConnectionWaitMS, t.TLSMS, t.FirstByteMS, t.BodyMS, t.CompleteMS}
 	for _, value := range values {
 		if math.IsNaN(value) || math.IsInf(value, 0) || value < 0 {
 			return false
 		}
 	}
-	return t.RequestAttemptCount == t.CompleteCount && t.WriteCount <= t.CompleteCount && t.WriteFailedCount <= t.CompleteCount-t.WriteCount && t.FirstByteCount <= t.CompleteCount && t.BodyCount <= t.FirstByteCount && t.BodyIncompleteCount == t.FirstByteCount-t.BodyCount && t.DNSCount <= t.DNSStartCount && t.ConnectCount <= t.ConnectStartCount && t.TLSCount <= t.TLSStartCount
+	return t.RequestAttemptCount == t.CompleteCount && t.WriteCount <= t.CompleteCount && t.WriteFailedCount <= t.CompleteCount-t.WriteCount && t.FirstByteCount <= t.CompleteCount && t.BodyCount <= t.FirstByteCount && t.BodyIncompleteCount == t.FirstByteCount-t.BodyCount && t.DNSCount <= t.DNSStartCount && t.ConnectCount <= t.ConnectStartCount && t.ConnectionReusedCount <= t.ConnectionAcquireCount && t.ConnectionWaitCount <= t.ConnectionReusedCount && t.TLSCount <= t.TLSStartCount
 }
 
 func validHTTPDiagnostics(d HTTPDiagnostics, completed, cancelled int) bool {
