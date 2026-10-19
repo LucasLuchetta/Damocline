@@ -185,7 +185,11 @@ func campaignProfileRun(args []string, store campaignprofile.Store, stdout, stde
 	}
 	path := data.Name()
 	defer os.Remove(path)
-	_ = data.Chmod(0600)
+	if err := data.Chmod(0600); err != nil {
+		data.Close()
+		fmt.Fprintf(stderr, "scenario temp file permission error: %v\n", err)
+		return 2
+	}
 	if err := jsonEncodeScenario(data, profile.Scenario); err != nil {
 		data.Close()
 		fmt.Fprintf(stderr, "scenario encode error: %v\n", err)
@@ -206,7 +210,7 @@ func campaignProfileRun(args []string, store campaignprofile.Store, stdout, stde
 	if o.LongRun {
 		argsOut = append(argsOut, "--allow-long-run")
 	}
-	if *staging {
+	if *staging || (o.LongRun && *dry) {
 		argsOut = append(argsOut, "--staging-confirmed")
 	}
 	if *authorized {

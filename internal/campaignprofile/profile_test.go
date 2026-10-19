@@ -77,6 +77,37 @@ func TestSecretsMustRemainExternalReferences(t *testing.T) {
 	if err := ValidateScenarioSecrets(p.Scenario); err != nil {
 		t.Fatal(err)
 	}
+	workflowScenario := config.Scenario{
+		ScenarioVersion: config.CurrentScenarioVersion,
+		BaseURL:         "http://127.0.0.1:8080",
+		Workflows: []config.Profile{{Name: "read", Weight: 1, Steps: []config.Step{{
+			Name: "health", Method: "GET", Path: "/", Headers: map[string]string{"Authorization": "Bearer abc"},
+		}}}},
+	}
+	if _, err := New("versioned-secret", "", workflowScenario, campaign.Options{Observation: 10 * time.Second, Repeats: 2}); err == nil {
+		t.Fatal("accepted literal credential in a versioned workflow profile")
+	}
+	workflowScenario.Workflows[0].Steps[0].Headers["Authorization"] = "${DAMOCLINE_TOKEN}"
+	if _, err := New("versioned-secret", "", workflowScenario, campaign.Options{Observation: 10 * time.Second, Repeats: 2}); err != nil {
+		t.Fatalf("rejected environment-backed workflow credential: %v", err)
+	}
+}
+
+func TestPublishedCampaignProfileExampleIsRunnable(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "examples", "campaign-profile-v1.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile, _, err := Decode(data)
+	if err != nil {
+		t.Fatalf("decode example profile: %v", err)
+	}
+	if _, err := config.Parse(profile.Scenario, config.Options{Authorized: true}); err != nil {
+		t.Fatalf("example scenario cannot be used by the runner: %v", err)
+	}
+	if _, err := profile.CampaignOptions(); err != nil {
+		t.Fatalf("example campaign controls are invalid: %v", err)
+	}
 }
 
 func TestStorePrivateReplaceMigrateAndDelete(t *testing.T) {

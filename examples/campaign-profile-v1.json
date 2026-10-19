@@ -15,8 +15,14 @@
     "max_rps": 10,
     "p95_limit_ms": 1000,
     "max_error_rate": 0.01,
-    "steps": [
-      { "name": "health", "method": "GET", "path": "/health" }
+    "workflows": [
+      {
+        "name": "health",
+        "weight": 1,
+        "steps": [
+          { "name": "health", "method": "GET", "path": "/health" }
+        ]
+      }
     ]
   },
   "options": {

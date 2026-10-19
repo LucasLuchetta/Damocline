@@ -143,8 +143,11 @@ func ValidateScenarioSecrets(s config.Scenario) error {
 	if err != nil || base.User != nil || strings.ContainsAny(s.BaseURL, "\r\n") {
 		return errors.New("campaign profile base_url must not contain credentials or control characters")
 	}
-	workflows := make([][]config.Step, 0, len(s.Profiles)+1)
+	workflows := make([][]config.Step, 0, len(s.Workflows)+len(s.Profiles)+1)
 	workflows = append(workflows, s.Steps)
+	for _, workflow := range s.Workflows {
+		workflows = append(workflows, workflow.Steps)
+	}
 	for _, profile := range s.Profiles {
 		workflows = append(workflows, profile.Steps)
 	}
