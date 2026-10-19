@@ -5,6 +5,7 @@ package arrivalexplorer
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -17,12 +18,15 @@ import (
 const generatorUtilizationGuard = 0.90
 
 type Options struct {
-	MinJourneysPerSecond    int
-	MaxJourneysPerSecond    int
-	TargetJourneysPerSecond int
-	Repeats                 int
-	StageDuration           time.Duration
-	Budget                  time.Duration
+	MinJourneysPerSecond          int
+	MaxJourneysPerSecond          int
+	TargetJourneysPerSecond       int
+	Repeats                       int
+	StageDuration                 time.Duration
+	Budget                        time.Duration
+	ProbeRates                    []int
+	RequestedMinJourneysPerSecond int
+	RequestedMaxJourneysPerSecond int
 }
 
 type Probe struct {
@@ -50,6 +54,9 @@ type Result struct {
 	Reason                          string   `json:"reason,omitempty"`
 	Probes                          []Probe  `json:"probes"`
 	Notes                           []string `json:"notes"`
+	RequestedMinJourneysPerSecond   int      `json:"requested_min_scheduled_starts_per_second,omitempty"`
+	RequestedMaxJourneysPerSecond   int      `json:"requested_max_scheduled_starts_per_second,omitempty"`
+	CalibratedProbeRates            []int    `json:"calibrated_probe_rates,omitempty"`
 }
 
 type Runner func(context.Context, config.Validated) report.Result
@@ -72,6 +79,23 @@ func Validate(o Options, s config.Scenario) error {
 	}
 	if o.Budget != 0 && (o.Budget < o.StageDuration+30*time.Second || o.Budget > 15*time.Minute) {
 		return fmt.Errorf("budget must cover one stage plus the engine's maximum bounded drain allowance and be at most 15m")
+	}
+	if len(o.ProbeRates) > 0 {
+		if o.RequestedMinJourneysPerSecond < 1 || o.RequestedMaxJourneysPerSecond < o.RequestedMinJourneysPerSecond ||
+			o.RequestedMaxJourneysPerSecond > 100 || o.ProbeRates[0] < o.RequestedMinJourneysPerSecond ||
+			o.ProbeRates[len(o.ProbeRates)-1] > o.RequestedMaxJourneysPerSecond ||
+			o.ProbeRates[0] != o.MinJourneysPerSecond || o.ProbeRates[len(o.ProbeRates)-1] != o.MaxJourneysPerSecond {
+			return fmt.Errorf("calibrated probe rates must include both effective exploration bounds")
+		}
+		for i, rate := range o.ProbeRates {
+			if rate < o.MinJourneysPerSecond || rate > o.MaxJourneysPerSecond || i > 0 && rate <= o.ProbeRates[i-1] {
+				return fmt.Errorf("calibrated probe rates must be unique, ascending, and within the effective bounds")
+			}
+		}
+		if o.TargetJourneysPerSecond > 0 && o.TargetJourneysPerSecond >= o.MinJourneysPerSecond &&
+			o.TargetJourneysPerSecond <= o.MaxJourneysPerSecond && !containsRate(o.ProbeRates, o.TargetJourneysPerSecond) {
+			return fmt.Errorf("an in-range exact target must have an exact calibrated probe profile")
+		}
 	}
 	maxSteps := 0
 	if len(s.Profiles) > 0 {
@@ -117,6 +141,13 @@ func WithRunner(parent context.Context, base config.Validated, opt Options, runn
 			"Dropped/cancelled starts, generator pressure, or a binding client request-rate ceiling make a probe inconclusive rather than an application failure.",
 		},
 	}
+	if len(opt.ProbeRates) > 0 {
+		result.SchemaVersion = 2
+		result.RequestedMinJourneysPerSecond = opt.RequestedMinJourneysPerSecond
+		result.RequestedMaxJourneysPerSecond = opt.RequestedMaxJourneysPerSecond
+		result.CalibratedProbeRates = append([]int(nil), opt.ProbeRates...)
+		result.Notes = append(result.Notes, "This search probes only exact local generator calibration profiles. The recorded effective ceiling may be below the requested maximum; passing the calibrated ceiling does not establish the uncalibrated remainder.")
+	}
 
 	probe := func(rate int) string {
 		p := Probe{JourneysPerSecond: rate, Status: "PASS_OBSERVED", Runs: []report.Result{}}
@@ -150,7 +181,9 @@ func WithRunner(parent context.Context, base config.Validated, opt Options, runn
 	}
 
 	low, high := 0, 0
+	lowIndex, highIndex := -1, -1
 	candidate := opt.MinJourneysPerSecond
+	candidateIndex := 0
 	for {
 		status := probe(candidate)
 		if status == "ABORTED" || status == "INVALID_DELIVERY" || status == "INSUFFICIENT_EVIDENCE" {
@@ -160,6 +193,7 @@ func WithRunner(parent context.Context, base config.Validated, opt Options, runn
 		}
 		if status == "FAIL_OBSERVED" {
 			high = candidate
+			highIndex = candidateIndex
 			if low == 0 {
 				result.FirstFailingJourneysPerSecond = &high
 				result.Outcome = "NO_PASSING_RATE"
@@ -168,6 +202,7 @@ func WithRunner(parent context.Context, base config.Validated, opt Options, runn
 			break
 		}
 		low = candidate
+		lowIndex = candidateIndex
 		if candidate == opt.MaxJourneysPerSecond {
 			result.HighestPassingJourneysPerSecond = &low
 			result.Outcome = "PASSED_TO_CONFIGURED_CEILING"
@@ -177,16 +212,29 @@ func WithRunner(parent context.Context, base config.Validated, opt Options, runn
 		if opt.TargetJourneysPerSecond > candidate && opt.TargetJourneysPerSecond < next && opt.TargetJourneysPerSecond <= opt.MaxJourneysPerSecond {
 			next = opt.TargetJourneysPerSecond
 		}
+		if len(opt.ProbeRates) > 0 {
+			candidateIndex = nextRateIndex(opt.ProbeRates, next, candidateIndex+1)
+			if candidateIndex < 0 {
+				result.HighestPassingJourneysPerSecond = &low
+				result.Outcome = "PASSED_TO_CONFIGURED_CEILING"
+				return result, nil
+			}
+			next = opt.ProbeRates[candidateIndex]
+		}
 		candidate = next
 	}
 
-	for high-low > 1 {
+	for (len(opt.ProbeRates) == 0 && high-low > 1) || (len(opt.ProbeRates) > 0 && highIndex-lowIndex > 1) {
 		if ctx.Err() != nil {
 			result.Outcome = "ABORTED"
 			result.Reason = abortReason(ctx.Err())
 			return result, nil
 		}
 		mid := low + (high-low)/2
+		if len(opt.ProbeRates) > 0 {
+			candidateIndex = lowIndex + (highIndex-lowIndex)/2
+			mid = opt.ProbeRates[candidateIndex]
+		}
 		status := probe(mid)
 		if status == "ABORTED" || status == "INVALID_DELIVERY" || status == "INSUFFICIENT_EVIDENCE" {
 			result.Outcome = status
@@ -195,14 +243,36 @@ func WithRunner(parent context.Context, base config.Validated, opt Options, runn
 		}
 		if status == "PASS_OBSERVED" {
 			low = mid
+			if len(opt.ProbeRates) > 0 {
+				lowIndex = candidateIndex
+			}
 		} else {
 			high = mid
+			if len(opt.ProbeRates) > 0 {
+				highIndex = candidateIndex
+			}
 		}
 	}
 	result.HighestPassingJourneysPerSecond = &low
 	result.FirstFailingJourneysPerSecond = &high
 	result.Outcome = "BRACKETED"
 	return result, nil
+}
+
+func containsRate(rates []int, target int) bool {
+	index := sort.SearchInts(rates, target)
+	return index < len(rates) && rates[index] == target
+}
+
+func nextRateIndex(rates []int, minimum, after int) int {
+	index := sort.SearchInts(rates, minimum)
+	if index < after {
+		index = after
+	}
+	if index >= len(rates) {
+		return -1
+	}
+	return index
 }
 
 func classify(r report.Result, scenario config.Validated) (string, string) {

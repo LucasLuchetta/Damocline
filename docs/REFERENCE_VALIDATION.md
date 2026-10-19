@@ -76,9 +76,11 @@ and spike rate before starting phases. Missing, stale, malformed, runtime
 mismatched, or non-exact coverage blocks traffic. The campaign dry-run performs
 the same check. These gates assess local fixture delivery only. They do not
 verify remote host identity, target response behavior or campaign-duration
-headroom; ordinary target reports remain LIMITED. Without the campaign option,
-no calibration gate is applied. Closed-loop campaigns and arrival exploration
-remain outside this gate.
+headroom; ordinary target reports remain LIMITED. `explore-arrival` accepts
+the same optional calibration artifact and restricts adaptive probes to exact
+compatible matrix rates, recording requested and effective bounds for offline
+assessment. Closed-loop campaigns remain outside this gate because the matrix
+measures open-arrival workloads.
 
 ## Expanded transport-only reference matrix (G0-03 partial)
 

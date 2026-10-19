@@ -102,6 +102,29 @@ func TestJourneyStartGoalDoesNotInterpolateAndRejectsMixedUnits(t *testing.T) {
 	}
 }
 
+func TestJourneyStartGoalAcceptsCalibratedExplorerEnvelopeAndRejectsUnlistedProbe(t *testing.T) {
+	saved := arrivalexplorer.Result{
+		SchemaVersion: 2, Scenario: "synthetic", StageDuration: "10s", Repeats: 2,
+		WorkerLimit: 4, MinJourneysPerSecond: 2, MaxJourneysPerSecond: 10,
+		RequestedMinJourneysPerSecond: 1, RequestedMaxJourneysPerSecond: 20,
+		CalibratedProbeRates: []int{2, 5, 10},
+		Probes:               []arrivalexplorer.Probe{{JourneysPerSecond: 2, Status: "PASS_OBSERVED", Runs: []report.Result{}}},
+	}
+	assessment, err := EvaluateJourneyStarts(saved, JourneyStartGoal{PeakStartsPerSecond: 5})
+	if err != nil || assessment.State != "TARGET_NOT_DIRECTLY_TESTED" {
+		t.Fatalf("valid calibrated envelope was rejected or interpolated: %+v err=%v", assessment, err)
+	}
+	saved.Probes[0].JourneysPerSecond = 3
+	if _, err := EvaluateJourneyStarts(saved, JourneyStartGoal{PeakStartsPerSecond: 5}); err == nil {
+		t.Fatal("probe outside the recorded calibrated schedule was accepted")
+	}
+	saved.Probes[0].JourneysPerSecond = 2
+	saved.TargetJourneysPerSecond = 7
+	if _, err := EvaluateJourneyStarts(saved, JourneyStartGoal{PeakStartsPerSecond: 5}); err == nil {
+		t.Fatal("uncalibrated exact target inside requested range was accepted")
+	}
+}
+
 func TestJourneyStartGoalAcceptsFailedExactTargetMarkerAndReassessesEvidence(t *testing.T) {
 	saved := arrivalexplorer.Result{
 		SchemaVersion: 1, Scenario: "synthetic", StageDuration: "10s", Repeats: 2,

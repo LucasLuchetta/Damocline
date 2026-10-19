@@ -110,6 +110,13 @@ Preview a bounded schedule without sending traffic:
 .\damocline.exe explore-arrival --config .\examples\arrival-rate-readonly.json --min-journeys-per-second 2 --max-journeys-per-second 10 --authorized --dry-run
 ```
 
+To restrict the adaptive search to exact workload profiles measured by the
+local generator preflight, add `--calibration .damocline\calibration\reference.json`.
+Use `--require-calibration` when the preflight file must be mandatory. The
+requested minimum and any in-range business target must have exact profiles;
+the maximum is lowered to the highest matching measured rate and remains an
+explicitly narrower tested envelope.
+
 For an actual run, first replace the reserved documentation origin and routes with an explicitly authorized target, then omit `--dry-run` and retain a low ceiling. Every JSON result records attempted journey-start levels and each underlying run separately.
 
 You can state the business demand in the same unit and have the explorer insert
@@ -172,8 +179,14 @@ preflight readiness check is performed.
 
 For a single open-arrival run, `--require-calibration` makes `--calibration`
 mandatory and blocks before traffic when the exact local generator envelope
-does not match. Both are experimental generator-delivery gates, not target
-capacity gates. Closed-loop campaigns and `explore-arrival` are not covered.
+does not match. `explore-arrival` accepts the same flags; with a calibration,
+it searches only exact compatible matrix rates. The requested minimum must be
+covered, the effective ceiling is capped at the highest covered rate, and an
+in-range exact demand target must itself have a profile. The saved schema-v2
+exploration records both requested bounds and the exact calibrated rate set;
+offline assessment rejects any probe outside that set. These are experimental
+generator-delivery gates, not target capacity gates. Closed-loop campaigns are
+not covered because the current reference matrix measures open-arrival work.
 
 Recovery must be at least 10 seconds. Observation and optional soak need at least
 three complete configured windows; when `window_duration` is omitted, the
