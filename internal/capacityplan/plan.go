@@ -247,7 +247,7 @@ func metricSetBlocker(metrics report.MetricSet, p95LimitMS, maxErrorRate float64
 		return "does not establish its configured error budget under the conditional binomial bound; demand remains INSUFFICIENT_EVIDENCE."
 	}
 	if _, _, err := statistics.PercentileRankInterval95(metrics.Total, 0.95); err != nil ||
-		!metrics.P95IID95Approximation || math.IsNaN(metrics.P95IID95LowerMS) || math.IsInf(metrics.P95IID95LowerMS, 0) ||
+		!(metrics.P95IID95Approximation || metrics.P95IID95Exact) || math.IsNaN(metrics.P95IID95LowerMS) || math.IsInf(metrics.P95IID95LowerMS, 0) ||
 		math.IsNaN(metrics.P95IID95UpperMS) || math.IsInf(metrics.P95IID95UpperMS, 0) ||
 		metrics.P95IID95LowerMS < 0 || metrics.P95IID95UpperMS < metrics.P95IID95LowerMS || metrics.P95IID95UpperMS > p95LimitMS {
 		return "lacks an adequate p95 rank interval below its configured limit; demand remains INSUFFICIENT_EVIDENCE."

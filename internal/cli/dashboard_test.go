@@ -36,6 +36,7 @@ func TestLoadDashboardHandlerSupportsRunAndCampaignArtifacts(t *testing.T) {
 		t.Fatal(err)
 	}
 	phaseRun.SchemaVersion = report.CurrentSchemaVersion
+	phaseRun.StatisticalMethods = report.CurrentStatisticalMethods()
 	phaseRun.Config.Profiles = nil
 	phaseRun.Config.ProfileSelection = ""
 	phaseRun.Profiles = nil
@@ -78,6 +79,7 @@ func TestLoadDashboardHandlerSupportsOpenArrivalCheckpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 	phaseRun.SchemaVersion = report.CurrentSchemaVersion
+	phaseRun.StatisticalMethods = report.CurrentStatisticalMethods()
 	phaseRun.Config.Profiles = nil
 	phaseRun.Config.ProfileSelection = ""
 	phaseRun.Profiles = nil

@@ -4,6 +4,8 @@ This project follows a human-maintained changelog. No release exists yet.
 
 ## [Unreleased]
 
+- Define nearest-rank latency percentiles and replace the approximate p95 rank interval with an exact binomial order-statistic interval; persist the estimator, confidence method, and IID/stationarity assumption in schema v30.
+
 - Add bounded Go fuzz smoke checks for request-template interpolation, escaped-query byte accounting, and expanded URL size/origin invariants.
 
 - Bound base origins, path templates, and expanded HTTP request URLs, headers, and bodies; stop expansion at intermediate/output limits, record local rejections in schema v29, and invalidate delivery attribution when a generated request never reaches the target.

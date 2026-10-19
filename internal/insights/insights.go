@@ -64,6 +64,9 @@ func ValidateRunReport(r report.Result) error {
 	if !report.HasValidFailureClassification(r) {
 		return errors.New("report HTTP failure-classification evidence does not match its schema")
 	}
+	if !report.HasValidStatisticalMethods(r) {
+		return errors.New("report statistical-method evidence does not match its schema")
+	}
 	if !validThinkTimeProvenance(r) {
 		return errors.New("report think-time provenance does not match its schema")
 	}
@@ -413,6 +416,11 @@ func Write(w io.Writer, r report.Result, host *hostmon.Result, previous *report.
 	fmt.Fprintf(w, "USER CAPACITY:  %s\n", a.Capacity)
 	fmt.Fprintf(w, "SERVER UPGRADE: NOT JUSTIFIED BY THIS RUN ALONE\n")
 	fmt.Fprintf(w, "HOST METRICS:   %s\n", a.Infrastructure)
+	if r.SchemaVersion >= 30 {
+		fmt.Fprintf(w, "STATISTICS: nearest-rank percentiles; %s at %.0f%% under %s.\n", r.StatisticalMethods.P95IntervalMethod, r.StatisticalMethods.P95IntervalConfidence*100, r.StatisticalMethods.P95IntervalAssumption)
+	} else if r.Metrics.P95IID95Approximation {
+		fmt.Fprintln(w, "STATISTICS: historical approximate p95 rank interval; IID/stationarity assumptions apply.")
+	}
 	fmt.Fprintln(w, "\nWhat the data says:")
 	for _, f := range a.Findings {
 		fmt.Fprintf(w, "  [%s] %s\n", f.Level, f.Text)

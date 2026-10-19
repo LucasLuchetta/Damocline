@@ -5,6 +5,29 @@ import (
 	"testing"
 )
 
+func TestStatisticalMethodMetadataIsVersionedAndFailClosed(t *testing.T) {
+	current := Result{
+		SchemaVersion: CurrentSchemaVersion, StatisticalMethods: CurrentStatisticalMethods(),
+		Metrics: MetricSet{P95MS: 12, P95IID95LowerMS: 10, P95IID95UpperMS: 14, P95IID95Exact: true},
+	}
+	if !HasValidStatisticalMethods(current) {
+		t.Fatal("current exact percentile method metadata was rejected")
+	}
+	current.StatisticalMethods.PercentileEstimator = "LINEAR_INTERPOLATION"
+	if HasValidStatisticalMethods(current) {
+		t.Fatal("altered current percentile method metadata was accepted")
+	}
+
+	legacy := Result{SchemaVersion: 29, Metrics: MetricSet{P95IID95Approximation: true, P95IID95LowerMS: 10, P95IID95UpperMS: 14}}
+	if !HasValidStatisticalMethods(legacy) {
+		t.Fatal("historical approximate interval lost its schema-specific interpretation")
+	}
+	legacy.Metrics.P95IID95Exact = true
+	if HasValidStatisticalMethods(legacy) {
+		t.Fatal("pre-v30 exact interval marker was accepted")
+	}
+}
+
 func TestQualityRejectsOverflowAndNonFiniteDurations(t *testing.T) {
 	tests := []struct {
 		name   string

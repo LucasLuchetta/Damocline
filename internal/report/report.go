@@ -25,9 +25,33 @@ import (
 // application-metrics timeline, v26 records per-journey weighted-profile
 // selection semantics and per-profile start/actor ledgers, v27 records
 // per-workflow cookie-session scope names, v28 records configured connection
-// limits and observed connection-acquisition waits, and v29 records local
-// request-construction rejections caused by bounded template expansion.
-const CurrentSchemaVersion = 29
+// limits and observed connection-acquisition waits, v29 records local
+// request-construction rejections caused by bounded template expansion, and
+// v30 records percentile methods and exact IID order-statistic rank intervals.
+const CurrentSchemaVersion = 30
+
+const (
+	PercentileEstimatorNearestRank       = "NEAREST_RANK"
+	P95IntervalMethodExactBinomialRanks  = "EXACT_BINOMIAL_ORDER_STATISTIC_RANKS"
+	P95IntervalAssumptionIIDStationarity = "IID_STATIONARY_OBSERVATIONS"
+)
+
+// StatisticalMethods makes the persisted estimator and confidence method
+// explicit so an offline reviewer can interpret the report without assuming
+// undocumented implementation defaults.
+type StatisticalMethods struct {
+	PercentileEstimator   string  `json:"percentile_estimator"`
+	P95IntervalMethod     string  `json:"p95_interval_method"`
+	P95IntervalConfidence float64 `json:"p95_interval_confidence"`
+	P95IntervalAssumption string  `json:"p95_interval_assumption"`
+}
+
+func CurrentStatisticalMethods() StatisticalMethods {
+	return StatisticalMethods{
+		PercentileEstimator: PercentileEstimatorNearestRank, P95IntervalMethod: P95IntervalMethodExactBinomialRanks,
+		P95IntervalConfidence: 0.95, P95IntervalAssumption: P95IntervalAssumptionIIDStationarity,
+	}
+}
 
 type MetricSet struct {
 	Total                       int                     `json:"total"`
@@ -41,6 +65,7 @@ type MetricSet struct {
 	P95IID95LowerMS             float64                 `json:"p95_iid_95_lower_ms,omitempty"`
 	P95IID95UpperMS             float64                 `json:"p95_iid_95_upper_ms,omitempty"`
 	P95IID95Approximation       bool                    `json:"p95_iid_95_approximation,omitempty"`
+	P95IID95Exact               bool                    `json:"p95_iid_95_exact,omitempty"`
 	P99MS                       float64                 `json:"p99_ms"`
 	Reasons                     map[string]int          `json:"failure_reasons,omitempty"`
 	HTTP                        HTTPDiagnostics         `json:"http_diagnostics,omitempty"`
@@ -252,6 +277,8 @@ func (m *MetricSet) RecordHTTPOutcome(statusCode int, reason string, assertionFa
 }
 func (m *MetricSet) Snapshot() MetricSet {
 	v := *m
+	v.P95IID95Approximation = false
+	v.P95IID95Exact = false
 	v.Reasons = make(map[string]int, len(m.Reasons))
 	for k, n := range m.Reasons {
 		v.Reasons[k] = n
@@ -272,7 +299,7 @@ func (m *MetricSet) Snapshot() MetricSet {
 	if low, high, err := statistics.PercentileRankInterval95(len(d), 0.95); err == nil {
 		v.P95IID95LowerMS = roundMS(d[low-1])
 		v.P95IID95UpperMS = roundMS(d[high-1])
-		v.P95IID95Approximation = true
+		v.P95IID95Exact = true
 	}
 	v.P99MS = roundMS(percentile(d, 0.99))
 	v.durations = nil
@@ -382,6 +409,7 @@ type WindowMetric struct {
 }
 type Result struct {
 	SchemaVersion                    int                          `json:"schema_version"`
+	StatisticalMethods               StatisticalMethods           `json:"statistical_methods,omitzero"`
 	Name                             string                       `json:"name"`
 	Target                           string                       `json:"target"`
 	StartedAt                        string                       `json:"started_at"`
@@ -420,6 +448,59 @@ type Result struct {
 	ReferenceEvidence                *ControlledReferenceEvidence `json:"controlled_reference_evidence,omitempty"`
 	Quality                          *Quality                     `json:"data_quality,omitempty"`
 	Signals                          []Signal                     `json:"diagnostic_signals,omitempty"`
+}
+
+// HasValidStatisticalMethods validates versioned method metadata across all
+// metric sets. Historical reports keep their original implicit method rules.
+func HasValidStatisticalMethods(r Result) bool {
+	if r.SchemaVersion < 30 {
+		if r.StatisticalMethods != (StatisticalMethods{}) {
+			return false
+		}
+	} else {
+		want := CurrentStatisticalMethods()
+		if r.StatisticalMethods != want {
+			return false
+		}
+	}
+	validMetric := func(metrics MetricSet) bool {
+		if r.SchemaVersion < 30 {
+			return !metrics.P95IID95Exact
+		}
+		if metrics.P95IID95Exact {
+			return !metrics.P95IID95Approximation && metrics.P95IID95LowerMS <= metrics.P95IID95UpperMS
+		}
+		return !metrics.P95IID95Approximation && metrics.P95IID95LowerMS == 0 && metrics.P95IID95UpperMS == 0
+	}
+	if !validMetric(r.Metrics) || !validMetric(r.Journeys) {
+		return false
+	}
+	for _, step := range r.Steps {
+		if !validMetric(step.Metrics) {
+			return false
+		}
+	}
+	for _, profile := range r.Profiles {
+		if !validMetric(profile.Journeys) {
+			return false
+		}
+	}
+	for _, window := range r.Windows {
+		if !validMetric(window.Metrics) || !validMetric(window.Journeys) {
+			return false
+		}
+		for _, step := range window.Steps {
+			if !validMetric(step.Metrics) {
+				return false
+			}
+		}
+		for _, profile := range window.Profiles {
+			if !validMetric(profile.Metrics) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // CalibrationEvidence associates a run with sanitized local reference evidence.

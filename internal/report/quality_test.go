@@ -353,6 +353,7 @@ func TestSchemaThirteenRequiresReconciledNamedWindowLedgers(t *testing.T) {
 func TestSchemaTwentyTwoRequiresReconciledWindowJourneyLedger(t *testing.T) {
 	r := validSyntheticQualityRun()
 	r.SchemaVersion = CurrentSchemaVersion
+	r.StatisticalMethods = CurrentStatisticalMethods()
 	r.Config.WindowDuration = "1s"
 	r.Config.Mode = "arrival"
 	r.Config.ConnectionPolicy = "reuse"
@@ -484,6 +485,7 @@ func TestQualityNoLocalCapacityCertificateEvenForPerfectDelivery(t *testing.T) {
 func TestSchemaEighteenRequiresVerifiedEffectiveCPUCapacity(t *testing.T) {
 	r := validSyntheticQualityRun()
 	r.SchemaVersion = CurrentSchemaVersion
+	r.StatisticalMethods = CurrentStatisticalMethods()
 	r.Generator.GOMAXPROCS = 12
 	r.Generator.CPUCapacityCores = 12
 	r.Generator.CPUCapacitySource = "cgroup_cpu_limit_unavailable"
@@ -793,6 +795,7 @@ func TestQualityReconcilesCurrentIterationAndJourneyLedgers(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			r := validSyntheticQualityRun()
 			r.SchemaVersion = CurrentSchemaVersion
+			r.StatisticalMethods = CurrentStatisticalMethods()
 			r.Config.ConnectionPolicy = "reuse"
 			r.Generator = nil
 			admitted := r.IterationsStarted
@@ -808,6 +811,7 @@ func TestQualityReconcilesCurrentIterationAndJourneyLedgers(t *testing.T) {
 
 	r := validSyntheticQualityRun()
 	r.SchemaVersion = CurrentSchemaVersion
+	r.StatisticalMethods = CurrentStatisticalMethods()
 	r.Config.ConnectionPolicy = "reuse"
 	r.Generator = nil
 	admitted := r.IterationsStarted
@@ -826,6 +830,7 @@ func TestQualityReconcilesCurrentIterationAndJourneyLedgers(t *testing.T) {
 func TestQualityReconcilesSchema17ArrivalBreakdown(t *testing.T) {
 	r := validSyntheticQualityRun()
 	r.SchemaVersion = CurrentSchemaVersion
+	r.StatisticalMethods = CurrentStatisticalMethods()
 	r.Config.ConnectionPolicy = "reuse"
 	r.Generator = nil
 	r.ArrivalsScheduled = 100
@@ -956,6 +961,7 @@ func TestQualityRejectsInconsistentHTTPDiagnostics(t *testing.T) {
 func TestSchema20RequiresVersionedFailureClassificationEvidence(t *testing.T) {
 	base := validSyntheticQualityRun()
 	base.SchemaVersion = CurrentSchemaVersion
+	base.StatisticalMethods = CurrentStatisticalMethods()
 	base.Config.ConnectionPolicy = "reuse"
 	base.Generator = nil
 	admitted := base.IterationsStarted
@@ -981,6 +987,7 @@ func TestSchema20RequiresVersionedFailureClassificationEvidence(t *testing.T) {
 
 	legacy := base
 	legacy.SchemaVersion = 19
+	legacy.StatisticalMethods = StatisticalMethods{}
 	legacy.Metrics.HTTP.FailureClassificationVersion = 0
 	if quality := AssessQuality(legacy); quality.State == QualityInvalid {
 		t.Fatalf("schema-19 report without v20-only classification fields must remain readable: %+v", quality)

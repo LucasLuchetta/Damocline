@@ -521,6 +521,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	fmt.Fprintf(stdout, "Result: %s | requests: %d (%d passed, %d failed, %d cancelled) | request p95: %.1f ms | error rate: %.2f%% | %.1f req/s\n", result.Outcome, result.Metrics.Total, result.Metrics.Success, result.Metrics.Failures, result.Metrics.Cancelled, result.Metrics.P95MS, result.ErrorsRate*100, float64(result.Metrics.Total)/result.WindowSeconds())
+	fmt.Fprintln(stdout, "Latency percentiles: nearest-rank estimator (no interpolation).")
 	if result.ObservationSeconds > 0 {
 		fmt.Fprintf(stdout, "Journey throughput: %.2f successful configured journeys/s; %.2f completed journeys/s (%d complete, %d failed, %d cancelled/incomplete); completed journey p95: %s.\n", report.SuccessfulJourneysPerSecond(result), report.CompletedJourneysPerSecond(result), result.Journeys.Total, result.Journeys.Failures, result.Journeys.Cancelled, journeyP95Description(result.Journeys))
 	}
@@ -542,8 +543,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 		result.Metrics.HTTP.TransportFailures,
 		result.Metrics.HTTP.UnexpectedResponseSizes,
 	)
-	if result.Metrics.P95IID95Approximation {
-		fmt.Fprintf(stdout, "P95 IID 95%% rank approximation: %.1f-%.1f ms; this assumes independent, stationary request latencies.\n", result.Metrics.P95IID95LowerMS, result.Metrics.P95IID95UpperMS)
+	if result.Metrics.P95IID95Exact {
+		fmt.Fprintf(stdout, "P95 IID 95%% exact binomial order-statistic interval: %.1f-%.1f ms; this assumes independent, stationary request latencies.\n", result.Metrics.P95IID95LowerMS, result.Metrics.P95IID95UpperMS)
+	} else if result.Metrics.P95IID95Approximation {
+		fmt.Fprintf(stdout, "P95 IID 95%% legacy approximate rank interval: %.1f-%.1f ms; this assumes independent, stationary request latencies.\n", result.Metrics.P95IID95LowerMS, result.Metrics.P95IID95UpperMS)
 	}
 	for _, st := range result.Steps {
 		fmt.Fprintf(stdout, "  - %s/%s: total=%d failures=%d request p95=%.1f ms\n", st.Profile, st.Name, st.Metrics.Total, st.Metrics.Failures, st.Metrics.P95MS)

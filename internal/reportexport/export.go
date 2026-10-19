@@ -19,7 +19,7 @@ import (
 	"github.com/LucasLuchetta/Damocline/internal/report"
 )
 
-const Format = "damocline-redacted-evidence-v1"
+const Format = "damocline-redacted-evidence-v2"
 
 type Evidence struct {
 	Format      string       `json:"format"`
@@ -87,28 +87,38 @@ type Phase struct {
 }
 
 type Run struct {
-	Outcome               string      `json:"outcome"`
-	ElapsedSeconds        float64     `json:"elapsed_seconds"`
-	ObservationSeconds    float64     `json:"observation_seconds,omitempty"`
-	Mode                  string      `json:"mode"`
-	VirtualUsers          int         `json:"virtual_users"`
-	JourneyStartsPS       int         `json:"scheduled_journey_starts_per_second,omitempty"`
-	RequestCeiling        int         `json:"max_request_starts_per_second"`
-	P95LimitMS            float64     `json:"p95_limit_ms"`
-	MaxErrorRate          float64     `json:"max_error_rate"`
-	ConnectionPolicy      string      `json:"connection_policy,omitempty"`
-	MaxConnectionsPerHost int         `json:"max_connections_per_host,omitempty"`
-	ProfileSelection      string      `json:"profile_selection,omitempty"`
-	Metrics               Metrics     `json:"requests"`
-	Journeys              Metrics     `json:"completed_journeys"`
-	Steps                 []Step      `json:"steps,omitempty"`
-	Profiles              []Profile   `json:"workflows,omitempty"`
-	Windows               []Window    `json:"windows,omitempty"`
-	Arrivals              *Arrivals   `json:"arrival_accounting,omitempty"`
-	Scheduler             *Scheduler  `json:"scheduler,omitempty"`
-	Generator             *Generator  `json:"generator,omitempty"`
-	ApplicationMetrics    *AppMetrics `json:"application_metrics,omitempty"`
-	MeasurementQuality    string      `json:"measurement_quality,omitempty"`
+	Outcome               string             `json:"outcome"`
+	ElapsedSeconds        float64            `json:"elapsed_seconds"`
+	ObservationSeconds    float64            `json:"observation_seconds,omitempty"`
+	Mode                  string             `json:"mode"`
+	VirtualUsers          int                `json:"virtual_users"`
+	JourneyStartsPS       int                `json:"scheduled_journey_starts_per_second,omitempty"`
+	RequestCeiling        int                `json:"max_request_starts_per_second"`
+	P95LimitMS            float64            `json:"p95_limit_ms"`
+	MaxErrorRate          float64            `json:"max_error_rate"`
+	ConnectionPolicy      string             `json:"connection_policy,omitempty"`
+	MaxConnectionsPerHost int                `json:"max_connections_per_host,omitempty"`
+	ProfileSelection      string             `json:"profile_selection,omitempty"`
+	Metrics               Metrics            `json:"requests"`
+	Journeys              Metrics            `json:"completed_journeys"`
+	Steps                 []Step             `json:"steps,omitempty"`
+	Profiles              []Profile          `json:"workflows,omitempty"`
+	Windows               []Window           `json:"windows,omitempty"`
+	Arrivals              *Arrivals          `json:"arrival_accounting,omitempty"`
+	Scheduler             *Scheduler         `json:"scheduler,omitempty"`
+	Generator             *Generator         `json:"generator,omitempty"`
+	ApplicationMetrics    *AppMetrics        `json:"application_metrics,omitempty"`
+	MeasurementQuality    string             `json:"measurement_quality,omitempty"`
+	StatisticalMethods    StatisticalMethods `json:"statistical_methods,omitempty"`
+}
+
+// StatisticalMethods contains only fixed method identifiers and numerical
+// parameters, so the redacted export cannot carry user supplied strings here.
+type StatisticalMethods struct {
+	LatencyPercentileEstimator string  `json:"latency_percentile_estimator"`
+	P95IntervalMethod          string  `json:"p95_interval_method"`
+	P95IntervalConfidence      float64 `json:"p95_interval_confidence"`
+	P95IntervalAssumption      string  `json:"p95_interval_assumption"`
 }
 
 type Metrics struct {
@@ -120,6 +130,8 @@ type Metrics struct {
 	P50MS                       float64 `json:"p50_ms"`
 	MeanMS                      float64 `json:"mean_ms"`
 	P95MS                       float64 `json:"p95_ms"`
+	P95IID95LowerMS             float64 `json:"p95_iid_95_lower_ms,omitempty"`
+	P95IID95UpperMS             float64 `json:"p95_iid_95_upper_ms,omitempty"`
 	P99MS                       float64 `json:"p99_ms"`
 	Status1xx                   int     `json:"status_1xx"`
 	Status2xx                   int     `json:"status_2xx"`
@@ -318,7 +330,7 @@ func redactRun(r report.Result) *Run {
 	out := &Run{Outcome: safeOutcome(r.Outcome), ElapsedSeconds: r.ElapsedSeconds, ObservationSeconds: r.ObservationSeconds,
 		Mode: safeMode(r.Config.Mode), VirtualUsers: r.Config.Users, JourneyStartsPS: r.Config.ArrivalRate,
 		RequestCeiling: r.Config.MaxRPS, P95LimitMS: r.Config.P95LimitMS, MaxErrorRate: r.Config.MaxErrorRate,
-		ConnectionPolicy: safeConnectionPolicy(r.Config.ConnectionPolicy), MaxConnectionsPerHost: r.Config.MaxConnectionsPerHost, ProfileSelection: safeProfileSelection(r.Config.ProfileSelection), Metrics: safeMetrics(r.Metrics), Journeys: safeMetrics(r.Journeys)}
+		ConnectionPolicy: safeConnectionPolicy(r.Config.ConnectionPolicy), MaxConnectionsPerHost: r.Config.MaxConnectionsPerHost, ProfileSelection: safeProfileSelection(r.Config.ProfileSelection), Metrics: safeMetrics(r.Metrics), Journeys: safeMetrics(r.Journeys), StatisticalMethods: safeStatisticalMethods(r.StatisticalMethods)}
 	for _, s := range r.Steps {
 		key := stepKey(s.Profile, s.Name)
 		out.Steps = append(out.Steps, Step{ID: stepIDs[key], Method: safeMethod(s.Method), Cleanup: s.Cleanup, Metrics: safeMetrics(s.Metrics), ConnectionWaitCount: s.HTTPTrace.ConnectionWaitCount, ConnectionWaitMS: s.HTTPTrace.ConnectionWaitMS})
@@ -359,12 +371,24 @@ func redactRun(r report.Result) *Run {
 }
 
 func safeMetrics(m report.MetricSet) Metrics {
+	lower, upper := 0.0, 0.0
+	if m.P95IID95Exact && !m.P95IID95Approximation && m.P95IID95LowerMS <= m.P95IID95UpperMS {
+		lower, upper = m.P95IID95LowerMS, m.P95IID95UpperMS
+	}
 	return Metrics{Total: m.Total, Success: m.Success, Failures: m.Failures, Cancelled: m.Cancelled, RequestConstructionFailures: m.RequestConstructionFailures,
-		P50MS: m.P50MS, MeanMS: m.MeanMS, P95MS: m.P95MS, P99MS: m.P99MS,
+		P50MS: m.P50MS, MeanMS: m.MeanMS, P95MS: m.P95MS, P95IID95LowerMS: lower, P95IID95UpperMS: upper, P99MS: m.P99MS,
 		Status1xx: m.HTTP.Status1xx, Status2xx: m.HTTP.Status2xx, Status3xx: m.HTTP.Status3xx,
 		Status4xx: m.HTTP.Status4xx, Status5xx: m.HTTP.Status5xx, Timeouts: m.HTTP.NetworkTimeouts,
 		DNSFailures: m.HTTP.DNSFailures, ConnectFailures: m.HTTP.ConnectionFailures, TLSFailures: m.HTTP.TLSFailures,
 		TransportFailures: m.HTTP.TransportFailures}
+}
+
+func safeStatisticalMethods(m report.StatisticalMethods) StatisticalMethods {
+	if m.PercentileEstimator != report.PercentileEstimatorNearestRank || m.P95IntervalMethod != report.P95IntervalMethodExactBinomialRanks || m.P95IntervalAssumption != report.P95IntervalAssumptionIIDStationarity {
+		return StatisticalMethods{}
+	}
+	return StatisticalMethods{LatencyPercentileEstimator: m.PercentileEstimator, P95IntervalMethod: m.P95IntervalMethod,
+		P95IntervalConfidence: m.P95IntervalConfidence, P95IntervalAssumption: m.P95IntervalAssumption}
 }
 
 func aliases(r report.Result) (map[string]string, map[string]string) {
