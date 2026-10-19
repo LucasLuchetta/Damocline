@@ -33,6 +33,29 @@ func TestSeededWeightedExampleDryRunShowsTimingPolicy(t *testing.T) {
 	}
 }
 
+func TestArrivalExploreDryRunLabelsJourneyStartRates(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	path := filepath.Join("..", "..", "examples", "arrival-rate-readonly.json")
+	code := Run([]string{"explore-arrival", "--config", path, "--min-journeys-per-second", "2", "--max-journeys-per-second", "10", "--authorized", "--dry-run"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("arrival dry run failed: code=%d stderr=%s", code, stderr.String())
+	}
+	for _, expected := range []string{"scheduled journey starts 2-10/s", "worker limit 10", "DRY RUN: no traffic generated", "request/s and completed journeys/s are separate"} {
+		if !strings.Contains(stdout.String(), expected) {
+			t.Fatalf("arrival dry run omitted %q: %s", expected, stdout.String())
+		}
+	}
+}
+
+func TestArrivalExploreRejectsClosedLoopScenario(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	path := filepath.Join("..", "..", "examples", "advanced-readonly.json")
+	code := Run([]string{"explore-arrival", "--config", path, "--dry-run"}, &stdout, &stderr)
+	if code != 2 || !strings.Contains(stderr.String(), "requires mode=arrival") {
+		t.Fatalf("arrival explorer accepted a closed-loop scenario: code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+}
+
 func TestJourneyP95DescriptionDoesNotInventLatencyWhenNoneCompleted(t *testing.T) {
 	if got := journeyP95Description(report.MetricSet{Total: 0, Cancelled: 2}); got != "unavailable (no completed journeys)" {
 		t.Fatalf("empty journey percentile was presented as a measurement: %q", got)

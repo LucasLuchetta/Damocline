@@ -1,0 +1,18 @@
+{
+  "name": "Example arrival-rate read-only workflow",
+  "base_url": "https://app.example.com",
+  "mode": "arrival",
+  "users": 10,
+  "arrival_rate": 2,
+  "duration": "20s",
+  "ramp_up": "0s",
+  "request_timeout": "8s",
+  "max_rps": 20,
+  "p95_limit_ms": 1500,
+  "max_error_rate": 0.01,
+  "min_samples_per_step": 10,
+  "steps": [
+    {"name":"dashboard","method":"GET","path":"/dashboard","expected_status":[200]},
+    {"name":"search","method":"GET","path":"/search","expected_status":[200]}
+  ]
+}

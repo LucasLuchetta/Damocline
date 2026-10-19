@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/LucasLuchetta/Damocline/internal/appmetrics"
+	"github.com/LucasLuchetta/Damocline/internal/arrivalexplorer"
 	"github.com/LucasLuchetta/Damocline/internal/campaign"
 	"github.com/LucasLuchetta/Damocline/internal/capacitygoal"
 	"github.com/LucasLuchetta/Damocline/internal/config"
@@ -74,6 +75,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return run(args[1:], stdout, stderr)
 	case "explore":
 		return explore(args[1:], stdout, stderr)
+	case "explore-arrival":
+		return exploreArrival(args[1:], stdout, stderr)
 	case "campaign":
 		return campaignCmd(args[1:], stdout, stderr)
 	case "monitor":
@@ -105,6 +108,7 @@ Usage:
   damocline run --config scenario.json --authorized [--calibration reports/reference.json] [--out reports/run.json]
   damocline run --config scenario.json --dry-run
   damocline explore --config scenario.json --min-users 2 --max-users 20 --stage-duration 20s --repeats 2 --authorized
+  damocline explore-arrival --config arrival.json --min-journeys-per-second 2 --max-journeys-per-second 20 --authorized
 	  damocline campaign --config scenario.json --warmup 30s --observation 2m --recovery 30s --repeats 2 --authorized
   damocline explore --config scenario.json --peak-users 10 --growth-percent 25 --reserve-percent 20 --authorized
   damocline monitor --duration 3m --interval 2s --out reports/host.json
@@ -122,9 +126,125 @@ Only test applications you own or are expressly authorized to assess.
 Start with low concurrency and request rates. Run 'damocline run --help' for flags.
 
 Damocline runs its own bounded HTTP engine with closed-loop VUs or arrival-rate
-mode. Explore repeats candidate VU levels; it does not establish a universal
-server limit or include infrastructure telemetry.
+mode. 'explore' searches VU levels; 'explore-arrival' searches scheduled open-loop
+journey starts per second. Neither is requests/second, successful journeys per
+second, or a universal server limit.
 `)
+}
+
+func exploreArrival(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("explore-arrival", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	filename := fs.String("config", "", "arrival-mode scenario JSON")
+	minRate := fs.Int("min-journeys-per-second", 2, "first scheduled journey-start rate")
+	maxRate := fs.Int("max-journeys-per-second", 20, "maximum scheduled journey-start rate")
+	targetRate := fs.Int("target-journeys-per-second", 0, "optional exact business demand rate to probe")
+	repeats := fs.Int("repeats", 2, "confirmation runs for each passing rate (2-4)")
+	stage := fs.Duration("stage-duration", 20*time.Second, "duration for each repeated probe (10s-3m)")
+	budget := fs.Duration("budget", 10*time.Minute, "maximum exploration wall time (up to 15m)")
+	authorized := fs.Bool("authorized", false, "confirm permission to benchmark the target")
+	dry := fs.Bool("dry-run", false, "validate and explain the rate schedule without sending requests")
+	writes := fs.Bool("allow-writes", false, "explicitly opt in to HTTP mutation methods")
+	insecure := fs.Bool("allow-insecure-http", false, "permit intentional plaintext HTTP to a non-loopback host")
+	out := fs.String("out", "", "JSON exploration report output path")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if *filename == "" || len(fs.Args()) != 0 {
+		fmt.Fprintln(stderr, "--config is required and positional arguments are not accepted")
+		return 2
+	}
+	scenario, err := config.Load(*filename)
+	if err != nil {
+		fmt.Fprintf(stderr, "configuration error: %v\n", err)
+		return 2
+	}
+	if scenario.Mode != "arrival" {
+		fmt.Fprintln(stderr, "explore-arrival requires mode=arrival; closed-loop scenarios use damocline explore")
+		return 2
+	}
+	options := arrivalexplorer.Options{
+		MinJourneysPerSecond: *minRate, MaxJourneysPerSecond: *maxRate,
+		TargetJourneysPerSecond: *targetRate, Repeats: *repeats,
+		StageDuration: *stage, Budget: *budget,
+	}
+	if err := arrivalexplorer.Validate(options, scenario); err != nil {
+		fmt.Fprintf(stderr, "invalid arrival-rate exploration: %v\n", err)
+		return 2
+	}
+	scenario.ArrivalRate = *minRate
+	validated, err := config.Parse(scenario, config.Options{
+		Authorized: *authorized || *dry, AllowWrites: *writes, AllowInsecureHTTP: *insecure,
+	})
+	if err != nil {
+		fmt.Fprintf(stderr, "configuration error: %v\n", err)
+		return 2
+	}
+	fmt.Fprintf(stdout, "Arrival-rate explore: %s | %s://%s | scheduled journey starts %d-%d/s | worker limit %d | stage %s | repeats %d | max_rps %d\n",
+		validated.Scenario.Name, validated.Base.Scheme, validated.Base.Host,
+		*minRate, *maxRate, validated.Scenario.Users, stage.String(), *repeats, validated.Scenario.MaxRPS)
+	if *targetRate > 0 {
+		if *targetRate < *minRate || *targetRate > *maxRate {
+			fmt.Fprintln(stdout, "WARNING: exact journey-start target is outside the configured range and will not raise the safe ceiling.")
+		} else {
+			fmt.Fprintf(stdout, "Exact scheduled journey-start target: %d/s (tested only when reached through the bounded search).\n", *targetRate)
+		}
+	}
+	if *dry {
+		fmt.Fprintln(stdout, "DRY RUN: no traffic generated. Rates are scheduled journey starts/s; request/s and completed journeys/s are separate measured quantities.")
+		return 0
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	result, err := arrivalexplorer.Run(ctx, validated, options)
+	if err != nil {
+		fmt.Fprintf(stderr, "arrival-rate exploration error: %v\n", err)
+		return 2
+	}
+	for _, probe := range result.Probes {
+		fmt.Fprintf(stdout, "Scheduled starts %d/s: %s\n", probe.JourneysPerSecond, probe.Status)
+		if probe.Reason != "" {
+			fmt.Fprintf(stdout, "  Reason: %s\n", probe.Reason)
+		}
+		for _, run := range probe.Runs {
+			seconds := run.WindowSeconds()
+			if seconds <= 0 {
+				fmt.Fprintf(stdout, "  no valid observation duration; scheduled %d; admitted %v; dropped %d\n", run.ArrivalsScheduled, run.ArrivalsAdmitted, run.ArrivalsDropped)
+				continue
+			}
+			admitted := int64(0)
+			if run.ArrivalsAdmitted != nil {
+				admitted = *run.ArrivalsAdmitted
+			}
+			fmt.Fprintf(stdout, "  offered %.2f starts/s; admitted %.2f/s; dropped %d; request throughput %.2f/s; successful completed journeys %.2f/s; request p95 %.0fms; errors %.2f%%\n",
+				float64(run.ArrivalsScheduled)/seconds, float64(admitted)/seconds, run.ArrivalsDropped,
+				float64(run.Metrics.Total)/seconds, report.SuccessfulJourneysPerSecond(run), run.Metrics.P95MS, run.ErrorsRate*100)
+		}
+	}
+	fmt.Fprintf(stdout, "Outcome: %s\n", result.Outcome)
+	if result.Reason != "" {
+		fmt.Fprintf(stdout, "Reason: %s\n", result.Reason)
+	}
+	if result.HighestPassingJourneysPerSecond != nil {
+		fmt.Fprintf(stdout, "Highest repeatedly passing tested scheduled-start rate: %d journeys/s\n", *result.HighestPassingJourneysPerSecond)
+	}
+	if result.FirstFailingJourneysPerSecond != nil {
+		fmt.Fprintf(stdout, "First observed failing tested scheduled-start rate: %d journeys/s\n", *result.FirstFailingJourneysPerSecond)
+	}
+	for _, note := range result.Notes {
+		fmt.Fprintf(stdout, "Note: %s\n", note)
+	}
+	if *out != "" {
+		if err := report.WriteAnyJSON(*out, result); err != nil {
+			fmt.Fprintf(stderr, "report error: %v\n", err)
+			return 2
+		}
+		fmt.Fprintf(stdout, "Report: %s\n", *out)
+	}
+	if result.Outcome == "BRACKETED" || result.Outcome == "PASSED_TO_CONFIGURED_CEILING" {
+		return 0
+	}
+	return 1
 }
 func run(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)

@@ -95,7 +95,15 @@ If a passing run approaches the configured `max_rps` cap, exploration is marked 
 
 Set `"mode": "arrival"`, `"arrival_rate": 5`, `"users": 10`, and `"max_rps": 20`. The scheduler attempts five journey starts per second, independently of response completion; only ten workers are available to handle them. If all workers are busy, arrivals are counted as dropped and the run fails instead of silently reporting a lower effective workload.
 
-This is distinct from 10 concurrent users. It answers a different capacity question. `explore` is deliberately restricted to closed-loop user counts; arrival-rate tests use `run`.
+This is distinct from 10 concurrent users. It answers a different capacity question. `explore` searches closed-loop VU counts; `explore-arrival` searches scheduled journey starts per second and leaves `users` as the worker limit. The arrival search doubles and refines within explicit bounds, repeats passing levels, and treats dropped/cancelled arrivals, inadequate samples, generator pressure, or a binding HTTP `max_rps` ceiling as inconclusive rather than an application limit. These short probes do not establish sustainable capacity or translate journey starts/s into VUs or HTTP requests/s.
+
+Preview a bounded schedule without sending traffic:
+
+```powershell
+.\damocline.exe explore-arrival --config .\examples\arrival-rate-readonly.json --min-journeys-per-second 2 --max-journeys-per-second 10 --authorized --dry-run
+```
+
+For an actual run, first replace the reserved documentation origin and routes with an explicitly authorized target, then omit `--dry-run` and retain a low ceiling. Every JSON result records attempted journey-start levels and each underlying run separately.
 
 ## 7. Repeated phased campaign
 
