@@ -1203,6 +1203,39 @@ func TestSlowMinorityProfileCannotHideInsideWindowAggregate(t *testing.T) {
 	}
 }
 
+func TestWeightedWorkflowsUseIsolatedActorSessions(t *testing.T) {
+	var crossWorkflow atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		workflow := strings.TrimPrefix(r.URL.Path, "/")
+		cookie, err := r.Cookie("sid")
+		if err != nil || cookie.Value != workflow {
+			crossWorkflow.Add(1)
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	t.Setenv("DAMO_WF_BROWSE_1", "sid=browse; actor=one")
+	t.Setenv("DAMO_WF_BROWSE_2", "sid=browse; actor=two")
+	t.Setenv("DAMO_WF_EDIT_1", "sid=edit; actor=one")
+	t.Setenv("DAMO_WF_EDIT_2", "sid=edit; actor=two")
+	s := config.Scenario{Name: "workflow session isolation", BaseURL: srv.URL, Users: 2, Duration: "1s", MaxRPS: 100, P95LimitMS: 1000, MaxErrorRate: 0,
+		Profiles: []config.Profile{
+			{Name: "browse", Weight: 1, Steps: []config.Step{{Name: "browse", Path: "/browse"}}},
+			{Name: "edit", Weight: 1, Steps: []config.Step{{Name: "edit", Path: "/edit"}}},
+		}, ProfileCookieEnvPrefixes: map[string]string{"browse": "DAMO_WF_BROWSE_", "edit": "DAMO_WF_EDIT_"}}
+	v, err := config.Parse(s, config.Options{Authorized: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	v.Duration = 250 * time.Millisecond
+	r := Run(context.Background(), v)
+	if r.Outcome != "PASS" || crossWorkflow.Load() != 0 || len(r.Config.ProfileSessionScopes) != 2 {
+		t.Fatalf("workflow session isolation failed: cross=%d result=%+v", crossWorkflow.Load(), r)
+	}
+}
+
 func TestArrivalProfilesFollowConfiguredWeights(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
