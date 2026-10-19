@@ -204,6 +204,10 @@ func TestNativeEngineCampaignRecordsStableLoopbackWindows(t *testing.T) {
 	if state, reason := ClassifyEvidence(run); state != "PASS_OBSERVED" {
 		t.Fatalf("transient process CPU peak invalidated native evidence: %s %q", state, reason)
 	}
+	run.Metrics.Total = int(report.GeneratorUtilizationGuard * float64(run.Config.MaxRPS) * run.WindowSeconds())
+	if state, reason := ClassifyEvidence(run); state != "INVALID_DELIVERY" || reason == "" {
+		t.Fatalf("client-rate-bound native phase was accepted: %s %q", state, reason)
+	}
 }
 
 func TestCampaignSeparatesInvalidDeliveryFromObservedFailure(t *testing.T) {
