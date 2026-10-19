@@ -314,9 +314,16 @@ func AssessQuality(r Result) *Quality {
 				invalidate("Observation-window named step or profile ledgers are missing, duplicated, or inconsistent.")
 				break
 			}
+			if r.SchemaVersion >= 22 && !validWindowJourneyMetrics(window.Journeys) {
+				invalidate("Observation-window completed-journey metrics are missing or inconsistent.")
+				break
+			}
 		}
 		if r.SchemaVersion >= 13 && !validWindowProfileTotals(r) {
 			invalidate("Observation-window profile journeys exceed or do not match the persisted profile ledgers.")
+		}
+		if r.SchemaVersion >= 22 && !validWindowJourneyTotals(r) {
+			invalidate("Observation-window completed journeys exceed or conflict with the aggregate journey ledger.")
 		}
 	}
 	// Check each independent ledger against the aggregate when its coverage is
@@ -710,6 +717,64 @@ func validWindowMetricSet(metrics MetricSet) bool {
 	}
 	return validHTTPDiagnostics(metrics.HTTP, metrics.Total, metrics.Cancelled) &&
 		validResponseBodyDiagnostics(metrics.ResponseBody, responseStatusCount(metrics.HTTP), metrics.HTTP.UnexpectedResponseSizes)
+}
+
+func validWindowJourneyMetrics(metrics MetricSet) bool {
+	return validWindowMetricSet(metrics)
+}
+
+func validWindowJourneyTotals(r Result) bool {
+	var total, success, failures, cancelled int
+	for _, window := range r.Windows {
+		m := window.Journeys
+		if m.Total < 0 || m.Success < 0 || m.Failures < 0 || m.Cancelled < 0 ||
+			m.Total > r.Journeys.Total-total || m.Success > r.Journeys.Success-success ||
+			m.Failures > r.Journeys.Failures-failures || m.Cancelled > r.Journeys.Cancelled-cancelled {
+			return false
+		}
+		if len(r.Config.Profiles) > 0 {
+			var profileTotal, profileSuccess, profileFailures, profileCancelled int
+			for _, profile := range window.Profiles {
+				if profile.Metrics.Total > m.Total-profileTotal || profile.Metrics.Success > m.Success-profileSuccess ||
+					profile.Metrics.Failures > m.Failures-profileFailures || profile.Metrics.Cancelled > m.Cancelled-profileCancelled {
+					return false
+				}
+				profileTotal += profile.Metrics.Total
+				profileSuccess += profile.Metrics.Success
+				profileFailures += profile.Metrics.Failures
+				profileCancelled += profile.Metrics.Cancelled
+			}
+			if profileTotal != m.Total || profileSuccess != m.Success || profileFailures != m.Failures || profileCancelled != m.Cancelled {
+				return false
+			}
+		}
+		total += m.Total
+		success += m.Success
+		failures += m.Failures
+		cancelled += m.Cancelled
+	}
+	if total > r.Journeys.Total || success > r.Journeys.Success || failures > r.Journeys.Failures || cancelled > r.Journeys.Cancelled {
+		return false
+	}
+	if len(r.Profiles) > 0 {
+		var profileTotal, profileSuccess, profileFailures, profileCancelled int
+		for _, profile := range r.Profiles {
+			m := profile.Journeys
+			if m.Total > r.Journeys.Total-profileTotal || m.Success > r.Journeys.Success-profileSuccess ||
+				m.Failures > r.Journeys.Failures-profileFailures || m.Cancelled > r.Journeys.Cancelled-profileCancelled {
+				return false
+			}
+			profileTotal += m.Total
+			profileSuccess += m.Success
+			profileFailures += m.Failures
+			profileCancelled += m.Cancelled
+		}
+		if profileTotal != r.Journeys.Total || profileSuccess != r.Journeys.Success ||
+			profileFailures != r.Journeys.Failures || profileCancelled != r.Journeys.Cancelled {
+			return false
+		}
+	}
+	return true
 }
 
 func validWindowProfileTotals(r Result) bool {

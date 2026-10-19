@@ -68,3 +68,8 @@ The shipped test commands require explicit authorization for traffic and enforce
 Keep a small Go CLI and standard-library-first core. Add deterministic unit/integration tests using local HTTP servers. Only add dashboards, distributed workers, and automatic infrastructure diagnostics after correct single-node scheduling and measurement are demonstrated.
 
 Related: [Measurement model](METRICS.md), [Roadmap](ROADMAP.md), [Go core ADR](adr/0001-go-core.md).
+
+
+## Windowed journey evidence
+
+Schema-v22 reports keep completed-journey counters and latency distributions in each observation window for legacy workflows and weighted profiles. `internal/capacityplan` evaluates the whole-run journey ledger and each window against the declared latency and error objectives, in addition to request and step ledgers. Window counters reconcile against the run ledger; explicit profile counters reconcile to the aggregate journey window. Campaign stability screening requires sufficient completed journeys in every window and checks coarse full-journey latency and throughput drift. This supports a cautious offline demand assessment and does not certify sustainable capacity.

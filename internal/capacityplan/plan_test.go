@@ -168,10 +168,14 @@ func TestSchemaTwoRequiresExactStageSequenceAndClassification(t *testing.T) {
 				phase.EvidenceState = "PASS_OBSERVED"
 				phase.Run.Metrics.Total, phase.Run.Metrics.Success = 1200, 1200
 				phase.Run.Steps[0].Metrics.Total, phase.Run.Steps[0].Metrics.Success = 1200, 1200
+				phase.Run.Journeys.Total, phase.Run.Journeys.Success = 1200, 1200
 				phase.Run.Windows = nil
 				for windowIndex := 0; windowIndex < 4; windowIndex++ {
 					metrics := validStatisticalRun().Metrics
-					phase.Run.Windows = append(phase.Run.Windows, report.WindowResult{StartSeconds: float64(windowIndex) * 2.5, EndSeconds: float64(windowIndex+1) * 2.5, Metrics: metrics, Steps: []report.WindowMetric{{Name: "step", Metrics: metrics}}})
+					metrics.Total, metrics.Success = 300, 300
+					journeys := metrics
+					journeys.Total, journeys.Success = 300, 300
+					phase.Run.Windows = append(phase.Run.Windows, report.WindowResult{StartSeconds: float64(windowIndex) * 2.5, EndSeconds: float64(windowIndex+1) * 2.5, Metrics: metrics, Journeys: journeys, Steps: []report.WindowMetric{{Name: "step", Metrics: metrics}}})
 				}
 				if phase.Name == "observation" {
 					phase.Stability = "NO_LARGE_DRIFT_DETECTED"
@@ -237,6 +241,20 @@ func TestWeightedProfilesRequirePerWindowJourneyEvidence(t *testing.T) {
 	}
 }
 
+func TestCompletedJourneyLatencyCanBlockOtherwiseHealthyRequestMetrics(t *testing.T) {
+	evidence := campaign.Result{SchemaVersion: 1, Scenario: "synthetic", Outcome: "PASS", BaseUsers: 10, Repeats: 2, Trials: passingTrials(), ObservationVariability: validVariability()}
+	for trialIndex := range evidence.Trials {
+		for phaseIndex := range evidence.Trials[trialIndex].Phases {
+			run := &evidence.Trials[trialIndex].Phases[phaseIndex].Run
+			run.Journeys.P95IID95UpperMS = 150
+		}
+	}
+	result, err := evaluateWithDeclaredTestQuality(evidence, capacitygoal.Goal{PeakUsers: 10})
+	if err != nil || result.State != "INSUFFICIENT_EVIDENCE" || !containsFinding(result.Findings, "completed journeys") {
+		t.Fatalf("slow completed journey must block an otherwise passing request report: %+v %v", result, err)
+	}
+}
+
 func passingTrials() []campaign.Trial {
 	passed := validStatisticalRun()
 	return []campaign.Trial{
@@ -255,8 +273,9 @@ func validStatisticalRun() report.Result {
 		Config:  report.RunConfig{P95LimitMS: 100, MaxErrorRate: 0.01, MinSamplesPerStep: 1, WindowDuration: "10s"},
 		Metrics: metrics, Steps: []report.StepResult{{Name: "step", Metrics: metrics}},
 		Windows: []report.WindowResult{{StartSeconds: 0, EndSeconds: 10, Metrics: metrics,
-			Steps: []report.WindowMetric{{Name: "step", Metrics: metrics}}}},
-		SchemaVersion: 13,
+			Journeys: metrics, Steps: []report.WindowMetric{{Name: "step", Metrics: metrics}}}},
+		SchemaVersion: report.CurrentSchemaVersion,
+		Journeys:      metrics,
 		Quality:       &report.Quality{State: report.QualityValid},
 	}
 }

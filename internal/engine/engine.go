@@ -63,6 +63,7 @@ type collector struct {
 
 type windowMetrics struct {
 	aggregate *report.MetricSet
+	journeys  *report.MetricSet
 	steps     map[string]*report.MetricSet
 	profiles  map[string]*report.MetricSet
 }
@@ -110,7 +111,9 @@ func (c *collector) addJourney(profile string, latency time.Duration, success, c
 	if c.window > 0 {
 		elapsed := time.Since(c.started)
 		if elapsed < c.observation {
-			c.windowAt(elapsed).profiles[profile].Record(latency, success, cancelled, reason)
+			window := c.windowAt(elapsed)
+			window.journeys.Record(latency, success, cancelled, reason)
+			window.profiles[profile].Record(latency, success, cancelled, reason)
 		}
 	}
 }
@@ -183,7 +186,7 @@ func (c *collector) windowAt(elapsed time.Duration) *windowMetrics {
 
 func (c *collector) windowAtIndex(index int) *windowMetrics {
 	for len(c.windows) <= index {
-		window := &windowMetrics{aggregate: report.NewMetricSet(), steps: make(map[string]*report.MetricSet, len(c.steps)), profiles: make(map[string]*report.MetricSet, len(c.profiles))}
+		window := &windowMetrics{aggregate: report.NewMetricSet(), journeys: report.NewMetricSet(), steps: make(map[string]*report.MetricSet, len(c.steps)), profiles: make(map[string]*report.MetricSet, len(c.profiles))}
 		for name := range c.steps {
 			window.steps[name] = report.NewMetricSet()
 		}
@@ -405,7 +408,7 @@ func runWithTransport(parent context.Context, v config.Validated, transport *htt
 	for index, metrics := range coll.windows {
 		startSeconds := float64(index) * v.Window.Seconds()
 		endSeconds := math.Min(startSeconds+v.Window.Seconds(), v.Duration.Seconds())
-		window := report.WindowResult{StartSeconds: round(startSeconds), EndSeconds: round(endSeconds), Metrics: metrics.aggregate.Snapshot()}
+		window := report.WindowResult{StartSeconds: round(startSeconds), EndSeconds: round(endSeconds), Metrics: metrics.aggregate.Snapshot(), Journeys: metrics.journeys.Snapshot()}
 		for _, step := range v.Steps {
 			window.Steps = append(window.Steps, report.WindowMetric{Name: step.Name, Metrics: metrics.steps[step.Name].Snapshot()})
 		}
@@ -463,12 +466,36 @@ func runWithTransport(parent context.Context, v config.Validated, transport *htt
 	if agg.Total == 0 || agg.Success == 0 || errorsRate > v.Scenario.MaxErrorRate || agg.P95MS > v.Scenario.P95LimitMS || result.ArrivalsDropped > 0 {
 		result.Outcome = "FAIL"
 	}
+	if journeyMetrics.Total == 0 {
+		if result.Outcome == "PASS" {
+			result.Outcome = "INCONCLUSIVE"
+		}
+		result.Warnings = append(result.Warnings, "No completed journeys were observed; full-journey SLO evidence is unavailable.")
+	} else {
+		journeyErrorRate := float64(journeyMetrics.Failures) / float64(journeyMetrics.Total)
+		if journeyErrorRate > v.Scenario.MaxErrorRate || journeyMetrics.P95MS > v.Scenario.P95LimitMS {
+			result.Outcome = "FAIL"
+			result.Warnings = append(result.Warnings, "Completed journeys breached the configured latency or error objective.")
+		}
+	}
 	for _, st := range steps {
 		if st.Metrics.Total < v.Scenario.MinSamplesPerStep || st.Metrics.Success == 0 || st.Metrics.P95MS > v.Scenario.P95LimitMS || (st.Metrics.Total > 0 && float64(st.Metrics.Failures)/float64(st.Metrics.Total) > v.Scenario.MaxErrorRate) {
 			result.Outcome = "FAIL"
 		}
 	}
 	for _, window := range windows {
+		if window.Journeys.Total == 0 {
+			if result.Outcome == "PASS" {
+				result.Outcome = "INCONCLUSIVE"
+			}
+			result.Warnings = append(result.Warnings, fmt.Sprintf("Observation window %.1f-%.1fs has no completed journeys; full-journey evidence is insufficient.", window.StartSeconds, window.EndSeconds))
+		} else {
+			journeyErrorRate := float64(window.Journeys.Failures) / float64(window.Journeys.Total)
+			if window.Journeys.P95MS > v.Scenario.P95LimitMS || journeyErrorRate > v.Scenario.MaxErrorRate {
+				result.Outcome = "FAIL"
+				result.Warnings = append(result.Warnings, fmt.Sprintf("Completed journeys in observation window %.1f-%.1fs breached an SLO.", window.StartSeconds, window.EndSeconds))
+			}
+		}
 		if window.Metrics.Total < v.Scenario.MinSamplesPerStep {
 			if result.Outcome == "PASS" {
 				result.Outcome = "INCONCLUSIVE"

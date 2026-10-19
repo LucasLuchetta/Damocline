@@ -15,8 +15,9 @@ func TestStabilityDetectsMinorityWorkflowDriftHiddenByAggregate(t *testing.T) {
 		}
 		run.Windows = append(run.Windows, report.WindowResult{
 			StartSeconds: float64(i) * 2.5,
-			EndSeconds: float64(i+1) * 2.5,
-			Metrics: report.MetricSet{Total: 100, Success: 100, P95MS: 100},
+			EndSeconds:   float64(i+1) * 2.5,
+			Metrics:      report.MetricSet{Total: 100, Success: 100, P95MS: 100},
+			Journeys:     report.MetricSet{Total: 100, Success: 100, P95MS: 100},
 			Steps: []report.WindowMetric{
 				{Name: "dashboard", Metrics: report.MetricSet{Total: 80, Success: 80, P95MS: 100}},
 				{Name: "review", Metrics: report.MetricSet{Total: 20, Success: 20, P95MS: minority}},
@@ -42,8 +43,9 @@ func TestStabilityCannotCertifyMissingOrLowSampleMinorityWorkflow(t *testing.T) 
 	for i := 0; i < 4; i++ {
 		run.Windows = append(run.Windows, report.WindowResult{
 			StartSeconds: float64(i) * 2.5,
-			EndSeconds: float64(i+1) * 2.5,
-			Metrics: report.MetricSet{Total: 100, Success: 100, P95MS: 100},
+			EndSeconds:   float64(i+1) * 2.5,
+			Metrics:      report.MetricSet{Total: 100, Success: 100, P95MS: 100},
+			Journeys:     report.MetricSet{Total: 100, Success: 100, P95MS: 100},
 			Profiles: []report.WindowMetric{
 				{Name: "main", Metrics: report.MetricSet{Total: 80, Success: 80, P95MS: 100}},
 				{Name: "minority", Metrics: report.MetricSet{Total: 20, Success: 20, P95MS: 100}},
@@ -57,8 +59,40 @@ func TestStabilityCannotCertifyMissingOrLowSampleMinorityWorkflow(t *testing.T) 
 	}
 	run.Windows[1].Profiles[1].Metrics.Total = 20
 	run.Windows[1].Profiles[1].Metrics.Success = 20
+	run.Windows[1].Journeys.Total = 5
+	run.Windows[1].Journeys.Success = 5
+	if got := AssessStability(run); got != "INSUFFICIENT_WINDOWS" {
+		t.Fatalf("low-sample completed journeys incorrectly accepted: %s", got)
+	}
+	run.Windows[1].Journeys.Total = 100
+	run.Windows[1].Journeys.Success = 100
+	run.Windows[1].Profiles[1].Metrics.Total = 20
+	run.Windows[1].Profiles[1].Metrics.Success = 20
 	run.Windows[3].Profiles[1].Name = "unknown"
 	if got := AssessStability(run); got != "INSUFFICIENT_WINDOWS" {
 		t.Fatalf("changed workflow identity incorrectly accepted: %s", got)
+	}
+}
+
+func TestStabilityDetectsLegacyJourneyDriftHiddenByHealthyRequestMetrics(t *testing.T) {
+	run := report.Result{ObservationSeconds: 10}
+	for i := 0; i < 4; i++ {
+		journeyP95 := 100.0
+		if i == 2 {
+			journeyP95 = 160
+		}
+		run.Windows = append(run.Windows, report.WindowResult{
+			StartSeconds: float64(i) * 2.5,
+			EndSeconds:   float64(i+1) * 2.5,
+			Metrics:      report.MetricSet{Total: 100, Success: 100, P95MS: 100},
+			Journeys:     report.MetricSet{Total: 100, Success: 100, P95MS: journeyP95},
+		})
+	}
+	if got := AssessStability(run); got != "NON_STATIONARY" {
+		t.Fatalf("full-journey regression hidden by healthy requests: %s", got)
+	}
+	run.Windows[2].Journeys.P95MS = 100
+	if got := AssessStability(run); got != "NO_LARGE_DRIFT_DETECTED" {
+		t.Fatalf("stable legacy journey windows rejected: %s", got)
 	}
 }

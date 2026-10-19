@@ -5,6 +5,7 @@ This project follows a human-maintained changelog. No release exists yet.
 ## [Unreleased]
 
 ### Added
+- Advance HTTP run reports to schema v22 with completed-journey metrics in every observation window; evaluate journey SLOs in engine outcomes and campaign audits, reconcile journey ledgers in offline demand assessments, and include full-journey sample adequacy/drift in campaign screening.
 - Record schema-v2 campaign stage classifications and an observation-window drift screen; reserve bounded phase drains in the default wall-time cap and validate the exact saved phase schedule offline.
 - Add seeded discrete between-step timing with bounded repeated samples, profile overrides, report provenance and reproducible workload fingerprints.
 - Add bounded seeded between-step timing ranges for scenarios and weighted profiles, record policy and seed in schema-v21 reports and workload fingerprints, and keep fixed-pause scenarios compatible.
@@ -127,7 +128,7 @@ This project follows a human-maintained changelog. No release exists yet.
 - Guided setup accepts bare domains and HTTPS origins with a trailing slash, and retries invalid addresses instead of aborting.
 - Removed third-party load-testing tool references from the interactive welcome banner.
 
-### Added
+### Added.
 - Emit schema-v16 arrival accounting with externally cancelled planned starts separated from scheduler-late and worker-busy drops; preserve missing-versus-zero semantics for historical reports.
 - Branded sword splash screen and English numbered home menu for bare `damocline` and `start.cmd`, with safe choices for new, saved, current, help and exit.
 - Terminal-aware ANSI color support with plain-text fallback. Non-interactive commands remain unchanged.

@@ -15,12 +15,13 @@ func auditFixture() campaign.Result {
 		r := report.Result{
 			SchemaVersion: 1, Outcome: "PASS", Target: "http://127.0.0.1:18080",
 			ElapsedSeconds: 10, ObservationSeconds: 10,
-			Config: report.RunConfig{Users: 2, Duration: "10s", WindowDuration: "2.5s", MaxRPS: 40, P95LimitMS: 1000, MaxErrorRate: 0.1},
-			Metrics: report.MetricSet{Total: 80, Success: 80, P95MS: 100},
+			Config:   report.RunConfig{Users: 2, Duration: "10s", WindowDuration: "2.5s", MaxRPS: 40, P95LimitMS: 1000, MaxErrorRate: 0.1},
+			Metrics:  report.MetricSet{Total: 80, Success: 80, P95MS: 100},
+			Journeys: report.MetricSet{Total: 80, Success: 80, P95MS: 100},
 		}
 		for i := 0; i < 4; i++ {
 			r.Windows = append(r.Windows, report.WindowResult{StartSeconds: float64(i) * 2.5, EndSeconds: float64(i+1) * 2.5,
-				Metrics: report.MetricSet{Total: 20, Success: 20, P95MS: 100}})
+				Metrics: report.MetricSet{Total: 20, Success: 20, P95MS: 100}, Journeys: report.MetricSet{Total: 20, Success: 20, P95MS: 100}})
 		}
 		r.Quality = report.AssessQuality(r)
 		return r
@@ -78,7 +79,7 @@ func TestAuditCampaignRejectsMissingTrialsOrInvalidDelivery(t *testing.T) {
 	e = auditFixture()
 	e.Outcome = "INCONCLUSIVE"
 	e.Trials[0].Outcome = "INCONCLUSIVE"
-		e.Trials[0].Phases[0].Run.ArrivalsDropped = 1
+	e.Trials[0].Phases[0].Run.ArrivalsDropped = 1
 	e.Trials[0].Phases[0].Run.Outcome = "FAIL"
 	e.Trials[0].Phases[0].EvidenceState = "INVALID_DELIVERY"
 	if got := AuditCampaign(e); got.State != "INCONCLUSIVE" {

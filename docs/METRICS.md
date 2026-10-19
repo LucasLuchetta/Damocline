@@ -14,6 +14,8 @@
 | Journey time | Total elapsed time for specified business steps, including the configured timing rules. |
 | Sustainable capacity | A claim reserved for a workload level that passes a defined sustained protocol with adequate measurement quality and uncertainty; the current short-run explorer does not establish this. |
 
+Reports from schema v22 retain completed-journey counts and latency distributions inside each observation window for both legacy single-workflow scenarios and weighted profiles. The offline demand planner checks journey-level latency and error bounds for the run and each window alongside request and step metrics. Campaign stability screening also requires enough completed journeys in every window and checks for coarse drift in full-journey p95 and throughput. Journeys still in progress at the observation boundary are excluded from completed-journey percentiles and are reported separately.
+
 Do not describe a request rate, open TCP connection count, or total logins as "simultaneous users" without qualifications. A real browser page includes client rendering and third-party resource work that HTTP-only simulations may not measure.
 
 ## Workload types

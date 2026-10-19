@@ -51,12 +51,33 @@ func TestSuccess(t *testing.T) {
 	}))
 	defer srv.Close()
 	v := scenario(t, srv.URL, []config.Step{{Name: "page", Path: "/page", MustContain: "expected page"}})
+	v.Window = v.Duration
 	result := Run(context.Background(), v)
 	if result.Metrics.Success < 1 || result.Metrics.Failures != 0 || result.Outcome != "PASS" {
 		t.Fatalf("unexpected report: %+v", result)
 	}
 	if result.SchemaVersion != report.CurrentSchemaVersion || result.Config.WorkloadFingerprint == "" || result.ObservationSeconds != v.Duration.Seconds() || result.Generator == nil || result.Generator.ProcessSamples < 2 || result.Generator.SamplingIntervalMS != 250 || result.Generator.MaxSampleGapMS <= 0 || result.Generator.SampleCollectionTotalMS < result.Generator.SampleCollectionMaxMS {
 		t.Fatalf("report must include workload fingerprint, observation window and generator process observations: %+v", result)
+	}
+	if len(result.Windows) == 0 || result.Windows[0].Journeys.Total == 0 || result.Windows[0].Journeys.Success != result.Windows[0].Journeys.Total {
+		t.Fatalf("observation window must retain completed journey evidence: %+v", result.Windows)
+	}
+}
+
+func TestCompletedJourneyLatencyCanFailWhileRequestLatencyPasses(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer server.Close()
+	v := scenario(t, server.URL, []config.Step{{Name: "first", Path: "/first"}, {Name: "second", Path: "/second"}})
+	v.Duration = 450 * time.Millisecond
+	v.Window = v.Duration
+	v.Scenario.Users = 1
+	v.Scenario.MaxRPS = 5
+	v.Scenario.P95LimitMS = 100
+	result := Run(context.Background(), v)
+	if result.Metrics.P95MS >= v.Scenario.P95LimitMS || result.Journeys.P95MS <= v.Scenario.P95LimitMS || result.Outcome != "FAIL" {
+		t.Fatalf("full-journey latency breach was hidden by request metrics: requests=%+v journeys=%+v outcome=%s warnings=%v", result.Metrics, result.Journeys, result.Outcome, result.Warnings)
 	}
 }
 
