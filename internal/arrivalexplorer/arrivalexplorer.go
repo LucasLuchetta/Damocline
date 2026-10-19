@@ -70,8 +70,8 @@ func Validate(o Options, s config.Scenario) error {
 	if o.StageDuration < 10*time.Second || o.StageDuration > 3*time.Minute {
 		return fmt.Errorf("stage-duration must be between 10s and 3m")
 	}
-	if o.Budget != 0 && (o.Budget < o.StageDuration || o.Budget > 15*time.Minute) {
-		return fmt.Errorf("budget must cover at least one stage and be at most 15m")
+	if o.Budget != 0 && (o.Budget < o.StageDuration+30*time.Second || o.Budget > 15*time.Minute) {
+		return fmt.Errorf("budget must cover one stage plus the engine's maximum bounded drain allowance and be at most 15m")
 	}
 	maxSteps := 0
 	if len(s.Profiles) > 0 {

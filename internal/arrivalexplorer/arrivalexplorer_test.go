@@ -81,6 +81,16 @@ func TestArrivalRateBoundsPreserveWorkerAndRequestCeilings(t *testing.T) {
 	if err := Validate(valid, scenario); err != nil {
 		t.Fatalf("valid schedule rejected: %v", err)
 	}
+	shortBudget := valid
+	shortBudget.Budget = 10 * time.Second
+	if err := Validate(shortBudget, scenario); err == nil {
+		t.Fatal("budget that cannot include the bounded engine drain was accepted")
+	}
+	withDrain := valid
+	withDrain.Budget = 40 * time.Second
+	if err := Validate(withDrain, scenario); err != nil {
+		t.Fatalf("budget covering a stage and maximum drain was rejected: %v", err)
+	}
 	tooHigh := valid
 	tooHigh.MaxJourneysPerSecond = 21
 	if err := Validate(tooHigh, scenario); err == nil {
