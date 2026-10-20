@@ -4,6 +4,7 @@ This project follows a human-maintained changelog. No release exists yet.
 
 ## [Unreleased]
 
+- Include the kernel-reported Linux process `Cpus_allowed_list` in each sampled CPU entitlement, detecting effective cgroup-v1/v2 cpuset and post-startup affinity restrictions; unreadable or malformed allowed-CPU evidence keeps capacity quality unknown.
 - Test the redacted export allowlist against caller-controlled strings nested anywhere in run, campaign, or exploration artifacts across every supported source schema; fuzz schema and artifact-family selection as well.
 
 - Cap Linux generator CPU entitlement by readable cgroup v2 effective cpusets as well as ancestor quotas; expose the combined source in existing CPU capacity metadata, fail closed on malformed present cpusets, and validate synthetic cpuset restrictions and changes.
