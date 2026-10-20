@@ -4,6 +4,8 @@ This project follows a human-maintained changelog. No release exists yet.
 
 ## [Unreleased]
 
+- Cap Linux generator CPU entitlement by readable cgroup v2 effective cpusets as well as ancestor quotas; expose the combined source in existing CPU capacity metadata, fail closed on malformed present cpusets, and validate synthetic cpuset restrictions and changes.
+
 - Add versioned private local campaign profiles with migration, explicit replacement/deletion, repeatable run controls, fresh execution opt-ins, and automatic complete campaign reports under `.damocline/reports/`. Reject literal credentials in both legacy and versioned workflow headers, and validate the published profile example against the current scenario schema.
 - Add offline `campaign profile verify` to compare saved workload and campaign controls against persisted phase configurations, with explicit mismatch/unverifiable states and an optional non-overwriting JSON result.
 - Add replayable executive and technical Markdown campaign reports from the same offline assessment, and persist peak-demand, growth, and reserve inputs in assessment JSON.
