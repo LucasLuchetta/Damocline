@@ -192,3 +192,92 @@ func writeCgroupFixture(t *testing.T, root, cgroup, mountInfo string, files map[
 		}
 	}
 }
+
+
+func TestParseEffectiveCPUSet(t *testing.T) {
+	for _, test := range []struct {
+		input string
+		want  int
+	}{
+		{"0", 1}, {"0-3", 4}, {"0-1,4,7-9", 6}, {" 0,2-3\\n", 3},
+	} {
+		got, err := parseEffectiveCPUSet(test.input)
+		if err != nil || got != test.want {
+			t.Errorf("parseEffectiveCPUSet(%q) = (%d, %v), want %d", test.input, got, err, test.want)
+		}
+	}
+	for _, input := range []string{
+		"", " ", "1-0", "2-3,1", "0-3,3-4", "0,0", "1,,3",
+		"-1", "0-", "0-1-2", "a", "0-1048577", "0, 2",
+	} {
+		if got, err := parseEffectiveCPUSet(input); err == nil {
+			t.Errorf("invalid cpuset %q accepted with %d cores", input, got)
+		}
+	}
+}
+
+func TestLinuxCapacityCombinesV2QuotaAndEffectiveCPUSet(t *testing.T) {
+	tests := []struct {
+		name, quota, cpuset, source string
+		want                      float64
+		known                     bool
+		maxProcs                  int
+	}{
+		{"cpuset tighter than quota", "400000 100000", "0-1", "cgroup_v2_cpu_quota_and_cpuset", 2, true, 12},
+		{"quota tighter than cpuset", "200000 100000", "0-7", "cgroup_v2_cpu_quota_and_cpuset", 2, true, 12},
+		{"unlimited quota restricted to cpuset", "max 100000", "0,2-3", "cgroup_v2_cpuset_effective", 3, true, 12},
+		{"runtime tighter than set", "400000 100000", "0-7", "cgroup_v2_cpu_quota_and_cpuset", 2, true, 2},
+		{"malformed existing cpuset fails closed", "400000 100000", "0-2,2-3", "cgroup_v2_cpuset_unreadable", 4, false, 12},
+		{"empty existing cpuset fails closed", "max 100000", "", "cgroup_v2_cpuset_unreadable", 12, false, 12},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeCgroupFixture(t, root, "0::/container/job\\n",
+				"29 23 0:26 /container /sys/fs/cgroup rw - cgroup2 cgroup rw\\n",
+				map[string]string{
+					"sys/fs/cgroup/cpu.max":                "max 100000",
+					"sys/fs/cgroup/job/cpu.max":            test.quota,
+					"sys/fs/cgroup/job/cpuset.cpus.effective": test.cpuset,
+				})
+			capacity := cpuCapacityFromQuota(12, test.maxProcs, root, "/proc/self/cgroup", "/proc/self/mountinfo")
+			if capacity.cores != test.want || capacity.source != test.source || capacity.known != test.known {
+				t.Errorf("CPU capacity = %+v, want cores=%.2f source=%s known=%t", capacity, test.want, test.source, test.known)
+			}
+		})
+	}
+}
+
+func TestLinuxCapacityKeepsLegacyBehaviorWithoutV2CPUSetFile(t *testing.T) {
+	root := t.TempDir()
+	writeCgroupFixture(t, root, "0::/container/job\\n",
+		"29 23 0:26 /container /sys/fs/cgroup rw - cgroup2 cgroup rw\\n",
+		map[string]string{
+			"sys/fs/cgroup/cpu.max":     "max 100000",
+			"sys/fs/cgroup/job/cpu.max": "300000 100000",
+		})
+	capacity := cpuCapacityFromQuota(12, 12, root, "/proc/self/cgroup", "/proc/self/mountinfo")
+	if capacity.cores != 3 || capacity.source != cgroupV2QuotaSource || !capacity.known {
+		t.Fatalf("absent optional cpuset changed quota-only behavior: %+v", capacity)
+	}
+}
+
+func TestLinuxCapacityDetectsV2CPUSetChanges(t *testing.T) {
+	root := t.TempDir()
+	cpusetPath := filepath.Join(root, "sys/fs/cgroup/job/cpuset.cpus.effective")
+	writeCgroupFixture(t, root, "0::/container/job\\n",
+		"29 23 0:26 /container /sys/fs/cgroup rw - cgroup2 cgroup rw\\n",
+		map[string]string{
+			"sys/fs/cgroup/cpu.max":                "max 100000",
+			"sys/fs/cgroup/job/cpu.max":            "400000 100000",
+			"sys/fs/cgroup/job/cpuset.cpus.effective": "0-3",
+		})
+	before := cpuCapacityFromQuota(12, 12, root, "/proc/self/cgroup", "/proc/self/mountinfo")
+	if err := os.WriteFile(cpusetPath, []byte("0-1"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	after := cpuCapacityFromQuota(12, 12, root, "/proc/self/cgroup", "/proc/self/mountinfo")
+	if before.cores != 4 || after.cores != 2 || !before.known || !after.known {
+		t.Fatalf("effective cpuset change not detected: before=%+v after=%+v", before, after)
+	}
+}
