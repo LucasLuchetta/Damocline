@@ -4,6 +4,8 @@ This project follows a human-maintained changelog. No release exists yet.
 
 ## [Unreleased]
 
+- Test the redacted export allowlist against caller-controlled strings nested anywhere in run, campaign, or exploration artifacts across every supported source schema; fuzz schema and artifact-family selection as well.
+
 - Cap Linux generator CPU entitlement by readable cgroup v2 effective cpusets as well as ancestor quotas; expose the combined source in existing CPU capacity metadata, fail closed on malformed present cpusets, and validate synthetic cpuset restrictions and changes.
 
 - Add versioned private local campaign profiles with migration, explicit replacement/deletion, repeatable run controls, fresh execution opt-ins, and automatic complete campaign reports under `.damocline/reports/`. Reject literal credentials in both legacy and versioned workflow headers, and validate the published profile example against the current scenario schema.

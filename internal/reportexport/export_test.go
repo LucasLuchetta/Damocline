@@ -1,7 +1,10 @@
 package reportexport
 
 import (
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -212,4 +215,122 @@ func FuzzRedactedRunExportDoesNotCopyCallerStrings(f *testing.F) {
 			t.Fatalf("caller-controlled value escaped allowlist export: %q", marker)
 		}
 	})
+}
+
+// Fuzz every accepted source schema and artifact family. The export is an
+// allowlist, so no caller-controlled string from any nested source field may
+// survive, including strings introduced by later schemas.
+func FuzzRedactedExportDoesNotCopyCallerStringsAcrossSchemas(f *testing.F) {
+	f.Add("customer-731-secret.example.test/private/path", uint8(report.CurrentSchemaVersion), uint8(0))
+	f.Add("token=secret-abc-123", uint8(campaign.CurrentSchemaVersion), uint8(1))
+	f.Add("forged\\nfield", uint8(arrivalcampaign.CurrentSchemaVersion), uint8(2))
+	f.Add("private-route", uint8(2), uint8(3))
+	f.Add("private-tenant", uint8(2), uint8(4))
+	f.Fuzz(func(t *testing.T, input string, versionByte, kindByte uint8) {
+		if len(input) > 2048 {
+			t.Skip()
+		}
+		digest := sha256.Sum256([]byte(input))
+		marker := fmt.Sprintf("private-marker-%x", digest[:])
+		version, kind := int(versionByte), int(kindByte%5)
+		schemaCount := []int{report.CurrentSchemaVersion, campaign.CurrentSchemaVersion, arrivalcampaign.CurrentSchemaVersion, 2, 2}[kind]
+		version = version%schemaCount + 1
+		source := redactedEvidenceForSchema(kind, version, marker)
+		data, err := Marshal(source)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(data), marker) {
+			t.Fatalf("%s schema-v%d export retained caller-controlled field %q: %s", sourceKind(kind), version, marker, data)
+		}
+	})
+}
+
+func TestRedactedExportOmitsStringsAcrossEverySupportedSchema(t *testing.T) {
+	schemaCounts := []int{report.CurrentSchemaVersion, campaign.CurrentSchemaVersion, arrivalcampaign.CurrentSchemaVersion, 2, 2}
+	for kind, schemaCount := range schemaCounts {
+		for version := 1; version <= schemaCount; version++ {
+			t.Run(fmt.Sprintf("%s/schema-v%d", sourceKind(kind), version), func(t *testing.T) {
+				marker := fmt.Sprintf("private-marker-%s-v%d", sourceKind(kind), version)
+				data, err := Marshal(redactedEvidenceForSchema(kind, version, marker))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if strings.Contains(string(data), marker) {
+					t.Fatalf("export retained caller-controlled field %q: %s", marker, data)
+				}
+			})
+		}
+	}
+}
+
+func redactedEvidenceForSchema(kind, version int, marker string) Evidence {
+	switch kind {
+	case 0:
+		item := report.Result{SchemaVersion: version}
+		injectCallerStrings(reflect.ValueOf(&item).Elem(), marker)
+		return FromRun(item)
+	case 1:
+		item := campaign.Result{SchemaVersion: version}
+		injectCallerStrings(reflect.ValueOf(&item).Elem(), marker)
+		return FromClosedCampaign(item)
+	case 2:
+		item := arrivalcampaign.Result{SchemaVersion: version}
+		injectCallerStrings(reflect.ValueOf(&item).Elem(), marker)
+		return FromArrivalCampaign(item)
+	case 3:
+		item := explorer.Result{SchemaVersion: version}
+		injectCallerStrings(reflect.ValueOf(&item).Elem(), marker)
+		return FromClosedExplorer(item)
+	case 4:
+		item := arrivalexplorer.Result{SchemaVersion: version}
+		injectCallerStrings(reflect.ValueOf(&item).Elem(), marker)
+		return FromArrivalExplorer(item)
+	default:
+		panic("unknown report export source kind")
+	}
+}
+
+func sourceKind(kind int) string {
+	return [...]string{"run", "closed-loop campaign", "open-arrival campaign", "closed-loop exploration", "open-arrival exploration"}[kind]
+}
+
+// injectCallerStrings fills every string reachable in a source artifact,
+// including optional structures and maps. Numeric and boolean observations
+// remain zero so the test targets data-flow through the export allowlist.
+func injectCallerStrings(value reflect.Value, marker string) {
+	switch value.Kind() {
+	case reflect.Pointer:
+		if value.IsNil() {
+			value.Set(reflect.New(value.Type().Elem()))
+		}
+		injectCallerStrings(value.Elem(), marker)
+	case reflect.Struct:
+		for i := 0; i < value.NumField(); i++ {
+			field := value.Field(i)
+			if field.CanSet() {
+				injectCallerStrings(field, marker)
+			}
+		}
+	case reflect.Slice:
+		if value.IsNil() {
+			value.Set(reflect.MakeSlice(value.Type(), 1, 1))
+		}
+		for i := 0; i < value.Len(); i++ {
+			injectCallerStrings(value.Index(i), marker)
+		}
+	case reflect.Map:
+		if value.IsNil() {
+			value.Set(reflect.MakeMap(value.Type()))
+		}
+		key := reflect.New(value.Type().Key()).Elem()
+		if key.Kind() == reflect.String {
+			key.SetString(marker)
+		}
+		item := reflect.New(value.Type().Elem()).Elem()
+		injectCallerStrings(item, marker)
+		value.SetMapIndex(key, item)
+	case reflect.String:
+		value.SetString(marker)
+	}
 }
