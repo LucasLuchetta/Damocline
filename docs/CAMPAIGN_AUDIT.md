@@ -30,8 +30,9 @@ observational verdict. Only the separately validated loopback calibration
 owns the current positive generator measurement envelope. For a specific
 business-demand check, pass `--peak-users` (and optional growth and reserve
 percentages) to `audit`. The combined JSON assessment contains the observed
-audit and demand plan in one artifact; `plan` remains available for a
-standalone demand check.
+audit and demand plan in one artifact, including the original peak/growth/reserve
+inputs; `plan` remains available for a standalone demand check. `--report-out FILE.md` writes executive and technical sections from that same assessment and
+records the exact offline replay command.
 
 Each assessment includes a SHA-256 digest of the saved campaign and each
 reviewed phase report, the workload fingerprint recorded by each run, target,
@@ -48,6 +49,13 @@ workflow, breached p95/error objective, and observed values. A failure count
 inside the configured error budget is not labeled a breach. These observations
 describe which workflow metric crossed an SLO; they do not establish a root
 cause. Invalid evidence suppresses workflow-breach details.
+
+The Markdown report records phase-level controls, source and phase evidence
+IDs, observation statistics, confidence limits and a replay command. It includes
+the target origin and may contain private scenario labels, so keep it with local
+reports. It does not embed the full scenario or credentials. Preserve the private
+profile and use `campaign profile verify` to check that profile against the saved
+campaign before rerunning the workload.
 
 To inspect separately recorded campaigns at multiple active-workload levels,
 repeat `--campaign`:

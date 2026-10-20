@@ -34,6 +34,7 @@ type CampaignCollectionAssessment struct {
 	FailingLevels       []int                     `json:"observed_failing_levels"`
 	InconclusiveLevels  []int                     `json:"inconclusive_levels"`
 	ObservationPattern  string                    `json:"observation_pattern"`
+	DemandInputs        *capacitygoal.Goal        `json:"demand_inputs,omitempty"`
 	Demand              *Result                   `json:"demand,omitempty"`
 	DemandEvidenceID    string                    `json:"demand_evidence_id,omitempty"`
 	Findings            []string                  `json:"findings"`
@@ -98,7 +99,7 @@ func BuildCampaignCollectionAssessment(evidence []campaign.Result, goal *capacit
 		return CampaignCollectionAssessment{}, fmt.Errorf("campaign collection must contain 2-%d reports", MaxCampaignCollectionSize)
 	}
 	result := CampaignCollectionAssessment{
-		SchemaVersion:  1,
+		SchemaVersion:  2,
 		AssessmentType: "CAMPAIGN_LEVEL_COLLECTION",
 		State:          "OBSERVED_LEVELS_ONLY",
 		Levels:         make([]CampaignLevelAssessment, 0, len(evidence)),
@@ -183,6 +184,8 @@ func BuildCampaignCollectionAssessment(evidence []campaign.Result, goal *capacit
 		result.Findings = append(result.Findings, "Declared workload signatures match, but physical generator identity, actual demand equivalence, dependence, and stationarity are not independently established.")
 	}
 	if goal != nil {
+		goalCopy := *goal
+		result.DemandInputs = &goalCopy
 		target, err := capacitygoal.EvaluatedUsers(*goal)
 		if err != nil {
 			return CampaignCollectionAssessment{}, err

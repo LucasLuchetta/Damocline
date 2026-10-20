@@ -1,0 +1,61 @@
+package cli
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/LucasLuchetta/Damocline/internal/campaign"
+	"github.com/LucasLuchetta/Damocline/internal/capacitygoal"
+	"github.com/LucasLuchetta/Damocline/internal/capacityplan"
+	"github.com/LucasLuchetta/Damocline/internal/generatorhealth"
+	"github.com/LucasLuchetta/Damocline/internal/report"
+)
+
+func TestCampaignCapacityReportSnapshotAndVerdictSeparation(t *testing.T) {
+	policy := campaign.DefaultStabilityPolicy()
+	guardrails := generatorhealth.Guardrails{}
+	assessment := capacityplan.Assessment{
+		SchemaVersion: 3,
+		Audit: capacityplan.CampaignAudit{
+			SchemaVersion: campaign.CurrentSchemaVersion, EvidenceID: "sha256:campaign-fixture", ScenarioFingerprint: "sha256:workload-fixture",
+			Scenario: "synthetic local fixture", Target: "http://127.0.0.1:18080", StartedAt: "2026-10-19T12:00:00Z",
+			DemandTargetUsers: 3, TestedBaseUsers: 2, HostType: "NOT_RECORDED", PassingLevels: []int{2}, FailingLevels: []int{},
+			TestedDuration: "20s", Confidence: "NOT_ESTABLISHED", LimitingWorkflows: []string{},
+			ObservationTrials: []capacityplan.ObservationTrial{{Trial: 1, Requests: 100, RequestP95MS: 125, CompletedJourneys: 50, JourneyP95MS: 250, SuccessfulJourneysPerSec: 5}},
+			SpreadConsistency: "MATCHED", Repeatability: capacityplan.RepeatabilityEvidence{Status: "CONDITIONAL_INTERVAL", EvaluatedTrials: 2, PassingTrials: 2, Lower95: 0.158, Upper95: 1, Method: "EXACT_CLOPPER_PEARSON_BINOMIAL", Assumption: "INDEPENDENT_STATIONARY_REPEAT_TRIALS"},
+			Unknowns: []string{"Physical host identity is not verified."}, State: "OBSERVED_PASS_ONLY", MeasurementQuality: report.QualityLimited, ObservedOutcome: "PASS", RequiredPhases: 2,
+			Findings: []string{"Observed phase SLOs passed; sustainable capacity remains unproven."},
+			Phases:   []capacityplan.PhaseAudit{{Trial: 1, Name: "observation", EvidenceID: "sha256:phase-fixture", StartedAt: "2026-10-19T12:00:00Z", ObservationSecs: 10, RunFingerprint: "sha256:workload-fixture", EvidenceState: "PASS_OBSERVED", Measurement: report.QualityLimited, Stability: "NO_LARGE_DRIFT_DETECTED"}},
+		},
+		Confidence:   capacityplan.ConfidenceDimensions{Measurement: "LIMITED", WorkloadRepresentativeness: "NOT_ASSESSED", Decision: "NOT_ESTABLISHED", Findings: []string{"The workload mix is not independently validated."}},
+		DemandInputs: &capacitygoal.Goal{PeakUsers: 2, GrowthPercent: 25, ReservePercent: 10},
+		Demand:       &capacityplan.Result{State: "INSUFFICIENT_EVIDENCE", TargetUsers: 3, TestedUsers: 2, Findings: []string{"The exact demand target was not tested."}},
+		State:        "INSUFFICIENT_EVIDENCE",
+	}
+	phase := report.Result{Target: "http://127.0.0.1:18080", Config: report.RunConfig{Users: 2, Duration: "10s", Mode: "closed", MaxRPS: 20, P95LimitMS: 500, MaxErrorRate: .01, RequestTimeout: "2s", ConnectionPolicy: "reuse", WorkloadFingerprint: "sha256:workload-fixture"}}
+	evidence := campaign.Result{
+		SchemaVersion: campaign.CurrentSchemaVersion, ExecutionState: "COMPLETED", Scenario: assessment.Audit.Scenario, Target: assessment.Audit.Target,
+		BaseUsers: 2, Warmup: "0s", Stabilization: "0s", Observation: "10s", SpikeUsers: 0, SpikeDuration: "0s", Recovery: "10s", Soak: "0s", Cooldown: "0s",
+		Budget: "3m20s", Repeats: 2, Outcome: "PASS", DeclaredEnvironment: "development", StabilityPolicy: &policy, GeneratorGuardrails: &guardrails,
+		Trials: []campaign.Trial{{Number: 1, Outcome: "PASS", Phases: []campaign.Phase{{Name: "observation", Run: phase}}}},
+	}
+	got := renderCampaignCapacityReport(assessment, "campaign.json", "capacity.md", evidence)
+	if strings.Contains(got, "**Assessment:** OBSERVED_PASS_ONLY") || !strings.Contains(got, "**Assessment:** INSUFFICIENT_EVIDENCE") || !strings.Contains(got, "**Observed campaign:** OBSERVED_PASS_ONLY") {
+		t.Fatalf("executive and observed verdicts were conflated: %s", got)
+	}
+	path := filepath.Join("testdata", "capacity_report.golden.md")
+	if os.Getenv("UPDATE_GOLDEN") == "1" {
+		if err := os.WriteFile(path, []byte(got), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != strings.ReplaceAll(string(want), "\r\n", "\n") {
+		t.Fatalf("capacity Markdown report changed:\n%s", got)
+	}
+}

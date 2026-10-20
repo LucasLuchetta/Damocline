@@ -239,15 +239,19 @@ func writeProfileVerification(path string, verification campaignProfileVerificat
 		}
 		return err
 	}
-	defer file.Close()
 	removeOnError := true
 	defer func() {
+		_ = file.Close()
 		if removeOnError {
 			_ = os.Remove(path)
 		}
 	}()
-	if _, err := file.Write(data); err != nil {
+	n, err := file.Write(data)
+	if err != nil {
 		return err
+	}
+	if n != len(data) {
+		return io.ErrShortWrite
 	}
 	if err := file.Sync(); err != nil {
 		return err
