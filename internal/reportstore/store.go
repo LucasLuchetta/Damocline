@@ -138,7 +138,17 @@ func (s Store) listUnlocked() ([]Entry, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read report history: %w", err)
 	}
-	entries := make([]Entry, 0, len(dirEntries))
+
+	// Validate the entire archive envelope before opening any report body.
+	// A history altered outside this process must not bypass the same limits
+	// enforced by Save, or cause an unbounded sequence of large file reads.
+	type candidate struct {
+		id   string
+		name string
+		size int64
+	}
+	candidates := make([]candidate, 0, MaxReports)
+	var totalBytes int64
 	for _, dirEntry := range dirEntries {
 		name := dirEntry.Name()
 		if !strings.HasSuffix(name, ".json") {
@@ -147,6 +157,9 @@ func (s Store) listUnlocked() ([]Entry, error) {
 		id := strings.TrimSuffix(name, ".json")
 		if !idPattern.MatchString(id) {
 			continue
+		}
+		if len(candidates) >= MaxReports {
+			return nil, fmt.Errorf("report history exceeds the %d-report archive limit", MaxReports)
 		}
 		info, err := dirEntry.Info()
 		if err != nil {
@@ -158,24 +171,36 @@ func (s Store) listUnlocked() ([]Entry, error) {
 		if info.Size() > maxReportSize {
 			return nil, fmt.Errorf("archived report %s exceeds the 16 MiB archive limit", id)
 		}
-		data, err := os.ReadFile(filepath.Join(s.Dir, name))
+		if info.Size() > MaxStoreBytes-totalBytes {
+			return nil, fmt.Errorf("report history exceeds the %d MiB archive limit", MaxStoreBytes>>20)
+		}
+		totalBytes += info.Size()
+		candidates = append(candidates, candidate{id: id, name: name, size: info.Size()})
+	}
+
+	entries := make([]Entry, 0, len(candidates))
+	for _, file := range candidates {
+		data, err := readBoundedRegularFile(filepath.Join(s.Dir, file.name))
 		if err != nil {
-			return nil, fmt.Errorf("read archived report %s: %w", id, err)
+			return nil, fmt.Errorf("read archived report %s: %w", file.id, err)
+		}
+		if int64(len(data)) != file.size {
+			return nil, fmt.Errorf("archived report %s changed size during inspection", file.id)
 		}
 		metadata, err := inspectArtifact(data)
 		if err != nil {
-			return nil, fmt.Errorf("archived report %s is invalid: %w", id, err)
+			return nil, fmt.Errorf("archived report %s is invalid: %w", file.id, err)
 		}
 		digest := sha256.Sum256(data)
-		if hex.EncodeToString(digest[:]) != id[27:] {
-			return nil, fmt.Errorf("archived report %s failed its content digest check", id)
+		if hex.EncodeToString(digest[:]) != file.id[27:] {
+			return nil, fmt.Errorf("archived report %s failed its content digest check", file.id)
 		}
-		stamp, err := time.Parse("20060102T150405.000000000Z", id[:26])
+		stamp, err := time.Parse("20060102T150405.000000000Z", file.id[:26])
 		if err != nil {
-			return nil, fmt.Errorf("archived report %s has an invalid timestamp", id)
+			return nil, fmt.Errorf("archived report %s has an invalid timestamp", file.id)
 		}
-		entries = append(entries, Entry{ID: id, Kind: metadata.Kind, Scenario: metadata.Scenario,
-			Outcome: metadata.Outcome, StartedAt: metadata.StartedAt, Bytes: info.Size(), SavedAt: stamp})
+		entries = append(entries, Entry{ID: file.id, Kind: metadata.Kind, Scenario: metadata.Scenario,
+			Outcome: metadata.Outcome, StartedAt: metadata.StartedAt, Bytes: file.size, SavedAt: stamp})
 	}
 	sort.Slice(entries, func(i, j int) bool {
 		if entries[i].SavedAt.Equal(entries[j].SavedAt) {
@@ -187,27 +212,41 @@ func (s Store) listUnlocked() ([]Entry, error) {
 }
 
 func readArtifact(path string) ([]byte, error) {
+	data, err := readBoundedRegularFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read report artifact: %w", err)
+	}
+	if _, err := inspectArtifact(data); err != nil {
+		return nil, err
+	}
+	return data, nil
+}
+
+// readBoundedRegularFile checks the opened descriptor and limits actual reads.
+// A separate directory-entry size check is insufficient if a file changes
+// between inspection and opening.
+func readBoundedRegularFile(path string) ([]byte, error) {
 	file, err := os.Open(path)
 	if err != nil {
-		return nil, fmt.Errorf("open report artifact: %w", err)
+		return nil, fmt.Errorf("open: %w", err)
 	}
 	defer file.Close()
 	info, err := file.Stat()
 	if err != nil {
-		return nil, fmt.Errorf("inspect report artifact: %w", err)
+		return nil, fmt.Errorf("inspect: %w", err)
 	}
 	if !info.Mode().IsRegular() {
 		return nil, errors.New("report artifact must be a regular file")
 	}
+	if info.Size() > maxReportSize {
+		return nil, errors.New("report artifact exceeds the 16 MiB archive limit")
+	}
 	data, err := io.ReadAll(io.LimitReader(file, maxReportSize+1))
 	if err != nil {
-		return nil, fmt.Errorf("read report artifact: %w", err)
+		return nil, fmt.Errorf("read: %w", err)
 	}
 	if len(data) > maxReportSize {
 		return nil, errors.New("report artifact exceeds the 16 MiB archive limit")
-	}
-	if _, err := inspectArtifact(data); err != nil {
-		return nil, err
 	}
 	return data, nil
 }
