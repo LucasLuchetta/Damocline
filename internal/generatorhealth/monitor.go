@@ -83,7 +83,7 @@ type GuardrailTrigger struct {
 	ElapsedMS          float64 `json:"elapsed_ms"`
 }
 
-const note = "Generator-side Go runtime and supported OS process samples only; RSS is not total host memory. CPU utilization is normalized to detected capacity bounded by logical CPUs, GOMAXPROCS, and finite Linux cgroup CPU quotas across the process hierarchy. An unavailable quota is not treated as unlimited. The peak is the highest sampled interval and may reflect a short burst. Sampling may miss brief peaks and does not describe the target application."
+const note = "Generator-side Go runtime and supported OS process samples only; RSS is not total host memory. CPU utilization is normalized to detected capacity bounded by logical CPUs, GOMAXPROCS, and finite Linux cgroup CPU quotas across the process hierarchy and readable cgroup v2 effective cpusets. An unavailable quota is not treated as unlimited. The peak is the highest sampled interval and may reflect a short burst. Sampling may miss brief peaks and does not describe the target application."
 
 type reading struct {
 	at                time.Time

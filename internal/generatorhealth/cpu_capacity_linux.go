@@ -5,6 +5,7 @@ package generatorhealth
 import (
 	"bufio"
 	"errors"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
@@ -37,10 +38,28 @@ func cpuCapacityFromQuota(logicalCPUs, maxProcs int, root, cgroupFile, mountInfo
 	if !known {
 		return cpuCapacity{cores: runtimeCapacity, source: "cgroup_cpu_limit_unreadable", known: false}
 	}
-	if quotaCores <= 0 {
-		return cpuCapacity{cores: runtimeCapacity, source: "runtime_logical_cpus_and_gomaxprocs", known: true}
+
+	capacity := runtimeCapacity
+	if quotaCores > 0 {
+		capacity = effectiveCapacity(logicalCPUs, maxProcs, quotaCores)
 	}
-	capacity := effectiveCapacity(logicalCPUs, maxProcs, quotaCores)
+	// cpu.max and CFS quotas are not the only CPU constraints: a v2
+	// cpuset can restrict a container to fewer logical CPUs than its quota.
+	// Read the kernel-resolved effective set, which includes parent limits.
+	setCores, setPresent, setKnown := readLinuxV2CPUSet(root, cgroupFile, mountInfoFile)
+	if setPresent && !setKnown {
+		return cpuCapacity{cores: capacity, source: "cgroup_v2_cpuset_unreadable", known: false}
+	}
+	if setPresent {
+		capacity = math.Min(capacity, float64(setCores))
+		if quotaCores > 0 {
+			source = "cgroup_v2_cpu_quota_and_cpuset"
+		} else {
+			source = "cgroup_v2_cpuset_effective"
+		}
+	} else if quotaCores <= 0 {
+		source = "runtime_logical_cpus_and_gomaxprocs"
+	}
 	return cpuCapacity{cores: capacity, source: source, known: capacity > 0 && !math.IsInf(capacity, 0) && !math.IsNaN(capacity)}
 }
 
@@ -281,4 +300,87 @@ func readV1CPUQuota(directory string) (quota, period float64, unlimited bool, er
 		return 0, float64(periodValue), true, nil
 	}
 	return float64(quotaValue), float64(periodValue), false, nil
+}
+
+const maxCPUSetBytes = 4096
+const maxCPUSetIndex = 1 << 20
+
+// readLinuxV2CPUSet reads the effective v2 cpuset of the process cgroup.
+// A missing effective-set file preserves the earlier quota-only behavior;
+// a present but unreadable/malformed file invalidates verified capacity.
+// The v1 cpuset controller uses another mount and is not handled here.
+func readLinuxV2CPUSet(root, cgroupFile, mountInfoFile string) (cores int, present, known bool) {
+	cgroupData, err := os.ReadFile(filepath.Join(root, strings.TrimPrefix(cgroupFile, "/")))
+	if err != nil {
+		return 0, true, false
+	}
+	mountData, err := os.ReadFile(filepath.Join(root, strings.TrimPrefix(mountInfoFile, "/")))
+	if err != nil {
+		return 0, true, false
+	}
+	mount, cgroupPath, version, err := locateCPUController(string(cgroupData), string(mountData))
+	if err != nil {
+		return 0, true, false
+	}
+	if version != 2 {
+		return 0, false, true
+	}
+	directory, err := mapCgroupPath(root, mount, cgroupPath)
+	if err != nil {
+		return 0, true, false
+	}
+	path := filepath.Join(directory, "cpuset.cpus.effective")
+	file, err := os.Open(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return 0, false, true
+	}
+	if err != nil {
+		return 0, true, false
+	}
+	defer file.Close()
+
+	// Bound both the parsed CPU count and input bytes, including after open.
+	data, err := io.ReadAll(io.LimitReader(file, maxCPUSetBytes+1))
+	if err != nil || len(data) > maxCPUSetBytes {
+		return 0, true, false
+	}
+	cores, err = parseEffectiveCPUSet(string(data))
+	if err != nil {
+		return 0, true, false
+	}
+	return cores, true, true
+}
+
+// parseEffectiveCPUSet counts a canonical Linux CPU-list without expanding
+// ranges into allocations. Overlapping, unordered or malformed IDs fail closed.
+func parseEffectiveCPUSet(value string) (int, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0, errors.New("effective cpuset is empty")
+	}
+	count := 0
+	lastEnd := -1
+	for _, segment := range strings.Split(value, ",") {
+		parts := strings.Split(segment, "-")
+		if len(parts) == 0 || len(parts) > 2 {
+			return 0, errors.New("invalid effective cpuset range")
+		}
+		start, err := strconv.Atoi(parts[0])
+		if err != nil || start < 0 || start > maxCPUSetIndex || start <= lastEnd {
+			return 0, errors.New("invalid or unordered effective cpuset CPU ID")
+		}
+		end := start
+		if len(parts) == 2 {
+			end, err = strconv.Atoi(parts[1])
+			if err != nil || end < start || end > maxCPUSetIndex {
+				return 0, errors.New("invalid effective cpuset range endpoint")
+			}
+		}
+		count += end - start + 1
+		lastEnd = end
+	}
+	if count == 0 {
+		return 0, errors.New("effective cpuset contains no CPUs")
+	}
+	return count, nil
 }

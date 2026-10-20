@@ -21,8 +21,10 @@ func capacityAtSample() cpuCapacity {
 }
 
 // CurrentCPUCapacity returns a current CPU capacity estimate and its evidence
-// source. On Linux, an observed finite cgroup quota lowers the estimate; absent
-// or unreadable cgroup evidence is reported as unknown.
+// source. On Linux, an observed finite cgroup quota or a readable v2 effective
+// cpuset can lower the estimate. Absent or unreadable cgroup quota
+// evidence is reported as unknown; malformed present cpuset evidence
+// fails closed.
 func CurrentCPUCapacity() CPUCapacity {
 	capacity := capacityAtSample()
 	return CPUCapacity{Cores: capacity.cores, Source: capacity.source, Known: capacity.known}
