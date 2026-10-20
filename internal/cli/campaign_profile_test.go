@@ -8,12 +8,14 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/LucasLuchetta/Damocline/internal/campaign"
 	"github.com/LucasLuchetta/Damocline/internal/campaignprofile"
+	"github.com/LucasLuchetta/Damocline/internal/capacityplan"
 	"github.com/LucasLuchetta/Damocline/internal/config"
 )
 
@@ -97,6 +99,50 @@ func TestCampaignProfileRunDryRunAndLoopbackReport(t *testing.T) {
 	var savedVerification campaignProfileVerification
 	if err := json.Unmarshal(verificationData, &savedVerification); err != nil || savedVerification.State != "MATCHED" || savedVerification.CampaignEvidenceID != verification.CampaignEvidenceID {
 		t.Fatalf("invalid saved verification: %+v err=%v", savedVerification, err)
+	}
+
+	campaignEvidenceID := capacityplan.AuditCampaign(first).EvidenceID
+	assessmentOut := filepath.Join(outDir, "assessment.json")
+	capacityReportOut := filepath.Join(outDir, "capacity.md")
+	auditArgs := []string{"audit", "--campaign", firstOut, "--expect-evidence-id", campaignEvidenceID, "--peak-users", "2", "--out", assessmentOut, "--report-out", capacityReportOut}
+	beforeAuditRequests := requests.Load()
+	stdout.Reset()
+	stderr.Reset()
+	if code := Run(auditArgs, &stdout, &stderr); code != 0 {
+		t.Fatalf("offline capacity audit code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	assessmentData, err := os.ReadFile(assessmentOut)
+	if err != nil {
+		t.Fatalf("capacity assessment was not written: %v", err)
+	}
+	capacityReportData, err := os.ReadFile(capacityReportOut)
+	if err != nil {
+		t.Fatalf("capacity report was not written: %v", err)
+	}
+	if !strings.Contains(string(capacityReportData), "--expect-evidence-id '"+campaignEvidenceID+"'") {
+		t.Fatalf("capacity report replay does not pin its campaign evidence: %s", capacityReportData)
+	}
+	if got := requests.Load(); got != beforeAuditRequests {
+		t.Fatalf("offline audit generated %d target request(s)", got-beforeAuditRequests)
+	}
+
+	replayAssessmentOut := filepath.Join(outDir, "replay-assessment.json")
+	replayReportOut := filepath.Join(outDir, "replay-capacity.md")
+	replayArgs := []string{"audit", "--campaign", firstOut, "--expect-evidence-id", campaignEvidenceID, "--peak-users", "2", "--out", replayAssessmentOut, "--report-out", replayReportOut}
+	stdout.Reset()
+	stderr.Reset()
+	if code := Run(replayArgs, &stdout, &stderr); code != 0 {
+		t.Fatalf("reported offline replay code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	replayedAssessmentData, err := os.ReadFile(replayAssessmentOut)
+	if err != nil {
+		t.Fatalf("replayed assessment was not written: %v", err)
+	}
+	if string(replayedAssessmentData) != string(assessmentData) {
+		t.Fatalf("offline replay changed the machine assessment:\nfirst: %s\nreplay: %s", assessmentData, replayedAssessmentData)
+	}
+	if got := requests.Load(); got != beforeAuditRequests {
+		t.Fatalf("offline assessment replay generated %d target request(s)", got-beforeAuditRequests)
 	}
 
 	secondOut := filepath.Join(outDir, "second.json")

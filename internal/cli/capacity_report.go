@@ -78,7 +78,7 @@ func renderCampaignCapacityReport(assessment capacityplan.Assessment, source, re
 	fmt.Fprintln(&b, "### Offline replay")
 	fmt.Fprintln(&b)
 	fmt.Fprintf(&b, "Source campaign: %s (verify its content against campaign evidence ID %s).\n\n", markdownCode(source), markdownCode(a.EvidenceID))
-	fmt.Fprintf(&b, "%s\n", markdownCodeFence("powershell", markdownReplayCommand([]string{source}, assessment.DemandInputs)))
+	fmt.Fprintf(&b, "%s\n", markdownCodeFence("powershell", markdownReplayCommand([]string{source}, []string{a.EvidenceID}, assessment.DemandInputs)))
 	fmt.Fprintf(&b, "\nReport generated locally at %s. The saved campaign is the source of truth; keep it with this assessment.\n", markdownCode(reportPath))
 	return b.String()
 }
@@ -140,7 +140,11 @@ func renderCampaignCollectionCapacityReport(assessment capacityplan.CampaignColl
 		fmt.Fprintf(&b, "- %s\n", markdownCode(source))
 	}
 	fmt.Fprintln(&b)
-	fmt.Fprintf(&b, "%s\n", markdownCodeFence("powershell", markdownReplayCommand(sources, assessment.DemandInputs)))
+	expectedEvidenceIDs := make([]string, len(evidence))
+	for i, item := range evidence {
+		expectedEvidenceIDs[i] = capacityplan.AuditCampaign(item).EvidenceID
+	}
+	fmt.Fprintf(&b, "%s\n", markdownCodeFence("powershell", markdownReplayCommand(sources, expectedEvidenceIDs, assessment.DemandInputs)))
 	fmt.Fprintf(&b, "\nReport generated locally at %s. Keep all source campaign files with this assessment.\n", markdownCode(reportPath))
 	return b.String()
 }
@@ -154,11 +158,14 @@ func writeMarkdownDemand(b *strings.Builder, inputs *capacitygoal.Goal, result *
 	fmt.Fprintf(b, "- **Calculated target:** %d workload-equivalent active actors; **plan state:** %s\n", result.TargetUsers, markdownText(result.State))
 }
 
-func markdownReplayCommand(sources []string, goal *capacitygoal.Goal) string {
+func markdownReplayCommand(sources, evidenceIDs []string, goal *capacitygoal.Goal) string {
 	var args []string
 	args = append(args, "damocline", "audit")
-	for _, source := range sources {
+	for i, source := range sources {
 		args = append(args, "--campaign", powershellQuote(source))
+		if i < len(evidenceIDs) {
+			args = append(args, "--expect-evidence-id", powershellQuote(evidenceIDs[i]))
+		}
 	}
 	if goal != nil {
 		args = append(args, "--peak-users", strconv.Itoa(goal.PeakUsers), "--growth-percent", markdownFloat(goal.GrowthPercent), "--reserve-percent", markdownFloat(goal.ReservePercent))

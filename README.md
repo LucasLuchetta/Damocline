@@ -157,7 +157,12 @@ campaign verdict, demand calculation, content digests, workload fingerprints,
 tested duration, visible workflow breaches and known unknowns. It preserves the
 peak, growth and reserve inputs in assessment JSON and can write executive and
 technical Markdown sections from the same assessment, with an exact offline
-replay command. The Markdown file is created without overwriting and requests
+replay command pinned to the source campaign's SHA-256 evidence ID. Replay
+fails before writing output if the interpreted campaign evidence has changed.
+For a collection, the command pins each ID in the same order as its `--campaign`
+argument. These digests detect source changes relative to the report but are
+not signatures and do not authenticate who produced the evidence. The Markdown
+file is created without overwriting and requests
 mode 0600; Windows inherits the destination directory's ACL. It includes the
 target origin and may contain private workload details; keep it with local
 reports and do not commit it.
