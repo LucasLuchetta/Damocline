@@ -30,19 +30,36 @@ Developers rarely want only a requests-per-second chart. They want to answer:
 
 Damocline will seek **scenario-specific sustainable capacity**, never claim one universal "maximum users" number.
 
+## Current capabilities (October 2026)
+
+Damocline is a **working experimental, local-first HTTP capacity testing CLI**. It executes bounded synthetic workloads, explores load levels, runs repeated campaigns and audits recorded evidence offline. Its results describe **specific tested scenarios and conditions**, not a certified maximum number of simultaneous human users.
+
+| Area | Available today | Important limitation |
+| --- | --- | --- |
+| Go load engine | Closed-loop virtual users and scheduled open-loop journey arrivals | VUs, starts/s and requests/s are distinct units |
+| Workflows | Named/versioned scenarios, weighted journey selection, isolated actor cookies and optional per-workflow sessions | Session configuration does not verify real account identities or realistic behavior |
+| Capacity exploration | Repeated stages, bracket refinement and explicit demand-goal checks | Short passing tests do not prove sustainable capacity |
+| Repeated campaigns | Warm-up, observation, recovery, optional stabilization and bounded soak | Drift screens and short soaks do not prove long-term stability |
+| Measurement | p50/p95/p99, errors, journey rates, per-step/windows, connection-acquisition queueing and conditional uncertainty | Statistical intervals rely on stated independence/stationarity assumptions |
+| Generator calibration | Exact local closed-loop VU profiles and trusted loopback HTTPS profiles | Local calibration does not qualify remote-target generator equivalence |
+| Offline evidence | Campaign audit, profile verification, replayable JSON/Markdown assessments and redacted exports | Observed SLO passes may still have LIMITED measurement quality |
+| Interface and telemetry | Guided CLI, local profiles, read-only dashboard, Linux host sampling and opt-in app metrics | Telemetry alone does not prove bottleneck causation |
+
+Recent hardening includes bounded request-template expansion, fuzz regression smoke checks, explicit client-side transport observations and provenance for exact p95 interval methods. See [Roadmap](docs/ROADMAP.md), [Metrics](docs/METRICS.md) and [Campaign audit](docs/CAMPAIGN_AUDIT.md) for the evidence and outstanding work.
+
 ## Design goals
 
 | Component | Goal | Status |
 | --- | --- | --- |
-| Native Go load engine | Bounded HTTP workloads with native Go scheduling | **Experimental** |
-| Workload models | Closed-loop virtual users and independent journey arrivals | **Experimental** |
-| Capacity explorer | Repeat passing stages, double load and refine failing brackets | **Experimental** |
-| Per-workflow analysis | Named HTTP steps, full journey counts and mixed journeys | **Partial** |
-| Infrastructure adapters | Native Linux host CPU/RAM monitor; Docker/cloud adapters planned | **Partial** |
-| Reporting | p50/p95/p99, per-step, journeys, dropped starts, JSON and host-time correlation | **Partial** |
-| Local-first CLI | Run, explore, monitor and correlate offline | **Experimental** |
+| Native Go load engine | Bounded HTTP workloads with native Go scheduling | **Implemented — experimental** |
+| Workload models | Closed-loop users, arrival rates and weighted workflows | **Implemented — experimental** |
+| Capacity explorer | Repeated stages and bracket refinement | **Implemented — experimental** |
+| Per-workflow analysis | Named steps, journey accounting and session scopes | **Implemented — partially validated** |
+| Infrastructure adapters | Linux host monitoring; Docker/cloud adapters planned | **Partial** |
+| Reporting | Latency, errors, campaign audits and offline evidence | **Implemented — evidence-limited** |
+| Local-first CLI | Guided setup, profiles, campaigns and reports | **Implemented — experimental** |
 
-Damocline should apply to **authorized HTTP/HTTPS applications** hosted on VPSs, dedicated machines, containers, Kubernetes, PaaS, or serverless platforms. Internal resource metrics require optional instrumentation or permissions; an external URL alone cannot reveal a server's CPU or database bottlenecks.
+Damocline targets **authorized HTTP/HTTPS applications** on VPSs, dedicated machines, containers, Kubernetes, PaaS or serverless platforms. Internal resource metrics require separate access or instrumentation; an external URL cannot reveal server CPU or database bottlenecks on its own.
 
 ## How it is intended to work
 
