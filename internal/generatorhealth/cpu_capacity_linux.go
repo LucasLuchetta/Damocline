@@ -17,6 +17,7 @@ const (
 	cgroupV2QuotaSource = "cgroup_v2_cpu_quota_hierarchy"
 	cgroupV1QuotaSource = "cgroup_v1_cpu_quota_hierarchy"
 	maxCgroupAncestors  = 256
+	maxProcStatusBytes  = 64 << 10
 )
 
 func currentCPUCapacity(logicalCPUs, maxProcs int) cpuCapacity {
@@ -59,6 +60,21 @@ func cpuCapacityFromQuota(logicalCPUs, maxProcs int, root, cgroupFile, mountInfo
 		}
 	} else if quotaCores <= 0 {
 		source = "runtime_logical_cpus_and_gomaxprocs"
+	}
+	// NumCPU is a startup snapshot on Linux. The allowed list in the calling
+	// process status reflects the effective cpuset and affinity mask at this
+	// sample, including cgroup v1 and affinity changes after process startup.
+	allowedCPUs, err := readLinuxProcessAllowedCPUs(root, "/proc/self/status")
+	if err != nil {
+		return cpuCapacity{cores: capacity, source: "process_cpu_allowed_list_unreadable", known: false}
+	}
+	if float64(allowedCPUs) < capacity {
+		capacity = float64(allowedCPUs)
+		if source == "runtime_logical_cpus_and_gomaxprocs" {
+			source = "process_cpu_allowed_list"
+		} else {
+			source += "_and_process_cpu_allowed_list"
+		}
 	}
 	return cpuCapacity{cores: capacity, source: source, known: capacity > 0 && !math.IsInf(capacity, 0) && !math.IsNaN(capacity)}
 }
@@ -304,6 +320,43 @@ func readV1CPUQuota(directory string) (quota, period float64, unlimited bool, er
 
 const maxCPUSetBytes = 4096
 const maxCPUSetIndex = 1 << 20
+
+// readLinuxProcessAllowedCPUs reads the kernel-reported CPU list allowed for
+// the current process. Linux applies cpuset restrictions to task affinity, so
+// this also covers cgroup-v1 cpusets and affinity changes after Go startup.
+func readLinuxProcessAllowedCPUs(root, statusFile string) (int, error) {
+	file, err := os.Open(filepath.Join(root, strings.TrimPrefix(statusFile, "/")))
+	if err != nil {
+		return 0, err
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, maxProcStatusBytes+1))
+	if err != nil {
+		return 0, err
+	}
+	if len(data) > maxProcStatusBytes {
+		return 0, errors.New("process status exceeds the CPU-affinity read limit")
+	}
+	var allowed string
+	for _, line := range strings.Split(string(data), "\n") {
+		key, value, ok := strings.Cut(line, ":")
+		if !ok || strings.TrimSpace(key) != "Cpus_allowed_list" {
+			continue
+		}
+		if allowed != "" {
+			return 0, errors.New("process status contains duplicate Cpus_allowed_list fields")
+		}
+		allowed = strings.TrimSpace(value)
+	}
+	if allowed == "" {
+		return 0, errors.New("process status does not contain Cpus_allowed_list")
+	}
+	cores, err := parseEffectiveCPUSet(allowed)
+	if err != nil {
+		return 0, errors.New("process Cpus_allowed_list is malformed")
+	}
+	return cores, nil
+}
 
 // readLinuxV2CPUSet reads the effective v2 cpuset of the process cgroup.
 // A missing effective-set file preserves the earlier quota-only behavior;

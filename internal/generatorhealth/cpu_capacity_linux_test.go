@@ -5,6 +5,7 @@ package generatorhealth
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -170,6 +171,12 @@ func TestCurrentLinuxCPUCapacityReportsUnknownWhenCgroupEvidenceIsMissing(t *tes
 
 func writeCgroupFixture(t *testing.T, root, cgroup, mountInfo string, files map[string]string) {
 	t.Helper()
+	if files == nil {
+		files = make(map[string]string)
+	}
+	if _, ok := files["proc/self/status"]; !ok {
+		files["proc/self/status"] = "Name:\tfixture\nCpus_allowed_list:\t0-11\n"
+	}
 	for name, content := range map[string]string{
 		"proc/self/cgroup":    cgroup,
 		"proc/self/mountinfo": mountInfo,
@@ -190,6 +197,43 @@ func writeCgroupFixture(t *testing.T, root, cgroup, mountInfo string, files map[
 		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+func TestReadLinuxProcessAllowedCPUs(t *testing.T) {
+	root := t.TempDir()
+	statusPath := filepath.Join(root, "proc/self/status")
+	for _, test := range []struct {
+		name    string
+		status  string
+		want    int
+		wantErr bool
+	}{
+		{name: "sparse allowed list", status: "Name:\tfixture\nCpus_allowed_list:\t0-1,4\n", want: 3},
+		{name: "missing status file", wantErr: true},
+		{name: "missing field", status: "Name:\tfixture\n", wantErr: true},
+		{name: "duplicate field", status: "Cpus_allowed_list:\t0-1\nCpus_allowed_list:\t0-3\n", wantErr: true},
+		{name: "malformed list", status: "Cpus_allowed_list:\t0-2,2-4\n", wantErr: true},
+		{name: "oversized status", status: strings.Repeat("x", maxProcStatusBytes+1), wantErr: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if err := os.MkdirAll(filepath.Dir(statusPath), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if test.status == "" {
+				if err := os.Remove(statusPath); err != nil {
+					if !os.IsNotExist(err) {
+						t.Fatal(err)
+					}
+				}
+			} else if err := os.WriteFile(statusPath, []byte(test.status), 0600); err != nil {
+				t.Fatal(err)
+			}
+			got, err := readLinuxProcessAllowedCPUs(root, "/proc/self/status")
+			if (err != nil) != test.wantErr || got != test.want {
+				t.Fatalf("readLinuxProcessAllowedCPUs() = (%d, %v), want (%d, error=%t)", got, err, test.want, test.wantErr)
+			}
+		})
 	}
 }
 
@@ -215,12 +259,50 @@ func TestParseEffectiveCPUSet(t *testing.T) {
 	}
 }
 
+func TestLinuxCapacityUsesCurrentProcessAllowedCPUsForV1CpusetAndAffinity(t *testing.T) {
+	root := t.TempDir()
+	writeCgroupFixture(t, root, "2:cpu,cpuacct:/workers/limited\n",
+		"31 22 0:27 /workers /sys/fs/cgroup/cpu rw,relatime - cgroup cgroup rw,cpu,cpuacct\n",
+		map[string]string{
+			"proc/self/status":                            "Name:\tfixture\nCpus_allowed_list:\t0-3\n",
+			"sys/fs/cgroup/cpu/cpu.cfs_quota_us":          "800000",
+			"sys/fs/cgroup/cpu/cpu.cfs_period_us":         "100000",
+			"sys/fs/cgroup/cpu/limited/cpu.cfs_quota_us":  "800000",
+			"sys/fs/cgroup/cpu/limited/cpu.cfs_period_us": "100000",
+		})
+	capacity := cpuCapacityFromQuota(12, 12, root, "/proc/self/cgroup", "/proc/self/mountinfo")
+	if capacity.cores != 4 || capacity.source != "cgroup_v1_cpu_quota_hierarchy_and_process_cpu_allowed_list" || !capacity.known {
+		t.Fatalf("v1 cgroup did not apply the kernel-allowed CPU list: %+v", capacity)
+	}
+}
+
+func TestLinuxCapacityDetectsProcessAllowedCPUChangesAfterStartup(t *testing.T) {
+	root := t.TempDir()
+	statusPath := filepath.Join(root, "proc/self/status")
+	writeCgroupFixture(t, root, "0::/container/job\n",
+		"29 23 0:26 /container /sys/fs/cgroup rw - cgroup2 cgroup rw\n",
+		map[string]string{
+			"proc/self/status":                        "Name:\tfixture\nCpus_allowed_list:\t0-3\n",
+			"sys/fs/cgroup/cpu.max":                   "max 100000",
+			"sys/fs/cgroup/job/cpu.max":               "400000 100000",
+			"sys/fs/cgroup/job/cpuset.cpus.effective": "0-3",
+		})
+	before := cpuCapacityFromQuota(12, 12, root, "/proc/self/cgroup", "/proc/self/mountinfo")
+	if err := os.WriteFile(statusPath, []byte("Name:\tfixture\nCpus_allowed_list:\t0-1\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	after := cpuCapacityFromQuota(12, 12, root, "/proc/self/cgroup", "/proc/self/mountinfo")
+	if before.cores != 4 || after.cores != 2 || !before.known || !after.known || before.source == after.source {
+		t.Fatalf("process CPU allowance change was not detected: before=%+v after=%+v", before, after)
+	}
+}
+
 func TestLinuxCapacityCombinesV2QuotaAndEffectiveCPUSet(t *testing.T) {
 	tests := []struct {
 		name, quota, cpuset, source string
-		want                      float64
-		known                     bool
-		maxProcs                  int
+		want                        float64
+		known                       bool
+		maxProcs                    int
 	}{
 		{"cpuset tighter than quota", "400000 100000", "0-1", "cgroup_v2_cpu_quota_and_cpuset", 2, true, 12},
 		{"quota tighter than cpuset", "200000 100000", "0-7", "cgroup_v2_cpu_quota_and_cpuset", 2, true, 12},
