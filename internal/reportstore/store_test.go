@@ -173,3 +173,61 @@ func TestListDetectsArchiveContentTampering(t *testing.T) {
 		t.Fatalf("tampered archived report was listed as valid: %v", err)
 	}
 }
+
+func TestListRejectsReportCountBeforeReadingBodies(t *testing.T) {
+	store := Store{Dir: t.TempDir()}
+	// Deliberately invalid contents: the count limit must be checked first.
+	for index := 0; index <= MaxReports; index++ {
+		id := fmt.Sprintf("20261020T052512.%09dZ-%064x", index, index+1)
+		path := filepath.Join(store.Dir, id+".json")
+		if err := os.WriteFile(path, []byte("not JSON"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := store.List(); err == nil || !strings.Contains(err.Error(), "100-report archive limit") {
+		t.Fatalf("unbounded history was parsed before enforcing the count cap: %v", err)
+	}
+}
+
+func TestListRejectsAggregateBytesBeforeReadingBodies(t *testing.T) {
+	store := Store{Dir: t.TempDir()}
+	// Sparse files avoid allocating hundreds of MiB during this test.
+	// Invalid JSON is intentional: an oversized aggregate must fail early.
+	for index := 0; index <= MaxStoreBytes/maxReportSize; index++ {
+		id := fmt.Sprintf("20261020T052512.%09dZ-%064x", index, index+1)
+		path := filepath.Join(store.Dir, id+".json")
+		file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := file.Truncate(maxReportSize); err != nil {
+			file.Close()
+			t.Fatal(err)
+		}
+		if err := file.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := store.List(); err == nil || !strings.Contains(err.Error(), "512 MiB archive limit") {
+		t.Fatalf("oversized history was parsed before enforcing the byte cap: %v", err)
+	}
+}
+
+func TestBoundedReaderRejectsOversizedArchiveContent(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "large.json")
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Truncate(maxReportSize + 1); err != nil {
+		file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readBoundedRegularFile(path); err == nil || !strings.Contains(err.Error(), "16 MiB archive limit") {
+		t.Fatalf("oversized report bypassed bounded descriptor read: %v", err)
+	}
+}
