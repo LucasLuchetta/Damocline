@@ -41,6 +41,7 @@ This project follows a human-maintained changelog. No release exists yet.
 - Add opt-in `report export` for allowlisted, anonymized run, campaign, and exploration summaries; omit destinations, private names/free text, absolute timestamps, and custom metric names/values.
 
 ### Fixed
+- Reject report histories that exceed the 100-report or 512 MiB safety envelope before reading archive bodies; bound each descriptor read independently to 16 MiB, including after metadata inspection.
 - Enforce the configured observation boundary for scheduler arrivals and closed-loop journey starts even when timer delivery is delayed; late open-loop slots remain explicitly reconciled as generator drops while admitted work drains.
 
 ### Added
