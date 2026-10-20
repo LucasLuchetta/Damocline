@@ -193,13 +193,12 @@ func writeCgroupFixture(t *testing.T, root, cgroup, mountInfo string, files map[
 	}
 }
 
-
 func TestParseEffectiveCPUSet(t *testing.T) {
 	for _, test := range []struct {
 		input string
 		want  int
 	}{
-		{"0", 1}, {"0-3", 4}, {"0-1,4,7-9", 6}, {" 0,2-3\\n", 3},
+		{"0", 1}, {"0-3", 4}, {"0-1,4,7-9", 6}, {" 0,2-3\n", 3},
 	} {
 		got, err := parseEffectiveCPUSet(test.input)
 		if err != nil || got != test.want {
@@ -233,8 +232,8 @@ func TestLinuxCapacityCombinesV2QuotaAndEffectiveCPUSet(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()
-			writeCgroupFixture(t, root, "0::/container/job\\n",
-				"29 23 0:26 /container /sys/fs/cgroup rw - cgroup2 cgroup rw\\n",
+			writeCgroupFixture(t, root, "0::/container/job\n",
+				"29 23 0:26 /container /sys/fs/cgroup rw - cgroup2 cgroup rw\n",
 				map[string]string{
 					"sys/fs/cgroup/cpu.max":                "max 100000",
 					"sys/fs/cgroup/job/cpu.max":            test.quota,
@@ -250,8 +249,8 @@ func TestLinuxCapacityCombinesV2QuotaAndEffectiveCPUSet(t *testing.T) {
 
 func TestLinuxCapacityKeepsLegacyBehaviorWithoutV2CPUSetFile(t *testing.T) {
 	root := t.TempDir()
-	writeCgroupFixture(t, root, "0::/container/job\\n",
-		"29 23 0:26 /container /sys/fs/cgroup rw - cgroup2 cgroup rw\\n",
+	writeCgroupFixture(t, root, "0::/container/job\n",
+		"29 23 0:26 /container /sys/fs/cgroup rw - cgroup2 cgroup rw\n",
 		map[string]string{
 			"sys/fs/cgroup/cpu.max":     "max 100000",
 			"sys/fs/cgroup/job/cpu.max": "300000 100000",
@@ -265,8 +264,8 @@ func TestLinuxCapacityKeepsLegacyBehaviorWithoutV2CPUSetFile(t *testing.T) {
 func TestLinuxCapacityDetectsV2CPUSetChanges(t *testing.T) {
 	root := t.TempDir()
 	cpusetPath := filepath.Join(root, "sys/fs/cgroup/job/cpuset.cpus.effective")
-	writeCgroupFixture(t, root, "0::/container/job\\n",
-		"29 23 0:26 /container /sys/fs/cgroup rw - cgroup2 cgroup rw\\n",
+	writeCgroupFixture(t, root, "0::/container/job\n",
+		"29 23 0:26 /container /sys/fs/cgroup rw - cgroup2 cgroup rw\n",
 		map[string]string{
 			"sys/fs/cgroup/cpu.max":                "max 100000",
 			"sys/fs/cgroup/job/cpu.max":            "400000 100000",
