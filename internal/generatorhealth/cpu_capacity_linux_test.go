@@ -217,6 +217,9 @@ func TestReadLinuxProcessAllowedCPUs(t *testing.T) {
 		{name: "oversized status", status: strings.Repeat("x", maxProcStatusBytes+1), wantErr: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
+			if err := os.MkdirAll(filepath.Dir(statusPath), 0o700); err != nil {
+				t.Fatal(err)
+			}
 			if test.status == "" {
 				if err := os.Remove(statusPath); err != nil {
 					if !os.IsNotExist(err) {
