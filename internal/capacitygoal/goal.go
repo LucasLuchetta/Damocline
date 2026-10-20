@@ -15,9 +15,9 @@ import (
 // Goal expresses the demand to test, measured in synthetic actors executing
 // the same defined closed-loop business journey (not registered/logged-in people).
 type Goal struct {
-	PeakUsers      int
-	GrowthPercent  float64
-	ReservePercent float64
+	PeakUsers      int     `json:"peak_users"`
+	GrowthPercent  float64 `json:"growth_percent"`
+	ReservePercent float64 `json:"reserve_percent"`
 }
 
 // Assessment deliberately separates planned demand from observations.

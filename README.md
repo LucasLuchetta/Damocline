@@ -149,16 +149,24 @@ recovery evidence, assess the same business target without generating more
 traffic:
 
 ```powershell
-damocline audit --campaign reports/campaign.json --peak-users 200 --growth-percent 30 --reserve-percent 30 --out reports/assessment.json
+damocline audit --campaign reports/campaign.json --peak-users 200 --growth-percent 30 --reserve-percent 30 --out reports/assessment.json --report-out reports/capacity.md
 ```
 
 `audit` replays each saved phase and writes one assessment that includes the
 campaign verdict, demand calculation, content digests, workload fingerprints,
-tested duration, visible workflow breaches and known unknowns. `plan` remains
-available when only the demand calculation is needed. The assessment reports
-measurement confidence, workload representativeness and decision confidence
-separately; a declared workload mix remains unverified without independent
-evidence.
+tested duration, visible workflow breaches and known unknowns. It preserves the
+peak, growth and reserve inputs in assessment JSON and can write executive and
+technical Markdown sections from the same assessment, with an exact offline
+replay command. The Markdown file is created without overwriting and requests
+mode 0600; Windows inherits the destination directory's ACL. It includes the
+target origin and may contain private workload details; keep it with local
+reports and do not commit it.
+`plan` remains available when only the demand calculation is needed. The
+assessment reports measurement confidence, workload representativeness and
+decision confidence separately; a declared workload mix remains unverified
+without independent evidence. The full scenario and environment-backed values
+remain in the private profile/scenario; verify profile consistency separately
+with `campaign profile verify`.
 
 To audit multiple tested levels together, repeat `--campaign` with one saved
 campaign per level. The offline collection shows each level's verdict and

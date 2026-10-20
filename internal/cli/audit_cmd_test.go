@@ -57,15 +57,75 @@ func TestAuditCommandIsOfflineAndProducesMachineReadableEvidence(t *testing.T) {
 		Demand *struct {
 			TargetUsers int `json:"target_users"`
 		} `json:"demand"`
+		DemandInputs *struct {
+			PeakUsers      int     `json:"peak_users"`
+			GrowthPercent  float64 `json:"growth_percent"`
+			ReservePercent float64 `json:"reserve_percent"`
+		} `json:"demand_inputs"`
 	}
-	if err := json.Unmarshal(raw, &audit); err != nil || audit.SchemaVersion != 2 || audit.Audit.State != "INCONCLUSIVE" || audit.State != "INSUFFICIENT_EVIDENCE" {
+	if err := json.Unmarshal(raw, &audit); err != nil || audit.SchemaVersion != 3 || audit.Audit.State != "INCONCLUSIVE" || audit.State != "INSUFFICIENT_EVIDENCE" {
 		t.Fatalf("invalid audit JSON: %+v %v", audit, err)
 	}
-	if audit.Audit.EvidenceID == "" || audit.Demand == nil || audit.Demand.TargetUsers != 2 {
+	if audit.Audit.EvidenceID == "" || audit.Demand == nil || audit.Demand.TargetUsers != 2 || audit.DemandInputs == nil || audit.DemandInputs.PeakUsers != 2 || audit.DemandInputs.GrowthPercent != 0 || audit.DemandInputs.ReservePercent != 0 {
 		t.Fatalf("combined assessment is missing traceability or demand result: %+v", audit)
 	}
 	if audit.Confidence.Workload != "NOT_ASSESSED" || audit.Confidence.Decision != "NOT_ESTABLISHED" || audit.Confidence.Measurement != "LIMITED" {
 		t.Fatalf("combined assessment collapsed confidence dimensions: %+v", audit.Confidence)
+	}
+}
+
+func TestAuditReportOutContainsExecutiveTechnicalReplayWithoutConflictingVerdicts(t *testing.T) {
+	directory := t.TempDir()
+	path := filepath.Join(directory, "campaign.json")
+	reportPath := filepath.Join(directory, "capacity.md")
+	assessmentPath := filepath.Join(directory, "assessment.json")
+	evidence := campaign.Result{
+		SchemaVersion: campaign.CurrentSchemaVersion, ExecutionState: "COMPLETED", Stabilization: "0s", Cooldown: "0s", StabilityPolicy: defaultCampaignStabilityPolicy(),
+		Scenario: "synthetic local fixture", BaseUsers: 2, Repeats: 2, Outcome: "INCONCLUSIVE",
+		Trials: []campaign.Trial{{RunID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Number: 1, Outcome: "INCONCLUSIVE"}, {RunID: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", Number: 2, Outcome: "INCONCLUSIVE"}},
+	}
+	if err := report.WriteAnyJSON(path, evidence); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	args := []string{"audit", "--campaign", path, "--peak-users", "8", "--growth-percent", "25", "--reserve-percent", "10", "--out", assessmentPath, "--report-out", reportPath}
+	if code := Run(args, &stdout, &stderr); code != 0 {
+		t.Fatalf("audit report command failed: %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	data, err := os.ReadFile(reportPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(data)
+	for _, expected := range []string{"## Executive summary", "## Technical evidence", "peak 8 active users, growth 25%, reserve 10%", "Calculated target:", "Campaign evidence ID", "Offline replay", "--peak-users 8", "--growth-percent 25", "--reserve-percent 10", "INCONCLUSIVE", "INSUFFICIENT_EVIDENCE"} {
+		if !strings.Contains(content, expected) {
+			t.Fatalf("capacity report omits %q: %s", expected, content)
+		}
+	}
+	assessmentData, err := os.ReadFile(assessmentPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var assessment struct {
+		State string `json:"state"`
+		Audit struct {
+			State string `json:"state"`
+		} `json:"audit"`
+	}
+	if err := json.Unmarshal(assessmentData, &assessment); err != nil {
+		t.Fatal(err)
+	}
+	if assessment.State != "INSUFFICIENT_EVIDENCE" || assessment.Audit.State != "INCONCLUSIVE" || !strings.Contains(content, "**Assessment:** "+assessment.State) || !strings.Contains(content, "**Observed campaign:** "+assessment.Audit.State) {
+		t.Fatalf("Markdown and JSON used different assessment verdicts: markdown=%s json=%+v", content, assessment)
+	}
+	assessmentIndex := strings.Index(content, "**Assessment:** INSUFFICIENT_EVIDENCE")
+	observedIndex := strings.Index(content, "**Observed campaign:** INCONCLUSIVE")
+	if assessmentIndex < 0 || observedIndex < 0 || assessmentIndex > observedIndex {
+		t.Fatal("executive report state and observed campaign state were reordered or conflated")
+	}
+	var repeated bytes.Buffer
+	if code := Run(args, &repeated, &stderr); code != 2 || !strings.Contains(stderr.String(), "already exists") {
+		t.Fatalf("report output replaced an existing artifact: code=%d stderr=%s", code, stderr.String())
 	}
 }
 
@@ -120,6 +180,7 @@ func TestAuditCommandAcceptsMultipleCampaignsAndKeepsExactDemandUnknown(t *testi
 	firstPath := filepath.Join(directory, "first.json")
 	secondPath := filepath.Join(directory, "second.json")
 	out := filepath.Join(directory, "collection.json")
+	markdownOut := filepath.Join(directory, "collection.md")
 	for i, path := range []string{firstPath, secondPath} {
 		budget := campaign.PlannedBudget(campaign.Options{Warmup: 0, Observation: 10 * time.Second, Recovery: 10 * time.Second, Repeats: 2})
 		evidence := campaign.Result{
@@ -134,7 +195,7 @@ func TestAuditCommandAcceptsMultipleCampaignsAndKeepsExactDemandUnknown(t *testi
 		}
 	}
 	var stdout, stderr bytes.Buffer
-	args := []string{"audit", "--campaign", firstPath, "--campaign", secondPath, "--peak-users", "3", "--out", out}
+	args := []string{"audit", "--campaign", firstPath, "--campaign", secondPath, "--peak-users", "3", "--out", out, "--report-out", markdownOut}
 	if exit := Run(args, &stdout, &stderr); exit != 0 {
 		t.Fatalf("multi-level audit exit: %d %s", exit, stderr.String())
 	}
@@ -144,6 +205,7 @@ func TestAuditCommandAcceptsMultipleCampaignsAndKeepsExactDemandUnknown(t *testi
 		}
 	}
 	rendered := strings.Replace(stdout.String(), "Audit JSON: "+out+"\n", "", 1)
+	rendered = strings.Replace(rendered, "Executive and technical report: "+markdownOut+"\n", "", 1)
 	if os.Getenv("UPDATE_GOLDEN") == "1" {
 		if err := os.WriteFile(filepath.Join("testdata", "audit_collection.golden.txt"), []byte(rendered), 0o600); err != nil {
 			t.Fatal(err)
@@ -162,6 +224,7 @@ func TestAuditCommandAcceptsMultipleCampaignsAndKeepsExactDemandUnknown(t *testi
 		t.Fatal(err)
 	}
 	var assessment struct {
+		SchemaVersion  int    `json:"schema_version"`
 		State          string `json:"state"`
 		AssessmentType string `json:"assessment_type"`
 		Levels         []struct {
@@ -171,15 +234,27 @@ func TestAuditCommandAcceptsMultipleCampaignsAndKeepsExactDemandUnknown(t *testi
 			TargetUsers int    `json:"target_users"`
 			State       string `json:"state"`
 		} `json:"demand"`
+		DemandInputs *struct {
+			PeakUsers int `json:"peak_users"`
+		} `json:"demand_inputs"`
 	}
 	if err := json.Unmarshal(raw, &assessment); err != nil {
 		t.Fatal(err)
 	}
-	if assessment.AssessmentType != "CAMPAIGN_LEVEL_COLLECTION" || assessment.State != "INCONCLUSIVE" || len(assessment.Levels) != 2 || assessment.Levels[0].TestedUsers != 2 || assessment.Levels[1].TestedUsers != 4 {
+	if assessment.SchemaVersion != 2 || assessment.AssessmentType != "CAMPAIGN_LEVEL_COLLECTION" || assessment.State != "INCONCLUSIVE" || len(assessment.Levels) != 2 || assessment.Levels[0].TestedUsers != 2 || assessment.Levels[1].TestedUsers != 4 {
 		t.Fatalf("machine-readable level collection is malformed: %+v", assessment)
 	}
-	if assessment.Demand == nil || assessment.Demand.TargetUsers != 3 || assessment.Demand.State != "INSUFFICIENT_EVIDENCE" {
+	if assessment.Demand == nil || assessment.Demand.TargetUsers != 3 || assessment.Demand.State != "INSUFFICIENT_EVIDENCE" || assessment.DemandInputs == nil || assessment.DemandInputs.PeakUsers != 3 {
 		t.Fatalf("missing exact-level demand limitation: %+v", assessment.Demand)
+	}
+	markdown, err := os.ReadFile(markdownOut)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{"## Executive summary", "## Technical evidence", "Campaigns by tested level", "2 | ABORTED", "4 | ABORTED", "--peak-users 3", firstPath, secondPath} {
+		if !strings.Contains(string(markdown), expected) {
+			t.Fatalf("multi-level report omits %q: %s", expected, markdown)
+		}
 	}
 }
 

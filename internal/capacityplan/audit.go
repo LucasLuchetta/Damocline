@@ -116,6 +116,7 @@ type Assessment struct {
 	SchemaVersion int                  `json:"schema_version"`
 	Audit         CampaignAudit        `json:"audit"`
 	Confidence    ConfidenceDimensions `json:"confidence_dimensions"`
+	DemandInputs  *capacitygoal.Goal   `json:"demand_inputs,omitempty"`
 	Demand        *Result              `json:"demand,omitempty"`
 	State         string               `json:"state"`
 }
@@ -132,13 +133,15 @@ type ConfidenceDimensions struct {
 
 func BuildAssessment(e campaign.Result, goal *capacitygoal.Goal) (Assessment, error) {
 	audit := AuditCampaign(e)
-	assessment := Assessment{SchemaVersion: 2, Audit: audit, Confidence: assessConfidence(e, audit), State: audit.State}
+	assessment := Assessment{SchemaVersion: 3, Audit: audit, Confidence: assessConfidence(e, audit), State: audit.State}
 	if goal != nil {
 		plan, err := Evaluate(e, *goal)
 		if err != nil {
 			return Assessment{}, err
 		}
 		assessment.Demand = &plan
+		goalCopy := *goal
+		assessment.DemandInputs = &goalCopy
 		assessment.Audit.DemandTargetUsers = plan.TargetUsers
 		if audit.State == "INVALID_EVIDENCE" {
 			assessment.State = "INVALID_EVIDENCE"

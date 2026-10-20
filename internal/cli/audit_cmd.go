@@ -19,6 +19,7 @@ func auditCmd(args []string, stdout, stderr io.Writer) int {
 	var paths stringList
 	fs.Var(&paths, "campaign", "saved campaign JSON path; repeat for a multi-level offline assessment")
 	out := fs.String("out", "", "optional combined assessment JSON output path")
+	reportOut := fs.String("report-out", "", "optional executive and technical Markdown report path")
 	peak := fs.Int("peak-users", 0, "optional expected simultaneous active workload-equivalent users")
 	growth := fs.Float64("growth-percent", 0, "optional estimated growth of active demand (percent)")
 	reserve := fs.Float64("reserve-percent", 0, "optional additional safety reserve (percent)")
@@ -26,7 +27,7 @@ func auditCmd(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	if len(paths) == 0 || len(fs.Args()) != 0 {
-		fmt.Fprintln(stderr, "usage: damocline audit --campaign campaign.json [--campaign higher-level.json] [--peak-users 20] [--growth-percent 25] [--reserve-percent 20] [--out assessment.json]")
+		fmt.Fprintln(stderr, "usage: damocline audit --campaign campaign.json [--campaign higher-level.json] [--peak-users 20] [--growth-percent 25] [--reserve-percent 20] [--out assessment.json] [--report-out capacity-report.md]")
 		return 2
 	}
 	if len(paths) > capacityplan.MaxCampaignCollectionSize {
@@ -48,7 +49,7 @@ func auditCmd(args []string, stdout, stderr io.Writer) int {
 		goal = &capacitygoal.Goal{PeakUsers: *peak, GrowthPercent: *growth, ReservePercent: *reserve}
 	}
 	if len(paths) > 1 {
-		return auditCampaignCollection(paths, goal, *out, stdout, stderr)
+		return auditCampaignCollection(paths, goal, *out, *reportOut, stdout, stderr)
 	}
 	evidence, err := capacityplan.ReadCampaign(paths[0])
 	if err != nil {
@@ -109,6 +110,13 @@ func auditCmd(args []string, stdout, stderr io.Writer) int {
 		}
 		fmt.Fprintf(stdout, "Audit JSON: %s\n", *out)
 	}
+	if *reportOut != "" {
+		if err := writeCapacityMarkdown(*reportOut, renderCampaignCapacityReport(assessment, paths[0], *reportOut, evidence)); err != nil {
+			fmt.Fprintf(stderr, "cannot write capacity report: %v\n", err)
+			return 2
+		}
+		fmt.Fprintf(stdout, "Executive and technical report: %s\n", *reportOut)
+	}
 	fmt.Fprintln(stdout, "No traffic was generated; the artifact links this verdict to its saved campaign evidence.")
 	return 0
 }
@@ -125,7 +133,7 @@ func (values *stringList) Set(value string) error {
 	return nil
 }
 
-func auditCampaignCollection(paths []string, goal *capacitygoal.Goal, out string, stdout, stderr io.Writer) int {
+func auditCampaignCollection(paths []string, goal *capacitygoal.Goal, out, reportOut string, stdout, stderr io.Writer) int {
 	evidence, err := capacityplan.ReadCampaignCollection(paths)
 	if err != nil {
 		fmt.Fprintf(stderr, "cannot read campaign collection: %v\n", err)
@@ -175,6 +183,13 @@ func auditCampaignCollection(paths []string, goal *capacitygoal.Goal, out string
 			return 2
 		}
 		fmt.Fprintf(stdout, "Audit JSON: %s\n", out)
+	}
+	if reportOut != "" {
+		if err := writeCapacityMarkdown(reportOut, renderCampaignCollectionCapacityReport(assessment, paths, reportOut, evidence)); err != nil {
+			fmt.Fprintf(stderr, "cannot write capacity report: %v\n", err)
+			return 2
+		}
+		fmt.Fprintf(stdout, "Executive and technical report: %s\n", reportOut)
 	}
 	fmt.Fprintln(stdout, "No traffic was generated; every level remains linked to its saved campaign evidence.")
 	return 0
