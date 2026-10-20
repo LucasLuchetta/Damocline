@@ -32,14 +32,20 @@ business-demand check, pass `--peak-users` (and optional growth and reserve
 percentages) to `audit`. The combined JSON assessment contains the observed
 audit and demand plan in one artifact, including the original peak/growth/reserve
 inputs; `plan` remains available for a standalone demand check. `--report-out FILE.md` writes executive and technical sections from that same assessment and
-records the exact offline replay command.
+records an offline replay command pinned to each source campaign's SHA-256
+evidence ID. You can pin an audit explicitly with repeated
+`--expect-evidence-id sha256:<64-hex>` flags, one per `--campaign` in argument
+order. The audit stops before writing assessment outputs if any source digest
+differs. A digest identifies normalized evidence fields; it is not a signature or proof of who
+produced them.
 
-Each assessment includes a SHA-256 digest of the saved campaign and each
-reviewed phase report, the workload fingerprint recorded by each run, target,
-timestamps and observation durations, the sum of required phase durations,
+Each assessment includes a SHA-256 digest of the normalized, schema-decoded
+campaign evidence and each reviewed phase report, the workload fingerprint
+recorded by each run, target, timestamps and observation durations, the sum of required phase durations,
 observed levels, workflow failures visible in observation evidence, and known
-unknowns. These digests identify the exact serialized evidence reviewed; they
-do not authenticate who produced it or protect it from replacement. Confidence
+unknowns. These digests identify the evidence fields interpreted by this
+auditor; they do not authenticate who produced it or protect it from
+replacement. Confidence
 is explicitly `NOT_ESTABLISHED`: current conditional intervals assume IID
 observations and do not establish dependence-aware confidence. Demand is not
 extrapolated into untested workload levels.
@@ -55,7 +61,9 @@ IDs, observation statistics, confidence limits and a replay command. It includes
 the target origin and may contain private scenario labels, so keep it with local
 reports. It does not embed the full scenario or credentials. Preserve the private
 profile and use `campaign profile verify` to check that profile against the saved
-campaign before rerunning the workload.
+campaign before rerunning the workload. The generated replay command verifies
+the campaign evidence ID before it recomputes the assessment; this catches
+changes to interpreted source fields but does not authenticate their origin.
 
 To inspect separately recorded campaigns at multiple active-workload levels,
 repeat `--campaign`:

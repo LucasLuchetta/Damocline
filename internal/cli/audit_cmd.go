@@ -18,6 +18,8 @@ func auditCmd(args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	var paths stringList
 	fs.Var(&paths, "campaign", "saved campaign JSON path; repeat for a multi-level offline assessment")
+	var expectedEvidenceIDs stringList
+	fs.Var(&expectedEvidenceIDs, "expect-evidence-id", "require the campaign SHA-256 evidence ID; repeat in --campaign order")
 	out := fs.String("out", "", "optional combined assessment JSON output path")
 	reportOut := fs.String("report-out", "", "optional executive and technical Markdown report path")
 	peak := fs.Int("peak-users", 0, "optional expected simultaneous active workload-equivalent users")
@@ -27,11 +29,15 @@ func auditCmd(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	if len(paths) == 0 || len(fs.Args()) != 0 {
-		fmt.Fprintln(stderr, "usage: damocline audit --campaign campaign.json [--campaign higher-level.json] [--peak-users 20] [--growth-percent 25] [--reserve-percent 20] [--out assessment.json] [--report-out capacity-report.md]")
+		fmt.Fprintln(stderr, "usage: damocline audit --campaign campaign.json [--campaign higher-level.json] [--expect-evidence-id sha256:<64-hex>]... [--peak-users 20] [--growth-percent 25] [--reserve-percent 20] [--out assessment.json] [--report-out capacity-report.md]")
 		return 2
 	}
 	if len(paths) > capacityplan.MaxCampaignCollectionSize {
 		fmt.Fprintf(stderr, "cannot audit campaigns: at most %d campaign files are allowed\n", capacityplan.MaxCampaignCollectionSize)
+		return 2
+	}
+	if err := validateExpectedEvidenceIDCount(expectedEvidenceIDs, len(paths)); err != nil {
+		fmt.Fprintf(stderr, "invalid expected campaign evidence IDs: %v\n", err)
 		return 2
 	}
 	demandRequested := false
@@ -49,11 +55,15 @@ func auditCmd(args []string, stdout, stderr io.Writer) int {
 		goal = &capacitygoal.Goal{PeakUsers: *peak, GrowthPercent: *growth, ReservePercent: *reserve}
 	}
 	if len(paths) > 1 {
-		return auditCampaignCollection(paths, goal, *out, *reportOut, stdout, stderr)
+		return auditCampaignCollection(paths, expectedEvidenceIDs, goal, *out, *reportOut, stdout, stderr)
 	}
 	evidence, err := capacityplan.ReadCampaign(paths[0])
 	if err != nil {
 		fmt.Fprintf(stderr, "cannot read campaign: %v\n", err)
+		return 2
+	}
+	if err := verifyExpectedEvidenceIDs(expectedEvidenceIDs, []string{capacityplan.AuditCampaign(evidence).EvidenceID}); err != nil {
+		fmt.Fprintf(stderr, "campaign evidence ID check failed: %v\n", err)
 		return 2
 	}
 	assessment, err := capacityplan.BuildAssessment(evidence, goal)
@@ -127,16 +137,24 @@ func (values *stringList) String() string { return strings.Join(*values, ",") }
 
 func (values *stringList) Set(value string) error {
 	if strings.TrimSpace(value) == "" {
-		return fmt.Errorf("campaign path cannot be empty")
+		return fmt.Errorf("argument cannot be empty")
 	}
 	*values = append(*values, value)
 	return nil
 }
 
-func auditCampaignCollection(paths []string, goal *capacitygoal.Goal, out, reportOut string, stdout, stderr io.Writer) int {
+func auditCampaignCollection(paths, expectedEvidenceIDs []string, goal *capacitygoal.Goal, out, reportOut string, stdout, stderr io.Writer) int {
 	evidence, err := capacityplan.ReadCampaignCollection(paths)
 	if err != nil {
 		fmt.Fprintf(stderr, "cannot read campaign collection: %v\n", err)
+		return 2
+	}
+	actualEvidenceIDs := make([]string, len(evidence))
+	for i, item := range evidence {
+		actualEvidenceIDs[i] = capacityplan.AuditCampaign(item).EvidenceID
+	}
+	if err := verifyExpectedEvidenceIDs(expectedEvidenceIDs, actualEvidenceIDs); err != nil {
+		fmt.Fprintf(stderr, "campaign evidence ID check failed: %v\n", err)
 		return 2
 	}
 	assessment, err := capacityplan.BuildCampaignCollectionAssessment(evidence, goal)
@@ -193,6 +211,38 @@ func auditCampaignCollection(paths []string, goal *capacitygoal.Goal, out, repor
 	}
 	fmt.Fprintln(stdout, "No traffic was generated; every level remains linked to its saved campaign evidence.")
 	return 0
+}
+
+func validateExpectedEvidenceIDCount(expected []string, campaignCount int) error {
+	if len(expected) == 0 {
+		return nil
+	}
+	if len(expected) != campaignCount {
+		return fmt.Errorf("got %d IDs for %d campaign files; provide one ID per --campaign in the same order", len(expected), campaignCount)
+	}
+	for i, id := range expected {
+		if len(id) != len("sha256:")+64 || !strings.HasPrefix(id, "sha256:") {
+			return fmt.Errorf("ID %d must use sha256:<64 lowercase hexadecimal characters>", i+1)
+		}
+		for _, char := range id[len("sha256:"):] {
+			if !(char >= '0' && char <= '9' || char >= 'a' && char <= 'f') {
+				return fmt.Errorf("ID %d must use sha256:<64 lowercase hexadecimal characters>", i+1)
+			}
+		}
+	}
+	return nil
+}
+
+func verifyExpectedEvidenceIDs(expected, actual []string) error {
+	if err := validateExpectedEvidenceIDCount(expected, len(actual)); err != nil {
+		return err
+	}
+	for i := range expected {
+		if expected[i] != actual[i] {
+			return fmt.Errorf("campaign %d has %s; expected %s", i+1, actual[i], expected[i])
+		}
+	}
+	return nil
 }
 
 func writeObservationEvidence(w io.Writer, audit capacityplan.CampaignAudit, indent string) {

@@ -88,7 +88,8 @@ func TestAuditReportOutContainsExecutiveTechnicalReplayWithoutConflictingVerdict
 		t.Fatal(err)
 	}
 	var stdout, stderr bytes.Buffer
-	args := []string{"audit", "--campaign", path, "--peak-users", "8", "--growth-percent", "25", "--reserve-percent", "10", "--out", assessmentPath, "--report-out", reportPath}
+	expectedID := capacityplan.AuditCampaign(evidence).EvidenceID
+	args := []string{"audit", "--campaign", path, "--expect-evidence-id", expectedID, "--peak-users", "8", "--growth-percent", "25", "--reserve-percent", "10", "--out", assessmentPath, "--report-out", reportPath}
 	if code := Run(args, &stdout, &stderr); code != 0 {
 		t.Fatalf("audit report command failed: %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 	}
@@ -97,7 +98,7 @@ func TestAuditReportOutContainsExecutiveTechnicalReplayWithoutConflictingVerdict
 		t.Fatal(err)
 	}
 	content := string(data)
-	for _, expected := range []string{"## Executive summary", "## Technical evidence", "peak 8 active users, growth 25%, reserve 10%", "Calculated target:", "Campaign evidence ID", "Offline replay", "--peak-users 8", "--growth-percent 25", "--reserve-percent 10", "INCONCLUSIVE", "INSUFFICIENT_EVIDENCE"} {
+	for _, expected := range []string{"## Executive summary", "## Technical evidence", "peak 8 active users, growth 25%, reserve 10%", "Calculated target:", "Campaign evidence ID", "Offline replay", "--expect-evidence-id '" + expectedID + "'", "--peak-users 8", "--growth-percent 25", "--reserve-percent 10", "INCONCLUSIVE", "INSUFFICIENT_EVIDENCE"} {
 		if !strings.Contains(content, expected) {
 			t.Fatalf("capacity report omits %q: %s", expected, content)
 		}
@@ -126,6 +127,58 @@ func TestAuditReportOutContainsExecutiveTechnicalReplayWithoutConflictingVerdict
 	var repeated bytes.Buffer
 	if code := Run(args, &repeated, &stderr); code != 2 || !strings.Contains(stderr.String(), "already exists") {
 		t.Fatalf("report output replaced an existing artifact: code=%d stderr=%s", code, stderr.String())
+	}
+}
+
+func TestAuditCommandRejectsChangedCampaignBeforeWritingAssessment(t *testing.T) {
+	directory := t.TempDir()
+	campaignPath := filepath.Join(directory, "campaign.json")
+	evidence := campaign.Result{
+		SchemaVersion: campaign.CurrentSchemaVersion, ExecutionState: "COMPLETED", Scenario: "synthetic local fixture", BaseUsers: 2, Repeats: 2,
+		Outcome: "INCONCLUSIVE", Stabilization: "0s", Cooldown: "0s", StabilityPolicy: defaultCampaignStabilityPolicy(),
+		Trials: []campaign.Trial{{RunID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Number: 1, Outcome: "INCONCLUSIVE"}, {RunID: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", Number: 2, Outcome: "INCONCLUSIVE"}},
+	}
+	if err := report.WriteAnyJSON(campaignPath, evidence); err != nil {
+		t.Fatal(err)
+	}
+	expectedID := capacityplan.AuditCampaign(evidence).EvidenceID
+	evidence.Notes = []string{"changed after report generation"}
+	changed, err := json.Marshal(evidence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(campaignPath, changed, 0600); err != nil {
+		t.Fatal(err)
+	}
+	assessmentPath := filepath.Join(directory, "assessment.json")
+	reportPath := filepath.Join(directory, "capacity.md")
+	var stdout, stderr bytes.Buffer
+	args := []string{"audit", "--campaign", campaignPath, "--expect-evidence-id", expectedID, "--out", assessmentPath, "--report-out", reportPath}
+	if code := Run(args, &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "campaign evidence ID check failed") || !strings.Contains(stderr.String(), "expected "+expectedID) {
+		t.Fatalf("changed source campaign was not rejected: code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	for _, output := range []string{assessmentPath, reportPath} {
+		if _, err := os.Stat(output); !os.IsNotExist(err) {
+			t.Fatalf("ID mismatch left an assessment artifact at %s: err=%v", output, err)
+		}
+	}
+}
+
+func TestAuditExpectedEvidenceIDsRequireOneValidIDPerCampaign(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "wrong count", args: []string{"--campaign", "one.json", "--campaign", "two.json", "--expect-evidence-id", "sha256:" + strings.Repeat("a", 64)}, want: "provide one ID per --campaign"},
+		{name: "malformed digest", args: []string{"--campaign", "one.json", "--expect-evidence-id", "sha256:not-a-digest"}, want: "64 lowercase hexadecimal"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			if code := Run(append([]string{"audit"}, test.args...), &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), test.want) {
+				t.Fatalf("invalid expected evidence ID arguments were accepted: code=%d stderr=%s", code, stderr.String())
+			}
+		})
 	}
 }
 
@@ -181,6 +234,7 @@ func TestAuditCommandAcceptsMultipleCampaignsAndKeepsExactDemandUnknown(t *testi
 	secondPath := filepath.Join(directory, "second.json")
 	out := filepath.Join(directory, "collection.json")
 	markdownOut := filepath.Join(directory, "collection.md")
+	expectedIDs := make([]string, 0, 2)
 	for i, path := range []string{firstPath, secondPath} {
 		budget := campaign.PlannedBudget(campaign.Options{Warmup: 0, Observation: 10 * time.Second, Recovery: 10 * time.Second, Repeats: 2})
 		evidence := campaign.Result{
@@ -193,9 +247,10 @@ func TestAuditCommandAcceptsMultipleCampaignsAndKeepsExactDemandUnknown(t *testi
 		if err := report.WriteAnyJSON(path, evidence); err != nil {
 			t.Fatal(err)
 		}
+		expectedIDs = append(expectedIDs, capacityplan.AuditCampaign(evidence).EvidenceID)
 	}
 	var stdout, stderr bytes.Buffer
-	args := []string{"audit", "--campaign", firstPath, "--campaign", secondPath, "--peak-users", "3", "--out", out, "--report-out", markdownOut}
+	args := []string{"audit", "--campaign", secondPath, "--campaign", firstPath, "--expect-evidence-id", expectedIDs[1], "--expect-evidence-id", expectedIDs[0], "--peak-users", "3", "--out", out, "--report-out", markdownOut}
 	if exit := Run(args, &stdout, &stderr); exit != 0 {
 		t.Fatalf("multi-level audit exit: %d %s", exit, stderr.String())
 	}
@@ -251,7 +306,7 @@ func TestAuditCommandAcceptsMultipleCampaignsAndKeepsExactDemandUnknown(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, expected := range []string{"## Executive summary", "## Technical evidence", "Campaigns by tested level", "2 | ABORTED", "4 | ABORTED", "--peak-users 3", firstPath, secondPath} {
+	for _, expected := range []string{"## Executive summary", "## Technical evidence", "Campaigns by tested level", "2 | ABORTED", "4 | ABORTED", "--campaign '" + secondPath + "' --expect-evidence-id '" + expectedIDs[1] + "' --campaign '" + firstPath + "' --expect-evidence-id '" + expectedIDs[0] + "'", "--peak-users 3", firstPath, secondPath} {
 		if !strings.Contains(string(markdown), expected) {
 			t.Fatalf("multi-level report omits %q: %s", expected, markdown)
 		}
