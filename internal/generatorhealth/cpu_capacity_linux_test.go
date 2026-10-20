@@ -235,8 +235,8 @@ func TestLinuxCapacityCombinesV2QuotaAndEffectiveCPUSet(t *testing.T) {
 			writeCgroupFixture(t, root, "0::/container/job\n",
 				"29 23 0:26 /container /sys/fs/cgroup rw - cgroup2 cgroup rw\n",
 				map[string]string{
-					"sys/fs/cgroup/cpu.max":                "max 100000",
-					"sys/fs/cgroup/job/cpu.max":            test.quota,
+					"sys/fs/cgroup/cpu.max":                   "max 100000",
+					"sys/fs/cgroup/job/cpu.max":               test.quota,
 					"sys/fs/cgroup/job/cpuset.cpus.effective": test.cpuset,
 				})
 			capacity := cpuCapacityFromQuota(12, test.maxProcs, root, "/proc/self/cgroup", "/proc/self/mountinfo")
@@ -267,8 +267,8 @@ func TestLinuxCapacityDetectsV2CPUSetChanges(t *testing.T) {
 	writeCgroupFixture(t, root, "0::/container/job\n",
 		"29 23 0:26 /container /sys/fs/cgroup rw - cgroup2 cgroup rw\n",
 		map[string]string{
-			"sys/fs/cgroup/cpu.max":                "max 100000",
-			"sys/fs/cgroup/job/cpu.max":            "400000 100000",
+			"sys/fs/cgroup/cpu.max":                   "max 100000",
+			"sys/fs/cgroup/job/cpu.max":               "400000 100000",
 			"sys/fs/cgroup/job/cpuset.cpus.effective": "0-3",
 		})
 	before := cpuCapacityFromQuota(12, 12, root, "/proc/self/cgroup", "/proc/self/mountinfo")
