@@ -37,34 +37,56 @@ type Calibration struct {
 	Status   string `json:"status"`
 }
 
+type Objectives struct {
+	JourneyScope              string  `json:"journey_scope"`
+	JourneyP95LimitMS         float64 `json:"journey_p95_limit_ms"`
+	MaxJourneyErrorRate       float64 `json:"max_journey_error_rate"`
+	MinSamplesPerStep         int     `json:"min_samples_per_step"`
+	MinCompletedWorkRatio     float64 `json:"min_completed_work_ratio"`
+	MaxDroppedArrivals        int64   `json:"max_dropped_arrivals"`
+	MinimumObservationWindows int     `json:"minimum_observation_windows"`
+	MinimumSamplesPerWindow   int     `json:"minimum_samples_per_window"`
+	WindowDuration            string  `json:"window_duration"`
+}
+
+type StabilityPolicy struct {
+	MinimumWindows           int     `json:"minimum_windows"`
+	MinimumSamplesPerWindow  int     `json:"minimum_samples_per_window"`
+	MaxP95IncreasePercent    float64 `json:"max_p95_increase_percent"`
+	MaxP95IncreaseMS         float64 `json:"max_p95_increase_ms"`
+	MaxThroughputDropPercent float64 `json:"max_throughput_drop_percent"`
+}
+
 type Workload struct {
-	Mode                  string  `json:"mode,omitempty"`
-	VirtualUsers          int     `json:"virtual_users,omitempty"`
-	JourneyStartsPS       int     `json:"scheduled_journey_starts_per_second,omitempty"`
-	WorkerLimit           int     `json:"journey_worker_limit,omitempty"`
-	RequestCeiling        int     `json:"max_request_starts_per_second,omitempty"`
-	P95LimitMS            float64 `json:"p95_limit_ms,omitempty"`
-	MaxErrorRate          float64 `json:"max_error_rate,omitempty"`
-	Observation           string  `json:"observation_duration,omitempty"`
-	Warmup                string  `json:"warmup_duration,omitempty"`
-	SpikeDuration         string  `json:"spike_duration,omitempty"`
-	Recovery              string  `json:"recovery_duration,omitempty"`
-	Soak                  string  `json:"soak_duration,omitempty"`
-	Cooldown              string  `json:"cooldown_duration,omitempty"`
-	Repeats               int     `json:"repeats,omitempty"`
-	WindowDuration        string  `json:"observation_window,omitempty"`
-	ConnectionPolicy      string  `json:"connection_policy,omitempty"`
-	MaxConnectionsPerHost int     `json:"max_connections_per_host,omitempty"`
-	LoadUnit              string  `json:"load_unit,omitempty"`
-	MinimumLoad           int     `json:"minimum_tested_load,omitempty"`
-	MaximumLoad           int     `json:"maximum_tested_load,omitempty"`
-	TargetLoad            int     `json:"exact_target_load,omitempty"`
-	TargetTested          bool    `json:"exact_target_tested,omitempty"`
-	HighestPassingLoad    *int    `json:"highest_passing_tested_load,omitempty"`
-	FirstFailingLoad      *int    `json:"first_failing_tested_load,omitempty"`
-	RequestedMinimum      int     `json:"requested_minimum_load,omitempty"`
-	RequestedMaximum      int     `json:"requested_maximum_load,omitempty"`
-	CalibratedLoads       []int   `json:"calibrated_probe_loads,omitempty"`
+	Mode                  string           `json:"mode,omitempty"`
+	VirtualUsers          int              `json:"virtual_users,omitempty"`
+	JourneyStartsPS       int              `json:"scheduled_journey_starts_per_second,omitempty"`
+	WorkerLimit           int              `json:"journey_worker_limit,omitempty"`
+	RequestCeiling        int              `json:"max_request_starts_per_second,omitempty"`
+	P95LimitMS            float64          `json:"p95_limit_ms,omitempty"`
+	MaxErrorRate          float64          `json:"max_error_rate,omitempty"`
+	Observation           string           `json:"observation_duration,omitempty"`
+	Warmup                string           `json:"warmup_duration,omitempty"`
+	SpikeDuration         string           `json:"spike_duration,omitempty"`
+	Recovery              string           `json:"recovery_duration,omitempty"`
+	Soak                  string           `json:"soak_duration,omitempty"`
+	Cooldown              string           `json:"cooldown_duration,omitempty"`
+	Repeats               int              `json:"repeats,omitempty"`
+	WindowDuration        string           `json:"observation_window,omitempty"`
+	ConnectionPolicy      string           `json:"connection_policy,omitempty"`
+	MaxConnectionsPerHost int              `json:"max_connections_per_host,omitempty"`
+	LoadUnit              string           `json:"load_unit,omitempty"`
+	MinimumLoad           int              `json:"minimum_tested_load,omitempty"`
+	MaximumLoad           int              `json:"maximum_tested_load,omitempty"`
+	TargetLoad            int              `json:"exact_target_load,omitempty"`
+	TargetTested          bool             `json:"exact_target_tested,omitempty"`
+	HighestPassingLoad    *int             `json:"highest_passing_tested_load,omitempty"`
+	FirstFailingLoad      *int             `json:"first_failing_tested_load,omitempty"`
+	RequestedMinimum      int              `json:"requested_minimum_load,omitempty"`
+	RequestedMaximum      int              `json:"requested_maximum_load,omitempty"`
+	CalibratedLoads       []int            `json:"calibrated_probe_loads,omitempty"`
+	PredeclaredObjectives *Objectives      `json:"predeclared_objectives,omitempty"`
+	StabilityPolicy       *StabilityPolicy `json:"stability_policy,omitempty"`
 }
 
 type Probe struct {
@@ -264,6 +286,8 @@ func FromClosedCampaign(c campaign.Result) Evidence {
 		Mode: "closed", LoadUnit: "virtual_users", VirtualUsers: c.BaseUsers, Observation: safeDuration(c.Observation), Warmup: safeDuration(c.Warmup),
 		SpikeDuration: safeDuration(c.SpikeDuration), Recovery: safeDuration(c.Recovery), Soak: safeDuration(c.Soak), Cooldown: safeDuration(c.Cooldown), Repeats: c.Repeats,
 	}}
+	e.Workload.PredeclaredObjectives = redactedObjectives(c.Objectives)
+	e.Workload.StabilityPolicy = redactedStabilityPolicy(c.StabilityPolicy)
 	if c.Calibration != nil {
 		e.Calibration = &Calibration{Required: c.CalibrationRequired, Status: safeCalibrationStatus(c.Calibration.Status)}
 	}
@@ -291,6 +315,8 @@ func FromArrivalCampaign(c arrivalcampaign.Result) Evidence {
 		Observation: safeDuration(c.Observation), Warmup: safeDuration(c.Warmup), SpikeDuration: safeDuration(c.SpikeDuration), Recovery: safeDuration(c.Recovery),
 		Soak: safeDuration(c.Soak), Cooldown: safeDuration(c.Cooldown), Repeats: c.Repeats, WindowDuration: safeDuration(c.WindowDuration),
 	}}
+	e.Workload.PredeclaredObjectives = redactedObjectives(c.Objectives)
+	e.Workload.StabilityPolicy = redactedStabilityPolicy(c.StabilityPolicy)
 	e.Trials = make([]Trial, 0, len(c.Trials)+1)
 	for _, trial := range c.Trials {
 		e.Trials = append(e.Trials, redactArrivalTrial(trial))
@@ -299,6 +325,30 @@ func FromArrivalCampaign(c arrivalcampaign.Result) Evidence {
 		e.Trials = append(e.Trials, redactArrivalTrial(*c.PendingTrial))
 	}
 	return e
+}
+
+func redactedObjectives(source *campaign.ObjectiveContract) *Objectives {
+	if source == nil || source.Validate() != nil {
+		return nil
+	}
+	return &Objectives{
+		JourneyScope: source.JourneyScope, JourneyP95LimitMS: source.JourneyP95LimitMS,
+		MaxJourneyErrorRate: source.MaxJourneyErrorRate, MinSamplesPerStep: source.MinSamplesPerStep,
+		MinCompletedWorkRatio: source.MinCompletedWorkRatio, MaxDroppedArrivals: source.MaxDroppedArrivals,
+		MinimumObservationWindows: source.MinimumObservationWindows, MinimumSamplesPerWindow: source.MinimumSamplesPerWindow,
+		WindowDuration: safeDuration(source.WindowDuration),
+	}
+}
+
+func redactedStabilityPolicy(source *campaign.StabilityPolicy) *StabilityPolicy {
+	if source == nil || campaign.ValidateStabilityPolicy(*source) != nil {
+		return nil
+	}
+	return &StabilityPolicy{
+		MinimumWindows: source.MinimumWindows, MinimumSamplesPerWindow: source.MinimumSamplesPerWindow,
+		MaxP95IncreasePercent: source.MaxP95IncreasePercent, MaxP95IncreaseMS: source.MaxP95IncreaseMS,
+		MaxThroughputDropPercent: source.MaxThroughputDropPercent,
+	}
 }
 
 func Marshal(e Evidence) ([]byte, error) {

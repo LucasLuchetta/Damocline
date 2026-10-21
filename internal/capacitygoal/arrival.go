@@ -38,6 +38,8 @@ type JourneyStartAssessment struct {
 	MatchedTrials                 int
 	Findings                      []string
 	Next                          []string
+	Objectives                    *campaign.ObjectiveContract `json:"predeclared_objectives,omitempty"`
+	StabilityPolicy               *campaign.StabilityPolicy   `json:"stability_policy,omitempty"`
 }
 
 func (g JourneyStartGoal) required() (int, error) {

@@ -25,11 +25,13 @@ func goalCmd(args []string, stdout, stderr io.Writer) int {
 	peakStarts := fs.Int("peak-journeys-per-second", 0, "expected scheduled open-loop journey starts/s")
 	growth := fs.Float64("growth-percent", 0, "estimated growth of demand (percent)")
 	reserve := fs.Float64("reserve-percent", 0, "additional safety reserve on projected demand (percent)")
+	out := fs.String("out", "", "optional offline assessment JSON output path")
+	reportOut := fs.String("report-out", "", "optional executive and technical Markdown report path")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 	if *path == "" || *peakUsers < 0 || *peakStarts < 0 || (*peakUsers == 0) == (*peakStarts == 0) || len(fs.Args()) != 0 {
-		fmt.Fprintln(stderr, "usage: damocline goal --file capacity.json (--peak-users 20 | --peak-journeys-per-second 5) [--growth-percent 25] [--reserve-percent 20]")
+		fmt.Fprintln(stderr, "usage: damocline goal --file capacity.json (--peak-users 20 | --peak-journeys-per-second 5) [--growth-percent 25] [--reserve-percent 20] [--out assessment.json] [--report-out capacity.md]")
 		return 2
 	}
 	file, err := os.Open(*path)
@@ -77,6 +79,31 @@ func goalCmd(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "DEMAND TO VALIDATE: %d scheduled journey starts/s\n", assessment.TargetStartsPerSecond)
 		fmt.Fprintln(stdout, "Units: scheduled journey starts/s; VUs, admitted journeys, completed journeys, and HTTP requests/s are separate.")
 		fmt.Fprintf(stdout, "EVIDENCE STATUS: %s\n", assessment.State)
+		if *out != "" && saved.SchemaVersion >= 8 {
+			if err := writeArrivalCampaignAssessmentJSON(*out, assessment); err != nil {
+				fmt.Fprintf(stderr, "cannot write assessment: %v\n", err)
+				return 2
+			}
+			fmt.Fprintf(stdout, "Assessment JSON: %s\n", *out)
+		}
+		if *reportOut != "" && saved.SchemaVersion >= 8 {
+			if err := writeCapacityMarkdown(*reportOut, renderArrivalCampaignCapacityReport(assessment, *path, *reportOut, saved)); err != nil {
+				fmt.Fprintf(stderr, "cannot write capacity report: %v\n", err)
+				return 2
+			}
+			fmt.Fprintf(stdout, "Executive and technical report: %s\n", *reportOut)
+		}
+		if saved.Objectives != nil {
+			o := saved.Objectives
+			fmt.Fprintf(stdout, "Predeclared objectives: %s scope; journey p95 <= %.3fms; error rate <= %.5f%%; samples/step >= %d; complete work %.0f%%; dropped arrivals <= %d; windows >= %d with >= %d journeys/window; window %s\n",
+				o.JourneyScope, o.JourneyP95LimitMS, o.MaxJourneyErrorRate*100, o.MinSamplesPerStep, o.MinCompletedWorkRatio*100,
+				o.MaxDroppedArrivals, o.MinimumObservationWindows, o.MinimumSamplesPerWindow, o.WindowDuration)
+		}
+		if saved.StabilityPolicy != nil {
+			p := saved.StabilityPolicy
+			fmt.Fprintf(stdout, "Stability screen: minimum %d windows, %d samples/window; max p95 rise %.3f%% and %.3fms; max throughput drop %.3f%% (coarse screen, not a stationarity test)\n",
+				p.MinimumWindows, p.MinimumSamplesPerWindow, p.MaxP95IncreasePercent, p.MaxP95IncreaseMS, p.MaxThroughputDropPercent)
+		}
 		if assessment.MatchedStartsPerSecond != nil {
 			fmt.Fprintf(stdout, "Exact campaign target: %d scheduled starts/s; %d passing trial(s)\n", *assessment.MatchedStartsPerSecond, assessment.MatchedTrials)
 		}

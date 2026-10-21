@@ -71,3 +71,21 @@ func TestObjectiveContractIsPersistedAndReplayedAgainstCoverage(t *testing.T) {
 		t.Fatalf("workflow-level p95 breach was hidden by aggregate SLO evidence: %s", state)
 	}
 }
+
+func TestObjectiveContractMatchesPhaseCappedFixedWindows(t *testing.T) {
+	base := scenario(t)
+	base.Window = 20 * time.Second
+	base.Scenario.WindowDuration = base.Window.String()
+	policy := DefaultStabilityPolicy()
+	contract := NewObjectiveContract(base, policy)
+	run := stableResult(base)
+	run.Config.Duration = "10s"
+	run.Config.WindowDuration = "10s"
+	if !contract.MatchesRun(run) {
+		t.Fatal("phase-capped window was not matched to the predeclared fixed window")
+	}
+	run.Config.WindowDuration = "5s"
+	if contract.MatchesRun(run) {
+		t.Fatal("phase window shorter than the declared fixed window was accepted")
+	}
+}

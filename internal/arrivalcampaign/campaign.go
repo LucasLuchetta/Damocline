@@ -17,7 +17,7 @@ import (
 	"github.com/LucasLuchetta/Damocline/internal/report"
 )
 
-const CurrentSchemaVersion = 7
+const CurrentSchemaVersion = 9
 const maximumCampaignDuration = 15 * time.Minute
 const LongRunWallTimeLimit = 2 * time.Hour
 const LongRunPhaseLimit = 30 * time.Minute
@@ -92,6 +92,8 @@ type ProgressFunc func(Result) error
 
 type Result struct {
 	SchemaVersion        int                         `json:"arrival_campaign_schema_version"`
+	Objectives           *campaign.ObjectiveContract `json:"objectives,omitempty"`
+	StabilityPolicy      *campaign.StabilityPolicy   `json:"stability_policy,omitempty"`
 	ExecutionState       string                      `json:"execution_state,omitempty"`
 	Scenario             string                      `json:"scenario"`
 	Target               string                      `json:"target"`
@@ -321,6 +323,11 @@ func WithRunnerProgress(parent context.Context, base config.Validated, options O
 	if err := Validate(base, options); err != nil {
 		return Result{}, err
 	}
+	stability := campaign.DefaultStabilityPolicy()
+	objectives := campaign.NewObjectiveContract(base, stability)
+	if err := objectives.Validate(); err != nil {
+		return Result{}, fmt.Errorf("invalid predeclared arrival campaign objectives: %w", err)
+	}
 	options.Budget = PlannedBudget(options)
 	options.Guardrails = effectiveGeneratorGuardrails(options.Guardrails)
 	var generatorGuardrails *generatorhealth.Guardrails
@@ -331,7 +338,8 @@ func WithRunnerProgress(parent context.Context, base config.Validated, options O
 	ctx, cancel := context.WithTimeout(parent, options.Budget)
 	defer cancel()
 	result := Result{
-		SchemaVersion: CurrentSchemaVersion, ExecutionState: "RUNNING", Scenario: base.Scenario.Name, Target: base.Base.Scheme + "://" + base.Base.Host,
+		SchemaVersion: CurrentSchemaVersion, Objectives: &objectives, StabilityPolicy: &stability,
+		ExecutionState: "RUNNING", Scenario: base.Scenario.Name, Target: base.Base.Scheme + "://" + base.Base.Host,
 		WorkloadFingerprint: base.WorkloadFingerprint, RequestTimeout: base.Scenario.Timeout, RequestRateCeiling: base.Scenario.MaxRPS,
 		P95LimitMS: base.Scenario.P95LimitMS, MaxErrorRate: base.Scenario.MaxErrorRate, MinSamplesPerStep: base.Scenario.MinSamplesPerStep,
 		WindowDuration: base.Scenario.WindowDuration, Budget: PlannedBudget(options).String(),
@@ -421,10 +429,10 @@ func WithRunnerProgress(parent context.Context, base config.Validated, options O
 				}
 			}
 			run := runner(ctx, validated)
-			state, reason := ClassifyEvidence(run)
+			state, reason := ClassifyCampaignPhase(result, run, phase.Name)
 			stability := ""
 			if phase.Name == "stabilization" || phase.Name == "observation" || phase.Name == "soak" {
-				stability = campaign.AssessStability(run)
+				stability = campaign.AssessStabilityWithPolicy(run, *result.StabilityPolicy)
 			}
 			trial.Phases = append(trial.Phases, Phase{Name: phase.Name, EvidenceState: state, Reason: reason, Stability: stability, Run: run})
 			if err := checkpoint(trial); err != nil {
@@ -555,6 +563,19 @@ func ClassifyEvidence(run report.Result) (string, string) {
 		return "INVALID_DELIVERY", "Generator CPU or the configured client request ceiling may limit the offered arrival rate."
 	}
 	return campaign.ClassifyEvidence(run)
+}
+
+// ClassifyCampaignPhase applies the saved predeclared objective contract to
+// current open-arrival campaign phases while preserving historical behavior.
+func ClassifyCampaignPhase(evidence Result, run report.Result, phase string) (string, string) {
+	state, reason := ClassifyEvidence(run)
+	if state == "INVALID_DELIVERY" || state == "INSUFFICIENT_EVIDENCE" || state == "ABORTED" {
+		return state, reason
+	}
+	if evidence.SchemaVersion >= 8 && evidence.Objectives != nil {
+		return campaign.ApplyObjectiveContract(run, *evidence.Objectives, phase, state, reason)
+	}
+	return state, reason
 }
 
 func AssessStability(run report.Result) string { return campaign.AssessStability(run) }

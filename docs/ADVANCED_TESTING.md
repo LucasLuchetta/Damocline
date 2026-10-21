@@ -150,7 +150,7 @@ journey starts/s; `users` remains the journey-worker limit.
 
 ```powershell
 .\damocline.exe arrival-campaign --config .\arrival.local.json --warmup 30s --observation 2m --spike-journeys-per-second 10 --spike-duration 20s --recovery 30s --soak 1m --repeats 2 --peak-journeys-per-second 5 --growth-percent 25 --reserve-percent 20 --authorized --out reports\arrival-campaign.json
-.\damocline.exe goal --file reports\arrival-campaign.json --peak-journeys-per-second 5 --growth-percent 25 --reserve-percent 20
+.\damocline.exe goal --file reports\arrival-campaign.json --peak-journeys-per-second 5 --growth-percent 25 --reserve-percent 20 --out reports\arrival-assessment.json --report-out reports\arrival-capacity.md
 ```
 
 Growth and reserve are successive multipliers; this example calculates an exact
@@ -334,7 +334,7 @@ To share a validated run, campaign, or exploration without its private target de
 .\damocline.exe report export --file reports\campaign.json --out reports\campaign-redacted.json
 ```
 
-The export preserves aggregate and per-window measurements but aliases arbitrary workflow/step names and removes destinations, routes, notes, warning text, fingerprints, revisions and absolute timestamps. Custom metric names and values are omitted because they may contain identifiers. The `damocline-redacted-evidence-v2` file includes fixed estimator/method identifiers and exact p95 IID interval bounds when available. It is descriptive only and cannot be used by `goal`, `plan`, or `audit`; keep the original artifact private for full offline validation.
+The export preserves aggregate and per-window measurements but aliases arbitrary workflow/step names and removes destinations, routes, notes, warning text, fingerprints, revisions and absolute timestamps. Custom metric names and values are omitted because they may contain identifiers. Current campaign exports also include validated numeric predeclared objectives and stability thresholds. The `damocline-redacted-evidence-v2` file includes fixed estimator/method identifiers and exact p95 IID interval bounds when available. It is descriptive only and cannot be used by `goal`, `plan`, or `audit`; keep the original artifact private for full offline validation.
 
 ## 8. Limitations and quality checks
 

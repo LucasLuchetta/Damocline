@@ -10,10 +10,12 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/LucasLuchetta/Damocline/internal/arrivalcampaign"
 	"github.com/LucasLuchetta/Damocline/internal/campaign"
 	"github.com/LucasLuchetta/Damocline/internal/capacitygoal"
 	"github.com/LucasLuchetta/Damocline/internal/capacityplan"
 	"github.com/LucasLuchetta/Damocline/internal/generatorhealth"
+	"github.com/LucasLuchetta/Damocline/internal/report"
 )
 
 func renderCampaignCapacityReport(assessment capacityplan.Assessment, source, reportPath string, evidence campaign.Result) string {
@@ -110,6 +112,52 @@ func renderCampaignCapacityReport(assessment capacityplan.Assessment, source, re
 	return b.String()
 }
 
+func renderArrivalCampaignCapacityReport(assessment capacitygoal.JourneyStartAssessment, source, reportPath string, evidence arrivalcampaign.Result) string {
+	var b strings.Builder
+	fmt.Fprintln(&b, "# Open-arrival capacity assessment")
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "## Executive summary")
+	fmt.Fprintln(&b)
+	fmt.Fprintf(&b, "- **Demand decision:** %s\n- **Observed campaign outcome:** %s\n- **Scenario:** %s\n- **Tested scheduled journey starts/s:** %d\n- **Requested demand target:** %d scheduled journey starts/s (peak %d, growth %.1f%%, reserve %.1f%%)\n", assessment.State, evidence.Outcome, markdownText(evidence.Scenario), evidence.BaseStartsPerSecond, assessment.TargetStartsPerSecond, assessment.PeakStartsPerSecond, assessment.GrowthPercent, assessment.ReservePercent)
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "The result is direct evidence for the recorded workload, environment declaration and bounded schedule. It does not establish universal or long-term production capacity, workload representativeness, or causal root cause.")
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "## Technical evidence")
+	fmt.Fprintln(&b)
+	fmt.Fprintf(&b, "- **Campaign schema:** %d\n- **Execution state:** %s\n- **Scenario:** %s\n- **Target origin:** %s\n- **Start time:** %s\n- **Declared workload fingerprint:** %s\n- **Scheduled starts/s:** %d; **worker limit:** %d; **request start ceiling:** %d/s\n", evidence.SchemaVersion, markdownText(evidence.ExecutionState), markdownText(evidence.Scenario), markdownText(evidence.Target), markdownText(evidence.StartedAt), markdownCode(evidence.WorkloadFingerprint), evidence.BaseStartsPerSecond, evidence.WorkerLimit, evidence.RequestRateCeiling)
+	fmt.Fprintf(&b, "- **Schedule:** warm-up %s; stabilization %s; observation %s; spike %d starts/s for %s; recovery %s; soak %s; cooldown %s; repeats %d; budget %s\n", markdownText(evidence.Warmup), markdownText(evidence.Stabilization), markdownText(evidence.Observation), evidence.SpikeStartsPerSecond, markdownText(evidence.SpikeDuration), markdownText(evidence.Recovery), markdownText(evidence.Soak), markdownText(evidence.Cooldown), evidence.Repeats, markdownText(evidence.Budget))
+	writeMarkdownArrivalObjectives(&b, assessment.Objectives, assessment.StabilityPolicy)
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "### Replayed phase evidence")
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "| Trial | Phase | Scheduled starts | Admitted | Dropped | Completed journeys | Request p95 ms | Journey p95 ms | Evidence | Stability |")
+	fmt.Fprintln(&b, "| ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |")
+	for _, trial := range evidence.Trials {
+		for _, phase := range trial.Phases {
+			run := phase.Run
+			admitted := int64(0)
+			if run.ArrivalsAdmitted != nil {
+				admitted = *run.ArrivalsAdmitted
+			}
+			fmt.Fprintf(&b, "| %d | %s | %d | %d | %d | %d | %.3f | %.3f | %s | %s |\n", trial.Number, markdownText(phase.Name), run.ArrivalsScheduled, admitted, run.ArrivalsDropped, run.Journeys.Total, run.Metrics.P95MS, run.Journeys.P95MS, markdownText(phase.EvidenceState), markdownText(phase.Stability))
+		}
+	}
+	fmt.Fprintln(&b)
+	writeMarkdownList(&b, "Findings", assessment.Findings)
+	writeMarkdownList(&b, "Next experiments", assessment.Next)
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "### Offline replay")
+	fmt.Fprintln(&b)
+	fmt.Fprintf(&b, "Source campaign: %s. Replay the native campaign audit with the same exact demand inputs.\n\n", markdownCode(source))
+	fmt.Fprintf(&b, "%s\n", markdownCodeFence("powershell", fmt.Sprintf("damocline goal --file %s --peak-journeys-per-second %d --growth-percent %s --reserve-percent %s", powershellQuote(source), assessment.PeakStartsPerSecond, markdownFloat(assessment.GrowthPercent), markdownFloat(assessment.ReservePercent))))
+	fmt.Fprintf(&b, "\nReport generated locally at %s. Keep the private source campaign and scenario together.\n", markdownCode(reportPath))
+	return b.String()
+}
+
+func writeArrivalCampaignAssessmentJSON(path string, assessment capacitygoal.JourneyStartAssessment) error {
+	return report.WriteAnyJSON(path, assessment)
+}
+
 func renderCampaignCollectionCapacityReport(assessment capacityplan.CampaignCollectionAssessment, sources []string, reportPath string, evidence []campaign.Result) string {
 	var b strings.Builder
 	fmt.Fprintln(&b, "# Capacity level assessment")
@@ -177,6 +225,19 @@ func renderCampaignCollectionCapacityReport(assessment capacityplan.CampaignColl
 	fmt.Fprintf(&b, "%s\n", markdownCodeFence("powershell", markdownReplayCommand(sources, expectedEvidenceIDs, assessment.DemandInputs)))
 	fmt.Fprintf(&b, "\nReport generated locally at %s. Keep all source campaign files with this assessment.\n", markdownCode(reportPath))
 	return b.String()
+}
+
+func writeMarkdownArrivalObjectives(b *strings.Builder, objectives *campaign.ObjectiveContract, policy *campaign.StabilityPolicy) {
+	fmt.Fprintln(b, "### Predeclared objectives")
+	fmt.Fprintln(b)
+	if objectives == nil || policy == nil {
+		fmt.Fprintln(b, "Not recorded by this historical open-arrival campaign schema.")
+		return
+	}
+	fmt.Fprintf(b, "- Journey scope: %s; p95 <= %.3f ms; maximum journey error rate %.5f%%.\n", markdownText(objectives.JourneyScope), objectives.JourneyP95LimitMS, objectives.MaxJourneyErrorRate*100)
+	fmt.Fprintf(b, "- Minimum samples per step: %d; minimum observation windows: %d with at least %d completed journeys/window; window duration: %s.\n", objectives.MinSamplesPerStep, objectives.MinimumObservationWindows, objectives.MinimumSamplesPerWindow, markdownText(objectives.WindowDuration))
+	fmt.Fprintf(b, "- Completed-work ratio: %.0f%%; maximum dropped arrivals: %d.\n", objectives.MinCompletedWorkRatio*100, objectives.MaxDroppedArrivals)
+	fmt.Fprintf(b, "- Stability screen: minimum %d windows and %d samples/window; maximum p95 increase %.3f%% and %.3f ms; maximum throughput drop %.3f%%. This coarse screen does not establish stationarity.\n", policy.MinimumWindows, policy.MinimumSamplesPerWindow, policy.MaxP95IncreasePercent, policy.MaxP95IncreaseMS, policy.MaxThroughputDropPercent)
 }
 
 func optionalLevel(level *int) string {

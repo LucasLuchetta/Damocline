@@ -745,6 +745,12 @@ func ClassifyEvidence(run report.Result) (string, string) {
 // policy for one phase before applying its observed journey SLO verdict.
 func ClassifyEvidenceWithObjectives(run report.Result, objectives ObjectiveContract, phase string) (string, string) {
 	state, reason := ClassifyEvidence(run)
+	return ApplyObjectiveContract(run, objectives, phase, state, reason)
+}
+
+// ApplyObjectiveContract applies declared coverage and delivery rules to an
+// already classified phase while preserving the campaign family's classifier.
+func ApplyObjectiveContract(run report.Result, objectives ObjectiveContract, phase, state, reason string) (string, string) {
 	if state == "INVALID_DELIVERY" || state == "INSUFFICIENT_EVIDENCE" {
 		return state, reason
 	}
