@@ -2,7 +2,7 @@
 
 ## Audit scope
 
-The merged baseline is `master` at `439de70`, after PR #145. This audit distinguishes that baseline from the current candidate, PR #149. This audit snapshot records the candidate tree at `ac7184b` on 2026-10-21. GitHub reported PR head `41d5b0a`; runs #381 (`fefbbcb`) and #382 (`3fc1706`) cover earlier commits, not this candidate snapshot. Treat candidate changes below as unmerged until the PR head and checks cover the exact commit.
+The merged baseline is `master` at `439de70`, after PR #145. This audit was prepared while PR #149 was open and distinguishes that candidate from the merged baseline. The exact PR head and CI state change as commits are pushed, so the PR is the authoritative source for current review status; candidate changes below remain unmerged until accepted.
 
 PRs #142–#145 added path-free generator runtime/executable provenance (run schema v31), explicit highest-passing and first-failing tested campaign levels, and a predeclared closed-loop objective contract (campaign schema v13). PR #143 only removed changelog conflict markers. The campaign boundary remains exact-tested-level evidence: it does not infer untested load or establish a universal capacity limit.
 
@@ -41,7 +41,7 @@ The candidate groups related reliability and validation work in one PR:
 - The open-arrival objective contract is persisted and replayed. The local acceptance matrix grows to manifest v6 with 41 profiles, including exact 20 and 40 starts/s trusted HTTPS profiles.
 - Capacity Markdown no longer embeds its local output path; the loopback CLI integration test requires byte-identical JSON and Markdown when replayed to a second destination.
 
-Local full Go tests, vet, build, formatting, and diff checks passed on the candidate snapshot. CI results were attached to earlier commits and therefore do not establish validation for `ac7184b`.
+The candidate code passes the full local Go test, vet, build, formatting, and diff-check gates. Its loopback integration test compares replayed JSON and Markdown byte for byte and confirms replay produces no target traffic. CI runs #381 and #382 passed on earlier candidate commits; exact-head cross-platform CI remains a separate merge gate.
 
 ## Reliability-first work order
 
