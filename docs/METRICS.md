@@ -152,3 +152,5 @@ A result for "Dashboard" at 150 VUs and one for "Search" at 100 VUs **cannot be 
 > Scenario: 60% search journeys and 40% approval journeys. Criteria: p95 below 1.5 s, business errors below 1%, 15-minute steady-state window. The 80-VU level passed repeated tests; the 100-VU level breached the p95 criterion. This is not an estimate for idle sessions or a different infrastructure configuration.
 
 No numbers above are actual Damocline measurements.
+
+Run reports from schema v31 also record path-free generator runtime and executable identity. The identity can reproduce the runner build when paired with the original build source or executable; it does not attest the physical host, machine model, operating-system image, target identity, or workload representativeness. Campaign audits compare this identity and effective CPU capacity across phases, marking missing historical evidence UNKNOWN and changed environments INCONCLUSIVE.

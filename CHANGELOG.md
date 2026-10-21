@@ -4,7 +4,11 @@ This project follows a human-maintained changelog. No release exists yet.
 
 ## [Unreleased]
 
+<<<<<<< HEAD
 - Run the repeated 39-profile G0 acceptance lab on Windows and a resource-bounded Linux container in CI for every pull request; archive only its synthetic reports and bounded logs for 14 days to support failure review.
+=======
+- Persist path-free runner build identity in run report schema v31 and expose per-phase identity and effective CPU consistency in offline campaign capacity reports; changed or missing provenance prevents same-environment claims.
+>>>>>>> 3792bf4 (feat: persist generator provenance in capacity reports)
 
 - Reconcile current G0 validation guidance and platform evidence with schema-v9 acceptance after PR #138, including the Linux process CPU allowance and explicit limits of the local fixture results.
 

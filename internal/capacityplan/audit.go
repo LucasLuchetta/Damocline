@@ -20,33 +20,50 @@ import (
 // campaign evidence. It is not an attestation of target identity, a
 // confidence interval, or a sustainable-capacity certificate.
 type CampaignAudit struct {
-	SchemaVersion       int                   `json:"schema_version"`
-	ExecutionState      string                `json:"execution_state,omitempty"`
-	EvidenceID          string                `json:"evidence_id"`
-	ScenarioFingerprint string                `json:"scenario_fingerprint,omitempty"`
-	Scenario            string                `json:"scenario"`
-	Target              string                `json:"target,omitempty"`
-	StartedAt           string                `json:"started_at,omitempty"`
-	DemandTargetUsers   int                   `json:"demand_target_users,omitempty"`
-	TestedBaseUsers     int                   `json:"tested_base_users"`
-	HostType            string                `json:"host_type"`
-	PassingLevels       []int                 `json:"observed_passing_levels"`
-	FailingLevels       []int                 `json:"observed_failing_levels"`
-	TestedDuration      string                `json:"tested_duration"`
-	Confidence          string                `json:"confidence"` // Legacy campaign-level marker; use Assessment.Confidence for dimensions.
-	LimitingWorkflows   []string              `json:"limiting_workflows"`
-	WorkflowBreaches    []WorkflowBreach      `json:"workflow_breaches,omitempty"`
-	ObservationTrials   []ObservationTrial    `json:"observation_trials,omitempty"`
-	ObservationSpread   *campaign.Variability `json:"recomputed_observation_spread,omitempty"`
-	SpreadConsistency   string                `json:"observation_spread_consistency"`
-	Repeatability       RepeatabilityEvidence `json:"repeatability_evidence"`
-	Unknowns            []string              `json:"known_unknowns"`
-	State               string                `json:"state"`
-	MeasurementQuality  string                `json:"measurement_quality"`
-	ObservedOutcome     string                `json:"observed_outcome"`
-	RequiredPhases      int                   `json:"required_phases"`
-	Findings            []string              `json:"findings"`
-	Phases              []PhaseAudit          `json:"phases"`
+	SchemaVersion           int                    `json:"schema_version"`
+	ExecutionState          string                 `json:"execution_state,omitempty"`
+	EvidenceID              string                 `json:"evidence_id"`
+	ScenarioFingerprint     string                 `json:"scenario_fingerprint,omitempty"`
+	Scenario                string                 `json:"scenario"`
+	Target                  string                 `json:"target,omitempty"`
+	StartedAt               string                 `json:"started_at,omitempty"`
+	DemandTargetUsers       int                    `json:"demand_target_users,omitempty"`
+	TestedBaseUsers         int                    `json:"tested_base_users"`
+	HostType                string                 `json:"host_type"`
+	GeneratorRuntimeStatus  string                 `json:"generator_runtime_identity_status"`
+	GeneratorCapacityStatus string                 `json:"generator_capacity_status"`
+	GeneratorEnvironments   []GeneratorEnvironment `json:"generator_environments"`
+	PassingLevels           []int                  `json:"observed_passing_levels"`
+	FailingLevels           []int                  `json:"observed_failing_levels"`
+	TestedDuration          string                 `json:"tested_duration"`
+	Confidence              string                 `json:"confidence"` // Legacy campaign-level marker; use Assessment.Confidence for dimensions.
+	LimitingWorkflows       []string               `json:"limiting_workflows"`
+	WorkflowBreaches        []WorkflowBreach       `json:"workflow_breaches,omitempty"`
+	ObservationTrials       []ObservationTrial     `json:"observation_trials,omitempty"`
+	ObservationSpread       *campaign.Variability  `json:"recomputed_observation_spread,omitempty"`
+	SpreadConsistency       string                 `json:"observation_spread_consistency"`
+	Repeatability           RepeatabilityEvidence  `json:"repeatability_evidence"`
+	Unknowns                []string               `json:"known_unknowns"`
+	State                   string                 `json:"state"`
+	MeasurementQuality      string                 `json:"measurement_quality"`
+	ObservedOutcome         string                 `json:"observed_outcome"`
+	RequiredPhases          int                    `json:"required_phases"`
+	Findings                []string               `json:"findings"`
+	Phases                  []PhaseAudit           `json:"phases"`
+}
+
+// GeneratorEnvironment records path-free runtime identity and effective CPU
+// capacity observed by one campaign phase. Host model and physical identity
+// are intentionally not inferred.
+type GeneratorEnvironment struct {
+	Trial             int                       `json:"trial"`
+	Phase             string                    `json:"phase"`
+	Identity          *report.GeneratorIdentity `json:"identity,omitempty"`
+	LogicalCPUs       int                       `json:"logical_cpus,omitempty"`
+	GOMAXPROCS        int                       `json:"gomaxprocs,omitempty"`
+	CPUCapacityCores  float64                   `json:"cpu_capacity_cores,omitempty"`
+	CPUCapacitySource string                    `json:"cpu_capacity_source,omitempty"`
+	CPUCapacityKnown  bool                      `json:"cpu_capacity_known"`
 }
 
 // RepeatabilityEvidence summarizes the observed fraction of terminal campaign
@@ -133,7 +150,7 @@ type ConfidenceDimensions struct {
 
 func BuildAssessment(e campaign.Result, goal *capacitygoal.Goal) (Assessment, error) {
 	audit := AuditCampaign(e)
-	assessment := Assessment{SchemaVersion: 3, Audit: audit, Confidence: assessConfidence(e, audit), State: audit.State}
+	assessment := Assessment{SchemaVersion: 4, Audit: audit, Confidence: assessConfidence(e, audit), State: audit.State}
 	if goal != nil {
 		plan, err := Evaluate(e, *goal)
 		if err != nil {
@@ -228,14 +245,15 @@ func AuditCampaign(e campaign.Result) CampaignAudit {
 		e = checkpointAsAbortedEvidence(e)
 	}
 	a := CampaignAudit{
-		SchemaVersion:   e.SchemaVersion,
-		ExecutionState:  original.ExecutionState,
-		EvidenceID:      evidenceDigest(original),
-		Scenario:        e.Scenario,
-		TestedBaseUsers: e.BaseUsers,
-		HostType:        "NOT_RECORDED",
-		Confidence:      "NOT_ESTABLISHED",
-		PassingLevels:   []int{}, FailingLevels: []int{}, LimitingWorkflows: []string{},
+		SchemaVersion:          e.SchemaVersion,
+		ExecutionState:         original.ExecutionState,
+		EvidenceID:             evidenceDigest(original),
+		Scenario:               e.Scenario,
+		TestedBaseUsers:        e.BaseUsers,
+		HostType:               "NOT_RECORDED",
+		GeneratorRuntimeStatus: "UNKNOWN", GeneratorCapacityStatus: "UNKNOWN", GeneratorEnvironments: []GeneratorEnvironment{},
+		Confidence:    "NOT_ESTABLISHED",
+		PassingLevels: []int{}, FailingLevels: []int{}, LimitingWorkflows: []string{},
 		Unknowns:           []string{"Dependence-aware confidence and stationarity are not established.", "Physical host type and equivalence to independent users are not verified."},
 		State:              "INCONCLUSIVE",
 		MeasurementQuality: report.QualityLimited,
@@ -245,12 +263,19 @@ func AuditCampaign(e campaign.Result) CampaignAudit {
 			"Ordinary external-target reports cannot certify generator/endpoint equivalence from loopback calibration alone.",
 		},
 	}
+	a.GeneratorEnvironments, a.GeneratorRuntimeStatus, a.GeneratorCapacityStatus = summarizeGeneratorEnvironments(e)
 	a.ObservationTrials, a.ObservationSpread = recomputeObservationEvidence(e)
 	a.SpreadConsistency = observationSpreadConsistency(e, a.ObservationSpread)
 	a.Repeatability = summarizeRepeatability(e.Trials)
 	if a.SpreadConsistency == "MISMATCHED" {
 		a.State = "INVALID_EVIDENCE"
 		a.Findings = append(a.Findings, "Persisted observation variability does not match the saved independent observation phases.")
+	}
+	if a.GeneratorRuntimeStatus == "CHANGED" || a.GeneratorCapacityStatus == "CHANGED" {
+		a.Findings = append(a.Findings, "Generator runtime identity or effective CPU capacity changed between campaign phases; results are not a same-generator-environment repeat.")
+	}
+	if a.GeneratorRuntimeStatus == "UNKNOWN" || a.GeneratorCapacityStatus == "UNKNOWN" {
+		a.Findings = append(a.Findings, "Generator runtime identity or effective CPU capacity is not recorded for every campaign phase; environment equivalence is not established.")
 	}
 	if inProgress {
 		a.Findings = append(a.Findings, "This is a RUNNING checkpoint. Its final campaign and pending-trial outcomes are unknown; the saved phases are retained for review only.")
@@ -324,7 +349,7 @@ func AuditCampaign(e campaign.Result) CampaignAudit {
 		return a
 	}
 
-	invalid, inconclusive, limited := a.State == "INVALID_EVIDENCE", false, false
+	invalid, inconclusive, limited := a.State == "INVALID_EVIDENCE", a.GeneratorRuntimeStatus == "CHANGED" || a.GeneratorCapacityStatus == "CHANGED", false
 	for _, trial := range e.Trials {
 		for _, phase := range trial.Phases {
 			if phase.Name == "warmup" {
@@ -402,6 +427,69 @@ func AuditCampaign(e campaign.Result) CampaignAudit {
 		a.Findings = append(a.Findings, "All recorded mandatory stages met their observed objectives; statistical and workload-specific certification remain separate decisions.")
 	}
 	return a
+}
+
+func summarizeGeneratorEnvironments(e campaign.Result) ([]GeneratorEnvironment, string, string) {
+	rows := make([]GeneratorEnvironment, 0)
+	identityStatus, capacityStatus := "CONSISTENT", "CONSISTENT"
+	identitySeen, capacitySeen := false, false
+	var firstIdentity report.GeneratorIdentity
+	var firstCapacity struct {
+		logical, gomax int
+		cores          float64
+		source         string
+		known          bool
+	}
+	identityUnknown, capacityUnknown := false, false
+	for _, trial := range e.Trials {
+		for _, phase := range trial.Phases {
+			if phase.Name == "warmup" {
+				continue
+			}
+			run := phase.Run
+			row := GeneratorEnvironment{Trial: trial.Number, Phase: phase.Name}
+			if run.SchemaVersion >= 31 && report.HasValidGeneratorIdentity(run) && run.GeneratorIdentity.RunnerIdentityMethod != "unavailable" {
+				identity := run.GeneratorIdentity
+				row.Identity = &identity
+				if identitySeen && identity != firstIdentity {
+					identityStatus = "CHANGED"
+				}
+				firstIdentity, identitySeen = identity, true
+			} else {
+				identityUnknown = true
+			}
+			if run.Generator != nil {
+				row.LogicalCPUs = run.Generator.LogicalCPUs
+				row.GOMAXPROCS = run.Generator.GOMAXPROCS
+				row.CPUCapacityCores = run.Generator.CPUCapacityCores
+				row.CPUCapacitySource = run.Generator.CPUCapacitySource
+				row.CPUCapacityKnown = run.Generator.CPUCapacityKnown
+				current := struct {
+					logical, gomax int
+					cores          float64
+					source         string
+					known          bool
+				}{row.LogicalCPUs, row.GOMAXPROCS, row.CPUCapacityCores, row.CPUCapacitySource, row.CPUCapacityKnown}
+				if capacitySeen && current != firstCapacity {
+					capacityStatus = "CHANGED"
+				}
+				firstCapacity, capacitySeen = current, true
+				if !current.known || current.logical < 1 || current.gomax < 1 || current.cores <= 0 || current.source == "" {
+					capacityUnknown = true
+				}
+			} else {
+				capacityUnknown = true
+			}
+			rows = append(rows, row)
+		}
+	}
+	if identityStatus != "CHANGED" && (!identitySeen || identityUnknown) {
+		identityStatus = "UNKNOWN"
+	}
+	if capacityStatus != "CHANGED" && (!capacitySeen || capacityUnknown) {
+		capacityStatus = "UNKNOWN"
+	}
+	return rows, identityStatus, capacityStatus
 }
 
 func summarizeRepeatability(trials []campaign.Trial) RepeatabilityEvidence {

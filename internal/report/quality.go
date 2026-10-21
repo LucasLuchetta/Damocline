@@ -51,6 +51,9 @@ func GeneratorCapacityIssue(r Result) string {
 	if r.Metrics.RequestConstructionFailures > 0 {
 		return "One or more generated requests were rejected locally before delivery."
 	}
+	if r.SchemaVersion >= 31 && (!HasValidGeneratorIdentity(r) || r.GeneratorIdentity.RunnerIdentityMethod == "unavailable") {
+		return "Generator runtime or executable identity is incomplete."
+	}
 	if r.Metrics.Total <= 0 || r.Generator == nil || r.Generator.Samples < 2 || !r.Generator.GoCPUValid ||
 		r.Generator.ProcessSamples < 2 || !r.Generator.ProcessCPUValid || r.Generator.PeakProcessRSSBytes == 0 {
 		return "Generator process health evidence is incomplete."
@@ -86,8 +89,11 @@ func AssessQuality(r Result) *Quality {
 	if r.Metrics.RequestConstructionFailures > 0 {
 		invalidate("One or more generated requests were rejected locally before delivery.")
 	}
-	if !HasValidStatisticalMethods(r) {
+	if r.SchemaVersion >= 30 && !HasValidStatisticalMethods(r) {
 		invalidate("Statistical method metadata is missing or inconsistent with the report schema.")
+	}
+	if r.SchemaVersion >= 31 && (!HasValidGeneratorIdentity(r) || r.GeneratorIdentity.RunnerIdentityMethod == "unavailable") {
+		invalidate("Generator runtime or executable identity metadata is missing or inconsistent with the report schema.")
 	}
 	if r.SchemaVersion >= 20 && !validFailureClassificationEvidence(r) {
 		invalidate("HTTP failure-classification evidence is missing or inconsistent for schema 20.")

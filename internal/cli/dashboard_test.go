@@ -36,6 +36,8 @@ func TestLoadDashboardHandlerSupportsRunAndCampaignArtifacts(t *testing.T) {
 		t.Fatal(err)
 	}
 	phaseRun.SchemaVersion = report.CurrentSchemaVersion
+	phaseRun.GeneratorIdentity = report.GeneratorIdentity{OS: "linux", Architecture: "amd64", GoVersion: "go1.24.0", RunnerIdentityMethod: "git_commit", RunnerIdentity: strings.Repeat("a", 40)}
+	phaseRun.GeneratorIdentity = report.GeneratorIdentity{OS: "linux", Architecture: "amd64", GoVersion: "go1.24.0", RunnerIdentityMethod: "git_commit", RunnerIdentity: strings.Repeat("a", 40)}
 	phaseRun.StatisticalMethods = report.CurrentStatisticalMethods()
 	phaseRun.Config.Profiles = nil
 	phaseRun.Config.ProfileSelection = ""
@@ -79,6 +81,7 @@ func TestLoadDashboardHandlerSupportsOpenArrivalCheckpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 	phaseRun.SchemaVersion = report.CurrentSchemaVersion
+	phaseRun.GeneratorIdentity = report.GeneratorIdentity{OS: "linux", Architecture: "amd64", GoVersion: "go1.24.0", RunnerIdentityMethod: "git_commit", RunnerIdentity: strings.Repeat("a", 40)}
 	phaseRun.StatisticalMethods = report.CurrentStatisticalMethods()
 	phaseRun.Config.Profiles = nil
 	phaseRun.Config.ProfileSelection = ""

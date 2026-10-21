@@ -31,6 +31,10 @@ func validSyntheticQualityRun() Result {
 	}
 }
 
+func validGeneratorIdentity() GeneratorIdentity {
+	return GeneratorIdentity{OS: "linux", Architecture: "amd64", GoVersion: "go1.24.0", RunnerIdentityMethod: "git_commit", RunnerIdentity: strings.Repeat("a", 40)}
+}
+
 func TestGeneratorGuardrailTriggerRequiresMatchingPolicyAndConsecutiveSamples(t *testing.T) {
 	policy := generatorhealth.Guardrails{MaxProcessCPUPercent: 75, MaxProcessRSSBytes: 512 * 1024 * 1024, ConsecutiveSamples: 3}
 	cpu := generatorhealth.GuardrailTrigger{Resource: "generator_process_cpu", ObservedCPUPercent: 80, LimitCPUPercent: 75, ConsecutiveSamples: 3, SampleNumber: 5, ElapsedMS: 1000}
@@ -353,6 +357,7 @@ func TestSchemaThirteenRequiresReconciledNamedWindowLedgers(t *testing.T) {
 func TestSchemaTwentyTwoRequiresReconciledWindowJourneyLedger(t *testing.T) {
 	r := validSyntheticQualityRun()
 	r.SchemaVersion = CurrentSchemaVersion
+	r.GeneratorIdentity = validGeneratorIdentity()
 	r.StatisticalMethods = CurrentStatisticalMethods()
 	r.Config.WindowDuration = "1s"
 	r.Config.Mode = "arrival"
@@ -485,6 +490,7 @@ func TestQualityNoLocalCapacityCertificateEvenForPerfectDelivery(t *testing.T) {
 func TestSchemaEighteenRequiresVerifiedEffectiveCPUCapacity(t *testing.T) {
 	r := validSyntheticQualityRun()
 	r.SchemaVersion = CurrentSchemaVersion
+	r.GeneratorIdentity = validGeneratorIdentity()
 	r.StatisticalMethods = CurrentStatisticalMethods()
 	r.Generator.GOMAXPROCS = 12
 	r.Generator.CPUCapacityCores = 12
@@ -811,6 +817,7 @@ func TestQualityReconcilesCurrentIterationAndJourneyLedgers(t *testing.T) {
 
 	r := validSyntheticQualityRun()
 	r.SchemaVersion = CurrentSchemaVersion
+	r.GeneratorIdentity = validGeneratorIdentity()
 	r.StatisticalMethods = CurrentStatisticalMethods()
 	r.Config.ConnectionPolicy = "reuse"
 	r.Generator = nil
@@ -830,6 +837,7 @@ func TestQualityReconcilesCurrentIterationAndJourneyLedgers(t *testing.T) {
 func TestQualityReconcilesSchema17ArrivalBreakdown(t *testing.T) {
 	r := validSyntheticQualityRun()
 	r.SchemaVersion = CurrentSchemaVersion
+	r.GeneratorIdentity = validGeneratorIdentity()
 	r.StatisticalMethods = CurrentStatisticalMethods()
 	r.Config.ConnectionPolicy = "reuse"
 	r.Generator = nil
@@ -961,6 +969,7 @@ func TestQualityRejectsInconsistentHTTPDiagnostics(t *testing.T) {
 func TestSchema20RequiresVersionedFailureClassificationEvidence(t *testing.T) {
 	base := validSyntheticQualityRun()
 	base.SchemaVersion = CurrentSchemaVersion
+	base.GeneratorIdentity = validGeneratorIdentity()
 	base.StatisticalMethods = CurrentStatisticalMethods()
 	base.Config.ConnectionPolicy = "reuse"
 	base.Generator = nil

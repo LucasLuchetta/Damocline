@@ -8,7 +8,8 @@ import (
 func TestStatisticalMethodMetadataIsVersionedAndFailClosed(t *testing.T) {
 	current := Result{
 		SchemaVersion: CurrentSchemaVersion, StatisticalMethods: CurrentStatisticalMethods(),
-		Metrics: MetricSet{P95MS: 12, P95IID95LowerMS: 10, P95IID95UpperMS: 14, P95IID95Exact: true},
+		GeneratorIdentity: GeneratorIdentity{OS: "linux", Architecture: "amd64", GoVersion: "go1.24.0", RunnerIdentityMethod: "git_commit", RunnerIdentity: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+		Metrics:           MetricSet{P95MS: 12, P95IID95LowerMS: 10, P95IID95UpperMS: 14, P95IID95Exact: true},
 	}
 	if !HasValidStatisticalMethods(current) {
 		t.Fatal("current exact percentile method metadata was rejected")
@@ -25,6 +26,29 @@ func TestStatisticalMethodMetadataIsVersionedAndFailClosed(t *testing.T) {
 	legacy.Metrics.P95IID95Exact = true
 	if HasValidStatisticalMethods(legacy) {
 		t.Fatal("pre-v30 exact interval marker was accepted")
+	}
+}
+
+func TestGeneratorIdentityIsRequiredOnlyForSchema31(t *testing.T) {
+	legacy := Result{SchemaVersion: 30}
+	if !HasValidGeneratorIdentity(legacy) {
+		t.Fatal("schema-v30 report without future provenance was rejected")
+	}
+	current := Result{SchemaVersion: 31, GeneratorIdentity: GeneratorIdentity{OS: "linux", Architecture: "amd64", GoVersion: "go1.24.0", RunnerIdentityMethod: "git_commit", RunnerIdentity: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}
+	if !HasValidGeneratorIdentity(current) {
+		t.Fatal("valid schema-v31 generator identity was rejected")
+	}
+	current.GeneratorIdentity.OS = `C:\\private\\runner`
+	if HasValidGeneratorIdentity(current) {
+		t.Fatal("path-bearing generator identity was accepted")
+	}
+	current.GeneratorIdentity = GeneratorIdentity{}
+	if AssessQuality(current).State != QualityInvalid {
+		t.Fatal("current report without generator identity was not invalid")
+	}
+	current.GeneratorIdentity = GeneratorIdentity{OS: "linux", Architecture: "amd64", GoVersion: "go1.24.0", RunnerIdentityMethod: "unavailable"}
+	if !HasValidGeneratorIdentity(current) || AssessQuality(current).State != QualityInvalid {
+		t.Fatal("unavailable identity should be schema-valid but fail measurement quality")
 	}
 }
 

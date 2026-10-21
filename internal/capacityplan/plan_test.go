@@ -34,9 +34,9 @@ func TestCampaignAuditValidatesAndCapsAttachedApplicationMetrics(t *testing.T) {
 			StartedAt: start, FinishedAt: finish, Samples: samples, Note: "test"}
 	}
 	evidence := campaign.Result{Trials: []campaign.Trial{{Phases: []campaign.Phase{{Name: "observation", Run: report.Result{
-		SchemaVersion: report.CurrentSchemaVersion, ApplicationMetrics: func() *appmetrics.Timeline { x := makeTimeline(); return &x }(),
+		SchemaVersion: report.CurrentSchemaVersion, GeneratorIdentity: report.GeneratorIdentity{OS: "linux", Architecture: "amd64", GoVersion: "go1.24.0", RunnerIdentityMethod: "git_commit", RunnerIdentity: strings.Repeat("a", 40)}, ApplicationMetrics: func() *appmetrics.Timeline { x := makeTimeline(); return &x }(),
 	}}, {Name: "recovery", Run: report.Result{
-		SchemaVersion: report.CurrentSchemaVersion, ApplicationMetrics: func() *appmetrics.Timeline { x := makeTimeline(); return &x }(),
+		SchemaVersion: report.CurrentSchemaVersion, GeneratorIdentity: report.GeneratorIdentity{OS: "linux", Architecture: "amd64", GoVersion: "go1.24.0", RunnerIdentityMethod: "git_commit", RunnerIdentity: strings.Repeat("a", 40)}, ApplicationMetrics: func() *appmetrics.Timeline { x := makeTimeline(); return &x }(),
 	}}}}}}
 	if err := validateApplicationMetrics(evidence); err == nil || !strings.Contains(err.Error(), "exceed 4194304 bytes") {
 		t.Fatalf("campaign-wide metric sample budget was not enforced: %v", err)
@@ -279,6 +279,9 @@ func TestSchemaThreeRequiresExactStageSequenceAndClassification(t *testing.T) {
 				phase.Run.Config.Duration = "10s"
 				phase.Run.Config.WindowDuration = "2.5s"
 				phase.Run.Target = evidence.Target
+				phase.Run.SchemaVersion = report.CurrentSchemaVersion
+				phase.Run.StatisticalMethods = report.CurrentStatisticalMethods()
+				phase.Run.GeneratorIdentity = report.GeneratorIdentity{OS: "linux", Architecture: "amd64", GoVersion: "go1.24.0", RunnerIdentityMethod: "git_commit", RunnerIdentity: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
 				phase.EvidenceState = "PASS_OBSERVED"
 				phase.Run.Metrics.Total, phase.Run.Metrics.Success = 1200, 1200
 				phase.Run.Steps[0].Metrics.Total, phase.Run.Steps[0].Metrics.Success = 1200, 1200
@@ -367,6 +370,9 @@ func TestSchemaFourRequiresFinalSoakEvidence(t *testing.T) {
 			p := &evidence.Trials[i].Phases[j]
 			p.Run.Config.Users, p.Run.Config.Duration, p.Run.Config.WindowDuration = 10, "10s", "2.5s"
 			p.Run.Target = evidence.Target
+			p.Run.SchemaVersion = report.CurrentSchemaVersion
+			p.Run.StatisticalMethods = report.CurrentStatisticalMethods()
+			p.Run.GeneratorIdentity = report.GeneratorIdentity{OS: "linux", Architecture: "amd64", GoVersion: "go1.24.0", RunnerIdentityMethod: "git_commit", RunnerIdentity: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
 			p.Run.Outcome = "PASS"
 			p.EvidenceState = "PASS_OBSERVED"
 			p.Run.Metrics, p.Run.Journeys = validStatisticalRun().Metrics, validStatisticalRun().Metrics
@@ -485,6 +491,32 @@ func passingTrials() []campaign.Trial {
 	}
 }
 
+func TestSummarizeGeneratorEnvironmentsDetectsUnknownAndChangedState(t *testing.T) {
+	legacy := campaign.Result{Trials: []campaign.Trial{{Number: 1, Phases: []campaign.Phase{{Name: "observation", Run: report.Result{SchemaVersion: 30}}}}}}
+	_, runtimeStatus, capacityStatus := summarizeGeneratorEnvironments(legacy)
+	if runtimeStatus != "UNKNOWN" || capacityStatus != "UNKNOWN" {
+		t.Fatalf("legacy evidence should have unknown provenance: runtime=%s capacity=%s", runtimeStatus, capacityStatus)
+	}
+	run := validStatisticalRun()
+	run.GeneratorIdentity = report.GeneratorIdentity{OS: "linux", Architecture: "amd64", GoVersion: "go1.24.0", RunnerIdentityMethod: "git_commit", RunnerIdentity: strings.Repeat("a", 40)}
+	run.Generator = &generatorhealth.Summary{LogicalCPUs: 4, GOMAXPROCS: 2, CPUCapacityKnown: true, CPUCapacityCores: 1.5, CPUCapacitySource: "cgroup_cpu_quota"}
+	trial := campaign.Trial{Number: 1, Phases: []campaign.Phase{{Name: "observation", Run: run}, {Name: "recovery", Run: run}}}
+	_, runtimeStatus, capacityStatus = summarizeGeneratorEnvironments(campaign.Result{Trials: []campaign.Trial{trial}})
+	if runtimeStatus != "CONSISTENT" || capacityStatus != "CONSISTENT" {
+		t.Fatalf("identical phase environment was not consistent: runtime=%s capacity=%s", runtimeStatus, capacityStatus)
+	}
+	changed := trial.Phases[1].Run
+	changed.GeneratorIdentity.RunnerIdentity = strings.Repeat("b", 40)
+	changedCapacity := *changed.Generator
+	changedCapacity.CPUCapacityCores = 1
+	changed.Generator = &changedCapacity
+	trial.Phases[1].Run = changed
+	_, runtimeStatus, capacityStatus = summarizeGeneratorEnvironments(campaign.Result{Trials: []campaign.Trial{trial}})
+	if runtimeStatus != "CHANGED" || capacityStatus != "CHANGED" {
+		t.Fatalf("changed phase environment was not detected: runtime=%s capacity=%s", runtimeStatus, capacityStatus)
+	}
+}
+
 func validStatisticalRun() report.Result {
 	metrics := report.MetricSet{
 		Total: 300, Success: 300, P95MS: 30,
@@ -492,14 +524,15 @@ func validStatisticalRun() report.Result {
 	}
 	return report.Result{
 		Outcome: "PASS", ObservationSeconds: 10, StatisticalMethods: report.CurrentStatisticalMethods(),
-		Config:  report.RunConfig{P95LimitMS: 100, MaxErrorRate: 0.01, MinSamplesPerStep: 1, WindowDuration: "10s", MaxRPS: 1000},
-		Metrics: metrics, Steps: []report.StepResult{{Name: "step", Metrics: metrics}},
+		GeneratorIdentity: report.GeneratorIdentity{OS: "linux", Architecture: "amd64", GoVersion: "go1.24.0", RunnerIdentityMethod: "git_commit", RunnerIdentity: strings.Repeat("a", 40)},
+		Config:            report.RunConfig{P95LimitMS: 100, MaxErrorRate: 0.01, MinSamplesPerStep: 1, WindowDuration: "10s", MaxRPS: 1000},
+		Metrics:           metrics, Steps: []report.StepResult{{Name: "step", Metrics: metrics}},
 		Windows: []report.WindowResult{{StartSeconds: 0, EndSeconds: 10, Metrics: metrics,
 			Journeys: metrics, Steps: []report.WindowMetric{{Name: "step", Metrics: metrics}}}},
 		SchemaVersion: report.CurrentSchemaVersion,
 		Journeys:      metrics,
 		Generator: &generatorhealth.Summary{Samples: 4, GoCPUValid: true, ProcessSamples: 4, ProcessCPUValid: true,
-			PeakProcessRSSBytes: 1024},
+			PeakProcessRSSBytes: 1024, LogicalCPUs: 4, GOMAXPROCS: 2, CPUCapacityCores: 1.5, CPUCapacitySource: "cgroup_cpu_quota", CPUCapacityKnown: true},
 		Quality: &report.Quality{State: report.QualityValid},
 	}
 }
