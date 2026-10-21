@@ -221,7 +221,7 @@ func TestReportExportAcceptsClosedExplorerAndKeepsLoadUnit(t *testing.T) {
 	run := validExportRun(t, secret, 2, "10s", "closed")
 	passed := 2
 	saved := explorer.Result{SchemaVersion: 2, Scenario: secret, Target: "https://" + secret, StageDuration: "10s", Repeats: 2, MinUsers: 2,
-		MaxUsers: 4, HighestPassingUsers: &passed, Outcome: "PASS", Probes: []explorer.Probe{{Users: 2, Status: "PASS", Runs: []report.Result{run, run}}}}
+		MaxUsers: 4, HighestPassingUsers: &passed, Outcome: "PASS", Probes: []explorer.Probe{{Users: 2, Status: "PASS", Runs: []report.Result{run, run}}}, Notes: []string{}}
 	writeJSONFile(t, input, saved)
 	sourceBefore, err := os.ReadFile(input)
 	if err != nil {
@@ -251,7 +251,7 @@ func TestReportExportAcceptsOpenArrivalExplorerWithoutUnitConfusion(t *testing.T
 	run := report.Result{SchemaVersion: 3, Outcome: "PASS", ObservationSeconds: 10, ElapsedSeconds: 10, Config: report.RunConfig{Mode: "arrival", Users: 5, ArrivalRate: 2, Duration: "10s", WorkloadFingerprint: "synthetic-fingerprint"}, Metrics: report.MetricSet{Total: 20, Success: 20, P95MS: 10}, Journeys: report.MetricSet{Total: 20, Success: 20, P95MS: 10}, Steps: []report.StepResult{{Name: "step", Metrics: report.MetricSet{Total: 20, Success: 20, P95MS: 10}}}}
 	saved := arrivalexplorer.Result{SchemaVersion: 1, Scenario: secret, Target: "https://" + secret, StartedAt: time.Now().UTC().Format(time.RFC3339), StageDuration: "10s", Repeats: 2,
 		WorkerLimit: 5, MinJourneysPerSecond: 2, MaxJourneysPerSecond: 4, Outcome: "PASS",
-		Probes: []arrivalexplorer.Probe{{JourneysPerSecond: 2, Status: "PASS", Runs: []report.Result{run, run}}}}
+		Probes: []arrivalexplorer.Probe{{JourneysPerSecond: 2, Status: "PASS", Runs: []report.Result{run, run}}}, Notes: []string{}}
 	writeJSONFile(t, input, saved)
 	sourceBefore, err := os.ReadFile(input)
 	if err != nil {
@@ -273,6 +273,31 @@ func TestReportExportAcceptsOpenArrivalExplorerWithoutUnitConfusion(t *testing.T
 	}
 	assertExportSourceUnchanged(t, input, sourceBefore)
 	assertNoPrivateExportFields(t, data, secret)
+}
+
+func TestReportExportRejectsExplorationWithOmittedTopLevelEvidence(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		data string
+	}{
+		{name: "closed loop", data: `{"schema_version":1,"probes":[{}]}`},
+		{name: "open arrival", data: `{"schema_version":1,"journey_worker_limit":2,"probes":[{}]}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			input, output := filepath.Join(dir, "exploration.json"), filepath.Join(dir, "redacted.json")
+			if err := os.WriteFile(input, []byte(tc.data), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			var stdout, stderr strings.Builder
+			if code := Run([]string{"report", "export", "--file", input, "--out", output}, &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "missing required field") {
+				t.Fatalf("export accepted incomplete exploration: code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+			}
+			if _, err := os.Stat(output); !os.IsNotExist(err) {
+				t.Fatalf("export wrote output for invalid evidence: stat err=%v", err)
+			}
+		})
+	}
 }
 
 func validExportRun(t *testing.T, name string, users int, duration, mode string) report.Result {

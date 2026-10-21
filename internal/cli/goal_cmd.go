@@ -177,6 +177,10 @@ func goalCmd(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stderr, "arrival exploration has incomplete metric evidence: %v\n", err)
 			return 2
 		}
+		if err := arrivalexplorer.ValidateArtifactJSON(data); err != nil {
+			fmt.Fprintf(stderr, "arrival exploration has incomplete evidence: %v\n", err)
+			return 2
+		}
 		var saved arrivalexplorer.Result
 		if err := json.Unmarshal(data, &saved); err != nil {
 			fmt.Fprintf(stderr, "invalid arrival capacity report JSON: %v\n", err)
@@ -214,6 +218,10 @@ func goalCmd(args []string, stdout, stderr io.Writer) int {
 				fmt.Fprintf(stderr, "closed-loop exploration has incomplete metric evidence: %v\n", err)
 				return 2
 			}
+		}
+		if err := explorer.ValidateArtifactJSON(data); err != nil {
+			fmt.Fprintf(stderr, "closed-loop exploration has incomplete evidence: %v\n", err)
+			return 2
 		}
 		var saved explorer.Result
 		if err := json.Unmarshal(data, &saved); err != nil {

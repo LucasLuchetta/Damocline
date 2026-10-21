@@ -98,6 +98,10 @@ func reportExportCmd(args []string, stdout, stderr io.Writer) int {
 		evidence = reportexport.FromClosedCampaign(saved)
 	case shape.SchemaVersion != nil && len(shape.Probes) > 0 && string(shape.Probes) != "null":
 		if shape.JourneyWorkerLimit != nil {
+			if err := arrivalexplorer.ValidateArtifactJSON(data); err != nil {
+				fmt.Fprintf(stderr, "arrival exploration has incomplete evidence: %v\n", err)
+				return 2
+			}
 			var saved arrivalexplorer.Result
 			if json.Unmarshal(data, &saved) != nil {
 				fmt.Fprintln(stderr, "arrival exploration is invalid or unsupported")
@@ -113,6 +117,10 @@ func reportExportCmd(args []string, stdout, stderr io.Writer) int {
 			}
 			evidence = reportexport.FromArrivalExplorer(saved)
 		} else {
+			if err := explorer.ValidateArtifactJSON(data); err != nil {
+				fmt.Fprintf(stderr, "closed-loop exploration has incomplete evidence: %v\n", err)
+				return 2
+			}
 			var saved explorer.Result
 			if json.Unmarshal(data, &saved) != nil {
 				fmt.Fprintln(stderr, "closed-loop exploration is invalid or unsupported")

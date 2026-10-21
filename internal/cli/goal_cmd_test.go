@@ -29,7 +29,7 @@ func TestGoalCommandUsesSavedExploreWithoutGeneratingTraffic(t *testing.T) {
 	highest := 30
 	r := explorer.Result{SchemaVersion: 1, Scenario: "synthetic app", StageDuration: "30s",
 		MinUsers: 2, MaxUsers: 50, Repeats: 2, HighestPassingUsers: &highest,
-		Probes: []explorer.Probe{{Users: 30, Status: "PASS", Runs: []report.Result{current, current}}},
+		Probes: []explorer.Probe{{Users: 30, Status: "PASS", Runs: []report.Result{current, current}}}, Notes: []string{},
 	}
 	if err := report.WriteAnyJSON(file, r); err != nil {
 		t.Fatal(err)
@@ -57,13 +57,36 @@ func TestGoalCommandRejectsDuplicateJSONKeys(t *testing.T) {
 	}
 }
 
+func TestGoalCommandRejectsExplorationWithOmittedTopLevelEvidence(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		json string
+		args []string
+	}{
+		{name: "closed loop", json: `{"schema_version":1,"scenario":"synthetic","target":"http://127.0.0.1","started_at":"2026-01-01T00:00:00Z","stage_duration":"10s","min_users":1,"max_users":1,"outcome":"INCONCLUSIVE","probes":[],"notes":[]}`, args: []string{"--peak-users", "1"}},
+		{name: "open arrival", json: `{"schema_version":1,"scenario":"synthetic","target":"http://127.0.0.1","started_at":"2026-01-01T00:00:00Z","stage_duration":"10s","journey_worker_limit":2,"min_scheduled_journey_starts_per_second":1,"max_scheduled_journey_starts_per_second":1,"outcome":"INCONCLUSIVE","probes":[],"notes":[]}`, args: []string{"--peak-journeys-per-second", "1"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			file := filepath.Join(t.TempDir(), "incomplete.json")
+			if err := os.WriteFile(file, []byte(tc.json), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			var stdout, stderr bytes.Buffer
+			args := append([]string{"goal", "--file", file}, tc.args...)
+			if code := Run(args, &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "missing required field") {
+				t.Fatalf("goal accepted missing exploration evidence: code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+			}
+		})
+	}
+}
+
 func TestGoalCommandKeepsArrivalDemandInScheduledStartsPerSecond(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "arrival-capacity.json")
 	saved := arrivalexplorer.Result{
 		SchemaVersion: 1, Scenario: "synthetic arrival", StageDuration: "10s", Repeats: 2,
 		WorkerLimit: 4, MinJourneysPerSecond: 1, MaxJourneysPerSecond: 1,
 		Outcome: "PASSED_TO_CONFIGURED_CEILING",
-		Probes:  []arrivalexplorer.Probe{{JourneysPerSecond: 1, Status: "PASS_OBSERVED", Runs: []report.Result{}}},
+		Probes:  []arrivalexplorer.Probe{{JourneysPerSecond: 1, Status: "PASS_OBSERVED", Runs: []report.Result{}}}, Notes: []string{},
 	}
 	if err := report.WriteAnyJSON(file, saved); err != nil {
 		t.Fatal(err)
@@ -216,7 +239,7 @@ func TestGoalCommandRejectsInvalidJSONAndMissingFlags(t *testing.T) {
 	if err := report.WriteAnyJSON(p, map[string]any{"hello": "world"}); err != nil {
 		t.Fatal(err)
 	}
-	if c := Run([]string{"goal", "--file", p, "--peak-users", "20"}, &out, &errOut); c != 2 || !strings.Contains(errOut.String(), "invalid or empty capacity exploration") {
+	if c := Run([]string{"goal", "--file", p, "--peak-users", "20"}, &out, &errOut); c != 2 || !strings.Contains(errOut.String(), "exploration has a missing or unsupported schema_version") {
 		t.Fatalf("invalid JSON schema not rejected: exit %d stderr %s", c, errOut.String())
 	}
 }
