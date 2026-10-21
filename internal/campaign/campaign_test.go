@@ -38,6 +38,32 @@ func TestCampaignSeparatesWarmupObservationAndRecovery(t *testing.T) {
 	}
 }
 
+func TestRobustRepeatSpreadSummarizesIndependentPhaseP95s(t *testing.T) {
+	median, mad, ok := SummarizeRobustRepeatSpread([]float64{10, 11, 12, 13, 100})
+	if !ok || median != 12 || mad != 1 {
+		t.Fatalf("robust repeat spread did not use the median/MAD: median=%v mad=%v ok=%t", median, mad, ok)
+	}
+	if _, _, ok := SummarizeRobustRepeatSpread([]float64{10, math.NaN()}); ok {
+		t.Fatal("non-finite repeat P95 was accepted")
+	}
+}
+
+func TestCampaignPersistsRobustObservationSpread(t *testing.T) {
+	call := 0
+	result, err := WithRunner(context.Background(), scenario(t), Options{Observation: 10 * time.Second, Recovery: 10 * time.Second, Repeats: 5}, func(_ context.Context, v config.Validated) report.Result {
+		call++
+		r := stableResult(v)
+		return r
+	})
+	if err != nil || result.ObservationVariability == nil {
+		t.Fatalf("campaign failed: outcome=%s trials=%d err=%v", result.Outcome, len(result.Trials), err)
+	}
+	spread := result.ObservationVariability
+	if spread.RequestP95MedianMS != 100 || spread.RequestP95MADMS != 0 || spread.RequestP95RobustMethod != "MEDIAN_PLUS_MINUS_3_MAD" || spread.RequestP95RobustUpperMS != 100 {
+		t.Fatalf("robust spread should remain a descriptive median/MAD summary: %+v", spread)
+	}
+}
+
 func TestCampaignRequiredCalibrationBlocksBeforeRunner(t *testing.T) {
 	calls := 0
 	envelope := &calibration.ClosedLoopEnvelope{Status: "BLOCKED", Levels: []calibration.ClosedLoopAssessment{{

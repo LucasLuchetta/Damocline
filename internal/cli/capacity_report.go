@@ -102,6 +102,10 @@ func renderCampaignCapacityReport(assessment capacityplan.Assessment, source, re
 	fmt.Fprintf(&b, "P99 values are nearest-rank descriptive estimates. Exact 95%% rank intervals require at least %d observations and assume IID stationary latency samples; these states do not establish independence, a p99 objective, or capacity confidence.\n", minimumP99Samples)
 	fmt.Fprintln(&b)
 	fmt.Fprintf(&b, "Repeat-trial pass fraction: **%d/%d** evaluable; excluded incomplete trials: %d; method: %s; interval assumption: %s. The interval is conditional and is not capacity confidence.\n", a.Repeatability.PassingTrials, a.Repeatability.EvaluatedTrials, a.Repeatability.ExcludedTrials, markdownCode(a.Repeatability.Method), markdownCode(a.Repeatability.Assumption))
+	if a.ObservationSpread != nil && a.ObservationSpread.RequestP95RobustMethod != "" {
+		fmt.Fprintf(&b, "Repeat-level request p95: median **%.2f ms**, MAD %.2f ms; descriptive median +/- 3 MAD band %.2f–%.2f ms (%s). This is not a confidence interval and does not account for sequential dependence or non-stationarity.\n",
+			a.ObservationSpread.RequestP95MedianMS, a.ObservationSpread.RequestP95MADMS, a.ObservationSpread.RequestP95RobustLowerMS, a.ObservationSpread.RequestP95RobustUpperMS, markdownCode(a.ObservationSpread.RequestP95RobustMethod))
+	}
 	fmt.Fprintln(&b)
 	fmt.Fprintf(&b, "Confidence dimensions: measurement **%s**, workload representativeness **%s**, decision **%s**.\n", markdownText(assessment.Confidence.Measurement), markdownText(assessment.Confidence.WorkloadRepresentativeness), markdownText(assessment.Confidence.Decision))
 	writeMarkdownList(&b, "Observed workflow breaches", breachDescriptions(a.WorkflowBreaches))

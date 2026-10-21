@@ -115,6 +115,39 @@ func TestAuditRecomputesIndependentObservationSummaries(t *testing.T) {
 	}
 }
 
+func TestAuditRecomputesRobustSpreadFromTrialP95WithoutUpgradingVerdict(t *testing.T) {
+	e := auditFixture()
+	template := e.Trials[0]
+	e.Trials = make([]campaign.Trial, 5)
+	for i := range e.Trials {
+		e.Trials[i] = template
+		e.Trials[i].Phases = append([]campaign.Phase(nil), template.Phases...)
+	}
+	for trial, p95 := range []float64{100, 110, 120, 130, 200} {
+		e.Trials[trial].Number = trial + 1
+		e.Trials[trial].RunID = strings.Repeat(string(rune('a'+trial)), 32)
+		for phaseIndex := range e.Trials[trial].Phases {
+			run := &e.Trials[trial].Phases[phaseIndex].Run
+			if e.Trials[trial].Phases[phaseIndex].Name != "observation" {
+				continue
+			}
+			run.Metrics.P95MS = p95
+			run.Metrics.P95IID95Exact = false
+			run.Metrics.P95IID95LowerMS = 0
+			run.Metrics.P95IID95UpperMS = 0
+			run.Quality = report.AssessQuality(*run)
+		}
+	}
+	e.ObservationVariability = nil
+	a := AuditCampaign(e)
+	if a.ObservationSpread == nil || a.ObservationSpread.RequestP95MedianMS != 120 || a.ObservationSpread.RequestP95MADMS != 10 || a.ObservationSpread.RequestP95RobustLowerMS != 90 || a.ObservationSpread.RequestP95RobustUpperMS != 150 {
+		t.Fatalf("robust repeat spread was not recomputed from independent trial summaries: %+v", a.ObservationSpread)
+	}
+	if a.Repeatability.EvaluatedTrials != 5 || a.Repeatability.Method != "EXACT_CLOPPER_PEARSON_BINOMIAL" || a.Repeatability.Assumption != "INDEPENDENT_STATIONARY_REPEAT_TRIALS" {
+		t.Fatalf("descriptive spread changed the conditional pass interval: repeat=%+v", a.Repeatability)
+	}
+}
+
 func TestCurrentCampaignRequiresPhaseControlsToMatchPredeclaredObjectives(t *testing.T) {
 	evidence := auditFixture()
 	if err := validateEvidence(evidence); err != nil {

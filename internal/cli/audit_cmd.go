@@ -268,6 +268,8 @@ func writeObservationEvidence(w io.Writer, audit capacityplan.CampaignAudit, ind
 		fmt.Fprintf(w, "%s  Observed spread across %d independent observation phases: request-p95 %.2f–%.2f ms, request-errors %.2f–%.2f%%, request-rate %.2f–%.2f/s, successful-journeys %.2f–%.2f/s. Descriptive spread, not a confidence interval.\n",
 			indent, spread.Runs, spread.P95MinMS, spread.P95MaxMS, spread.ErrorRateMin*100, spread.ErrorRateMax*100,
 			spread.ThroughputMinRPS, spread.ThroughputMaxRPS, spread.SuccessfulJourneysMinPerSec, spread.SuccessfulJourneysMaxPerSec)
+		fmt.Fprintf(w, "%s  Request p95 across repeats: median %.2f ms, MAD %.2f ms, descriptive median +/- 3 MAD band %.2f-%.2f ms. This does not account for sequential dependence or non-stationarity and is not a confidence interval.\n",
+			indent, spread.RequestP95MedianMS, spread.RequestP95MADMS, spread.RequestP95RobustLowerMS, spread.RequestP95RobustUpperMS)
 	}
 }
 
