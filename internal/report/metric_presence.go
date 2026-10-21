@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 )
 
 // ValidateMetricCountersInArtifactJSON rejects persisted run evidence where
@@ -120,11 +121,24 @@ func validateMetricSetCounters(raw json.RawMessage, path string) error {
 		return fmt.Errorf("%s must be an object", path)
 	}
 	for _, key := range []string{"total", "success", "failures"} {
-		if _, ok := metric[key]; !ok {
+		value, ok := metric[key]
+		if !ok {
 			return fmt.Errorf("%s omits required %s counter; absence cannot be interpreted as zero", path, key)
+		}
+		if !isJSONInteger(value) {
+			return fmt.Errorf("%s.%s must be a non-negative integer counter", path, key)
 		}
 	}
 	return nil
+}
+
+func isJSONInteger(raw json.RawMessage) bool {
+	value := bytes.TrimSpace(raw)
+	if len(value) == 0 {
+		return false
+	}
+	parsed, err := strconv.ParseInt(string(value), 10, 64)
+	return err == nil && parsed >= 0
 }
 
 func validateMetricList(raw json.RawMessage, path, metricKey string) error {

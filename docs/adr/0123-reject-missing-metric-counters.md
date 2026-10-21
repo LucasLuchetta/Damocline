@@ -15,7 +15,8 @@ zero in the report, dashboard, capacity goal, and export paths.
 ## Decision
 
 Before decoding report evidence into typed results, require explicit
-`total`, `success`, and `failures` fields in every serialized metric set.
+non-negative integer `total`, `success`, and `failures` fields in every
+serialized metric set.
 Apply the same validation to standalone reports and reports embedded in
 campaign phases and exploration probes. Accept explicit zero counters; reject
 missing fields as incomplete evidence. Keep optional diagnostics optional and
@@ -30,6 +31,7 @@ continue to use each artifact's schema version for fields introduced later.
   and require rejection.
 - The shared validation runs in run inspection, campaign assessment,
   dashboard, and redacted-export entry points.
-- This check covers the three base request counters. It does not replace
+- The JSON presence check covers the three base request counters' presence
+  and token type. It does not replace
   schema-specific validation for other fields or authenticate the report
   producer.

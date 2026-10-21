@@ -2,6 +2,7 @@ package report
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -18,6 +19,29 @@ func TestValidateMetricCountersInArtifactJSONRequiresExplicitCounters(t *testing
 				t.Fatalf("missing %s counter was interpreted as measured zero", missing)
 			}
 		})
+	}
+}
+
+func TestValidateMetricCountersInArtifactJSONRequiresIntegerCounters(t *testing.T) {
+	for _, invalid := range []string{`null`, `"0"`, `-1`, `1.5`, `1e2`, `true`, `{}`} {
+		t.Run(invalid, func(t *testing.T) {
+			candidate := `{"schema_version":1,"metrics":{"total":0,"success":0,"failures":0}}`
+			candidate = strings.Replace(candidate, `"total":0`, `"total":`+invalid, 1)
+			if err := ValidateMetricCountersInArtifactJSON([]byte(candidate)); err == nil {
+				t.Fatalf("invalid counter %s was accepted", invalid)
+			}
+		})
+	}
+	for _, valid := range []string{`0`, `7`, `9223372036854775807`} {
+		t.Run("valid_"+valid, func(t *testing.T) {
+			candidate := `{"schema_version":1,"metrics":{"total":` + valid + `,"success":0,"failures":0}}`
+			if err := ValidateMetricCountersInArtifactJSON([]byte(candidate)); err != nil {
+				t.Fatalf("integer counter %s should be accepted: %v", valid, err)
+			}
+		})
+	}
+	if err := ValidateMetricCountersInArtifactJSON([]byte(`{"metrics":{"total":9223372036854775808,"success":0,"failures":0}}`)); err == nil {
+		t.Fatal("counter outside the supported signed integer range was accepted")
 	}
 }
 
