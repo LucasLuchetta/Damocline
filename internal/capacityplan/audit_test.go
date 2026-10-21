@@ -33,7 +33,7 @@ func auditFixtureAtUsers(users int) campaign.Result {
 		metrics.P95IID95Exact, metrics.P95IID95LowerMS, metrics.P95IID95UpperMS = true, 80, 120
 		trace := report.HTTPTrace{RateWaitCount: 80, RequestAttemptCount: 80, CompleteCount: 80, FirstByteCount: 80, BodyCount: 80, WriteCount: 80}
 		generator := generatorhealth.Summary{Samples: 2, ObservedSeconds: 10, SamplingIntervalMS: 500, MaxSampleGapMS: 500, LogicalCPUs: 1, GOMAXPROCS: 1,
-			CPUCapacityCores: 1, CPUCapacitySource: "runtime.NumCPU", GoCPUCapacitySeconds: 10, GoCPUValid: true, GoCPUUtilizationRatio: 0.1,
+			CPUCapacityCores: 1, CPUCapacitySource: "runtime.NumCPU", CPUCapacityKnown: true, GoCPUCapacitySeconds: 10, GoCPUValid: true, GoCPUUtilizationRatio: 0.1,
 			ProcessSamples: 2, ProcessCPUSamples: 2, ProcessCPUValid: true, PeakProcessRSSBytes: 1, PeakHeapAllocBytes: 1, PeakGoroutines: 1, MeanProcessCPUUtilizationRatio: 0.1}
 		r := report.Result{
 			SchemaVersion: report.CurrentSchemaVersion, Outcome: "PASS", Target: "http://127.0.0.1:18080", IterationsStarted: 80, IterationsCompleted: 80,

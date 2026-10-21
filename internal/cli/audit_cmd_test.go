@@ -369,7 +369,7 @@ func TestAuditCommandAcceptsMultipleCampaignsAndKeepsExactDemandUnknown(t *testi
 	if exit := Run(args, &stdout, &stderr); exit != 0 {
 		t.Fatalf("multi-level audit exit: %d %s", exit, stderr.String())
 	}
-	for _, expected := range []string{"CAMPAIGN LEVEL AUDIT (OFFLINE)", "INCONCLUSIVE", "inconclusive levels: [2 4]", "not interpolated", "No traffic was generated"} {
+	for _, expected := range []string{"CAMPAIGN LEVEL AUDIT (OFFLINE)", "NOT_COMPARABLE", "Generator environment consistency: UNKNOWN", "not interpolated", "No traffic was generated"} {
 		if !strings.Contains(stdout.String(), expected) {
 			t.Fatalf("missing %q in output: %s", expected, stdout.String())
 		}
@@ -399,9 +399,10 @@ func TestAuditCommandAcceptsMultipleCampaignsAndKeepsExactDemandUnknown(t *testi
 			Version          string `json:"version"`
 			ExecutableSHA256 string `json:"executable_sha256"`
 		} `json:"auditor"`
-		State          string `json:"state"`
-		AssessmentType string `json:"assessment_type"`
-		Levels         []struct {
+		State                      string `json:"state"`
+		GeneratorEnvironmentStatus string `json:"generator_environment_consistency"`
+		AssessmentType             string `json:"assessment_type"`
+		Levels                     []struct {
 			TestedUsers int `json:"tested_users"`
 			Assessment  struct {
 				Audit struct {
@@ -420,7 +421,7 @@ func TestAuditCommandAcceptsMultipleCampaignsAndKeepsExactDemandUnknown(t *testi
 	if err := json.Unmarshal(raw, &assessment); err != nil {
 		t.Fatal(err)
 	}
-	if assessment.SchemaVersion != 4 || assessment.AssessmentType != "CAMPAIGN_LEVEL_COLLECTION" || assessment.State != "INCONCLUSIVE" || assessment.Auditor.Version != Version || !validAuditorSHA256(assessment.Auditor.ExecutableSHA256) || len(assessment.Levels) != 2 || assessment.Levels[0].TestedUsers != 2 || assessment.Levels[1].TestedUsers != 4 || assessment.Levels[0].Assessment.Audit.SourceFileSHA256 != expectedFileSHA256s[1] || assessment.Levels[1].Assessment.Audit.SourceFileSHA256 != expectedFileSHA256s[0] {
+	if assessment.SchemaVersion != 5 || assessment.AssessmentType != "CAMPAIGN_LEVEL_COLLECTION" || assessment.State != "NOT_COMPARABLE" || assessment.GeneratorEnvironmentStatus != "UNKNOWN" || assessment.Auditor.Version != Version || !validAuditorSHA256(assessment.Auditor.ExecutableSHA256) || len(assessment.Levels) != 2 || assessment.Levels[0].TestedUsers != 2 || assessment.Levels[1].TestedUsers != 4 || assessment.Levels[0].Assessment.Audit.SourceFileSHA256 != expectedFileSHA256s[1] || assessment.Levels[1].Assessment.Audit.SourceFileSHA256 != expectedFileSHA256s[0] {
 		t.Fatalf("machine-readable level collection is malformed: %+v", assessment)
 	}
 	if assessment.Demand == nil || assessment.Demand.TargetUsers != 3 || assessment.Demand.State != "INSUFFICIENT_EVIDENCE" || assessment.DemandInputs == nil || assessment.DemandInputs.PeakUsers != 3 {
@@ -430,7 +431,7 @@ func TestAuditCommandAcceptsMultipleCampaignsAndKeepsExactDemandUnknown(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, expected := range []string{"## Executive summary", "## Technical evidence", "Campaigns by tested level", "Source file SHA-256", "Auditor executable SHA-256", assessment.Auditor.ExecutableSHA256, "2 | ABORTED", "4 | ABORTED", "--campaign '" + secondPath + "' --expect-evidence-id '" + expectedIDs[1] + "' --expect-campaign-file-sha256 '" + expectedFileSHA256s[0] + "' --campaign '" + firstPath + "' --expect-evidence-id '" + expectedIDs[0] + "' --expect-campaign-file-sha256 '" + expectedFileSHA256s[1] + "' --expect-auditor-sha256 '" + assessment.Auditor.ExecutableSHA256 + "'", "--peak-users 3", firstPath, secondPath} {
+	for _, expected := range []string{"## Executive summary", "## Technical evidence", "Campaigns by tested level", "Generator environment consistency across levels and required phases", "UNKNOWN", "Source file SHA-256", "Auditor executable SHA-256", assessment.Auditor.ExecutableSHA256, "2 | ABORTED", "4 | ABORTED", "--campaign '" + secondPath + "' --expect-evidence-id '" + expectedIDs[1] + "' --expect-campaign-file-sha256 '" + expectedFileSHA256s[0] + "' --campaign '" + firstPath + "' --expect-evidence-id '" + expectedIDs[0] + "' --expect-campaign-file-sha256 '" + expectedFileSHA256s[1] + "' --expect-auditor-sha256 '" + assessment.Auditor.ExecutableSHA256 + "'", "--peak-users 3", firstPath, secondPath} {
 		if !strings.Contains(string(markdown), expected) {
 			t.Fatalf("multi-level report omits %q: %s", expected, markdown)
 		}

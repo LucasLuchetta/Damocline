@@ -61,7 +61,7 @@ records an offline replay command pinned to both each source campaign's
 decoded evidence ID and exact file-byte SHA-256. You can pin an audit explicitly
 with repeated `--expect-evidence-id sha256:<64-hex>` and
 `--expect-campaign-file-sha256 sha256:<64-hex>` flags, one of each per
-`--campaign` in argument order. Assessment schema v6 and collection schema v4
+`--campaign` in argument order. Assessment schema v6 and collection schema v5
 also record the auditor version and exact executable SHA-256. Generated replay
 commands pass `--expect-auditor-sha256`; a different executable is rejected
 before campaign files are read or outputs are written. This lets reviewers see
@@ -125,6 +125,16 @@ only recorded outcomes. A pass at a higher level after a failure at a lower
 level is labeled `NON_MONOTONIC`; the tool will not infer a capacity threshold.
 A demand target still requires a campaign at its exact
 calculated level and is never interpolated from neighboring campaigns.
+
+The collection also records generator-environment consistency across every
+required phase and tested level. It compares the path-free runner identity
+(OS, architecture, Go version and source/build identity), logical CPU count,
+GOMAXPROCS, effective CPU capacity, and the source used to determine that
+capacity. Missing or unavailable identity/capacity, or a change between phases
+or levels, makes the collection `NOT_COMPARABLE`; each level's offline audit
+remains available. These fields describe the generator process and its observed
+CPU entitlement. They do not attest the physical host, host model, operating
+system image, target identity, or environment authenticity.
 
 The collection also reports the highest passing tested level and first failing
 tested level as separate observations. `upper_bound_state` is

@@ -189,7 +189,7 @@ func renderCampaignCollectionCapacityReport(assessment capacityplan.CampaignColl
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "## Executive summary")
 	fmt.Fprintln(&b)
-	fmt.Fprintf(&b, "- **Collection verdict:** %s\n- **Scenario:** %s\n- **Highest passing tested level:** %s\n- **First failing tested level:** %s\n- **Upper bound:** %s\n- **Observed passing levels:** %v; **failing levels:** %v; **inconclusive levels:** %v\n- **Observed pattern:** %s\n", assessment.State, markdownText(assessment.Scenario), optionalLevel(assessment.HighestPassingLevel), optionalLevel(assessment.FirstFailingLevel), markdownText(assessment.UpperBound), assessment.PassingLevels, assessment.FailingLevels, assessment.InconclusiveLevels, markdownText(assessment.ObservationPattern))
+	fmt.Fprintf(&b, "- **Collection verdict:** %s\n- **Generator environment consistency:** %s\n- **Scenario:** %s\n- **Highest passing tested level:** %s\n- **First failing tested level:** %s\n- **Upper bound:** %s\n- **Observed passing levels:** %v; **failing levels:** %v; **inconclusive levels:** %v\n- **Observed pattern:** %s\n", assessment.State, markdownText(assessment.GeneratorEnvironmentStatus), markdownText(assessment.Scenario), optionalLevel(assessment.HighestPassingLevel), optionalLevel(assessment.FirstFailingLevel), markdownText(assessment.UpperBound), assessment.PassingLevels, assessment.FailingLevels, assessment.InconclusiveLevels, markdownText(assessment.ObservationPattern))
 	writeMarkdownDemand(&b, assessment.DemandInputs, assessment.Demand)
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "Tested levels are observations only. The collection does not interpolate untested workloads or certify human-user capacity.")
@@ -197,6 +197,7 @@ func renderCampaignCollectionCapacityReport(assessment capacityplan.CampaignColl
 	fmt.Fprintln(&b, "## Technical evidence")
 	fmt.Fprintln(&b)
 	fmt.Fprintf(&b, "- **Scenario:** %s\n- **Target origin:** %s\n- **Declared workload fingerprint:** `%s`\n- **Collection assessment type:** `%s`\n", markdownText(assessment.Scenario), markdownText(assessment.Target), markdownCode(assessment.WorkloadFingerprint), markdownCode(assessment.AssessmentType))
+	fmt.Fprintf(&b, "- **Generator environment consistency across levels and required phases:** **%s**\n", markdownText(assessment.GeneratorEnvironmentStatus))
 	if assessment.Auditor.ExecutableSHA256 != "" {
 		fmt.Fprintf(&b, "- **Auditor version:** %s\n- **Auditor executable SHA-256:** %s\n", markdownText(assessment.Auditor.Version), markdownCode(assessment.Auditor.ExecutableSHA256))
 	}

@@ -205,6 +205,7 @@ func auditCampaignCollection(paths, expectedEvidenceIDs, expectedCampaignFileSHA
 	}
 	fmt.Fprintln(stdout, "--- DAMOCLINE | CAMPAIGN LEVEL AUDIT (OFFLINE) ---")
 	fmt.Fprintf(stdout, "Level collection verdict: %s\n", assessment.State)
+	fmt.Fprintf(stdout, "Generator environment consistency: %s\n", assessment.GeneratorEnvironmentStatus)
 	if assessment.State == "NOT_COMPARABLE" {
 		fmt.Fprintln(stdout, "Scenario, target and workload match: NOT ESTABLISHED")
 	} else {
