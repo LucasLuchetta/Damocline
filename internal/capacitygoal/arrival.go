@@ -27,6 +27,7 @@ type JourneyStartGoal struct {
 // JourneyStartAssessment reports only direct evidence at an exact scheduled
 // journey-start rate. It does not estimate a continuous capacity curve.
 type JourneyStartAssessment struct {
+	SourceEvidenceID              string `json:"source_evidence_id,omitempty"`
 	PeakStartsPerSecond           int
 	TargetStartsPerSecond         int
 	GrowthPercent                 float64

@@ -151,6 +151,7 @@ journey starts/s; `users` remains the journey-worker limit.
 ```powershell
 .\damocline.exe arrival-campaign --config .\arrival.local.json --warmup 30s --observation 2m --spike-journeys-per-second 10 --spike-duration 20s --recovery 30s --soak 1m --repeats 2 --peak-journeys-per-second 5 --growth-percent 25 --reserve-percent 20 --authorized --out reports\arrival-campaign.json
 .\damocline.exe goal --file reports\arrival-campaign.json --peak-journeys-per-second 5 --growth-percent 25 --reserve-percent 20 --out reports\arrival-assessment.json --report-out reports\arrival-capacity.md
+# Add --expect-source-sha256 sha256:<64-hex> to require the source bytes recorded in an earlier report.
 ```
 
 Growth and reserve are successive multipliers; this example calculates an exact

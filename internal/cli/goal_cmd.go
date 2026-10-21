@@ -28,6 +28,7 @@ func goalCmd(args []string, stdout, stderr io.Writer) int {
 	reserve := fs.Float64("reserve-percent", 0, "additional safety reserve on projected demand (percent)")
 	out := fs.String("out", "", "optional offline assessment JSON output path")
 	reportOut := fs.String("report-out", "", "optional executive and technical Markdown report path")
+	expectedSourceSHA256 := fs.String("expect-source-sha256", "", "require the exact source file SHA-256 as sha256:<64 lowercase hexadecimal characters>")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -49,6 +50,17 @@ func goalCmd(args []string, stdout, stderr io.Writer) int {
 	if len(data) > maxGoalReportBytes {
 		fmt.Fprintln(stderr, "capacity report exceeds the 16 MiB safety limit")
 		return 2
+	}
+	if *expectedSourceSHA256 != "" {
+		if err := validateExpectedEvidenceIDCount([]string{*expectedSourceSHA256}, 1); err != nil {
+			fmt.Fprintf(stderr, "invalid expected source SHA-256: %v\n", err)
+			return 2
+		}
+		digest := fmt.Sprintf("sha256:%x", sha256.Sum256(data))
+		if digest != *expectedSourceSHA256 {
+			fmt.Fprintf(stderr, "source SHA-256 check failed: got %s; expected %s\n", digest, *expectedSourceSHA256)
+			return 2
+		}
 	}
 	var shape struct {
 		JourneyWorkerLimit     *int `json:"journey_worker_limit"`
@@ -75,6 +87,8 @@ func goalCmd(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stderr, "cannot assess arrival campaign: %v\n", err)
 			return 2
 		}
+		sourceDigest := fmt.Sprintf("sha256:%x", sha256.Sum256(data))
+		assessment.SourceEvidenceID = sourceDigest
 		fmt.Fprintf(stdout, "Expected peak: %d scheduled journey starts/s\n", assessment.PeakStartsPerSecond)
 		fmt.Fprintf(stdout, "Planned growth: %.1f%% | Reserve: %.1f%%\n", assessment.GrowthPercent, assessment.ReservePercent)
 		fmt.Fprintf(stdout, "DEMAND TO VALIDATE: %d scheduled journey starts/s\n", assessment.TargetStartsPerSecond)
@@ -88,8 +102,7 @@ func goalCmd(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stdout, "Assessment JSON: %s\n", *out)
 		}
 		if *reportOut != "" && saved.SchemaVersion >= 8 {
-			sourceDigest := sha256.Sum256(data)
-			if err := writeCapacityMarkdown(*reportOut, renderArrivalCampaignCapacityReport(assessment, *path, *reportOut, saved, fmt.Sprintf("sha256:%x", sourceDigest))); err != nil {
+			if err := writeCapacityMarkdown(*reportOut, renderArrivalCampaignCapacityReport(assessment, *path, *reportOut, saved, sourceDigest)); err != nil {
 				fmt.Fprintf(stderr, "cannot write capacity report: %v\n", err)
 				return 2
 			}

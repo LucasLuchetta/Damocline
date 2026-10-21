@@ -2,6 +2,8 @@ package cli
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -90,8 +92,13 @@ func TestGoalCommandWritesOpenArrivalObjectiveReportOffline(t *testing.T) {
 	}
 	assessmentPath := filepath.Join(dir, "assessment.json")
 	markdownPath := filepath.Join(dir, "capacity.md")
+	sourceBytes, err := os.ReadFile(campaignPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expectedDigest := fmt.Sprintf("sha256:%x", sha256.Sum256(sourceBytes))
 	var stdout, stderr bytes.Buffer
-	code := Run([]string{"goal", "--file", campaignPath, "--peak-journeys-per-second", "1", "--out", assessmentPath, "--report-out", markdownPath}, &stdout, &stderr)
+	code := Run([]string{"goal", "--file", campaignPath, "--expect-source-sha256", expectedDigest, "--peak-journeys-per-second", "1", "--out", assessmentPath, "--report-out", markdownPath}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("goal exited %d: %s", code, stderr.String())
 	}
@@ -99,14 +106,32 @@ func TestGoalCommandWritesOpenArrivalObjectiveReportOffline(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"Open-arrival capacity assessment", "Predeclared objectives", "maximum dropped arrivals: 0", "maximum p95 increase", "SHA-256 of the exact source bytes: `sha256:", "digest identifies the saved campaign bytes", "Offline replay", "--peak-journeys-per-second 1"} {
+	for _, want := range []string{"Open-arrival capacity assessment", "Predeclared objectives", "maximum dropped arrivals: 0", "maximum p95 increase", "SHA-256 of the exact source bytes: `" + expectedDigest + "`", "digest identifies the saved campaign bytes", "Offline replay", "--expect-source-sha256 '" + expectedDigest + "'", "--peak-journeys-per-second 1"} {
 		if !strings.Contains(string(data), want) {
 			t.Fatalf("capacity report missing %q:\n%s", want, data)
 		}
 	}
 	assessmentData, err := os.ReadFile(assessmentPath)
-	if err != nil || !strings.Contains(string(assessmentData), `"predeclared_objectives"`) || !strings.Contains(string(assessmentData), `"stability_policy"`) {
+	if err != nil || !strings.Contains(string(assessmentData), `"predeclared_objectives"`) || !strings.Contains(string(assessmentData), `"stability_policy"`) || !strings.Contains(string(assessmentData), `"source_evidence_id": "`+expectedDigest+`"`) {
 		t.Fatalf("assessment did not retain its replay criteria: err=%v json=%s", err, assessmentData)
+	}
+
+	blockedAssessment := filepath.Join(dir, "must-not-write-assessment.json")
+	blockedReport := filepath.Join(dir, "must-not-write-report.md")
+	stdout.Reset()
+	stderr.Reset()
+	if code := Run([]string{"goal", "--file", campaignPath, "--expect-source-sha256", "sha256:" + strings.Repeat("0", 64), "--peak-journeys-per-second", "1", "--out", blockedAssessment, "--report-out", blockedReport}, &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "source SHA-256 check failed") {
+		t.Fatalf("mismatched source digest was accepted: exit=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	for _, path := range []string{blockedAssessment, blockedReport} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("digest mismatch wrote %s (stat error %v)", path, err)
+		}
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := Run([]string{"goal", "--file", campaignPath, "--expect-source-sha256", "sha256:invalid", "--peak-journeys-per-second", "1"}, &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "64 lowercase hexadecimal") {
+		t.Fatalf("malformed expected source digest was accepted: exit=%d stderr=%s", code, stderr.String())
 	}
 }
 
