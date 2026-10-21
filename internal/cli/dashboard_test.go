@@ -38,6 +38,17 @@ func TestLoadDashboardRejectsMissingMetricCounter(t *testing.T) {
 	}
 }
 
+func TestLoadDashboardRejectsMissingCampaignTimestamp(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "campaign.json")
+	data := []byte(`{"schema_version":15,"scenario":"synthetic","base_users":2,"target":"http://127.0.0.1:18080","warmup":"0s","observation":"10s","recovery":"10s","repeats":2,"trials":[],"outcome":"INCONCLUSIVE"}`)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadDashboardHandler(path); err == nil || !strings.Contains(err.Error(), `"started_at"`) {
+		t.Fatalf("dashboard accepted missing campaign start timestamp: %v", err)
+	}
+}
+
 func TestLoadDashboardHandlerSupportsRunAndCampaignArtifacts(t *testing.T) {
 	runPath := filepath.Join("..", "insights", "testdata", "reports", "schema-v25.json")
 	runHandler, err := loadDashboardHandler(runPath)

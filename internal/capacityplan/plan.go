@@ -279,6 +279,19 @@ func ReadCampaign(path string) (campaign.Result, error) {
 	return result, err
 }
 
+// ValidateCampaignArtifact validates the bounded raw JSON structure used by
+// campaign readers before callers decode it into a struct. Keep this public
+// for readers that already own bounded bytes, such as dashboard and export.
+func ValidateCampaignArtifact(data []byte) error {
+	if err := jsonartifact.RejectDuplicateKeys(data); err != nil {
+		return fmt.Errorf("campaign report contains ambiguous JSON: %w", err)
+	}
+	if err := report.ValidateMetricCountersInArtifactJSON(data); err != nil {
+		return fmt.Errorf("invalid campaign metric evidence: %w", err)
+	}
+	return validateCampaignArtifactPresence(data)
+}
+
 // ReadCampaignWithFileSHA256 reads and decodes one bounded campaign report and
 // hashes the exact bytes that were decoded. The hash identifies source bytes;
 // it does not authenticate their producer or origin.
@@ -287,10 +300,7 @@ func ReadCampaignWithFileSHA256(path string) (campaign.Result, string, error) {
 	if err != nil {
 		return campaign.Result{}, "", err
 	}
-	if err := report.ValidateMetricCountersInArtifactJSON(data); err != nil {
-		return campaign.Result{}, "", fmt.Errorf("invalid campaign metric evidence: %w", err)
-	}
-	if err := validateCampaignArtifactPresence(data); err != nil {
+	if err := ValidateCampaignArtifact(data); err != nil {
 		return campaign.Result{}, "", err
 	}
 	var result campaign.Result
@@ -330,10 +340,7 @@ func ReadCampaignCollectionWithFileSHA256(paths []string) ([]campaign.Result, []
 			return nil, nil, err
 		}
 		totalBytes += int64(len(data))
-		if err := report.ValidateMetricCountersInArtifactJSON(data); err != nil {
-			return nil, nil, fmt.Errorf("campaign %q has invalid metric evidence: %w", path, err)
-		}
-		if err := validateCampaignArtifactPresence(data); err != nil {
+		if err := ValidateCampaignArtifact(data); err != nil {
 			return nil, nil, fmt.Errorf("campaign %q: %w", path, err)
 		}
 		var result campaign.Result
@@ -362,7 +369,12 @@ func validateCampaignArtifactPresence(data []byte) error {
 	if err := json.Unmarshal(fields["schema_version"], &schemaVersion); err != nil {
 		return fmt.Errorf("campaign schema_version is invalid: %w", err)
 	}
-	if schemaVersion == campaign.CurrentSchemaVersion {
+	// Campaign start timestamps first became authoritative in schema v5. Older
+	// v2/v4 artifacts can legitimately contain an empty value; schemas v5-v14
+	// already persisted a populated RFC3339 timestamp even before schema v15
+	// made it useful in reports. Validate the historical field according to
+	// when it entered the contract, rather than only for today's schema number.
+	if schemaVersion >= 5 {
 		var startedAt string
 		if err := json.Unmarshal(fields["started_at"], &startedAt); err != nil || startedAt == "" {
 			return errors.New("current campaign started_at must be a non-empty RFC3339 timestamp")

@@ -70,6 +70,9 @@ func loadDashboardHandler(path string) (http.Handler, error) {
 		return reportui.CampaignHandler(presentation), nil
 	}
 	if shape.BaseUsers != nil {
+		if err := capacityplan.ValidateCampaignArtifact(data); err != nil {
+			return nil, fmt.Errorf("invalid closed-loop campaign evidence: %w", err)
+		}
 		var saved campaign.Result
 		if err := json.Unmarshal(data, &saved); err != nil {
 			return nil, fmt.Errorf("invalid closed-loop campaign JSON: %w", err)

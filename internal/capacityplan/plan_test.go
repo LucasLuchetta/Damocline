@@ -62,6 +62,30 @@ func TestReadCampaignRequiresPersistedTopLevelEvidence(t *testing.T) {
 	}
 }
 
+func TestReadCampaignRequiresValidStartTimestampFromSchemaV5(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("testdata", "campaigns", "schema-v4.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var root map[string]json.RawMessage
+	if err := json.Unmarshal(data, &root); err != nil {
+		t.Fatal(err)
+	}
+	root["schema_version"] = json.RawMessage(`5`)
+	for name, timestamp := range map[string]string{"empty": `""`, "invalid": `"yesterday"`, "null": `null`} {
+		t.Run(name, func(t *testing.T) {
+			candidate := make(map[string]json.RawMessage, len(root))
+			for key, value := range root {
+				candidate[key] = value
+			}
+			candidate["started_at"] = json.RawMessage(timestamp)
+			writeCampaignAndAssertRejected(t, candidate)
+		})
+	}
+	root["started_at"] = json.RawMessage(`"2026-01-02T03:04:05Z"`)
+	writeCampaignAndAssertAccepted(t, root)
+}
+
 func writeCampaignAndAssertRejected(t *testing.T, fields map[string]json.RawMessage) {
 	t.Helper()
 	data, err := json.Marshal(fields)
@@ -74,6 +98,21 @@ func writeCampaignAndAssertRejected(t *testing.T, fields map[string]json.RawMess
 	}
 	if _, err := ReadCampaign(path); err == nil {
 		t.Fatal("campaign with missing or malformed required evidence was accepted")
+	}
+}
+
+func writeCampaignAndAssertAccepted(t *testing.T, fields map[string]json.RawMessage) {
+	t.Helper()
+	data, err := json.Marshal(fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "campaign.json")
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadCampaign(path); err != nil {
+		t.Fatalf("campaign with valid required evidence was rejected: %v", err)
 	}
 }
 

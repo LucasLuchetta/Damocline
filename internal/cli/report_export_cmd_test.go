@@ -111,6 +111,22 @@ func TestReportExportRejectsMissingMetricCounterBeforeWriting(t *testing.T) {
 	}
 }
 
+func TestReportExportRejectsMissingCampaignTimestampBeforeWriting(t *testing.T) {
+	dir := t.TempDir()
+	input := filepath.Join(dir, "campaign.json")
+	output := filepath.Join(dir, "redacted.json")
+	if err := os.WriteFile(input, []byte(`{"schema_version":15,"scenario":"synthetic","base_users":2,"target":"http://127.0.0.1:18080","warmup":"0s","observation":"10s","recovery":"10s","repeats":2,"trials":[],"outcome":"INCONCLUSIVE"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr strings.Builder
+	if code := Run([]string{"report", "export", "--file", input, "--out", output}, &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), `"started_at"`) {
+		t.Fatalf("campaign export accepted missing start timestamp: code=%d stderr=%s", code, stderr.String())
+	}
+	if _, err := os.Stat(output); !os.IsNotExist(err) {
+		t.Fatalf("invalid campaign wrote redacted output (stat error %v)", err)
+	}
+}
+
 func TestReportExportValidHistoricalCampaignsThroughCLIWithoutChangingSources(t *testing.T) {
 	dir := t.TempDir()
 	marker := "private-marker-731.example.invalid"

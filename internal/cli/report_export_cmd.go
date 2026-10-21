@@ -86,6 +86,10 @@ func reportExportCmd(args []string, stdout, stderr io.Writer) int {
 		}
 		evidence = reportexport.FromArrivalCampaign(saved)
 	case shape.BaseUsers != nil:
+		if err := capacityplan.ValidateCampaignArtifact(data); err != nil {
+			fmt.Fprintf(stderr, "closed-loop campaign has incomplete evidence: %v\n", err)
+			return 2
+		}
 		var saved campaign.Result
 		if json.Unmarshal(data, &saved) != nil || capacityplan.ValidateSavedCampaign(saved) != nil {
 			fmt.Fprintln(stderr, "closed-loop campaign is invalid or unsupported")
