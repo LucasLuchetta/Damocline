@@ -99,7 +99,7 @@ func TestGoalCommandWritesOpenArrivalObjectiveReportOffline(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"Open-arrival capacity assessment", "Predeclared objectives", "maximum dropped arrivals: 0", "maximum p95 increase", "Offline replay", "--peak-journeys-per-second 1"} {
+	for _, want := range []string{"Open-arrival capacity assessment", "Predeclared objectives", "maximum dropped arrivals: 0", "maximum p95 increase", "SHA-256 of the exact source bytes: `sha256:", "digest identifies the saved campaign bytes", "Offline replay", "--peak-journeys-per-second 1"} {
 		if !strings.Contains(string(data), want) {
 			t.Fatalf("capacity report missing %q:\n%s", want, data)
 		}

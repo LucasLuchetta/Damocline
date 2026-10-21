@@ -112,7 +112,7 @@ func renderCampaignCapacityReport(assessment capacityplan.Assessment, source, re
 	return b.String()
 }
 
-func renderArrivalCampaignCapacityReport(assessment capacitygoal.JourneyStartAssessment, source, reportPath string, evidence arrivalcampaign.Result) string {
+func renderArrivalCampaignCapacityReport(assessment capacitygoal.JourneyStartAssessment, source, reportPath string, evidence arrivalcampaign.Result, sourceDigest string) string {
 	var b strings.Builder
 	fmt.Fprintln(&b, "# Open-arrival capacity assessment")
 	fmt.Fprintln(&b)
@@ -148,9 +148,9 @@ func renderArrivalCampaignCapacityReport(assessment capacitygoal.JourneyStartAss
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "### Offline replay")
 	fmt.Fprintln(&b)
-	fmt.Fprintf(&b, "Source campaign: %s. Replay the native campaign audit with the same exact demand inputs.\n\n", markdownCode(source))
+	fmt.Fprintf(&b, "Source campaign: %s; SHA-256 of the exact source bytes: %s. Verify this digest before replay so a renamed or copied artifact can still be identified. Replay the native campaign audit with the same exact demand inputs.\n\n", markdownCode(source), markdownCode(sourceDigest))
 	fmt.Fprintf(&b, "%s\n", markdownCodeFence("powershell", fmt.Sprintf("damocline goal --file %s --peak-journeys-per-second %d --growth-percent %s --reserve-percent %s", powershellQuote(source), assessment.PeakStartsPerSecond, markdownFloat(assessment.GrowthPercent), markdownFloat(assessment.ReservePercent))))
-	fmt.Fprintf(&b, "\nReport generated locally at %s. Keep the private source campaign and scenario together.\n", markdownCode(reportPath))
+	fmt.Fprintf(&b, "\nReport generated locally at %s. Keep the private source campaign and scenario together; the digest identifies the saved campaign bytes, not the scenario file or original target.\n", markdownCode(reportPath))
 	return b.String()
 }
 
