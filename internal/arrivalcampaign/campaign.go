@@ -17,7 +17,7 @@ import (
 	"github.com/LucasLuchetta/Damocline/internal/report"
 )
 
-const CurrentSchemaVersion = 9
+const CurrentSchemaVersion = 8
 const maximumCampaignDuration = 15 * time.Minute
 const LongRunWallTimeLimit = 2 * time.Hour
 const LongRunPhaseLimit = 30 * time.Minute
