@@ -4,6 +4,8 @@ This project follows a human-maintained changelog. No release exists yet.
 
 ## [Unreleased]
 
+- Record exact bounded scenario/profile source-file SHA-256 and semantic workload fingerprint in closed-loop campaign schema v15 and offline audit output; verify profile byte identity while keeping file contents, paths, and credentials private.
+
 - Advance campaign collection assessment schema to v5 and require recorded generator build/runtime identity and effective CPU entitlement to match across every required phase and tested load level; preserve individual audits while marking missing or changed environment provenance `NOT_COMPARABLE`.
 - Clarify that HTTP trace phase counts remain authoritative when a measured duration is below clock resolution, and validate immediate refusals plus delayed transport errors against independent loopback observations and serialized report data.
 - Report descriptive p99 adequacy and conditional exact IID 95% order-statistic intervals in schema v32 run evidence, insights, capacity reports, and redacted exports; intervals are bounded from 1,000 to 1,000,000 samples and never imply dependence-aware confidence or a p99 objective.

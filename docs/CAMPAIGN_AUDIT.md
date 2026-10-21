@@ -14,8 +14,9 @@ and the measurement quality recomputed from the saved report. Stale or altered
 stage labels and self-declared positive quality are flagged as
 `INVALID_EVIDENCE`. Missing telemetry is not filled in or treated as zero.
 
-Closed-loop campaign schema v14 also records the objective contract before
-traffic: aggregate and per-workflow journey p95/error limits, minimum samples,
+Closed-loop campaign schema v15 optionally records workload source identity: source kind, exact bounded source-file SHA-256, and semantic workload fingerprint (plus logical profile name/schema where applicable). Profile verification checks whether a saved profile still has the exact bytes recorded at run time; historical campaigns report that identity as not recorded. Hashes are unkeyed and do not authenticate authorship, capture environment-backed values, or attest target state.
+
+Schema v14 also records the objective contract before traffic: aggregate and per-workflow journey p95/error limits, minimum samples,
 window coverage for journeys, steps, and configured workflows, a 100%
 started-work completion ratio, and zero dropped arrivals. The offline audit checks those declarations against each required
 phase and its saved window ledger. Older campaign schemas remain readable but
@@ -97,8 +98,9 @@ The Markdown report records phase-level controls, source and phase evidence
 IDs, observation statistics, confidence limits and a replay command. It includes
 the target origin and may contain private scenario labels, so keep it with local
 reports. It does not embed the full scenario or credentials. Preserve the private
-profile and use `campaign profile verify` to check that profile against the saved
-campaign before rerunning the workload. The generated replay command verifies
+profile and use `campaign profile verify` to check its exact file-byte identity
+and phase controls against the saved campaign before rerunning the workload.
+Older campaigns cannot establish exact source-byte identity. The generated replay command verifies
 both campaign digests before it recomputes the assessment; this catches
 changes to interpreted fields and any change to source bytes, but does not
 authenticate their origin.

@@ -594,6 +594,10 @@ func journeyP95Description(metrics report.MetricSet) string {
 }
 
 func campaignCmd(args []string, stdout, stderr io.Writer) int {
+	return campaignCmdWithWorkloadSource(args, nil, stdout, stderr)
+}
+
+func campaignCmdWithWorkloadSource(args []string, source *campaign.WorkloadSource, stdout, stderr io.Writer) int {
 	if len(args) > 0 && args[0] == "profile" {
 		return campaignProfileCmd(args[1:], stdout, stderr)
 	}
@@ -652,7 +656,7 @@ func campaignCmd(args []string, stdout, stderr io.Writer) int {
 	if guardrails.Enabled() {
 		guardrails.ConsecutiveSamples = *guardrailSamples
 	}
-	options := campaign.Options{Warmup: *warmup, Stabilization: *stabilization, Observation: *observation, SpikeUsers: *spikeUsers, SpikeDuration: *spikeDuration, Recovery: *recovery, Soak: *soak, Cooldown: *cooldown, Repeats: *repeats, Budget: *budget,
+	options := campaign.Options{WorkloadSource: source, Warmup: *warmup, Stabilization: *stabilization, Observation: *observation, SpikeUsers: *spikeUsers, SpikeDuration: *spikeDuration, Recovery: *recovery, Soak: *soak, Cooldown: *cooldown, Repeats: *repeats, Budget: *budget,
 		Guardrails: guardrails,
 		LongRun:    *longRun, StagingConfirmed: *stagingConfirmed,
 		Stability: campaign.StabilityPolicy{MinimumWindows: *minWindows, MinimumSamplesPerWindow: *minSamples, MaxP95IncreasePercent: *maxP95IncreasePercent, MaxP95IncreaseMS: *maxP95IncreaseMS, MaxThroughputDropPercent: *maxThroughputDropPercent}}
@@ -660,10 +664,13 @@ func campaignCmd(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "invalid campaign: %v\n", err)
 		return 2
 	}
-	scenario, err := config.Load(*filename)
+	scenario, sourceSHA256, err := config.LoadWithSHA256(*filename)
 	if err != nil {
 		fmt.Fprintf(stderr, "configuration error: %v\n", err)
 		return 2
+	}
+	if source == nil {
+		source = &campaign.WorkloadSource{Type: "scenario_file", SchemaVersion: scenario.ScenarioVersion, FileSHA256: sourceSHA256}
 	}
 	if !*dry {
 		if err := rejectCampaignOutputAlias(*filename, *out); err != nil {
@@ -676,6 +683,8 @@ func campaignCmd(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "configuration error: %v\n", err)
 		return 2
 	}
+	source.SemanticFingerprint = validated.WorkloadFingerprint
+	options.WorkloadSource = source
 	if err := campaign.ValidateForScenario(validated, options); err != nil {
 		fmt.Fprintf(stderr, "invalid campaign: %v\n", err)
 		return 2

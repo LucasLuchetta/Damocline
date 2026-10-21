@@ -17,7 +17,17 @@ import (
 	"github.com/LucasLuchetta/Damocline/internal/report"
 )
 
-const CurrentSchemaVersion = 14
+const CurrentSchemaVersion = 15
+
+// WorkloadSource identifies the exact bounded configuration bytes used to
+// construct a campaign. Digests identify bytes but do not authenticate origin.
+type WorkloadSource struct {
+	Type                string `json:"type"`
+	Name                string `json:"name,omitempty"`
+	SchemaVersion       int    `json:"schema_version,omitempty"`
+	FileSHA256          string `json:"file_sha256"`
+	SemanticFingerprint string `json:"semantic_fingerprint,omitempty"`
+}
 
 const (
 	DefaultWallTimeLimit = 15 * time.Minute
@@ -71,6 +81,7 @@ func effectiveStabilityPolicy(policy StabilityPolicy) StabilityPolicy {
 }
 
 type Options struct {
+	WorkloadSource     *WorkloadSource
 	Warmup             time.Duration
 	Stabilization      time.Duration
 	Observation        time.Duration
@@ -151,6 +162,7 @@ type Result struct {
 	SchemaVersion          int                             `json:"schema_version"`
 	ExecutionState         string                          `json:"execution_state,omitempty"`
 	Scenario               string                          `json:"scenario"`
+	WorkloadSource         *WorkloadSource                 `json:"workload_source,omitempty"`
 	BaseUsers              int                             `json:"base_users"`
 	Target                 string                          `json:"target"`
 	StartedAt              string                          `json:"started_at"`
@@ -408,6 +420,7 @@ func WithRunnerProgress(ctx context.Context, base config.Validated, options Opti
 		SchemaVersion:       CurrentSchemaVersion,
 		ExecutionState:      "RUNNING",
 		Scenario:            base.Scenario.Name,
+		WorkloadSource:      options.WorkloadSource,
 		BaseUsers:           base.Scenario.Users,
 		Target:              base.Base.Scheme + "://" + base.Base.Host,
 		StartedAt:           time.Now().UTC().Format(time.RFC3339),

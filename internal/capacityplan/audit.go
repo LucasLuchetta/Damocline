@@ -25,6 +25,7 @@ type CampaignAudit struct {
 	EvidenceID              string                      `json:"evidence_id"`
 	SourceFileSHA256        string                      `json:"source_file_sha256,omitempty"`
 	ScenarioFingerprint     string                      `json:"scenario_fingerprint,omitempty"`
+	WorkloadSource          *campaign.WorkloadSource    `json:"workload_source,omitempty"`
 	Scenario                string                      `json:"scenario"`
 	Target                  string                      `json:"target,omitempty"`
 	StartedAt               string                      `json:"started_at,omitempty"`
@@ -265,6 +266,7 @@ func AuditCampaign(e campaign.Result) CampaignAudit {
 		ExecutionState:         original.ExecutionState,
 		EvidenceID:             evidenceDigest(original),
 		Scenario:               e.Scenario,
+		WorkloadSource:         e.WorkloadSource,
 		TestedBaseUsers:        e.BaseUsers,
 		HostType:               "NOT_RECORDED",
 		GeneratorRuntimeStatus: "UNKNOWN", GeneratorCapacityStatus: "UNKNOWN", GeneratorEnvironments: []GeneratorEnvironment{},

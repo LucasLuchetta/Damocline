@@ -15,7 +15,7 @@ This assessment describes the saved evidence under its declared conditions. It d
 ## Technical evidence
 
 - **Campaign evidence ID:** `sha256:campaign-fixture`
-- **Campaign schema:** 14
+- **Campaign schema:** 15
 - **Campaign execution state:** COMPLETED
 - **Scenario:** synthetic local fixture
 - **Declared environment:** development
@@ -26,6 +26,7 @@ This assessment describes the saved evidence under its declared conditions. It d
 - **Base active users:** 2
 - **Workload fingerprint:** `sha256:workload-fixture`
 - **Campaign source file SHA-256:** `sha256:source-bytes-fixture`
+- **Workload source identity:** not recorded (historical campaign)
 - **Evidence ID scope:** SHA-256 of canonical decoded campaign fields; it identifies the fields interpreted by this reader. The source file SHA-256 separately covers the exact input bytes, including whitespace and fields unknown to this reader. Neither digest is a signature or producer/host/target attestation.
 - **Campaign schedule:** warm-up 0s; stabilization 0s; observation 10s; spike 0 users for 0s; recovery 10s; soak 0s; cooldown 0s; repeats 2; wall-time budget 3m20s
 - **Effective drift screen policy** (persisted): minimum 3 windows, 20 samples/window, p95 increase 20.000% and 5.000 ms, throughput decrease 20.000%

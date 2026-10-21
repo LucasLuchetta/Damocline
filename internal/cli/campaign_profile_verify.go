@@ -21,14 +21,17 @@ import (
 )
 
 type campaignProfileVerification struct {
-	SchemaVersion      int      `json:"schema_version"`
-	State              string   `json:"state"`
-	Profile            string   `json:"profile"`
-	ProfileFingerprint string   `json:"profile_fingerprint"`
-	CampaignEvidenceID string   `json:"campaign_evidence_id"`
-	ComparedPhases     int      `json:"compared_phases"`
-	Mismatches         []string `json:"mismatches"`
-	KnownLimitations   []string `json:"known_limitations"`
+	SchemaVersion             int      `json:"schema_version"`
+	State                     string   `json:"state"`
+	Profile                   string   `json:"profile"`
+	ProfileFingerprint        string   `json:"profile_fingerprint"`
+	CurrentProfileFileSHA256  string   `json:"current_profile_file_sha256"`
+	RecordedProfileFileSHA256 string   `json:"recorded_profile_file_sha256,omitempty"`
+	SourceIdentityStatus      string   `json:"source_identity_status"`
+	CampaignEvidenceID        string   `json:"campaign_evidence_id"`
+	ComparedPhases            int      `json:"compared_phases"`
+	Mismatches                []string `json:"mismatches"`
+	KnownLimitations          []string `json:"known_limitations"`
 }
 
 func campaignProfileVerifyCmd(args []string, store campaignprofile.Store, stdout, stderr io.Writer) int {
@@ -41,7 +44,7 @@ func campaignProfileVerifyCmd(args []string, store campaignprofile.Store, stdout
 		fmt.Fprintln(stderr, "usage: damocline campaign profile verify --name NAME --campaign FILE [--out FILE]")
 		return 2
 	}
-	profile, _, err := store.Load(*name)
+	profile, _, profileSHA256, err := store.LoadWithSHA256(*name)
 	if err != nil {
 		fmt.Fprintf(stderr, "profile load error: %v\n", err)
 		return 2
@@ -56,6 +59,19 @@ func campaignProfileVerifyCmd(args []string, store campaignprofile.Store, stdout
 		fmt.Fprintf(stderr, "profile verification error: %v\n", err)
 		return 2
 	}
+	verification.CurrentProfileFileSHA256 = profileSHA256
+	if evidence.WorkloadSource != nil && evidence.WorkloadSource.Type == "campaign_profile" {
+		verification.RecordedProfileFileSHA256 = evidence.WorkloadSource.FileSHA256
+		if evidence.WorkloadSource.Name != profile.Name || evidence.WorkloadSource.FileSHA256 != profileSHA256 {
+			verification.SourceIdentityStatus = "MISMATCHED"
+			verification.State = "MISMATCHED"
+			verification.Mismatches = append(verification.Mismatches, "exact campaign profile file bytes differ from the profile used to create this campaign")
+		} else {
+			verification.SourceIdentityStatus = "MATCHED"
+		}
+	} else {
+		verification.SourceIdentityStatus = "NOT_RECORDED"
+	}
 	if *out != "" {
 		if err := writeProfileVerification(*out, verification); err != nil {
 			fmt.Fprintf(stderr, "verification output error: %v\n", err)
@@ -65,6 +81,7 @@ func campaignProfileVerifyCmd(args []string, store campaignprofile.Store, stdout
 	}
 	fmt.Fprintf(stdout, "Campaign profile verification: %s\n", verification.State)
 	fmt.Fprintf(stdout, "Profile: %s | profile fingerprint: %s\n", verification.Profile, verification.ProfileFingerprint)
+	fmt.Fprintf(stdout, "Profile source identity: %s | current file SHA-256: %s\n", verification.SourceIdentityStatus, verification.CurrentProfileFileSHA256)
 	fmt.Fprintf(stdout, "Campaign evidence: %s | compared phases: %d\n", verification.CampaignEvidenceID, verification.ComparedPhases)
 	for _, mismatch := range verification.Mismatches {
 		fmt.Fprintf(stdout, "  - %s\n", mismatch)
@@ -73,7 +90,7 @@ func campaignProfileVerifyCmd(args []string, store campaignprofile.Store, stdout
 		fmt.Fprintf(stdout, "  - Limitation: %s\n", limitation)
 	}
 	fmt.Fprintln(stdout, "No traffic was generated; profile and campaign files were read locally.")
-	if verification.State == "MATCHED" {
+	if verification.State == "MATCHED" && verification.SourceIdentityStatus != "MISMATCHED" {
 		return 0
 	}
 	return 1
@@ -87,10 +104,11 @@ func verifyCampaignProfile(profile campaignprofile.Profile, evidence campaign.Re
 		return campaignProfileVerification{}, fmt.Errorf("invalid saved campaign evidence: %w", err)
 	}
 	result := campaignProfileVerification{
-		SchemaVersion: 1, State: "MATCHED", Profile: profile.Name,
+		SchemaVersion: 2, State: "MATCHED", Profile: profile.Name, SourceIdentityStatus: "UNVERIFIABLE",
 		ProfileFingerprint: digestProfile(profile), CampaignEvidenceID: digestCampaign(evidence),
 		Mismatches: []string{}, KnownLimitations: []string{
 			"A matching declaration does not authenticate who produced or preserved either file.",
+			"Exact source hashes cover profile file bytes only; referenced environment values and target application state are not captured.",
 			"Credential values, account identity, target data state, and application-metrics endpoint settings are not stored in the profile and are not verified.",
 			"Environment-backed body contents are excluded from workload fingerprints; only their configured length is included.",
 			"The environment and application revision are self-declared; profile matching does not attest the physical host or target identity.",

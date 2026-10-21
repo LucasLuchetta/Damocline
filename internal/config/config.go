@@ -3,6 +3,8 @@ package config
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -144,32 +146,39 @@ const maxBaseURLBytes = 4 << 10
 const CurrentScenarioVersion = 1
 
 func Load(path string) (Scenario, error) {
+	scenario, _, err := LoadWithSHA256(path)
+	return scenario, err
+}
+
+// LoadWithSHA256 hashes the exact bounded bytes decoded from the scenario file.
+func LoadWithSHA256(path string) (Scenario, string, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return Scenario{}, fmt.Errorf("open scenario: %w", err)
+		return Scenario{}, "", fmt.Errorf("open scenario: %w", err)
 	}
 	defer f.Close()
 	data, err := io.ReadAll(io.LimitReader(f, maxScenarioBytes+1))
 	if err != nil {
-		return Scenario{}, fmt.Errorf("read scenario: %w", err)
+		return Scenario{}, "", fmt.Errorf("read scenario: %w", err)
 	}
 	if len(data) > maxScenarioBytes {
-		return Scenario{}, fmt.Errorf("scenario exceeds the %d-byte input limit", maxScenarioBytes)
+		return Scenario{}, "", fmt.Errorf("scenario exceeds the %d-byte input limit", maxScenarioBytes)
 	}
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 	var s Scenario
 	if err := dec.Decode(&s); err != nil {
-		return Scenario{}, fmt.Errorf("decode scenario: %w", err)
+		return Scenario{}, "", fmt.Errorf("decode scenario: %w", err)
 	}
 	var extra any
 	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
-		return Scenario{}, errors.New("scenario must contain exactly one JSON object")
+		return Scenario{}, "", errors.New("scenario must contain exactly one JSON object")
 	}
 	if err := validateScenarioFormat(s); err != nil {
-		return Scenario{}, err
+		return Scenario{}, "", err
 	}
-	return s, nil
+	digest := sha256.Sum256(data)
+	return s, "sha256:" + hex.EncodeToString(digest[:]), nil
 }
 
 func validateScenarioFormat(s Scenario) error {

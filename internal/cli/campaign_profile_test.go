@@ -70,11 +70,11 @@ func TestCampaignProfileRunDryRunAndLoopbackReport(t *testing.T) {
 	if err := json.Unmarshal(firstData, &first); err != nil {
 		t.Fatalf("decode first campaign report: %v", err)
 	}
-	if first.SchemaVersion != campaign.CurrentSchemaVersion || len(first.Trials) != 2 || len(first.Trials[0].Phases) == 0 || first.Trials[0].Phases[0].Run.Config.WorkloadFingerprint == "" {
+	if first.SchemaVersion != campaign.CurrentSchemaVersion || len(first.Trials) != 2 || len(first.Trials[0].Phases) == 0 || first.Trials[0].Phases[0].Run.Config.WorkloadFingerprint == "" || first.WorkloadSource == nil || first.WorkloadSource.Type != "campaign_profile" || first.WorkloadSource.FileSHA256 == "" {
 		t.Fatalf("first report lacks reproducible campaign evidence: schema=%d trials=%+v stability=%+v", first.SchemaVersion, first.Trials, first.StabilityPolicy)
 	}
 	verification, err := verifyCampaignProfile(profile, first)
-	if err != nil || verification.State != "MATCHED" || verification.ComparedPhases != 4 {
+	if err != nil || verification.State != "MATCHED" || verification.SourceIdentityStatus != "UNVERIFIABLE" || verification.ComparedPhases != 4 {
 		t.Fatalf("saved profile did not match its campaign report: state=%s phases=%d mismatches=%v err=%v", verification.State, verification.ComparedPhases, verification.Mismatches, err)
 	}
 	changedProfile := profile
@@ -93,6 +93,9 @@ func TestCampaignProfileRunDryRunAndLoopbackReport(t *testing.T) {
 	if _, err := os.Stat(verificationOut); err != nil {
 		t.Fatalf("verification command did not create output: stdout=%s stderr=%s err=%v", stdout.String(), stderr.String(), err)
 	}
+	if got, _, _, digestErr := store.LoadWithSHA256("loopback"); digestErr != nil || got.Name != profile.Name {
+		t.Fatalf("could not load hash-identified profile: %+v err=%v", got, digestErr)
+	}
 	if got := requests.Load(); got != beforeVerificationRequests {
 		t.Fatalf("offline profile verification sent %d request(s)", got-beforeVerificationRequests)
 	}
@@ -101,8 +104,24 @@ func TestCampaignProfileRunDryRunAndLoopbackReport(t *testing.T) {
 		t.Fatalf("verification artifact not written: %v", err)
 	}
 	var savedVerification campaignProfileVerification
-	if err := json.Unmarshal(verificationData, &savedVerification); err != nil || savedVerification.State != "MATCHED" || savedVerification.CampaignEvidenceID != verification.CampaignEvidenceID {
+	if err := json.Unmarshal(verificationData, &savedVerification); err != nil || savedVerification.State != "MATCHED" || savedVerification.SourceIdentityStatus != "MATCHED" || savedVerification.CampaignEvidenceID != verification.CampaignEvidenceID {
 		t.Fatalf("invalid saved verification: %+v err=%v", savedVerification, err)
+	}
+	changedBytes, err := os.ReadFile(store.Path("loopback"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	changedBytes = append(changedBytes, ' ')
+	if err := os.WriteFile(store.Path("loopback"), changedBytes, 0600); err != nil {
+		t.Fatal(err)
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := campaignProfileVerifyCmd([]string{"--name", "loopback", "--campaign", firstOut}, store, &stdout, &stderr); code != 1 || !strings.Contains(stdout.String(), "MISMATCHED") {
+		t.Fatalf("changed exact profile bytes were not rejected: code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if err := os.WriteFile(store.Path("loopback"), changedBytes[:len(changedBytes)-1], 0600); err != nil {
+		t.Fatal(err)
 	}
 
 	campaignEvidenceID := capacityplan.AuditCampaign(first).EvidenceID

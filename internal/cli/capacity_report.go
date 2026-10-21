@@ -40,6 +40,14 @@ func renderCampaignCapacityReport(assessment capacityplan.Assessment, source, re
 	}
 	fmt.Fprintf(&b, "- **Campaign evidence ID:** %s\n- **Campaign schema:** %d\n- **Campaign execution state:** %s\n- **Scenario:** %s\n- **Declared environment:** %s\n- **Target origin:** %s\n- **Start time:** %s\n- **Host type:** %s\n- **Required phase duration reviewed:** %s\n- **Base active users:** %d\n- **Workload fingerprint:** %s\n", markdownCode(a.EvidenceID), a.SchemaVersion, markdownText(evidence.ExecutionState), markdownText(evidence.Scenario), markdownText(evidence.DeclaredEnvironment), markdownText(a.Target), markdownText(a.StartedAt), markdownText(a.HostType), markdownText(a.TestedDuration), evidence.BaseUsers, markdownCode(a.ScenarioFingerprint))
 	fmt.Fprintf(&b, "- **Campaign source file SHA-256:** %s\n", markdownCode(a.SourceFileSHA256))
+	if source := a.WorkloadSource; source != nil {
+		fmt.Fprintf(&b, "- **Workload source identity:** %s | schema %d | file SHA-256 %s | semantic fingerprint %s\n", markdownText(source.Type), source.SchemaVersion, markdownCode(source.FileSHA256), markdownCode(source.SemanticFingerprint))
+		if source.Name != "" {
+			fmt.Fprintf(&b, "- **Private profile name:** %s\n", markdownText(source.Name))
+		}
+	} else {
+		fmt.Fprintln(&b, "- **Workload source identity:** not recorded (historical campaign)")
+	}
 	fmt.Fprintln(&b, "- **Evidence ID scope:** SHA-256 of canonical decoded campaign fields; it identifies the fields interpreted by this reader. The source file SHA-256 separately covers the exact input bytes, including whitespace and fields unknown to this reader. Neither digest is a signature or producer/host/target attestation.")
 	fmt.Fprintf(&b, "- **Campaign schedule:** warm-up %s; stabilization %s; observation %s; spike %d users for %s; recovery %s; soak %s; cooldown %s; repeats %d; wall-time budget %s\n", markdownOptionalDuration(evidence.Warmup), markdownOptionalDuration(evidence.Stabilization), markdownOptionalDuration(evidence.Observation), evidence.SpikeUsers, markdownOptionalDuration(evidence.SpikeDuration), markdownOptionalDuration(evidence.Recovery), markdownOptionalDuration(evidence.Soak), markdownOptionalDuration(evidence.Cooldown), evidence.Repeats, markdownOptionalDuration(evidence.Budget))
 	stability := evidence.EffectiveStabilityPolicy()
