@@ -43,6 +43,9 @@ func TestCampaignCollectionAggregatesOnlyMatchedLevels(t *testing.T) {
 	if len(assessment.PassingLevels) != 1 || assessment.PassingLevels[0] != 2 || len(assessment.FailingLevels) != 1 || assessment.FailingLevels[0] != 4 {
 		t.Fatalf("observed passing levels are incomplete: %+v", assessment.PassingLevels)
 	}
+	if assessment.HighestPassingLevel == nil || *assessment.HighestPassingLevel != 2 || assessment.FirstFailingLevel == nil || *assessment.FirstFailingLevel != 4 || assessment.UpperBound != "BRACKETED_BY_TESTED_LEVELS" {
+		t.Fatalf("tested pass/fail bracket was not made explicit: %+v", assessment)
+	}
 	if assessment.Demand == nil || assessment.Demand.TargetUsers != 4 || assessment.Demand.State != "INSUFFICIENT_EVIDENCE" || assessment.DemandEvidenceID != assessment.Levels[1].Assessment.Audit.EvidenceID {
 		t.Fatalf("exact level demand should retain its quality blocker: %+v", assessment.Demand)
 	}
@@ -62,8 +65,23 @@ func TestCampaignCollectionNeverInterpolatesAndDetectsNonMonotonicLevels(t *test
 	if assessment.State != "OBSERVED_LEVELS_ONLY" || assessment.ObservationPattern != "NON_MONOTONIC" || len(assessment.FailingLevels) != 1 || assessment.FailingLevels[0] != 2 || len(assessment.PassingLevels) != 1 || assessment.PassingLevels[0] != 4 {
 		t.Fatalf("non-monotonic observations were not reported: %+v", assessment)
 	}
+	if assessment.HighestPassingLevel == nil || *assessment.HighestPassingLevel != 4 || assessment.FirstFailingLevel == nil || *assessment.FirstFailingLevel != 2 || assessment.UpperBound != "NON_MONOTONIC_UNKNOWN" {
+		t.Fatalf("non-monotonic tested levels were presented as a bracket: %+v", assessment)
+	}
 	if assessment.Demand == nil || assessment.Demand.TargetUsers != 3 || len(assessment.Demand.Findings) != 1 || !strings.Contains(assessment.Demand.Findings[0], "exact calculated workload level") {
 		t.Fatalf("untested demand level was interpolated: %+v", assessment.Demand)
+	}
+}
+
+func TestCampaignCollectionPassingOnlyReportsUnknownUpperBound(t *testing.T) {
+	first := auditFixtureAtUsers(2)
+	second := auditFixtureAtUsers(4)
+	assessment, err := BuildCampaignCollectionAssessment([]campaign.Result{first, second}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if assessment.HighestPassingLevel == nil || *assessment.HighestPassingLevel != 4 || assessment.FirstFailingLevel != nil || assessment.UpperBound != "UNKNOWN" {
+		t.Fatalf("all-pass observations must retain an unknown upper bound: %+v", assessment)
 	}
 }
 

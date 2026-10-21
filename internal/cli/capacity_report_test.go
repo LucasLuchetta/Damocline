@@ -59,3 +59,18 @@ func TestCampaignCapacityReportSnapshotAndVerdictSeparation(t *testing.T) {
 		t.Fatalf("capacity Markdown report changed:\n%s", got)
 	}
 }
+
+func TestCampaignCollectionCapacityReportShowsTestedBoundary(t *testing.T) {
+	highest, firstFailing := 4, 8
+	assessment := capacityplan.CampaignCollectionAssessment{
+		State: "OBSERVED_LEVELS_ONLY", Scenario: "synthetic", PassingLevels: []int{2, 4}, FailingLevels: []int{8},
+		HighestPassingLevel: &highest, FirstFailingLevel: &firstFailing, UpperBound: "BRACKETED_BY_TESTED_LEVELS",
+		ObservationPattern: "PASS_BELOW_FAIL", Levels: []capacityplan.CampaignLevelAssessment{}, Findings: []string{}, InconclusiveLevels: []int{},
+	}
+	got := renderCampaignCollectionCapacityReport(assessment, nil, "capacity.md", nil)
+	for _, want := range []string{"Highest passing tested level:** 4 active users (tested)", "First failing tested level:** 8 active users (tested)", "Upper bound:** BRACKETED_BY_TESTED_LEVELS"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("collection report does not contain %q:\n%s", want, got)
+		}
+	}
+}
