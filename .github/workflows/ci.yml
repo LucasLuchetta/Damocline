@@ -12,6 +12,7 @@ jobs:
   go:
     name: Format, vet, test, and run source
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -37,6 +38,28 @@ jobs:
         run: docker run --rm --cpus=4 --memory=4g --pids-limit=256 -v "$PWD:/workspace" -w /workspace golang:1.24.13-bookworm go run ./cmd/damocline-calibrate --extended --out .damocline/calibration/ci-reference.json
       - name: Validate bounded transport fixtures
         run: docker run --rm --cpus=4 --memory=4g --pids-limit=256 -v "$PWD:/workspace" -w /workspace golang:1.24.13-bookworm go run ./cmd/damocline-calibrate --transport-matrix --out .damocline/calibration/ci-transport.json
+      - name: Run repeated G0 acceptance in bounded Linux container
+        run: >-
+          docker run --rm --cpus=4 --memory=4g --pids-limit=256
+          -v "$PWD:/workspace" -w /workspace golang:1.24.13-bookworm
+          bash -c 'go build -buildvcs=false -o /tmp/damocline-calibrate ./cmd/damocline-calibrate &&
+          go build -buildvcs=false -o /tmp/damocline-acceptance ./cmd/damocline-acceptance && {
+          /tmp/damocline-acceptance --calibrator /tmp/damocline-calibrate
+          --out-dir .damocline/acceptance/ci-linux --repeats 2 --run-timeout 4m;
+          status=$?;
+          chmod o+rx .damocline .damocline/acceptance 2>/dev/null || true;
+          chmod -R a+rX .damocline/acceptance/ci-linux 2>/dev/null || true;
+          exit "$status";
+          }'
+      - name: Archive Linux G0 acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: g0-acceptance-linux
+          path: .damocline/acceptance/ci-linux/
+          if-no-files-found: ignore
+          retention-days: 14
+          include-hidden-files: true
 
 # CI verifies source compatibility but intentionally does not publish prebuilt binaries.
 
@@ -76,6 +99,7 @@ jobs:
   windows-launcher:
     name: Windows source installer and CMD shim
     runs-on: windows-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -99,3 +123,22 @@ jobs:
         run: go run ./cmd/damocline-calibrate --extended --out .damocline/calibration/ci-reference.json
       - name: Validate bounded transport fixtures
         run: go run ./cmd/damocline-calibrate --transport-matrix --out .damocline/calibration/ci-transport.json
+      - name: Run repeated G0 acceptance
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path .damocline/local-validation | Out-Null
+          go build -o .damocline/local-validation/damocline-calibrate.exe ./cmd/damocline-calibrate
+          if ($LASTEXITCODE -ne 0) { throw 'Could not build the calibration executable' }
+          go build -o .damocline/local-validation/damocline-acceptance.exe ./cmd/damocline-acceptance
+          if ($LASTEXITCODE -ne 0) { throw 'Could not build the acceptance executable' }
+          .\.damocline\local-validation\damocline-acceptance.exe --calibrator .\.damocline\local-validation\damocline-calibrate.exe --out-dir .damocline\acceptance\ci-windows --repeats 2 --run-timeout 4m
+          if ($LASTEXITCODE -ne 0) { throw 'Repeated G0 acceptance failed' }
+      - name: Archive Windows G0 acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: g0-acceptance-windows
+          path: .damocline/acceptance/ci-windows/
+          if-no-files-found: ignore
+          retention-days: 14
+          include-hidden-files: true
