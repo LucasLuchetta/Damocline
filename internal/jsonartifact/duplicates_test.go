@@ -1,6 +1,9 @@
 package jsonartifact
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+)
 
 func TestRejectDuplicateKeys(t *testing.T) {
 	tests := []struct {
@@ -25,4 +28,20 @@ func TestRejectDuplicateKeys(t *testing.T) {
 			}
 		})
 	}
+}
+
+func FuzzRejectDuplicateKeysNeverAcceptsInvalidJSON(f *testing.F) {
+	for _, seed := range [][]byte{
+		[]byte(`{}`),
+		[]byte(`{"a":1,"a":2}`),
+		[]byte(`{"a":{"b":[true,null,3]}}`),
+		[]byte(`{"a":}`),
+	} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, data []byte) {
+		if err := RejectDuplicateKeys(data); err == nil && !json.Valid(data) {
+			t.Fatal("invalid JSON was accepted")
+		}
+	})
 }

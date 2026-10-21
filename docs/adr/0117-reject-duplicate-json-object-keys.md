@@ -18,4 +18,4 @@ Previously accepted ambiguous files now fail with a clear input error. Valid his
 
 ## Validation
 
-Unit tests cover duplicate keys at the top level, inside nested objects and arrays, and keys that collide after Unicode escape decoding. Reader tests cover scenarios, profiles, campaigns, run reports, calibration, acceptance, history, dashboard, goal, and export paths and verify rejected exports do not create output.
+Unit tests cover duplicate keys at the top level, inside nested objects and arrays, and keys that collide after Unicode escape decoding. A bounded CI fuzz target verifies malformed JSON is never accepted. Reader tests cover scenarios, profiles, campaigns, run reports, calibration, acceptance, history, dashboard, goal, and export paths and verify rejected exports do not create output.
