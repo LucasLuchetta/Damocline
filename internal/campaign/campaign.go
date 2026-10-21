@@ -911,7 +911,7 @@ func summarizeObservationVariability(trials []Trial) *Variability {
 }
 
 func SummarizeRobustRepeatSpread(values []float64) (median, mad float64, ok bool) {
-	if len(values) == 0 {
+	if len(values) < 2 {
 		return 0, 0, false
 	}
 	ordered := append([]float64(nil), values...)

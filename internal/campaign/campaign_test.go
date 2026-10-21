@@ -43,6 +43,9 @@ func TestRobustRepeatSpreadSummarizesIndependentPhaseP95s(t *testing.T) {
 	if !ok || median != 12 || mad != 1 {
 		t.Fatalf("robust repeat spread did not use the median/MAD: median=%v mad=%v ok=%t", median, mad, ok)
 	}
+	if _, _, ok := SummarizeRobustRepeatSpread([]float64{12}); ok {
+		t.Fatal("a single completed observation phase was reported as repeat spread")
+	}
 	if _, _, ok := SummarizeRobustRepeatSpread([]float64{10, math.NaN()}); ok {
 		t.Fatal("non-finite repeat P95 was accepted")
 	}
