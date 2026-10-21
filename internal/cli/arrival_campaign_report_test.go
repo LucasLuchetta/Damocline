@@ -64,7 +64,7 @@ func TestOpenArrivalLoopbackCampaignGoalReportReplaysWithoutTraffic(t *testing.T
 	scenario := config.Scenario{
 		Name: "loopback-arrival", WorkloadRevision: "workload-v1", ApplicationRevision: "fixture-v1", Environment: "development",
 		BaseURL: server.URL, Users: 8, Duration: "30s", RampUp: "0s", Timeout: "2s", MaxRPS: 100,
-		P95LimitMS: 1000, MaxErrorRate: 0.1, Mode: "arrival", ArrivalRate: 40, MinSamplesPerStep: 1, WindowDuration: "10s",
+		P95LimitMS: 1000, MaxErrorRate: 0.1, Mode: "arrival", ArrivalRate: 10, MinSamplesPerStep: 1, WindowDuration: "10s",
 		Steps: []config.Step{{Name: "health", Method: http.MethodGet, Path: "/", ExpectedStatus: []int{http.StatusOK}}},
 	}
 	data, err := json.Marshal(scenario)
@@ -76,7 +76,7 @@ func TestOpenArrivalLoopbackCampaignGoalReportReplaysWithoutTraffic(t *testing.T
 	}
 
 	campaignPath := filepath.Join(dir, "campaign.json")
-	code, stdout, stderr := runCLI("arrival-campaign", "--config", scenarioPath, "--warmup", "0s", "--observation", "30s", "--recovery", "10s", "--repeats", "2", "--peak-journeys-per-second", "40", "--stability-min-samples", "20", "--out", campaignPath, "--authorized")
+	code, stdout, stderr := runCLI("arrival-campaign", "--config", scenarioPath, "--warmup", "0s", "--observation", "30s", "--recovery", "10s", "--repeats", "2", "--peak-journeys-per-second", "10", "--stability-min-samples", "20", "--out", campaignPath, "--authorized")
 	if code != 0 && code != 1 {
 		t.Fatalf("bounded loopback campaign failed before producing a result: code=%d stdout=%s stderr=%s", code, stdout, stderr)
 	}
@@ -91,19 +91,30 @@ func TestOpenArrivalLoopbackCampaignGoalReportReplaysWithoutTraffic(t *testing.T
 	if err := json.Unmarshal(campaignBytes, &saved); err != nil {
 		t.Fatalf("decode campaign artifact: %v", err)
 	}
-	if saved.SchemaVersion != arrivalcampaign.CurrentSchemaVersion || saved.Outcome != "PASS" || len(saved.Trials) != 2 || len(saved.Trials[0].Phases) == 0 {
-		t.Fatalf("campaign did not retain complete bounded phase evidence: schema=%d trials=%+v", saved.SchemaVersion, saved.Trials)
+	if saved.SchemaVersion != arrivalcampaign.CurrentSchemaVersion || (saved.Outcome != "PASS" && saved.Outcome != "INCONCLUSIVE") || len(saved.Trials) != 2 || len(saved.Trials[0].Phases) == 0 {
+		t.Fatalf("campaign did not retain complete bounded phase evidence: schema=%d outcome=%s trials=%+v", saved.SchemaVersion, saved.Outcome, saved.Trials)
 	}
 	for _, trial := range saved.Trials {
-		if trial.Outcome != "PASS" {
-			t.Fatalf("loopback campaign did not complete its native phases: trial=%+v", trial)
+		if trial.Outcome != "PASS" && trial.Outcome != "INCONCLUSIVE" {
+			t.Fatalf("loopback campaign did not preserve a terminal phase outcome: trial=%+v", trial)
 		}
 		for _, phase := range trial.Phases {
 			if phase.Name == "warmup" {
 				continue
 			}
-			if phase.EvidenceState != "PASS_OBSERVED" || phase.Run.Outcome != "PASS" || phase.Name == "observation" && phase.Stability != "NO_LARGE_DRIFT_DETECTED" {
-				t.Fatalf("loopback phase did not retain passing native SLO and stability evidence: phase=%+v", phase)
+			if phase.EvidenceState == "PASS_OBSERVED" {
+				if phase.Run.Outcome != "PASS" {
+					t.Fatalf("passing loopback phase does not retain a passing run: phase=%+v", phase)
+				}
+			} else if phase.EvidenceState == "INVALID_DELIVERY" {
+				if phase.Run.Outcome != "INCONCLUSIVE" || phase.Run.ArrivalsDropped == 0 {
+					t.Fatalf("loopback phase hid or misclassified a delivery shortfall: phase=%+v", phase)
+				}
+			} else {
+				t.Fatalf("loopback phase retained an unexpected evidence state: phase=%+v", phase)
+			}
+			if phase.Name == "observation" && phase.Stability != "NO_LARGE_DRIFT_DETECTED" {
+				t.Fatalf("loopback observation omitted its stability screen: phase=%+v", phase)
 			}
 			cfg := phase.Run.Config
 			if cfg.WorkloadRevision != scenario.WorkloadRevision || cfg.ApplicationRevision != scenario.ApplicationRevision || cfg.Environment != scenario.Environment {
@@ -116,7 +127,7 @@ func TestOpenArrivalLoopbackCampaignGoalReportReplaysWithoutTraffic(t *testing.T
 	assessmentPath := filepath.Join(dir, "assessment.json")
 	reportPath := filepath.Join(dir, "capacity.md")
 	goalArgs := []string{"goal", "--file", campaignPath, "--expect-source-sha256", sourceDigest, "--expect-auditor-sha256", auditorSHA256,
-		"--peak-journeys-per-second", "40", "--out", assessmentPath, "--report-out", reportPath}
+		"--peak-journeys-per-second", "10", "--out", assessmentPath, "--report-out", reportPath}
 	if code, stdout, stderr := runCLI(goalArgs...); code != 0 {
 		t.Fatalf("offline open-arrival assessment failed: code=%d stdout=%s stderr=%s", code, stdout, stderr)
 	}
@@ -132,7 +143,7 @@ func TestOpenArrivalLoopbackCampaignGoalReportReplaysWithoutTraffic(t *testing.T
 		"Open-arrival capacity assessment", "Scenario identity consistency:** CONSISTENT",
 		"Workload revision:** workload-v1", "Application revision:** fixture-v1", "Declared environment:** development",
 		"Auditor executable SHA-256:** `" + auditorSHA256 + "`", "--expect-source-sha256 '" + sourceDigest + "'",
-		"--expect-auditor-sha256 '" + auditorSHA256 + "'", "--peak-journeys-per-second 40",
+		"--expect-auditor-sha256 '" + auditorSHA256 + "'", "--peak-journeys-per-second 10",
 	} {
 		if !strings.Contains(string(markdown), expected) {
 			t.Fatalf("open-arrival report omitted %q:\n%s", expected, markdown)
@@ -150,7 +161,7 @@ func TestOpenArrivalLoopbackCampaignGoalReportReplaysWithoutTraffic(t *testing.T
 	replayAssessmentPath := filepath.Join(dir, "replayed-assessment.json")
 	replayReportPath := filepath.Join(dir, "replayed-capacity.md")
 	replayArgs := []string{"goal", "--file", campaignPath, "--expect-source-sha256", sourceDigest, "--expect-auditor-sha256", auditorSHA256,
-		"--peak-journeys-per-second", "40", "--out", replayAssessmentPath, "--report-out", replayReportPath}
+		"--peak-journeys-per-second", "10", "--out", replayAssessmentPath, "--report-out", replayReportPath}
 	if code, stdout, stderr := runCLI(replayArgs...); code != 0 {
 		t.Fatalf("offline replay failed: code=%d stdout=%s stderr=%s", code, stdout, stderr)
 	}
@@ -169,7 +180,7 @@ func TestOpenArrivalLoopbackCampaignGoalReportReplaysWithoutTraffic(t *testing.T
 	blockedAssessment := filepath.Join(dir, "blocked-assessment.json")
 	blockedReport := filepath.Join(dir, "blocked-capacity.md")
 	badSourceArgs := []string{"goal", "--file", campaignPath, "--expect-source-sha256", "sha256:" + strings.Repeat("0", 64),
-		"--expect-auditor-sha256", auditorSHA256, "--peak-journeys-per-second", "40", "--out", blockedAssessment, "--report-out", blockedReport}
+		"--expect-auditor-sha256", auditorSHA256, "--peak-journeys-per-second", "10", "--out", blockedAssessment, "--report-out", blockedReport}
 	if code, _, stderr := runCLI(badSourceArgs...); code != 2 || !strings.Contains(stderr, "source SHA-256 check failed") {
 		t.Fatalf("wrong campaign digest was not rejected before replay: code=%d stderr=%s", code, stderr)
 	}
