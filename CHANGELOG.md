@@ -5,6 +5,7 @@ This project follows a human-maintained changelog. No release exists yet.
 ## [Unreleased]
 
 - Reject current campaign profiles and calibration artifacts that omit required persisted controls or generator/fixture evidence, while preserving schema-versioned historical calibration fields and explicit zero values.
+- Reject campaign artifacts missing required top-level evidence fields; require current campaign timestamps to be valid RFC3339 values while preserving historical timestamp semantics.
 - Reject run, campaign, and exploration artifacts with missing or malformed request counters, non-conserved outcomes, or aggregate ledgers that do not reconcile with their steps; apply the check through report, dashboard, goal, and export readers.
 - Reject run reports without a valid HTTP(S) origin target identity instead of presenting targetless measurements as attributable evidence.
 - Preserve native open-arrival campaign PASS artifacts when phase SLOs pass but measurement quality is insufficient for a capacity decision; offline `goal` now reports `INSUFFICIENT_EVIDENCE` with the quality limitation instead of rejecting the valid campaign. Add a bounded subprocess test using the built CLI and a real loopback campaign; replay produces byte-identical outputs without traffic.

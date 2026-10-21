@@ -290,6 +290,9 @@ func ReadCampaignWithFileSHA256(path string) (campaign.Result, string, error) {
 	if err := report.ValidateMetricCountersInArtifactJSON(data); err != nil {
 		return campaign.Result{}, "", fmt.Errorf("invalid campaign metric evidence: %w", err)
 	}
+	if err := validateCampaignArtifactPresence(data); err != nil {
+		return campaign.Result{}, "", err
+	}
 	var result campaign.Result
 	if err := json.Unmarshal(data, &result); err != nil {
 		return campaign.Result{}, "", err
@@ -330,6 +333,9 @@ func ReadCampaignCollectionWithFileSHA256(paths []string) ([]campaign.Result, []
 		if err := report.ValidateMetricCountersInArtifactJSON(data); err != nil {
 			return nil, nil, fmt.Errorf("campaign %q has invalid metric evidence: %w", path, err)
 		}
+		if err := validateCampaignArtifactPresence(data); err != nil {
+			return nil, nil, fmt.Errorf("campaign %q: %w", path, err)
+		}
 		var result campaign.Result
 		if err := json.Unmarshal(data, &result); err != nil {
 			return nil, nil, fmt.Errorf("cannot decode campaign %q: %w", path, err)
@@ -339,6 +345,33 @@ func ReadCampaignCollectionWithFileSHA256(paths []string) ([]campaign.Result, []
 		results = append(results, result)
 	}
 	return results, digests, nil
+}
+
+func validateCampaignArtifactPresence(data []byte) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	for _, name := range []string{"schema_version", "scenario", "base_users", "target", "started_at", "warmup", "observation", "recovery", "repeats", "trials", "outcome"} {
+		value, ok := fields[name]
+		if !ok || string(value) == "null" {
+			return fmt.Errorf("campaign is missing required field %q; absence cannot be interpreted as zero", name)
+		}
+	}
+	var schemaVersion int
+	if err := json.Unmarshal(fields["schema_version"], &schemaVersion); err != nil {
+		return fmt.Errorf("campaign schema_version is invalid: %w", err)
+	}
+	if schemaVersion == campaign.CurrentSchemaVersion {
+		var startedAt string
+		if err := json.Unmarshal(fields["started_at"], &startedAt); err != nil || startedAt == "" {
+			return errors.New("current campaign started_at must be a non-empty RFC3339 timestamp")
+		}
+		if _, err := time.Parse(time.RFC3339Nano, startedAt); err != nil {
+			return errors.New("current campaign started_at must be a non-empty RFC3339 timestamp")
+		}
+	}
+	return nil
 }
 
 func readCampaignBytes(path string, maxBytes int64) ([]byte, error) {

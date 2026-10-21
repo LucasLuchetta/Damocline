@@ -31,6 +31,52 @@ func TestReadCampaignRejectsDuplicateJSONKeys(t *testing.T) {
 	}
 }
 
+func TestReadCampaignRequiresPersistedTopLevelEvidence(t *testing.T) {
+	valid, err := json.Marshal(auditFixture())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var root map[string]json.RawMessage
+	if err := json.Unmarshal(valid, &root); err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{"started_at", "warmup", "trials"} {
+		t.Run("missing_"+field, func(t *testing.T) {
+			candidate := make(map[string]json.RawMessage, len(root))
+			for key, value := range root {
+				candidate[key] = value
+			}
+			delete(candidate, field)
+			writeCampaignAndAssertRejected(t, candidate)
+		})
+	}
+	for _, value := range []string{`null`, `"not-a-timestamp"`, `""`} {
+		t.Run("invalid_started_at_"+strings.Trim(value, `"`), func(t *testing.T) {
+			candidate := make(map[string]json.RawMessage, len(root))
+			for key, raw := range root {
+				candidate[key] = raw
+			}
+			candidate["started_at"] = json.RawMessage(value)
+			writeCampaignAndAssertRejected(t, candidate)
+		})
+	}
+}
+
+func writeCampaignAndAssertRejected(t *testing.T, fields map[string]json.RawMessage) {
+	t.Helper()
+	data, err := json.Marshal(fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "campaign.json")
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadCampaign(path); err == nil {
+		t.Fatal("campaign with missing or malformed required evidence was accepted")
+	}
+}
+
 func TestReadCampaignRejectsMissingEmbeddedRunCounters(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("testdata", "campaigns", "schema-v4.json"))
 	if err != nil {
