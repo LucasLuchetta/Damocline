@@ -198,6 +198,11 @@ func Decode(data []byte) (Profile, bool, error) {
 	if version > CurrentSchemaVersion {
 		return Profile{}, false, fmt.Errorf("unsupported campaign profile schema %d (maximum %d)", version, CurrentSchemaVersion)
 	}
+	if version == CurrentSchemaVersion {
+		if err := requireProfileFields(envelope); err != nil {
+			return Profile{}, false, err
+		}
+	}
 	var p Profile
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
@@ -250,6 +255,38 @@ func Decode(data []byte) (Profile, bool, error) {
 		return Profile{}, version == 0, err
 	}
 	return p, version == 0, nil
+}
+
+// Current profiles require explicit persisted controls. Zero-valued controls
+// remain valid when written; omission must not silently select Go zero values.
+func requireProfileFields(envelope map[string]json.RawMessage) error {
+	var scenario, options map[string]json.RawMessage
+	if err := json.Unmarshal(envelope["scenario"], &scenario); err != nil || scenario == nil {
+		return errors.New("campaign profile scenario is missing or invalid")
+	}
+	if err := json.Unmarshal(envelope["options"], &options); err != nil || options == nil {
+		return errors.New("campaign profile options are missing or invalid")
+	}
+	required := func(fields map[string]json.RawMessage, names ...string) bool {
+		for _, name := range names {
+			value, ok := fields[name]
+			if !ok || bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+				return false
+			}
+		}
+		return true
+	}
+	if !required(envelope, "name", "scenario", "options") ||
+		!required(scenario, "name", "base_url", "users", "duration", "ramp_up", "think_time", "request_timeout", "max_rps", "p95_limit_ms", "max_error_rate") ||
+		!required(options, "warmup", "stabilization", "observation", "spike_duration", "recovery", "soak", "cooldown", "repeats", "budget", "stability_policy") {
+		return errors.New("campaign profile omits required persisted fields")
+	}
+	var stability map[string]json.RawMessage
+	if err := json.Unmarshal(options["stability_policy"], &stability); err != nil || stability == nil ||
+		!required(stability, "minimum_windows", "minimum_samples_per_window", "max_p95_increase_percent", "max_p95_increase_ms", "max_throughput_drop_percent") {
+		return errors.New("campaign profile stability policy omits required fields")
+	}
+	return nil
 }
 
 func Validate(p Profile) error {

@@ -46,6 +46,22 @@ func TestDecodeRejectsDuplicateJSONKeys(t *testing.T) {
 	}
 }
 
+func TestDecodeRejectsOmittedCurrentProfileControls(t *testing.T) {
+	base := string(mustJSON(t, fixtureProfile(t)))
+	for _, mutation := range []struct{ fragment, replacement string }{
+		{`"repeats":2,`, ""}, {`"max_error_rate":1,`, ""}, {`"max_p95_increase_ms":5,`, ""},
+		{`"repeats":2`, `"repeats":null`},
+	} {
+		mutated := strings.Replace(base, mutation.fragment, mutation.replacement, 1)
+		if mutated == base {
+			t.Fatalf("fixture lacks required field fragment %q", mutation.fragment)
+		}
+		if _, _, err := Decode([]byte(mutated)); err == nil {
+			t.Fatalf("accepted profile with omitted persisted field %q", mutation.fragment)
+		}
+	}
+}
+
 func TestV0MigrationAndFutureSchemaRejected(t *testing.T) {
 	legacy := fixtureProfile(t)
 	legacy.SchemaVersion = 0

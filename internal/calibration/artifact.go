@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 
@@ -55,6 +56,9 @@ func ValidateArtifactBytes(b []byte, requirePassing bool) (Record, error) {
 	if err := jsonartifact.RejectDuplicateKeys(b); err != nil {
 		return Record{}, errors.New("calibration artifact contains ambiguous JSON")
 	}
+	if err := validateArtifactPresence(b); err != nil {
+		return Record{}, err
+	}
 	decoder := json.NewDecoder(bytes.NewReader(b))
 	if err := decoder.Decode(&result); err != nil {
 		return Record{}, errors.New("calibration artifact is not valid JSON")
@@ -79,4 +83,65 @@ func ValidateArtifactBytes(b []byte, requirePassing bool) (Record, error) {
 		}
 	}
 	return result.Preflight, nil
+}
+
+func validateArtifactPresence(data []byte) error {
+	var root map[string]json.RawMessage
+	if err := json.Unmarshal(data, &root); err != nil || root == nil {
+		return errors.New("calibration artifact must be a JSON object")
+	}
+	if err := requireFields(root, "schema_version", "status", "preflight", "checks", "scheduler_lag_calibration", "runs"); err != nil {
+		return errors.New("calibration artifact omits required evidence")
+	}
+	var preflight map[string]json.RawMessage
+	if err := json.Unmarshal(root["preflight"], &preflight); err != nil || preflight == nil {
+		return errors.New("calibration preflight is missing or invalid")
+	}
+	if err := requireFields(preflight, "schema_version", "kind", "status", "started_at", "finished_at", "generator", "fixture", "scenario_fingerprint_sha256", "healthy_stages", "highest_passing_tested_arrival_rate", "interpretation"); err != nil {
+		return errors.New("calibration preflight omits required evidence")
+	}
+	var version int
+	if err := json.Unmarshal(preflight["schema_version"], &version); err != nil || version < minimumSupportedSchemaVersion || version > SchemaVersion {
+		return errors.New("calibration preflight schema is invalid")
+	}
+	var generator, fixture map[string]json.RawMessage
+	if json.Unmarshal(preflight["generator"], &generator) != nil || generator == nil ||
+		json.Unmarshal(preflight["fixture"], &fixture) != nil || fixture == nil {
+		return errors.New("calibration generator or fixture is missing")
+	}
+	if err := requireFields(generator, "os", "arch", "logical_cpus", "gomaxprocs", "go_version", "runner_version"); err != nil {
+		return errors.New("calibration generator omits required evidence")
+	}
+	if version >= 7 {
+		if err := requireFields(generator, "cpu_capacity_cores", "cpu_capacity_source", "cpu_capacity_known"); err != nil {
+			return errors.New("calibration generator omits effective CPU evidence")
+		}
+	}
+	if err := requireFields(fixture, "network_mode", "workload_model", "method", "healthy_response_bytes", "healthy_delay", "stage_duration", "soak_duration", "stage_users", "maximum_rps", "repeats", "extended", "healthy_rates"); err != nil {
+		return errors.New("calibration fixture omits required controls")
+	}
+	if version >= 2 {
+		if err := requireFields(preflight, "fixture_workload_fingerprint"); err != nil {
+			return errors.New("calibration preflight omits fixture workload identity")
+		}
+	}
+	if version >= 3 {
+		if err := requireFields(preflight, "workload_observations"); err != nil {
+			return errors.New("calibration preflight omits workload observations")
+		}
+		if err := requireFields(fixture, "workload_profiles"); err != nil {
+			return errors.New("calibration fixture omits workload profiles")
+		}
+	}
+	return nil
+}
+
+func requireFields(object map[string]json.RawMessage, names ...string) error {
+	for _, name := range names {
+		value, ok := object[name]
+		if !ok || bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+			return fmt.Errorf("required field %q is absent", name)
+		}
+	}
+	return nil
 }

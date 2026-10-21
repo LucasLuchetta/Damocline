@@ -53,7 +53,7 @@ func passingArtifact(t *testing.T) artifact {
 	for i, s := range stages {
 		runs[i] = stageRun{ArrivalsScheduled: s.Scheduled, IterationsStarted: s.Started, IterationsCompleted: s.Completed, Outcome: s.Outcome}
 	}
-	a := artifact{SchemaVersion: 1, Status: rec.Status, Preflight: rec, Runs: runs}
+	a := artifact{SchemaVersion: 1, Status: rec.Status, Preflight: rec, Checks: []string{}, Runs: runs}
 	a.SchedulerLag = passedLagFixture()
 	return a
 }
@@ -293,6 +293,22 @@ func TestCalibrationArtifactRejectsDuplicateJSONKeys(t *testing.T) {
 	}
 	if _, err := ValidateArtifactBytes(duplicate, true); err == nil || !strings.Contains(err.Error(), "ambiguous JSON") {
 		t.Fatalf("duplicate calibration schema key was not rejected clearly: %v", err)
+	}
+}
+
+func TestCalibrationArtifactRejectsOmittedRequiredEvidence(t *testing.T) {
+	data, err := json.Marshal(passingArtifact(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{`"scheduler_lag_calibration":`, `"generator":`, `"healthy_stages":`, `"workload_observations":`} {
+		mutated := bytes.Replace(data, []byte(field), []byte(`"omitted_fixture_field":`), 1)
+		if bytes.Equal(mutated, data) {
+			t.Fatalf("fixture lacks required field %s", field)
+		}
+		if _, err := ValidateArtifactBytes(mutated, true); err == nil {
+			t.Fatalf("accepted calibration artifact without %s", field)
+		}
 	}
 }
 
