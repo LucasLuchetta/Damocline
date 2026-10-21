@@ -105,7 +105,7 @@ func TestAuditReportOutContainsExecutiveTechnicalReplayWithoutConflictingVerdict
 		t.Fatal(err)
 	}
 	content := string(data)
-	for _, expected := range []string{"## Executive summary", "## Technical evidence", "Predeclared objectives", "maximum journey error rate 10.00000%", "Completed-work ratio: 100%", "maximum dropped arrivals: 0", "peak 8 active users, growth 25%, reserve 10%", "Calculated target:", "Campaign evidence ID", "Offline replay", "--expect-evidence-id '" + expectedID + "'", "--peak-users 8", "--growth-percent 25", "--reserve-percent 10", "INCONCLUSIVE", "INSUFFICIENT_EVIDENCE"} {
+	for _, expected := range []string{"## Executive summary", "## Technical evidence", "Predeclared objectives", "maximum journey error rate 10.00000%", "Completed-work ratio: 100%", "maximum dropped arrivals: 0", "peak 8 active users, growth 25%, reserve 10%", "Calculated target:", "Campaign evidence ID", "Offline replay", "--expect-evidence-id '" + expectedID + "'", "--peak-users 8", "--growth-percent 25", "--reserve-percent 10", "canonical decoded campaign fields", "not a hash of original file bytes", "INCONCLUSIVE", "INSUFFICIENT_EVIDENCE"} {
 		if !strings.Contains(content, expected) {
 			t.Fatalf("capacity report omits %q: %s", expected, content)
 		}
@@ -156,6 +156,15 @@ func TestAuditCommandRejectsChangedCampaignBeforeWritingAssessment(t *testing.T)
 	}
 	if err := os.WriteFile(campaignPath, changed, 0600); err != nil {
 		t.Fatal(err)
+	}
+	whitespacePath := filepath.Join(directory, "campaign-whitespace-only.json")
+	whitespace := append([]byte(" \n"), changed...)
+	if err := os.WriteFile(whitespacePath, whitespace, 0600); err != nil {
+		t.Fatal(err)
+	}
+	var unchanged campaign.Result
+	if err := json.Unmarshal(whitespace, &unchanged); err != nil || capacityplan.AuditCampaign(unchanged).EvidenceID != capacityplan.AuditCampaign(evidence).EvidenceID {
+		t.Fatalf("whitespace-only encoding changed decoded-model evidence identity: err=%v", err)
 	}
 	assessmentPath := filepath.Join(directory, "assessment.json")
 	reportPath := filepath.Join(directory, "capacity.md")

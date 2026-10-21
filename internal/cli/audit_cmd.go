@@ -82,6 +82,7 @@ func auditCmd(args []string, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stdout, "Required phases reviewed: %d\n", audit.RequiredPhases)
 	fmt.Fprintf(stdout, "Confidence dimensions: measurement=%s | workload representativeness=%s | decision=%s\n", assessment.Confidence.Measurement, assessment.Confidence.WorkloadRepresentativeness, assessment.Confidence.Decision)
 	fmt.Fprintf(stdout, "Evidence ID: %s\n", audit.EvidenceID)
+	fmt.Fprintln(stdout, "Evidence ID scope: SHA-256 of canonical decoded campaign fields; it is not a hash of original file bytes, signature, or producer/host/target attestation.")
 	fmt.Fprintf(stdout, "Scenario fingerprint: %s\n", audit.ScenarioFingerprint)
 	fmt.Fprintf(stdout, "Host type: %s\n", audit.HostType)
 	fmt.Fprintf(stdout, "Tested required duration: %s | decision confidence: %s\n", audit.TestedDuration, assessment.Confidence.Decision)

@@ -178,7 +178,10 @@ replay command pinned to the source campaign's SHA-256 evidence ID. Replay
 fails before writing output if the interpreted campaign evidence has changed.
 For a collection, the command pins each ID in the same order as its `--campaign`
 argument. These digests detect source changes relative to the report but are
-not signatures and do not authenticate who produced the evidence. The Markdown
+canonical JSON hashes of decoded report fields, not hashes of original file
+bytes: whitespace-only changes and fields unknown to the reader are outside
+the check. They are unkeyed identifiers, not signatures or immutable storage,
+and do not authenticate who produced the evidence. The Markdown
 file is created without overwriting and requests
 mode 0600; Windows inherits the destination directory's ACL. It includes the
 target origin and may contain private workload details; keep it with local

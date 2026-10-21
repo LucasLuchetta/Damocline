@@ -25,6 +25,7 @@ This assessment describes the saved evidence under its declared conditions. It d
 - **Required phase duration reviewed:** 20s
 - **Base active users:** 2
 - **Workload fingerprint:** `sha256:workload-fixture`
+- **Evidence ID scope:** SHA-256 of canonical decoded campaign fields; it is not a hash of original file bytes, a signature, or producer/host/target attestation. Whitespace-only changes and fields unknown to this reader are outside this ID.
 - **Campaign schedule:** warm-up 0s; stabilization 0s; observation 10s; spike 0 users for 0s; recovery 10s; soak 0s; cooldown 0s; repeats 2; wall-time budget 3m20s
 - **Effective drift screen policy** (historical default when not persisted): minimum 3 windows, 20 samples/window, p95 increase 20.000% and 5.000 ms, throughput decrease 20.000%
 - **Generator guardrails:** disabled

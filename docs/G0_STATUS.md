@@ -1,5 +1,7 @@
 # G0 acceptance matrix
 
+Capacity audit evidence IDs are SHA-256 hashes over canonical JSON marshaled from decoded campaign/report structs. They verify replay against interpreted fields, not original file bytes, unknown JSON fields, producer identity, or source custody. They are unkeyed identifiers and do not turn local report files into immutable or authenticated evidence.
+
 This matrix records implementation, automated-test and runtime-validation evidence. `VALID_WITHIN_ENVELOPE` is reachable only for the calibrator-owned 30-second loopback soak; ordinary target runs remain limited. No item implies general application-capacity certification.
 
 | Gate | Implementation and tests in the merged baseline | Validation established | Remaining acceptance gap |
