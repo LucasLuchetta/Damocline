@@ -664,7 +664,14 @@ func validatePartialStageEvidence(evidence campaign.Result) error {
 			}
 			state, _ := campaign.ClassifyPhase(evidence, phase.Run, phase.Name)
 			stability := ""
-			if phase.Name == "stabilization" || phase.Name == "observation" || phase.Name == "soak" {
+			legacySchema := evidence.SchemaVersion == 2 || evidence.SchemaVersion == 4
+			if legacySchema {
+				state = historicalCampaignPhaseState(phase.Run)
+				stability = phase.Stability
+				if (phase.Name == "observation" || phase.Name == "soak") && !validHistoricalStability(stability) {
+					return fmt.Errorf("trial %d has unsupported historical %s stability classification", trial.Number, phase.Name)
+				}
+			} else if phase.Name == "stabilization" || phase.Name == "observation" || phase.Name == "soak" {
 				stability = campaign.AssessStabilityWithPolicy(phase.Run, evidence.EffectiveStabilityPolicy())
 			}
 			if phase.EvidenceState != state || (phase.Name == "stabilization" || phase.Name == "observation" || phase.Name == "soak") && phase.Stability != stability {
@@ -708,6 +715,30 @@ func validatePartialStageEvidence(evidence campaign.Result) error {
 		}
 	}
 	return nil
+}
+
+func historicalCampaignPhaseState(run report.Result) string {
+	if run.Quality != nil && run.Quality.State == report.QualityInvalid || run.ArrivalsDropped > 0 ||
+		run.ArrivalsCancelledBeforeAdmission != nil && *run.ArrivalsCancelledBeforeAdmission > 0 {
+		return "INVALID_DELIVERY"
+	}
+	switch run.Outcome {
+	case "PASS":
+		return "PASS_OBSERVED"
+	case "FAIL":
+		return "FAIL_OBSERVED"
+	default:
+		return "INSUFFICIENT_EVIDENCE"
+	}
+}
+
+func validHistoricalStability(value string) bool {
+	switch value {
+	case "NO_LARGE_DRIFT_DETECTED", "NON_STATIONARY", "INSUFFICIENT_WINDOWS":
+		return true
+	default:
+		return false
+	}
 }
 
 func validatePartialLegacyTrials(evidence campaign.Result) error {

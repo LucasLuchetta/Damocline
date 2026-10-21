@@ -417,15 +417,18 @@ func AuditCampaign(e campaign.Result) CampaignAudit {
 				a.Findings = append(a.Findings, fmt.Sprintf("Trial %d %s claims %s measurement quality but recomputes to %s.", trial.Number, phase.Name, phase.Run.Quality.State, quality.State))
 			}
 			if e.SchemaVersion >= 2 {
-				legacyClassification := (e.SchemaVersion == 2 || e.SchemaVersion == 4) && phase.EvidenceState == "PASS_OBSERVED"
-				legacyStability := e.SchemaVersion == 2 || e.SchemaVersion == 4
+				legacyClassification := e.SchemaVersion == 2 || e.SchemaVersion == 4
+				legacyStability := legacyClassification
 				if (!legacyClassification && phase.EvidenceState != state) || ((phase.Name == "observation" || phase.Name == "soak") && !legacyStability && phase.Stability != stability) {
 					invalid = true
 					a.Findings = append(a.Findings, fmt.Sprintf("Trial %d %s has stale or altered stage evidence.", trial.Number, phase.Name))
 				}
-				if legacyClassification && state == "FAIL_OBSERVED" {
+				if legacyClassification && !validHistoricalPhaseState(phase.EvidenceState) {
+					invalid = true
+					a.Findings = append(a.Findings, fmt.Sprintf("Trial %d %s has an unsupported historical phase classification.", trial.Number, phase.Name))
+				} else if legacyClassification && phase.EvidenceState != state {
 					inconclusive = true
-					a.Findings = append(a.Findings, fmt.Sprintf("Trial %d %s historical PASS classification conflicts with the current recomputed SLO result.", trial.Number, phase.Name))
+					a.Findings = append(a.Findings, fmt.Sprintf("Trial %d %s historical %s classification conflicts with the current recomputed %s result.", trial.Number, phase.Name, phase.EvidenceState, state))
 				}
 			}
 			if state == "INVALID_DELIVERY" || state == "INSUFFICIENT_EVIDENCE" || stability == "NON_STATIONARY" || stability == "INSUFFICIENT_WINDOWS" {
@@ -467,6 +470,15 @@ func AuditCampaign(e campaign.Result) CampaignAudit {
 		a.Findings = append(a.Findings, "All recorded mandatory stages met their observed objectives; statistical and workload-specific certification remain separate decisions.")
 	}
 	return a
+}
+
+func validHistoricalPhaseState(value string) bool {
+	switch value {
+	case "INVALID_DELIVERY", "PASS_OBSERVED", "FAIL_OBSERVED", "INSUFFICIENT_EVIDENCE":
+		return true
+	default:
+		return false
+	}
 }
 
 func summarizeGeneratorEnvironments(e campaign.Result) ([]GeneratorEnvironment, string, string) {

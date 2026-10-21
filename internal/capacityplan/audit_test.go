@@ -169,7 +169,7 @@ func TestHistoricalPassCannotOverrideRecomputedJourneySLOFailure(t *testing.T) {
 		t.Fatalf("historical campaign structure rejected before recomputed audit: %v", err)
 	}
 	audit := AuditCampaign(evidence)
-	if audit.State != "INCONCLUSIVE" || !containsFinding(audit.Findings, "historical PASS classification conflicts with the current recomputed SLO result") {
+	if audit.State != "INCONCLUSIVE" || !containsFinding(audit.Findings, "historical PASS_OBSERVED classification conflicts with the current recomputed FAIL_OBSERVED result") {
 		t.Fatalf("historical PASS overrode current journey SLO evidence: state=%s findings=%v", audit.State, audit.Findings)
 	}
 }

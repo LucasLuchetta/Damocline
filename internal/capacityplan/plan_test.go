@@ -108,6 +108,33 @@ func TestHistoricalCampaignFixturesRemainReadableAndAuditable(t *testing.T) {
 	}
 }
 
+func TestHistoricalPartialFailureFixturesRemainReadableAndAuditable(t *testing.T) {
+	for _, version := range []int{2, 4} {
+		t.Run(fmt.Sprintf("schema_v%d", version), func(t *testing.T) {
+			path := filepath.Join("testdata", "campaigns", fmt.Sprintf("schema-v%d.json", version))
+			evidence, err := ReadCampaign(path)
+			if err != nil {
+				t.Fatalf("read historical fixture: %v", err)
+			}
+			evidence.Outcome = "FAIL"
+			last := &evidence.Trials[len(evidence.Trials)-1]
+			last.Outcome = "FAIL"
+			last.Phases = append([]campaign.Phase(nil), last.Phases[:1]...)
+			last.Phases[0].Run.Outcome = "FAIL"
+			last.Phases[0].EvidenceState = "FAIL_OBSERVED"
+			evidence.ObservationVariability = nil
+
+			if err := ValidateSavedCampaign(evidence); err != nil {
+				t.Fatalf("valid historical partial failure rejected: %v", err)
+			}
+			audit := AuditCampaign(evidence)
+			if audit.State == "INVALID_EVIDENCE" {
+				t.Fatalf("historical partial failure became invalid evidence: %v", audit.Findings)
+			}
+		})
+	}
+}
+
 func TestCampaignAuditValidatesAndCapsAttachedApplicationMetrics(t *testing.T) {
 	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC).Format(time.RFC3339Nano)
 	finish := time.Date(2026, 1, 1, 0, 0, 1, 0, time.UTC).Format(time.RFC3339Nano)
