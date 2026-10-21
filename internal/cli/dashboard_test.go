@@ -18,6 +18,16 @@ import (
 	"github.com/LucasLuchetta/Damocline/internal/report"
 )
 
+func TestLoadDashboardRejectsDuplicateJSONKeys(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "duplicate-report.json")
+	if err := os.WriteFile(path, []byte(`{"base_users":10,"base_users":20}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadDashboardHandler(path); err == nil || !strings.Contains(err.Error(), "ambiguous JSON") {
+		t.Fatalf("duplicate dashboard artifact key was not rejected clearly: %v", err)
+	}
+}
+
 func TestLoadDashboardHandlerSupportsRunAndCampaignArtifacts(t *testing.T) {
 	runPath := filepath.Join("..", "insights", "testdata", "reports", "schema-v25.json")
 	runHandler, err := loadDashboardHandler(runPath)

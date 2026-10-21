@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -17,6 +18,17 @@ import (
 	"github.com/LucasLuchetta/Damocline/internal/generatorhealth"
 	"github.com/LucasLuchetta/Damocline/internal/report"
 )
+
+func TestReadCampaignRejectsDuplicateJSONKeys(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "campaign.json")
+	data := []byte(`{"schema_version":1,"schema_\u0076ersion":1}`)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadCampaign(path); err == nil {
+		t.Fatal("campaign with duplicate JSON keys was accepted")
+	}
+}
 
 func TestCampaignAuditValidatesAndCapsAttachedApplicationMetrics(t *testing.T) {
 	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC).Format(time.RFC3339Nano)

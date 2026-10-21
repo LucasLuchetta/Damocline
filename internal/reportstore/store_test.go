@@ -45,8 +45,9 @@ func TestSaveRequiresBoundedJSONArtifacts(t *testing.T) {
 	dir := t.TempDir()
 	store := Store{Dir: filepath.Join(dir, "history")}
 	for name, data := range map[string][]byte{
-		"invalid.json": []byte("not json"),
-		"array.json":   []byte("[]"),
+		"invalid.json":   []byte("not json"),
+		"array.json":     []byte("[]"),
+		"duplicate.json": []byte(`{"schema_version":1,"schema_\u0076ersion":2}`),
 	} {
 		source := filepath.Join(dir, name)
 		if err := os.WriteFile(source, data, 0600); err != nil {

@@ -6,6 +6,8 @@ import (
 	"errors"
 	"io"
 	"os"
+
+	"github.com/LucasLuchetta/Damocline/internal/jsonartifact"
 )
 
 const maxArtifactBytes = 16 << 20
@@ -49,6 +51,9 @@ func ValidateArtifactBytes(b []byte, requirePassing bool) (Record, error) {
 	var result artifact
 	if len(b) > maxArtifactBytes {
 		return Record{}, errors.New("calibration artifact exceeds the read limit")
+	}
+	if err := jsonartifact.RejectDuplicateKeys(b); err != nil {
+		return Record{}, errors.New("calibration artifact contains ambiguous JSON")
 	}
 	decoder := json.NewDecoder(bytes.NewReader(b))
 	if err := decoder.Decode(&result); err != nil {

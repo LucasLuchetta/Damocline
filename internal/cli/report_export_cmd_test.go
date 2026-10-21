@@ -79,6 +79,22 @@ func TestReportExportRejectsSamePathAndUnsupportedArtifacts(t *testing.T) {
 	}
 }
 
+func TestReportExportRejectsDuplicateJSONKeys(t *testing.T) {
+	dir := t.TempDir()
+	input := filepath.Join(dir, "duplicate.json")
+	output := filepath.Join(dir, "redacted.json")
+	if err := os.WriteFile(input, []byte(`{"schema_version":1,"schema_\u0076ersion":1}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr strings.Builder
+	if code := Run([]string{"report", "export", "--file", input, "--out", output}, &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "ambiguous JSON") {
+		t.Fatalf("export accepted ambiguous JSON: code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if _, err := os.Stat(output); !os.IsNotExist(err) {
+		t.Fatalf("ambiguous source produced an export: stat err=%v", err)
+	}
+}
+
 func TestReportExportValidHistoricalCampaignsThroughCLIWithoutChangingSources(t *testing.T) {
 	dir := t.TempDir()
 	marker := "private-marker-731.example.invalid"

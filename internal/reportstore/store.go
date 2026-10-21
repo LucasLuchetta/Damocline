@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/LucasLuchetta/Damocline/internal/jsonartifact"
 	"github.com/LucasLuchetta/Damocline/internal/report"
 )
 
@@ -259,6 +260,9 @@ type artifactMetadata struct {
 }
 
 func inspectArtifact(data []byte) (artifactMetadata, error) {
+	if err := jsonartifact.RejectDuplicateKeys(data); err != nil {
+		return artifactMetadata{}, fmt.Errorf("report artifact contains ambiguous JSON: %w", err)
+	}
 	var object map[string]json.RawMessage
 	if !json.Valid(data) || json.Unmarshal(data, &object) != nil || object == nil {
 		return artifactMetadata{}, errors.New("report artifact must be a valid JSON object")

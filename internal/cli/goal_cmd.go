@@ -12,6 +12,7 @@ import (
 	"github.com/LucasLuchetta/Damocline/internal/arrivalexplorer"
 	"github.com/LucasLuchetta/Damocline/internal/capacitygoal"
 	"github.com/LucasLuchetta/Damocline/internal/explorer"
+	"github.com/LucasLuchetta/Damocline/internal/jsonartifact"
 )
 
 const maxGoalReportBytes = 16 << 20
@@ -49,6 +50,10 @@ func goalCmd(args []string, stdout, stderr io.Writer) int {
 	}
 	if len(data) > maxGoalReportBytes {
 		fmt.Fprintln(stderr, "capacity report exceeds the 16 MiB safety limit")
+		return 2
+	}
+	if err := jsonartifact.RejectDuplicateKeys(data); err != nil {
+		fmt.Fprintf(stderr, "capacity report contains ambiguous JSON: %v\n", err)
 		return 2
 	}
 	if *expectedSourceSHA256 != "" {

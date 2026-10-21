@@ -20,6 +20,7 @@ import (
 	"github.com/LucasLuchetta/Damocline/internal/capacitygoal"
 	"github.com/LucasLuchetta/Damocline/internal/config"
 	"github.com/LucasLuchetta/Damocline/internal/generatorhealth"
+	"github.com/LucasLuchetta/Damocline/internal/jsonartifact"
 	"github.com/LucasLuchetta/Damocline/internal/report"
 	"github.com/LucasLuchetta/Damocline/internal/statistics"
 )
@@ -349,6 +350,9 @@ func readCampaignBytes(path string, maxBytes int64) ([]byte, error) {
 			return nil, errors.New("campaign report exceeds the 16 MiB safety limit")
 		}
 		return nil, errors.New("campaign collection exceeds the 64 MiB safety limit")
+	}
+	if err := jsonartifact.RejectDuplicateKeys(data); err != nil {
+		return nil, fmt.Errorf("campaign report contains ambiguous JSON: %w", err)
 	}
 	return data, nil
 }

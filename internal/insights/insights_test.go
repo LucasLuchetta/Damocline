@@ -276,6 +276,16 @@ func TestReadRunRejectsBrokenInput(t *testing.T) {
 	}
 }
 
+func TestReadRunRejectsDuplicateJSONKeys(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "duplicate.json")
+	if err := os.WriteFile(path, []byte(`{"schema_version":1,"schema_\u0076ersion":1}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadRun(path); err == nil || !strings.Contains(err.Error(), "ambiguous JSON") {
+		t.Fatalf("duplicate report schema key was not rejected clearly: %v", err)
+	}
+}
+
 func TestReadRunAcceptsSchemaThreeGeneratorHealth(t *testing.T) {
 	r := synthetic()
 	r.SchemaVersion = 3

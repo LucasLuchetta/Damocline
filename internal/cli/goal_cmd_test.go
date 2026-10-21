@@ -46,6 +46,17 @@ func TestGoalCommandUsesSavedExploreWithoutGeneratingTraffic(t *testing.T) {
 	}
 }
 
+func TestGoalCommandRejectsDuplicateJSONKeys(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "duplicate.json")
+	if err := os.WriteFile(file, []byte(`{"schema_version":1,"schema_\u0076ersion":1}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	if code := Run([]string{"goal", "--file", file, "--peak-users", "1"}, &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "ambiguous JSON") {
+		t.Fatalf("goal accepted ambiguous JSON: code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+}
+
 func TestGoalCommandKeepsArrivalDemandInScheduledStartsPerSecond(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "arrival-capacity.json")
 	saved := arrivalexplorer.Result{
