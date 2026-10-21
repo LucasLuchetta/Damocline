@@ -609,7 +609,7 @@ func campaignCmdWithWorkloadSource(args []string, source *campaign.WorkloadSourc
 	observation := fs.Duration("observation", 2*time.Minute, "steady observation duration (10s-10m)")
 	spikeUsers := fs.Int("spike-users", 0, "optional peak virtual users above the base scenario")
 	spikeDuration := fs.Duration("spike-duration", 0, "optional spike duration (10s-3m)")
-	recovery := fs.Duration("recovery", 30*time.Second, "recovery duration after observation (0s-3m)")
+	recovery := fs.Duration("recovery", 30*time.Second, "required recovery duration after observation (greater than 0, up to 3m)")
 	soak := fs.Duration("soak", 0, "optional final sustained observation after all repeated trials (10s-3m; long-run up to 30m)")
 	cooldown := fs.Duration("cooldown", 0, "optional bounded wait between independent trials (0-5m)")
 	longRun := fs.Bool("allow-long-run", false, "opt in to campaign phases up to 30m and a wall budget up to 2h")

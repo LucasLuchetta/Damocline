@@ -4,6 +4,7 @@ This project follows a human-maintained changelog. No release exists yet.
 
 ## [Unreleased]
 
+- Require a nonzero recovery phase for closed-loop campaigns before traffic starts, so a live `PASS` cannot produce evidence that offline capacity audit must reject as missing recovery. Saved profiles with `recovery: "0s"` are rejected rather than silently lengthened.
 - Record exact bounded scenario/profile source-file SHA-256 and semantic workload fingerprint in closed-loop campaign schema v15 and offline audit output; reject malformed descriptors or phase-fingerprint mismatches; verify profile byte identity while keeping file contents, paths, and credentials private.
 - Advance campaign collection assessment schema to v5 and require recorded generator build/runtime identity and effective CPU entitlement to match across every required phase and tested load level; preserve individual audits while marking missing or changed environment provenance `NOT_COMPARABLE`.
 - Clarify that HTTP trace phase counts remain authoritative when a measured duration is below clock resolution, and validate immediate refusals plus delayed transport errors against independent loopback observations and serialized report data.

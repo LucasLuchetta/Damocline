@@ -317,6 +317,17 @@ func TestCampaignSpikeRequiresRecoveryPhase(t *testing.T) {
 	}
 }
 
+func TestCampaignRequiresRecoveryBeforeRunnerCanPass(t *testing.T) {
+	calls := 0
+	_, err := WithRunner(context.Background(), scenario(t), Options{Observation: 10 * time.Second, Repeats: 2}, func(context.Context, config.Validated) report.Result {
+		calls++
+		return stableResult(scenario(t))
+	})
+	if err == nil || !strings.Contains(err.Error(), "recovery") || calls != 0 {
+		t.Fatalf("campaign without recovery was not rejected before measurement: calls=%d err=%v", calls, err)
+	}
+}
+
 func TestLongRunRequiresStagingDeclarationExplicitApprovalAndBoundedBudget(t *testing.T) {
 	options := Options{Observation: 30 * time.Minute, Recovery: 10 * time.Second, Repeats: 2,
 		Budget: 70 * time.Minute, LongRun: true, StagingConfirmed: true}
@@ -531,7 +542,7 @@ func TestStabilityPolicyConfiguresLatencyAndWindowEvidence(t *testing.T) {
 func TestCampaignPersistsConfiguredStabilityAndStopsOnItsThreshold(t *testing.T) {
 	policy := DefaultStabilityPolicy()
 	policy.MaxP95IncreasePercent = 10
-	result, err := WithRunner(context.Background(), scenario(t), Options{Observation: 10 * time.Second, Repeats: 2, Stability: policy}, func(_ context.Context, v config.Validated) report.Result {
+	result, err := WithRunner(context.Background(), scenario(t), Options{Observation: 10 * time.Second, Recovery: 10 * time.Second, Repeats: 2, Stability: policy}, func(_ context.Context, v config.Validated) report.Result {
 		run := stableResult(v)
 		run.Windows[3].Metrics.P95MS = 115
 		return run
@@ -563,7 +574,7 @@ func TestStabilityPolicyValidationIsBounded(t *testing.T) {
 
 func TestValidateForScenarioRequiresEnoughDeclaredWindows(t *testing.T) {
 	base := scenario(t)
-	options := Options{Observation: 10 * time.Second, Repeats: 2}
+	options := Options{Observation: 10 * time.Second, Recovery: 10 * time.Second, Repeats: 2}
 	if err := ValidateForScenario(base, options); err != nil {
 		t.Fatalf("default generated window coverage rejected: %v", err)
 	}
@@ -590,12 +601,12 @@ func TestNativeEngineCampaignRecordsStableLoopbackWindows(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := Run(context.Background(), v, Options{Observation: 10 * time.Second, Repeats: 2})
-	if err != nil || result.Outcome != "PASS" || len(result.Trials) != 2 || received.Load() < 200 {
+	result, err := Run(context.Background(), v, Options{Observation: 10 * time.Second, Recovery: 10 * time.Second, Repeats: 2})
+	if err != nil || result.Outcome != "PASS" || len(result.Trials) != 2 || received.Load() < 400 {
 		t.Fatalf("bounded local campaign failed: outcome=%s trials=%d received=%d err=%v", result.Outcome, len(result.Trials), received.Load(), err)
 	}
 	for _, trial := range result.Trials {
-		if len(trial.Phases) != 1 || trial.Phases[0].Stability != "NO_LARGE_DRIFT_DETECTED" || trial.Phases[0].EvidenceState != "PASS_OBSERVED" || len(trial.Phases[0].Run.Windows) != 4 {
+		if len(trial.Phases) != 2 || trial.Phases[0].Name != "observation" || trial.Phases[0].Stability != "NO_LARGE_DRIFT_DETECTED" || trial.Phases[0].EvidenceState != "PASS_OBSERVED" || len(trial.Phases[0].Run.Windows) != 4 || trial.Phases[1].Name != "recovery" || trial.Phases[1].EvidenceState != "PASS_OBSERVED" {
 			t.Fatalf("missing real engine window evidence: %+v", trial.Phases)
 		}
 	}
@@ -643,7 +654,7 @@ func TestCampaignSeparatesInvalidDeliveryFromObservedFailure(t *testing.T) {
 func TestCampaignRecordsInterruptionReason(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	result, err := WithRunner(ctx, scenario(t), Options{Observation: 10 * time.Second, Repeats: 2}, func(context.Context, config.Validated) report.Result {
+	result, err := WithRunner(ctx, scenario(t), Options{Observation: 10 * time.Second, Recovery: 10 * time.Second, Repeats: 2}, func(context.Context, config.Validated) report.Result {
 		t.Fatal("cancelled campaign started a phase")
 		return report.Result{}
 	})

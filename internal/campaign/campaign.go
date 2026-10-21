@@ -242,8 +242,8 @@ func Validate(options Options) error {
 	if err := ValidateStabilityPolicy(effectiveStabilityPolicy(options.Stability)); err != nil {
 		return err
 	}
-	if options.Warmup < 0 || options.Warmup > 3*time.Minute || options.Recovery < 0 || options.Recovery > 3*time.Minute {
-		return fmt.Errorf("warmup and recovery must be between 0 and 3m")
+	if options.Warmup < 0 || options.Warmup > 3*time.Minute || options.Recovery <= 0 || options.Recovery > 3*time.Minute {
+		return fmt.Errorf("warmup must be between 0 and 3m and recovery must be greater than 0 and at most 3m")
 	}
 	if options.Stabilization < 0 || options.Stabilization > stabilizationLimit || (options.Stabilization > 0 && options.Stabilization < 10*time.Second) {
 		return fmt.Errorf("stabilization must be between 10s and %s when enabled", stabilizationLimit)

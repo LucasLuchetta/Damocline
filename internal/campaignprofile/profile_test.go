@@ -15,7 +15,7 @@ import (
 
 func fixtureProfile(t *testing.T) Profile {
 	t.Helper()
-	profile, err := New("checkout", "synthetic local fixture", config.Scenario{Name: "fixture", BaseURL: "http://127.0.0.1:8080", Users: 2, Duration: "10s", Timeout: "1s", MaxRPS: 10, P95LimitMS: 1000, MaxErrorRate: 1, Steps: []config.Step{{Name: "read", Method: "GET", Path: "/"}}}, campaign.Options{Warmup: 0, Observation: 10 * time.Second, Recovery: 0, Repeats: 2})
+	profile, err := New("checkout", "synthetic local fixture", config.Scenario{Name: "fixture", BaseURL: "http://127.0.0.1:8080", Users: 2, Duration: "10s", Timeout: "1s", MaxRPS: 10, P95LimitMS: 1000, MaxErrorRate: 1, Steps: []config.Step{{Name: "read", Method: "GET", Path: "/"}}}, campaign.Options{Warmup: 0, Observation: 10 * time.Second, Recovery: 10 * time.Second, Repeats: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +88,7 @@ func TestSecretsMustRemainExternalReferences(t *testing.T) {
 		t.Fatal("accepted literal credential in a versioned workflow profile")
 	}
 	workflowScenario.Workflows[0].Steps[0].Headers["Authorization"] = "${DAMOCLINE_TOKEN}"
-	if _, err := New("versioned-secret", "", workflowScenario, campaign.Options{Observation: 10 * time.Second, Repeats: 2}); err != nil {
+	if _, err := New("versioned-secret", "", workflowScenario, campaign.Options{Observation: 10 * time.Second, Recovery: 10 * time.Second, Repeats: 2}); err != nil {
 		t.Fatalf("rejected environment-backed workflow credential: %v", err)
 	}
 }
@@ -107,6 +107,14 @@ func TestPublishedCampaignProfileExampleIsRunnable(t *testing.T) {
 	}
 	if _, err := profile.CampaignOptions(); err != nil {
 		t.Fatalf("example campaign controls are invalid: %v", err)
+	}
+}
+
+func TestProfileWithZeroRecoveryIsRejected(t *testing.T) {
+	profile := fixtureProfile(t)
+	profile.Options.Recovery = "0s"
+	if _, _, err := Decode(mustJSON(t, profile)); err == nil || !strings.Contains(err.Error(), "recovery") {
+		t.Fatalf("profile without auditable recovery was accepted: %v", err)
 	}
 }
 

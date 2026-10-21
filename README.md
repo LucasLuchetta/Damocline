@@ -253,6 +253,11 @@ write the full trial and phase report to a unique file under
 target state or credentials; environment variables and body data must be supplied
 at run time. Do not commit local profiles or reports.
 
+Every closed-loop campaign now requires a nonzero recovery phase so an observed
+pass can be independently audited. Saved profiles with `recovery: "0s"` are
+rejected; set an explicit positive recovery duration before importing or running
+them. The tool does not silently add extra target traffic to older profiles.
+
 `campaign profile verify` performs an offline comparison of the saved profile's
 workload and campaign controls against the phase configurations recorded in a
 campaign report. It generates no traffic and can save a machine-readable result

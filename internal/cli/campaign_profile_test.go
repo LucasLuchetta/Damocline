@@ -207,7 +207,7 @@ func TestLongRunProfileDryRunNeedsNoExecutionConfirmation(t *testing.T) {
 		Name: "staging-preview", Environment: "staging", BaseURL: "https://app.example.com",
 		Users: 2, Duration: "10s", Timeout: "1s", MaxRPS: 10, P95LimitMS: 1000,
 		MaxErrorRate: 0.01, Steps: []config.Step{{Name: "health", Method: "GET", Path: "/health"}},
-	}, campaign.Options{Observation: 10 * time.Second, Repeats: 2, LongRun: true})
+	}, campaign.Options{Observation: 10 * time.Second, Recovery: 10 * time.Second, Repeats: 2, LongRun: true})
 	if err != nil {
 		t.Fatal(err)
 	}

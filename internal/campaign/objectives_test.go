@@ -13,7 +13,7 @@ func TestObjectiveContractRejectsMissingCriteriaBeforeTraffic(t *testing.T) {
 	base := scenario(t)
 	base.Scenario.MaxErrorRate = 1
 	calls := 0
-	_, err := WithRunner(context.Background(), base, Options{Observation: 10 * time.Second, Repeats: 2}, func(context.Context, config.Validated) report.Result {
+	_, err := WithRunner(context.Background(), base, Options{Observation: 10 * time.Second, Recovery: 10 * time.Second, Repeats: 2}, func(context.Context, config.Validated) report.Result {
 		calls++
 		return report.Result{}
 	})
@@ -26,7 +26,7 @@ func TestObjectiveContractIsPersistedAndReplayedAgainstCoverage(t *testing.T) {
 	base := scenario(t)
 	base.Window = 2500 * time.Millisecond
 	base.Scenario.WindowDuration = base.Window.String()
-	result, err := WithRunner(context.Background(), base, Options{Observation: 10 * time.Second, Repeats: 2}, func(_ context.Context, v config.Validated) report.Result {
+	result, err := WithRunner(context.Background(), base, Options{Observation: 10 * time.Second, Recovery: 10 * time.Second, Repeats: 2}, func(_ context.Context, v config.Validated) report.Result {
 		return stableResult(v)
 	})
 	if err != nil || result.Outcome != "PASS" || result.Objectives == nil || result.Objectives.JourneyP95LimitMS != 1000 || result.Objectives.MaxJourneyErrorRate != 0 || result.Objectives.MinCompletedWorkRatio != 1 || result.Objectives.MaxDroppedArrivals != 0 {

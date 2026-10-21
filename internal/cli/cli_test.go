@@ -538,6 +538,20 @@ func TestCampaignDryRunShowsBoundedWallTime(t *testing.T) {
 	}
 }
 
+func TestCampaignWithoutRecoveryFailsBeforeReadingScenarioOrWritingReport(t *testing.T) {
+	directory := t.TempDir()
+	missingScenario := filepath.Join(directory, "not-read.json")
+	outputPath := filepath.Join(directory, "campaign.json")
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"campaign", "--config", missingScenario, "--observation", "10s", "--recovery", "0s", "--repeats", "2", "--authorized", "--out", outputPath}, &stdout, &stderr)
+	if code != 2 || !strings.Contains(stderr.String(), "recovery") || strings.Contains(stderr.String(), "configuration error") {
+		t.Fatalf("campaign without recovery was not rejected during preflight: code=%d out=%s err=%s", code, stdout.String(), stderr.String())
+	}
+	if _, err := os.Stat(outputPath); !os.IsNotExist(err) {
+		t.Fatalf("invalid campaign created an output artifact: stat err=%v", err)
+	}
+}
+
 func TestCampaignRepeatSummaryLabelsMedianMADAsDescriptive(t *testing.T) {
 	variability := campaign.Variability{Runs: 5, P95MinMS: 100, P95MaxMS: 200, ErrorRateMin: 0, ErrorRateMax: .01,
 		ThroughputMinRPS: 8, ThroughputMaxRPS: 10, SuccessfulJourneysMinPerSec: 7, SuccessfulJourneysMaxPerSec: 9,
