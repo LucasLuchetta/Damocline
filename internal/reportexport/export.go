@@ -141,6 +141,9 @@ type StatisticalMethods struct {
 	P95IntervalMethod          string  `json:"p95_interval_method"`
 	P95IntervalConfidence      float64 `json:"p95_interval_confidence"`
 	P95IntervalAssumption      string  `json:"p95_interval_assumption"`
+	P99IntervalMethod          string  `json:"p99_interval_method,omitempty"`
+	P99IntervalConfidence      float64 `json:"p99_interval_confidence,omitempty"`
+	P99IntervalAssumption      string  `json:"p99_interval_assumption,omitempty"`
 }
 
 type Metrics struct {
@@ -155,6 +158,9 @@ type Metrics struct {
 	P95IID95LowerMS             float64 `json:"p95_iid_95_lower_ms,omitempty"`
 	P95IID95UpperMS             float64 `json:"p95_iid_95_upper_ms,omitempty"`
 	P99MS                       float64 `json:"p99_ms"`
+	P99IID95LowerMS             float64 `json:"p99_iid_95_lower_ms,omitempty"`
+	P99IID95UpperMS             float64 `json:"p99_iid_95_upper_ms,omitempty"`
+	P99IID95Exact               bool    `json:"p99_iid_95_exact,omitempty"`
 	Status1xx                   int     `json:"status_1xx"`
 	Status2xx                   int     `json:"status_2xx"`
 	Status3xx                   int     `json:"status_3xx"`
@@ -425,8 +431,13 @@ func safeMetrics(m report.MetricSet) Metrics {
 	if m.P95IID95Exact && !m.P95IID95Approximation && m.P95IID95LowerMS <= m.P95IID95UpperMS {
 		lower, upper = m.P95IID95LowerMS, m.P95IID95UpperMS
 	}
+	p99Lower, p99Upper := 0.0, 0.0
+	p99Exact := m.P99IID95Exact && m.P99IID95LowerMS <= m.P99MS && m.P99MS <= m.P99IID95UpperMS
+	if p99Exact {
+		p99Lower, p99Upper = m.P99IID95LowerMS, m.P99IID95UpperMS
+	}
 	return Metrics{Total: m.Total, Success: m.Success, Failures: m.Failures, Cancelled: m.Cancelled, RequestConstructionFailures: m.RequestConstructionFailures,
-		P50MS: m.P50MS, MeanMS: m.MeanMS, P95MS: m.P95MS, P95IID95LowerMS: lower, P95IID95UpperMS: upper, P99MS: m.P99MS,
+		P50MS: m.P50MS, MeanMS: m.MeanMS, P95MS: m.P95MS, P95IID95LowerMS: lower, P95IID95UpperMS: upper, P99MS: m.P99MS, P99IID95LowerMS: p99Lower, P99IID95UpperMS: p99Upper, P99IID95Exact: p99Exact,
 		Status1xx: m.HTTP.Status1xx, Status2xx: m.HTTP.Status2xx, Status3xx: m.HTTP.Status3xx,
 		Status4xx: m.HTTP.Status4xx, Status5xx: m.HTTP.Status5xx, Timeouts: m.HTTP.NetworkTimeouts,
 		DNSFailures: m.HTTP.DNSFailures, ConnectFailures: m.HTTP.ConnectionFailures, TLSFailures: m.HTTP.TLSFailures,
@@ -437,8 +448,12 @@ func safeStatisticalMethods(m report.StatisticalMethods) StatisticalMethods {
 	if m.PercentileEstimator != report.PercentileEstimatorNearestRank || m.P95IntervalMethod != report.P95IntervalMethodExactBinomialRanks || m.P95IntervalAssumption != report.P95IntervalAssumptionIIDStationarity {
 		return StatisticalMethods{}
 	}
-	return StatisticalMethods{LatencyPercentileEstimator: m.PercentileEstimator, P95IntervalMethod: m.P95IntervalMethod,
+	result := StatisticalMethods{LatencyPercentileEstimator: m.PercentileEstimator, P95IntervalMethod: m.P95IntervalMethod,
 		P95IntervalConfidence: m.P95IntervalConfidence, P95IntervalAssumption: m.P95IntervalAssumption}
+	if m.P99IntervalMethod == report.P99IntervalMethodExactBinomialRanks && m.P99IntervalAssumption == report.P95IntervalAssumptionIIDStationarity && m.P99IntervalConfidence == 0.95 {
+		result.P99IntervalMethod, result.P99IntervalConfidence, result.P99IntervalAssumption = m.P99IntervalMethod, m.P99IntervalConfidence, m.P99IntervalAssumption
+	}
+	return result
 }
 
 func aliases(r report.Result) (map[string]string, map[string]string) {

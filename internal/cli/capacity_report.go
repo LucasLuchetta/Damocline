@@ -90,11 +90,13 @@ func renderCampaignCapacityReport(assessment capacityplan.Assessment, source, re
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "### Independent observation trials")
 	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, "| Trial | Requests | Request p95 (ms) | Request errors | Completed journeys | Journey p95 (ms) | Journey errors | Successful journeys/s |")
-	fmt.Fprintln(&b, "| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
+	fmt.Fprintln(&b, "| Trial | Requests | Request p95 (ms) | Request p99 (ms) | Request p99 interval | Request errors | Completed journeys | Journey p95 (ms) | Journey p99 (ms) | Journey p99 interval | Journey errors | Successful journeys/s |")
+	fmt.Fprintln(&b, "| ---: | ---: | ---: | ---: | --- | ---: | ---: | ---: | ---: | --- | ---: | ---: |")
 	for _, trial := range a.ObservationTrials {
-		fmt.Fprintf(&b, "| %d | %d | %.3f | %s | %d | %.3f | %s | %.3f |\n", trial.Trial, trial.Requests, trial.RequestP95MS, markdownOptionalPercent(trial.RequestErrorRate), trial.CompletedJourneys, trial.JourneyP95MS, markdownOptionalPercent(trial.JourneyErrorRate), trial.SuccessfulJourneysPerSec)
+		fmt.Fprintf(&b, "| %d | %d | %.3f | %.3f | %s | %s | %d | %.3f | %.3f | %s | %s | %.3f |\n", trial.Trial, trial.Requests, trial.RequestP95MS, trial.RequestP99MS, markdownCode(trial.RequestP99IntervalState), markdownOptionalPercent(trial.RequestErrorRate), trial.CompletedJourneys, trial.JourneyP95MS, trial.JourneyP99MS, markdownCode(trial.JourneyP99IntervalState), markdownOptionalPercent(trial.JourneyErrorRate), trial.SuccessfulJourneysPerSec)
 	}
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "P99 values are nearest-rank descriptive estimates. Exact 95% rank intervals require at least 1,000 observations and assume IID stationary latency samples; these states do not establish independence, a p99 objective, or capacity confidence.")
 	fmt.Fprintln(&b)
 	fmt.Fprintf(&b, "Repeat-trial pass fraction: **%d/%d** evaluable; excluded incomplete trials: %d; method: %s; interval assumption: %s. The interval is conditional and is not capacity confidence.\n", a.Repeatability.PassingTrials, a.Repeatability.EvaluatedTrials, a.Repeatability.ExcludedTrials, markdownCode(a.Repeatability.Method), markdownCode(a.Repeatability.Assumption))
 	fmt.Fprintln(&b)
@@ -130,8 +132,8 @@ func renderArrivalCampaignCapacityReport(assessment capacitygoal.JourneyStartAss
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "### Replayed phase evidence")
 	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, "| Trial | Phase | Scheduled starts | Admitted | Dropped | Completed journeys | Request p95 ms | Journey p95 ms | Evidence | Stability |")
-	fmt.Fprintln(&b, "| ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |")
+	fmt.Fprintln(&b, "| Trial | Phase | Scheduled starts | Admitted | Dropped | Completed journeys | Request p95 ms | Request p99 ms | Request p99 interval | Journey p95 ms | Journey p99 ms | Journey p99 interval | Evidence | Stability |")
+	fmt.Fprintln(&b, "| ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: | ---: | --- | --- | --- |")
 	for _, trial := range evidence.Trials {
 		for _, phase := range trial.Phases {
 			run := phase.Run
@@ -139,9 +141,11 @@ func renderArrivalCampaignCapacityReport(assessment capacitygoal.JourneyStartAss
 			if run.ArrivalsAdmitted != nil {
 				admitted = *run.ArrivalsAdmitted
 			}
-			fmt.Fprintf(&b, "| %d | %s | %d | %d | %d | %d | %.3f | %.3f | %s | %s |\n", trial.Number, markdownText(phase.Name), run.ArrivalsScheduled, admitted, run.ArrivalsDropped, run.Journeys.Total, run.Metrics.P95MS, run.Journeys.P95MS, markdownText(phase.EvidenceState), markdownText(phase.Stability))
+			fmt.Fprintf(&b, "| %d | %s | %d | %d | %d | %d | %.3f | %.3f | %s | %.3f | %.3f | %s | %s | %s |\n", trial.Number, markdownText(phase.Name), run.ArrivalsScheduled, admitted, run.ArrivalsDropped, run.Journeys.Total, run.Metrics.P95MS, run.Metrics.P99MS, markdownCode(string(run.Metrics.P99RankIntervalState())), run.Journeys.P95MS, run.Journeys.P99MS, markdownCode(string(run.Journeys.P99RankIntervalState())), markdownText(phase.EvidenceState), markdownText(phase.Stability))
 		}
 	}
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "P99 values are nearest-rank descriptive estimates. Exact 95% rank intervals require at least 1,000 observations and assume IID stationary latency samples; these states do not establish independence, a p99 objective, or capacity confidence.")
 	fmt.Fprintln(&b)
 	writeMarkdownList(&b, "Findings", assessment.Findings)
 	writeMarkdownList(&b, "Next experiments", assessment.Next)

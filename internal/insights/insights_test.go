@@ -671,12 +671,16 @@ func TestSupportedReportSchemaGoldensRoundTrip(t *testing.T) {
 					t.Fatal("schema-v29 local request rejection counts were not preserved")
 				}
 			case 30:
-				if got.StatisticalMethods != report.CurrentStatisticalMethods() {
+				if got.StatisticalMethods != report.StatisticalMethodsV30() {
 					t.Fatal("schema-v30 percentile and confidence methods were not preserved")
 				}
 			case 31:
 				if !report.HasValidGeneratorIdentity(got) || got.GeneratorIdentity.RunnerIdentity == "" {
 					t.Fatal("schema-v31 generator identity was not preserved")
+				}
+			case 32:
+				if got.StatisticalMethods != report.CurrentStatisticalMethods() || got.Metrics.P99RankIntervalState() != report.P99IntervalInsufficient {
+					t.Fatal("schema-v32 p99 method or low-sample state was not preserved")
 				}
 			}
 		})
@@ -695,6 +699,17 @@ func TestReadRunRejectsInvalidApplicationMetricsTimeline(t *testing.T) {
 	}
 	if _, err := ReadRun(path); err == nil {
 		t.Fatal("negative application-metrics duration was accepted")
+	}
+}
+
+func TestWriteLabelsP99SampleAdequacyAndConditionalAssumption(t *testing.T) {
+	r := report.Result{SchemaVersion: 32, StatisticalMethods: report.CurrentStatisticalMethods(), Metrics: report.MetricSet{Total: 42, P99MS: 150}}
+	var output bytes.Buffer
+	Write(&output, r, nil, nil)
+	for _, expected := range []string{"P99 REQUEST INTERVAL: INSUFFICIENT_SAMPLES (n=42; minimum 1000", "does not establish independence or a p99 objective"} {
+		if !strings.Contains(output.String(), expected) {
+			t.Errorf("insights omitted %q: %s", expected, output.String())
+		}
 	}
 }
 

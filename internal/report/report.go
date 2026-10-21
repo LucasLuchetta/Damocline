@@ -28,8 +28,10 @@ import (
 // per-workflow cookie-session scope names, v28 records configured connection
 // limits and observed connection-acquisition waits, v29 records local
 // request-construction rejections caused by bounded template expansion, and
-// v30 records percentile methods and exact IID order-statistic rank intervals; v31 records path-free generator runtime and executable provenance.
-const CurrentSchemaVersion = 31
+// v30 records percentile methods and exact IID order-statistic rank intervals;
+// v31 records path-free generator runtime and executable provenance; v32 adds
+// conditional exact IID rank intervals for p99 when sample counts permit them.
+const CurrentSchemaVersion = 32
 
 // GeneratorIdentity records path-free runtime and executable provenance.
 // It identifies the generator process, not the physical host or target.
@@ -45,6 +47,7 @@ const (
 	PercentileEstimatorNearestRank       = "NEAREST_RANK"
 	P95IntervalMethodExactBinomialRanks  = "EXACT_BINOMIAL_ORDER_STATISTIC_RANKS"
 	P95IntervalAssumptionIIDStationarity = "IID_STATIONARY_OBSERVATIONS"
+	P99IntervalMethodExactBinomialRanks  = "EXACT_BINOMIAL_ORDER_STATISTIC_RANKS"
 )
 
 // StatisticalMethods makes the persisted estimator and confidence method
@@ -55,13 +58,49 @@ type StatisticalMethods struct {
 	P95IntervalMethod     string  `json:"p95_interval_method"`
 	P95IntervalConfidence float64 `json:"p95_interval_confidence"`
 	P95IntervalAssumption string  `json:"p95_interval_assumption"`
+	P99IntervalMethod     string  `json:"p99_interval_method"`
+	P99IntervalConfidence float64 `json:"p99_interval_confidence"`
+	P99IntervalAssumption string  `json:"p99_interval_assumption"`
 }
 
 func CurrentStatisticalMethods() StatisticalMethods {
 	return StatisticalMethods{
 		PercentileEstimator: PercentileEstimatorNearestRank, P95IntervalMethod: P95IntervalMethodExactBinomialRanks,
 		P95IntervalConfidence: 0.95, P95IntervalAssumption: P95IntervalAssumptionIIDStationarity,
+		P99IntervalMethod: P99IntervalMethodExactBinomialRanks, P99IntervalConfidence: 0.95,
+		P99IntervalAssumption: P95IntervalAssumptionIIDStationarity,
 	}
+}
+
+// StatisticalMethodsV30 returns the method metadata persisted by schemas 30
+// and 31, before conditional p99 rank intervals were recorded.
+func StatisticalMethodsV30() StatisticalMethods {
+	return StatisticalMethods{PercentileEstimator: PercentileEstimatorNearestRank,
+		P95IntervalMethod: P95IntervalMethodExactBinomialRanks, P95IntervalConfidence: 0.95,
+		P95IntervalAssumption: P95IntervalAssumptionIIDStationarity}
+}
+
+type P99IntervalState string
+
+const (
+	P99IntervalConditionalIID P99IntervalState = "CONDITIONAL_IID_INTERVAL"
+	P99IntervalInsufficient   P99IntervalState = "INSUFFICIENT_SAMPLES"
+	P99IntervalResourceLimit  P99IntervalState = "ANALYSIS_RESOURCE_LIMIT"
+	P99IntervalNotRecorded    P99IntervalState = "INTERVAL_NOT_RECORDED"
+)
+
+func (m MetricSet) P99RankIntervalState() P99IntervalState {
+	minimum, err := statistics.MinimumSamplesForPercentileRankInterval95(0.99)
+	if err != nil || m.Total < minimum {
+		return P99IntervalInsufficient
+	}
+	if m.Total > statistics.MaxExactPercentileRankIntervalSamples {
+		return P99IntervalResourceLimit
+	}
+	if m.P99IID95Exact {
+		return P99IntervalConditionalIID
+	}
+	return P99IntervalNotRecorded
 }
 
 type MetricSet struct {
@@ -78,6 +117,9 @@ type MetricSet struct {
 	P95IID95Approximation       bool                    `json:"p95_iid_95_approximation,omitempty"`
 	P95IID95Exact               bool                    `json:"p95_iid_95_exact,omitempty"`
 	P99MS                       float64                 `json:"p99_ms"`
+	P99IID95LowerMS             float64                 `json:"p99_iid_95_lower_ms,omitempty"`
+	P99IID95UpperMS             float64                 `json:"p99_iid_95_upper_ms,omitempty"`
+	P99IID95Exact               bool                    `json:"p99_iid_95_exact,omitempty"`
 	Reasons                     map[string]int          `json:"failure_reasons,omitempty"`
 	HTTP                        HTTPDiagnostics         `json:"http_diagnostics,omitempty"`
 	ResponseBody                ResponseBodyDiagnostics `json:"response_body,omitzero"`
@@ -290,6 +332,9 @@ func (m *MetricSet) Snapshot() MetricSet {
 	v := *m
 	v.P95IID95Approximation = false
 	v.P95IID95Exact = false
+	v.P99IID95LowerMS = 0
+	v.P99IID95UpperMS = 0
+	v.P99IID95Exact = false
 	v.Reasons = make(map[string]int, len(m.Reasons))
 	for k, n := range m.Reasons {
 		v.Reasons[k] = n
@@ -313,6 +358,11 @@ func (m *MetricSet) Snapshot() MetricSet {
 		v.P95IID95Exact = true
 	}
 	v.P99MS = roundMS(percentile(d, 0.99))
+	if low, high, err := statistics.PercentileRankInterval95(len(d), 0.99); err == nil {
+		v.P99IID95LowerMS = roundMS(d[low-1])
+		v.P99IID95UpperMS = roundMS(d[high-1])
+		v.P99IID95Exact = true
+	}
 	v.durations = nil
 	return v
 }
@@ -515,19 +565,37 @@ func HasValidStatisticalMethods(r Result) bool {
 			return false
 		}
 	} else {
-		want := CurrentStatisticalMethods()
+		want := StatisticalMethodsV30()
+		if r.SchemaVersion >= 32 {
+			want = CurrentStatisticalMethods()
+		}
 		if r.StatisticalMethods != want {
 			return false
 		}
 	}
 	validMetric := func(metrics MetricSet) bool {
+		validP95 := true
+		if r.SchemaVersion < 32 && (metrics.P99IID95Exact || metrics.P99IID95LowerMS != 0 || metrics.P99IID95UpperMS != 0) {
+			return false
+		}
 		if r.SchemaVersion < 30 {
-			return !metrics.P95IID95Exact
+			validP95 = !metrics.P95IID95Exact
+		} else if metrics.P95IID95Exact {
+			validP95 = !metrics.P95IID95Approximation && metrics.P95IID95LowerMS <= metrics.P95MS && metrics.P95MS <= metrics.P95IID95UpperMS
+		} else {
+			validP95 = !metrics.P95IID95Approximation && metrics.P95IID95LowerMS == 0 && metrics.P95IID95UpperMS == 0
 		}
-		if metrics.P95IID95Exact {
-			return !metrics.P95IID95Approximation && metrics.P95IID95LowerMS <= metrics.P95IID95UpperMS
+		if r.SchemaVersion < 32 {
+			return validP95 && !metrics.P99IID95Exact && metrics.P99IID95LowerMS == 0 && metrics.P99IID95UpperMS == 0
 		}
-		return !metrics.P95IID95Approximation && metrics.P95IID95LowerMS == 0 && metrics.P95IID95UpperMS == 0
+		minimum, err := statistics.MinimumSamplesForPercentileRankInterval95(0.99)
+		if err != nil {
+			return false
+		}
+		if metrics.Total < minimum || metrics.Total > statistics.MaxExactPercentileRankIntervalSamples {
+			return validP95 && !metrics.P99IID95Exact && metrics.P99IID95LowerMS == 0 && metrics.P99IID95UpperMS == 0
+		}
+		return validP95 && metrics.P99IID95Exact && metrics.P99IID95LowerMS <= metrics.P99MS && metrics.P99MS <= metrics.P99IID95UpperMS
 	}
 	if !validMetric(r.Metrics) || !validMetric(r.Journeys) {
 		return false

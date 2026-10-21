@@ -59,9 +59,11 @@ The phase configuration and fingerprint do not contain a complete request defini
 
 ### Independent observation trials
 
-| Trial | Requests | Request p95 (ms) | Request errors | Completed journeys | Journey p95 (ms) | Journey errors | Successful journeys/s |
-| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1 | 100 | 125.000 | not recorded | 50 | 250.000 | not recorded | 5.000 |
+| Trial | Requests | Request p95 (ms) | Request p99 (ms) | Request p99 interval | Request errors | Completed journeys | Journey p95 (ms) | Journey p99 (ms) | Journey p99 interval | Journey errors | Successful journeys/s |
+| ---: | ---: | ---: | ---: | --- | ---: | ---: | ---: | ---: | --- | ---: | ---: |
+| 1 | 100 | 125.000 | 300.000 | `INSUFFICIENT_SAMPLES` | not recorded | 50 | 250.000 | 450.000 | `INSUFFICIENT_SAMPLES` | not recorded | 5.000 |
+
+P99 values are nearest-rank descriptive estimates. Exact 95% rank intervals require at least 1,000 observations and assume IID stationary latency samples; these states do not establish independence, a p99 objective, or capacity confidence.
 
 Repeat-trial pass fraction: **2/2** evaluable; excluded incomplete trials: 0; method: `EXACT_CLOPPER_PEARSON_BINOMIAL`; interval assumption: `INDEPENDENT_STATIONARY_REPEAT_TRIALS`. The interval is conditional and is not capacity confidence.
 

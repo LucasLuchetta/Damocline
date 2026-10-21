@@ -421,6 +421,9 @@ func Write(w io.Writer, r report.Result, host *hostmon.Result, previous *report.
 	fmt.Fprintf(w, "HOST METRICS:   %s\n", a.Infrastructure)
 	if r.SchemaVersion >= 30 {
 		fmt.Fprintf(w, "STATISTICS: nearest-rank percentiles; %s at %.0f%% under %s.\n", r.StatisticalMethods.P95IntervalMethod, r.StatisticalMethods.P95IntervalConfidence*100, r.StatisticalMethods.P95IntervalAssumption)
+		if r.SchemaVersion >= 32 {
+			fmt.Fprintf(w, "P99 REQUEST INTERVAL: %s (n=%d; minimum 1000 for exact 95%% ranks). The nearest-rank p99 remains descriptive; the interval assumes IID stationary observations and does not establish independence or a p99 objective.\n", r.Metrics.P99RankIntervalState(), r.Metrics.Total)
+		}
 	} else if r.Metrics.P95IID95Approximation {
 		fmt.Fprintln(w, "STATISTICS: historical approximate p95 rank interval; IID/stationarity assumptions apply.")
 	}

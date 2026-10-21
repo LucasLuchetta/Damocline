@@ -88,9 +88,13 @@ type ObservationTrial struct {
 	Trial                    int      `json:"trial"`
 	Requests                 int      `json:"requests"`
 	RequestP95MS             float64  `json:"request_p95_ms"`
+	RequestP99MS             float64  `json:"request_p99_ms"`
+	RequestP99IntervalState  string   `json:"request_p99_interval_state"`
 	RequestErrorRate         *float64 `json:"request_error_rate,omitempty"`
 	CompletedJourneys        int      `json:"completed_journeys"`
 	JourneyP95MS             float64  `json:"journey_p95_ms"`
+	JourneyP99MS             float64  `json:"journey_p99_ms"`
+	JourneyP99IntervalState  string   `json:"journey_p99_interval_state"`
 	JourneyErrorRate         *float64 `json:"journey_error_rate,omitempty"`
 	SuccessfulJourneysPerSec float64  `json:"successful_journeys_per_second"`
 }
@@ -577,8 +581,10 @@ func recomputeObservationEvidence(e campaign.Result) ([]ObservationTrial, *campa
 			run := phase.Run
 			observation := ObservationTrial{
 				Trial: trial.Number, Requests: run.Metrics.Total, RequestP95MS: run.Metrics.P95MS,
+				RequestP99MS: run.Metrics.P99MS, RequestP99IntervalState: string(run.Metrics.P99RankIntervalState()),
 				RequestErrorRate: observedErrorRate(run.Metrics), CompletedJourneys: run.Journeys.Total,
-				JourneyP95MS: run.Journeys.P95MS, JourneyErrorRate: observedErrorRate(run.Journeys),
+				JourneyP95MS: run.Journeys.P95MS, JourneyP99MS: run.Journeys.P99MS,
+				JourneyP99IntervalState: string(run.Journeys.P99RankIntervalState()), JourneyErrorRate: observedErrorRate(run.Journeys),
 				SuccessfulJourneysPerSec: report.SuccessfulJourneysPerSecond(run),
 			}
 			observations = append(observations, observation)
