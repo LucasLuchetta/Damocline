@@ -342,6 +342,49 @@ func TestWorkflowBreachDiagnosisUsesOnlyExceededObjectives(t *testing.T) {
 	}
 }
 
+func TestAuditCampaignValidatesWorkloadSourceIdentity(t *testing.T) {
+	e := auditFixture()
+	fingerprint := e.Trials[0].Phases[0].Run.Config.WorkloadFingerprint
+	e.WorkloadSource = &campaign.WorkloadSource{Type: "campaign_profile", Name: "checkout", SchemaVersion: 1,
+		FileSHA256: "sha256:" + strings.Repeat("b", 64), SemanticFingerprint: fingerprint}
+	if err := validateEvidence(e); err != nil {
+		t.Fatalf("valid source identity rejected: %v", err)
+	}
+	if got := AuditCampaign(e); got.State == "INVALID_EVIDENCE" || got.WorkloadSource == nil || got.WorkloadSource.SemanticFingerprint != fingerprint {
+		t.Fatalf("valid source identity was not retained by audit: %+v", got)
+	}
+	cases := []struct {
+		name   string
+		mutate func(*campaign.WorkloadSource)
+	}{
+		{"unsupported type", func(s *campaign.WorkloadSource) { s.Type = "other" }},
+		{"invalid file digest", func(s *campaign.WorkloadSource) { s.FileSHA256 = "sha256:short" }},
+		{"invalid semantic digest", func(s *campaign.WorkloadSource) { s.SemanticFingerprint = "sha256:" + strings.Repeat("c", 64) }},
+		{"invalid profile name", func(s *campaign.WorkloadSource) { s.Name = "../profile" }},
+		{"invalid profile schema", func(s *campaign.WorkloadSource) { s.SchemaVersion = 2 }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			candidate := auditFixture()
+			source := *e.WorkloadSource
+			tc.mutate(&source)
+			candidate.WorkloadSource = &source
+			if err := validateEvidence(candidate); err == nil {
+				t.Fatal("malformed source identity accepted")
+			}
+			if got := AuditCampaign(candidate); got.State != "INVALID_EVIDENCE" {
+				t.Fatalf("malformed source identity was not invalidated: %+v", got)
+			}
+		})
+	}
+	legacy := auditFixture()
+	legacy.SchemaVersion = 14
+	legacy.WorkloadSource = e.WorkloadSource
+	if err := validateEvidence(legacy); err == nil {
+		t.Fatal("accepted v15 source metadata under a historical schema")
+	}
+}
+
 func TestAuditCampaignRejectsAlteredQualityAndStageLabels(t *testing.T) {
 	e := auditFixture()
 	e.Trials[0].Phases[0].Run.Quality = &report.Quality{State: report.QualityValid}

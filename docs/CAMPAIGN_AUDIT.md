@@ -14,7 +14,7 @@ and the measurement quality recomputed from the saved report. Stale or altered
 stage labels and self-declared positive quality are flagged as
 `INVALID_EVIDENCE`. Missing telemetry is not filled in or treated as zero.
 
-Closed-loop campaign schema v15 optionally records workload source identity: source kind, exact bounded source-file SHA-256, and semantic workload fingerprint (plus logical profile name/schema where applicable). Profile verification checks whether a saved profile still has the exact bytes recorded at run time; historical campaigns report that identity as not recorded. Hashes are unkeyed and do not authenticate authorship, capture environment-backed values, or attest target state.
+Closed-loop campaign schema v15 optionally records workload source identity: source kind, exact bounded source-file SHA-256, and semantic workload fingerprint (plus logical profile name/schema where applicable). Offline validation rejects malformed source descriptors and semantic fingerprints that differ from any recorded phase. Profile verification checks whether a saved profile still has the exact bytes recorded at run time; historical campaigns report that identity as not recorded. Hashes are unkeyed and do not authenticate authorship, capture environment-backed values, or attest target state.
 
 Schema v14 also records the objective contract before traffic: aggregate and per-workflow journey p95/error limits, minimum samples,
 window coverage for journeys, steps, and configured workflows, a 100%

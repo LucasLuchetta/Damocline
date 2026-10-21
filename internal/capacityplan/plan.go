@@ -16,7 +16,9 @@ import (
 	"github.com/LucasLuchetta/Damocline/internal/appmetrics"
 	"github.com/LucasLuchetta/Damocline/internal/calibration"
 	"github.com/LucasLuchetta/Damocline/internal/campaign"
+	"github.com/LucasLuchetta/Damocline/internal/campaignprofile"
 	"github.com/LucasLuchetta/Damocline/internal/capacitygoal"
+	"github.com/LucasLuchetta/Damocline/internal/config"
 	"github.com/LucasLuchetta/Damocline/internal/generatorhealth"
 	"github.com/LucasLuchetta/Damocline/internal/report"
 	"github.com/LucasLuchetta/Damocline/internal/statistics"
@@ -377,6 +379,9 @@ func validateEvidence(evidence campaign.Result) error {
 	if evidence.SchemaVersion < 1 || evidence.SchemaVersion > campaign.CurrentSchemaVersion || evidence.Scenario == "" || evidence.BaseUsers < 1 || evidence.Repeats < 2 || evidence.Repeats > 5 || len(evidence.Trials) == 0 || len(evidence.Trials) > evidence.Repeats {
 		return errors.New("expected a complete supported repeated campaign")
 	}
+	if err := validateWorkloadSource(evidence); err != nil {
+		return err
+	}
 	if err := validateApplicationMetrics(evidence); err != nil {
 		return err
 	}
@@ -494,6 +499,61 @@ func validateEvidence(evidence campaign.Result) error {
 		}
 	}
 	return nil
+}
+
+func validateWorkloadSource(evidence campaign.Result) error {
+	source := evidence.WorkloadSource
+	if source == nil {
+		return nil
+	}
+	if evidence.SchemaVersion < 15 {
+		return errors.New("workload source metadata is unsupported by this campaign schema")
+	}
+	if !validSHA256Digest(source.FileSHA256) || !validSHA256Digest(source.SemanticFingerprint) {
+		return errors.New("workload source digests must be full SHA-256 values")
+	}
+	switch source.Type {
+	case "scenario_file":
+		if source.Name != "" || source.SchemaVersion < 0 || source.SchemaVersion > config.CurrentScenarioVersion {
+			return errors.New("scenario-file source metadata is malformed")
+		}
+	case "campaign_profile":
+		if !campaignprofile.ValidName(source.Name) || source.SchemaVersion != campaignprofile.CurrentSchemaVersion {
+			return errors.New("campaign-profile source metadata is malformed")
+		}
+	default:
+		return errors.New("workload source type is unsupported")
+	}
+	foundFingerprint := false
+	for _, trial := range evidence.Trials {
+		for _, phase := range trial.Phases {
+			fingerprint := phase.Run.Config.WorkloadFingerprint
+			if fingerprint != source.SemanticFingerprint {
+				return fmt.Errorf("workload source semantic fingerprint does not match trial %d %s phase", trial.Number, phase.Name)
+			}
+			foundFingerprint = true
+		}
+	}
+	if evidence.PendingTrial != nil {
+		for _, phase := range evidence.PendingTrial.Phases {
+			if phase.Run.Config.WorkloadFingerprint != source.SemanticFingerprint {
+				return fmt.Errorf("workload source semantic fingerprint does not match pending trial %d %s phase", evidence.PendingTrial.Number, phase.Name)
+			}
+			foundFingerprint = true
+		}
+	}
+	if !foundFingerprint {
+		return errors.New("workload source metadata has no phase fingerprint to verify")
+	}
+	return nil
+}
+
+func validSHA256Digest(value string) bool {
+	if len(value) != len("sha256:")+64 || !strings.HasPrefix(value, "sha256:") {
+		return false
+	}
+	decoded, err := hex.DecodeString(strings.TrimPrefix(value, "sha256:"))
+	return err == nil && len(decoded) == 32
 }
 
 func validateApplicationMetrics(evidence campaign.Result) error {
