@@ -95,6 +95,22 @@ func TestReportExportRejectsDuplicateJSONKeys(t *testing.T) {
 	}
 }
 
+func TestReportExportRejectsMissingMetricCounterBeforeWriting(t *testing.T) {
+	dir := t.TempDir()
+	input := filepath.Join(dir, "missing-counter.json")
+	output := filepath.Join(dir, "redacted.json")
+	if err := os.WriteFile(input, []byte(`{"schema_version":1,"metrics":{"success":0,"failures":0}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr strings.Builder
+	if code := Run([]string{"report", "export", "--file", input, "--out", output}, &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "omits required total counter") {
+		t.Fatalf("missing metric counter was not rejected: code=%d stderr=%s", code, stderr.String())
+	}
+	if _, err := os.Stat(output); !os.IsNotExist(err) {
+		t.Fatalf("invalid evidence wrote redacted output (stat error %v)", err)
+	}
+}
+
 func TestReportExportValidHistoricalCampaignsThroughCLIWithoutChangingSources(t *testing.T) {
 	dir := t.TempDir()
 	marker := "private-marker-731.example.invalid"

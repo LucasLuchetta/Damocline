@@ -28,6 +28,16 @@ func TestLoadDashboardRejectsDuplicateJSONKeys(t *testing.T) {
 	}
 }
 
+func TestLoadDashboardRejectsMissingMetricCounter(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "missing-counter.json")
+	if err := os.WriteFile(path, []byte(`{"schema_version":1,"metrics":{"success":0,"failures":0}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadDashboardHandler(path); err == nil || !strings.Contains(err.Error(), "omits required total counter") {
+		t.Fatalf("missing dashboard metric counter was not rejected: %v", err)
+	}
+}
+
 func TestLoadDashboardHandlerSupportsRunAndCampaignArtifacts(t *testing.T) {
 	runPath := filepath.Join("..", "insights", "testdata", "reports", "schema-v25.json")
 	runHandler, err := loadDashboardHandler(runPath)

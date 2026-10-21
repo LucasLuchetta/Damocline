@@ -192,6 +192,19 @@ func TestGoalRejectsAuditorPinForNonCampaignArtifact(t *testing.T) {
 		t.Fatalf("auditor pin was silently accepted for another artifact: code=%d stderr=%s", code, stderr.String())
 	}
 }
+
+func TestGoalRejectsMissingMetricCounterInExplorerProbe(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "missing-probe-counter.json")
+	saved := `{"schema_version":1,"scenario":"synthetic","target":"http://127.0.0.1","stage_duration":"10s","repeats":2,"min_users":2,"max_users":2,"outcome":"INCONCLUSIVE","probes":[{"users":2,"status":"INCONCLUSIVE","runs":[{"metrics":{"success":0,"failures":0}}]}],"notes":[]}`
+	if err := os.WriteFile(path, []byte(saved), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	if code := Run([]string{"goal", "--file", path, "--peak-users", "2"}, &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "omits required total counter") {
+		t.Fatalf("missing explorer metric counter was not rejected: code=%d stderr=%s", code, stderr.String())
+	}
+}
+
 func TestGoalCommandRejectsInvalidJSONAndMissingFlags(t *testing.T) {
 	var out, errOut bytes.Buffer
 	if c := Run([]string{"goal"}, &out, &errOut); c != 2 {
