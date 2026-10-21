@@ -19,10 +19,17 @@ func defaultCampaignStabilityPolicy() *campaign.StabilityPolicy {
 	return &policy
 }
 
+func defaultCampaignObjectives() *campaign.ObjectiveContract {
+	policy := campaign.DefaultStabilityPolicy()
+	return &campaign.ObjectiveContract{Version: 1, JourneyScope: "AGGREGATE_AND_EACH_WORKFLOW", JourneyP95LimitMS: 1000,
+		MaxJourneyErrorRate: 0.1, MinSamplesPerStep: 1, MinCompletedWorkRatio: 1, MaxDroppedArrivals: 0,
+		MinimumObservationWindows: policy.MinimumWindows, MinimumSamplesPerWindow: policy.MinimumSamplesPerWindow, WindowDuration: "AUTO_PER_PHASE"}
+}
+
 func TestAuditCommandIsOfflineAndProducesMachineReadableEvidence(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "campaign.json")
 	out := filepath.Join(t.TempDir(), "audit.json")
-	evidence := campaign.Result{SchemaVersion: campaign.CurrentSchemaVersion, ExecutionState: "COMPLETED", Stabilization: "0s", Cooldown: "0s", StabilityPolicy: defaultCampaignStabilityPolicy(),
+	evidence := campaign.Result{SchemaVersion: campaign.CurrentSchemaVersion, ExecutionState: "COMPLETED", Stabilization: "0s", Cooldown: "0s", StabilityPolicy: defaultCampaignStabilityPolicy(), Objectives: defaultCampaignObjectives(),
 		Scenario: "offline", BaseUsers: 2, Repeats: 2, Outcome: "INCONCLUSIVE",
 		Trials: []campaign.Trial{{RunID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Number: 1, Outcome: "INCONCLUSIVE"}, {RunID: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", Number: 2, Outcome: "INCONCLUSIVE"}},
 	}
@@ -80,7 +87,7 @@ func TestAuditReportOutContainsExecutiveTechnicalReplayWithoutConflictingVerdict
 	reportPath := filepath.Join(directory, "capacity.md")
 	assessmentPath := filepath.Join(directory, "assessment.json")
 	evidence := campaign.Result{
-		SchemaVersion: campaign.CurrentSchemaVersion, ExecutionState: "COMPLETED", Stabilization: "0s", Cooldown: "0s", StabilityPolicy: defaultCampaignStabilityPolicy(),
+		SchemaVersion: campaign.CurrentSchemaVersion, ExecutionState: "COMPLETED", Stabilization: "0s", Cooldown: "0s", StabilityPolicy: defaultCampaignStabilityPolicy(), Objectives: defaultCampaignObjectives(),
 		Scenario: "synthetic local fixture", BaseUsers: 2, Repeats: 2, Outcome: "INCONCLUSIVE",
 		Trials: []campaign.Trial{{RunID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Number: 1, Outcome: "INCONCLUSIVE"}, {RunID: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", Number: 2, Outcome: "INCONCLUSIVE"}},
 	}
@@ -98,7 +105,7 @@ func TestAuditReportOutContainsExecutiveTechnicalReplayWithoutConflictingVerdict
 		t.Fatal(err)
 	}
 	content := string(data)
-	for _, expected := range []string{"## Executive summary", "## Technical evidence", "peak 8 active users, growth 25%, reserve 10%", "Calculated target:", "Campaign evidence ID", "Offline replay", "--expect-evidence-id '" + expectedID + "'", "--peak-users 8", "--growth-percent 25", "--reserve-percent 10", "INCONCLUSIVE", "INSUFFICIENT_EVIDENCE"} {
+	for _, expected := range []string{"## Executive summary", "## Technical evidence", "Predeclared objectives", "maximum journey error rate 10.00000%", "Completed-work ratio: 100%", "maximum dropped arrivals: 0", "peak 8 active users, growth 25%, reserve 10%", "Calculated target:", "Campaign evidence ID", "Offline replay", "--expect-evidence-id '" + expectedID + "'", "--peak-users 8", "--growth-percent 25", "--reserve-percent 10", "INCONCLUSIVE", "INSUFFICIENT_EVIDENCE"} {
 		if !strings.Contains(content, expected) {
 			t.Fatalf("capacity report omits %q: %s", expected, content)
 		}
@@ -135,7 +142,7 @@ func TestAuditCommandRejectsChangedCampaignBeforeWritingAssessment(t *testing.T)
 	campaignPath := filepath.Join(directory, "campaign.json")
 	evidence := campaign.Result{
 		SchemaVersion: campaign.CurrentSchemaVersion, ExecutionState: "COMPLETED", Scenario: "synthetic local fixture", BaseUsers: 2, Repeats: 2,
-		Outcome: "INCONCLUSIVE", Stabilization: "0s", Cooldown: "0s", StabilityPolicy: defaultCampaignStabilityPolicy(),
+		Outcome: "INCONCLUSIVE", Stabilization: "0s", Cooldown: "0s", StabilityPolicy: defaultCampaignStabilityPolicy(), Objectives: defaultCampaignObjectives(),
 		Trials: []campaign.Trial{{RunID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Number: 1, Outcome: "INCONCLUSIVE"}, {RunID: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", Number: 2, Outcome: "INCONCLUSIVE"}},
 	}
 	if err := report.WriteAnyJSON(campaignPath, evidence); err != nil {
@@ -218,7 +225,7 @@ func floatPointer(value float64) *float64 { return &value }
 
 func TestAuditCommandRequiresPeakWhenDemandOptionsAreSupplied(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "campaign.json")
-	evidence := campaign.Result{SchemaVersion: campaign.CurrentSchemaVersion, ExecutionState: "COMPLETED", Scenario: "offline", BaseUsers: 2, Repeats: 2, Outcome: "INCONCLUSIVE", Stabilization: "0s", Cooldown: "0s", StabilityPolicy: defaultCampaignStabilityPolicy()}
+	evidence := campaign.Result{SchemaVersion: campaign.CurrentSchemaVersion, ExecutionState: "COMPLETED", Scenario: "offline", BaseUsers: 2, Repeats: 2, Outcome: "INCONCLUSIVE", Stabilization: "0s", Cooldown: "0s", StabilityPolicy: defaultCampaignStabilityPolicy(), Objectives: defaultCampaignObjectives()}
 	if err := report.WriteAnyJSON(path, evidence); err != nil {
 		t.Fatal(err)
 	}
@@ -238,7 +245,7 @@ func TestAuditCommandAcceptsMultipleCampaignsAndKeepsExactDemandUnknown(t *testi
 	for i, path := range []string{firstPath, secondPath} {
 		budget := campaign.PlannedBudget(campaign.Options{Warmup: 0, Observation: 10 * time.Second, Recovery: 10 * time.Second, Repeats: 2})
 		evidence := campaign.Result{
-			SchemaVersion: campaign.CurrentSchemaVersion, ExecutionState: "COMPLETED", Scenario: "offline", BaseUsers: []int{2, 4}[i], Stabilization: "0s", Cooldown: "0s", StabilityPolicy: defaultCampaignStabilityPolicy(),
+			SchemaVersion: campaign.CurrentSchemaVersion, ExecutionState: "COMPLETED", Scenario: "offline", BaseUsers: []int{2, 4}[i], Stabilization: "0s", Cooldown: "0s", StabilityPolicy: defaultCampaignStabilityPolicy(), Objectives: defaultCampaignObjectives(),
 			Target: "http://127.0.0.1:18080", Warmup: "0s", Observation: "10s", SpikeDuration: "0s", Recovery: "10s", Budget: budget.String(),
 			Repeats: 2, Outcome: "ABORTED", Trials: []campaign.Trial{
 				{RunID: []string{"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "cccccccccccccccccccccccccccccccc"}[i], Number: 1, Outcome: "ABORTED", AbortReason: "The campaign was interrupted by its caller."},

@@ -12,7 +12,7 @@ import (
 func TestCampaignLevelScheduleValidatesDeclaredLongRunEnvelope(t *testing.T) {
 	policy := campaign.DefaultStabilityPolicy()
 	evidence := campaign.Result{
-		SchemaVersion: campaign.CurrentSchemaVersion, Scenario: "synthetic", Target: "https://app.example.com", BaseUsers: 10,
+		SchemaVersion: campaign.CurrentSchemaVersion, Objectives: &campaign.ObjectiveContract{Version: 1, JourneyScope: "AGGREGATE_AND_EACH_WORKFLOW", JourneyP95LimitMS: 1000, MaxJourneyErrorRate: 0.1, MinSamplesPerStep: 1, MinCompletedWorkRatio: 1, MaxDroppedArrivals: 0, MinimumObservationWindows: policy.MinimumWindows, MinimumSamplesPerWindow: policy.MinimumSamplesPerWindow, WindowDuration: "AUTO_PER_PHASE"}, Scenario: "synthetic", Target: "https://app.example.com", BaseUsers: 10,
 		Warmup: "0s", Stabilization: "0s", Observation: "30m", SpikeDuration: "0s", Recovery: "45s", Cooldown: "0s", Budget: "70m", Repeats: 2,
 		LongRun: true, DeclaredEnvironment: "staging", StabilityPolicy: &policy,
 	}
@@ -93,7 +93,7 @@ func markCampaignFailed(e *campaign.Result) {
 		phase := &e.Trials[0].Phases[j]
 		if phase.Name == "observation" {
 			phase.Run.Outcome = "FAIL"
-			phase.EvidenceState, _ = campaign.ClassifyEvidence(phase.Run)
+			phase.EvidenceState, _ = campaign.ClassifyPhase(*e, phase.Run, phase.Name)
 			e.Trials[0].Phases = e.Trials[0].Phases[:j+1]
 			break
 		}
@@ -118,10 +118,13 @@ func TestCampaignCollectionRejectsMismatchesInvalidEvidenceAndDuplicateLevels(t 
 		t.Fatalf("different saved drift policies were combined: %+v %v", assessment, err)
 	}
 	second = auditFixtureAtUsers(4)
+	second.Objectives = nil
+	second.SchemaVersion = 12
 	second.Trials[0].Phases[0].Run.SchemaVersion = 10
+	second.Trials[0].Phases[0].Run.Config.WorkloadFingerprint = ""
 	assessment, err = BuildCampaignCollectionAssessment([]campaign.Result{first, second}, nil)
 	if err != nil || assessment.State != "NOT_COMPARABLE" {
-		t.Fatalf("pre-fingerprint schema was treated as comparable: %+v %v", assessment, err)
+		t.Fatalf("pre-fingerprint schema was treated as comparable: state=%s findings=%v", assessment.State, assessment.Findings)
 	}
 	second = auditFixtureAtUsers(4)
 	second.Trials[0].Phases[0].EvidenceState = "ALTERED"

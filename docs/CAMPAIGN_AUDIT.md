@@ -14,6 +14,15 @@ and the measurement quality recomputed from the saved report. Stale or altered
 stage labels and self-declared positive quality are flagged as
 `INVALID_EVIDENCE`. Missing telemetry is not filled in or treated as zero.
 
+Closed-loop campaign schema v13 also records the objective contract before
+traffic: aggregate and per-workflow journey p95/error limits, minimum samples,
+window coverage for journeys, steps, and configured workflows, a 100%
+started-work completion ratio, and zero dropped arrivals. The offline audit checks those declarations against each required
+phase and its saved window ledger. Older campaign schemas remain readable but
+do not claim to carry this predeclared contract. Automatic window sizing is
+recorded explicitly as `AUTO_PER_PHASE`; the realized phase window durations
+remain in each run report.
+
 The audit distinguishes:
 
 - `OBSERVED_PASS_ONLY`: recorded required stages passed their stated SLOs,

@@ -365,6 +365,29 @@ func validateEvidence(evidence campaign.Result) error {
 			return fmt.Errorf("invalid persisted stability policy: %w", err)
 		}
 	}
+	if evidence.SchemaVersion >= 13 {
+		if evidence.Objectives == nil {
+			return errors.New("predeclared campaign objective contract is missing")
+		}
+		if err := evidence.Objectives.Validate(); err != nil {
+			return fmt.Errorf("invalid predeclared campaign objectives: %w", err)
+		}
+		policy := evidence.EffectiveStabilityPolicy()
+		if evidence.Objectives.MinimumObservationWindows != policy.MinimumWindows || evidence.Objectives.MinimumSamplesPerWindow != policy.MinimumSamplesPerWindow {
+			return errors.New("predeclared window objectives do not match the saved stability policy")
+		}
+	} else if evidence.Objectives != nil {
+		return errors.New("predeclared campaign objectives are unsupported by this campaign schema")
+	}
+	if evidence.SchemaVersion >= 13 {
+		for _, trial := range evidence.Trials {
+			for _, phase := range trial.Phases {
+				if phase.Name != "warmup" && !evidence.Objectives.MatchesRun(phase.Run) {
+					return fmt.Errorf("trial %d %s phase controls do not match predeclared objectives", trial.Number, phase.Name)
+				}
+			}
+		}
+	}
 	if evidence.SchemaVersion >= 12 {
 		if (evidence.Calibration == nil) != (evidence.CalibrationSource == "") {
 			return errors.New("closed-loop calibration metadata is incomplete")
@@ -538,7 +561,7 @@ func validatePartialStageEvidence(evidence campaign.Result) error {
 			if phase.Name != want.Name || phase.Run.Config.Users != want.Users || phase.Run.Config.Duration != want.Duration.String() || phase.Run.Target != evidence.Target {
 				return fmt.Errorf("trial %d has mismatched %s phase evidence", trial.Number, want.Name)
 			}
-			state, _ := campaign.ClassifyEvidence(phase.Run)
+			state, _ := campaign.ClassifyPhase(evidence, phase.Run, phase.Name)
 			stability := ""
 			if phase.Name == "stabilization" || phase.Name == "observation" || phase.Name == "soak" {
 				stability = campaign.AssessStabilityWithPolicy(phase.Run, evidence.EffectiveStabilityPolicy())
@@ -725,7 +748,7 @@ func validateStageEvidence(evidence campaign.Result) error {
 			if !campaignRunGuardrailsMatch(evidence, phase.Run) {
 				return fmt.Errorf("trial %d has mismatched %s generator guardrails", i+1, want.Name)
 			}
-			state, _ := campaign.ClassifyEvidence(phase.Run)
+			state, _ := campaign.ClassifyPhase(evidence, phase.Run, phase.Name)
 			if phase.EvidenceState != state || phase.EvidenceState == "INVALID_DELIVERY" || (phase.Name != "warmup" && phase.EvidenceState != "PASS_OBSERVED") {
 				return fmt.Errorf("trial %d has inconsistent %s phase classification", i+1, want.Name)
 			}

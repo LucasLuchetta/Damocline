@@ -16,7 +16,7 @@ import (
 	"github.com/LucasLuchetta/Damocline/internal/report"
 )
 
-const CurrentSchemaVersion = 12
+const CurrentSchemaVersion = 13
 
 const (
 	DefaultWallTimeLimit = 15 * time.Minute
@@ -164,6 +164,7 @@ type Result struct {
 	LongRun                bool                            `json:"long_run,omitempty"`
 	DeclaredEnvironment    string                          `json:"declared_environment,omitempty"`
 	StabilityPolicy        *StabilityPolicy                `json:"stability_policy,omitempty"`
+	Objectives             *ObjectiveContract              `json:"objectives,omitempty"`
 	GeneratorGuardrails    *generatorhealth.Guardrails     `json:"generator_guardrails,omitempty"`
 	CalibrationRequired    bool                            `json:"calibration_required,omitempty"`
 	Calibration            *calibration.ClosedLoopEnvelope `json:"calibration,omitempty"`
@@ -292,6 +293,9 @@ func ValidateForScenario(base config.Validated, options Options) error {
 		return fmt.Errorf("long-run campaigns require scenario environment to be explicitly declared as staging")
 	}
 	policy := effectiveStabilityPolicy(options.Stability)
+	if err := NewObjectiveContract(base, policy).Validate(); err != nil {
+		return err
+	}
 	for _, duration := range []time.Duration{options.Stabilization, options.Observation, options.Soak} {
 		if duration == 0 {
 			continue
@@ -379,6 +383,7 @@ func WithRunnerProgress(ctx context.Context, base config.Validated, options Opti
 	options.Stability = effectiveStabilityPolicy(options.Stability)
 	options.Guardrails = effectiveGeneratorGuardrails(options.Guardrails)
 	stabilityPolicy := options.Stability
+	objectiveContract := NewObjectiveContract(base, stabilityPolicy)
 	var generatorGuardrails *generatorhealth.Guardrails
 	if options.Guardrails.Enabled() {
 		policy := options.Guardrails
@@ -410,6 +415,7 @@ func WithRunnerProgress(ctx context.Context, base config.Validated, options Opti
 		LongRun:             options.LongRun,
 		DeclaredEnvironment: base.Scenario.Environment,
 		StabilityPolicy:     &stabilityPolicy,
+		Objectives:          &objectiveContract,
 		GeneratorGuardrails: generatorGuardrails,
 		CalibrationRequired: options.RequireCalibration,
 		Calibration:         options.Calibration,
@@ -487,7 +493,7 @@ func WithRunnerProgress(ctx context.Context, base config.Validated, options Opti
 				v.Cookies = spikeCookies
 			}
 			run := runner(ctx, v)
-			state, reason := ClassifyEvidence(run)
+			state, reason := ClassifyPhase(result, run, phase.Name)
 			stability := ""
 			if phase.Name == "stabilization" || phase.Name == "observation" || phase.Name == "soak" {
 				stability = AssessStabilityWithPolicy(run, options.Stability)
@@ -505,18 +511,6 @@ func WithRunnerProgress(ctx context.Context, base config.Validated, options Opti
 				trial.Outcome = "INCONCLUSIVE"
 				break
 			}
-			if phase.Name == "spike" && run.Outcome == "FAIL" && state == "FAIL_OBSERVED" {
-				spikeFailed = true
-				if options.Recovery == 0 {
-					trial.Outcome = "FAIL"
-					break
-				}
-				continue
-			}
-			if (phase.Name == "stabilization" || phase.Name == "observation" || phase.Name == "soak") && state == "PASS_OBSERVED" && stability != "NO_LARGE_DRIFT_DETECTED" {
-				trial.Outcome = "INCONCLUSIVE"
-				break
-			}
 			if run.Outcome == "ABORTED" || run.Outcome == "INCONCLUSIVE" {
 				trial.Outcome = run.Outcome
 				if run.Outcome == "ABORTED" {
@@ -530,6 +524,22 @@ func WithRunnerProgress(ctx context.Context, base config.Validated, options Opti
 						}
 					}
 				}
+				break
+			}
+			if state == "INSUFFICIENT_EVIDENCE" && phase.Required {
+				trial.Outcome = "INCONCLUSIVE"
+				break
+			}
+			if phase.Name == "spike" && run.Outcome == "FAIL" && state == "FAIL_OBSERVED" {
+				spikeFailed = true
+				if options.Recovery == 0 {
+					trial.Outcome = "FAIL"
+					break
+				}
+				continue
+			}
+			if (phase.Name == "stabilization" || phase.Name == "observation" || phase.Name == "soak") && state == "PASS_OBSERVED" && stability != "NO_LARGE_DRIFT_DETECTED" {
+				trial.Outcome = "INCONCLUSIVE"
 				break
 			}
 			if phase.Required && run.Outcome != "PASS" {
@@ -729,6 +739,124 @@ func ClassifyEvidence(run report.Result) (string, string) {
 	default:
 		return "INSUFFICIENT_EVIDENCE", "The phase did not complete with a decisive observed outcome."
 	}
+}
+
+// ClassifyEvidenceWithObjectives replays the predeclared coverage and delivery
+// policy for one phase before applying its observed journey SLO verdict.
+func ClassifyEvidenceWithObjectives(run report.Result, objectives ObjectiveContract, phase string) (string, string) {
+	state, reason := ClassifyEvidence(run)
+	if state == "INVALID_DELIVERY" || state == "INSUFFICIENT_EVIDENCE" {
+		return state, reason
+	}
+	if err := objectives.Validate(); err != nil || !objectives.MatchesRun(run) {
+		return "INVALID_DELIVERY", "Recorded phase controls do not match the predeclared campaign objectives."
+	}
+	if run.IterationsStarted <= 0 || run.IterationsCompleted != run.IterationsStarted {
+		return "INVALID_DELIVERY", "The declared completed-work ratio of 100% was not met."
+	}
+	if run.ArrivalsDropped > objectives.MaxDroppedArrivals {
+		return "INVALID_DELIVERY", "The declared zero-dropped-arrivals policy was not met."
+	}
+	observedWorkflowFailure := false
+	for _, configured := range run.Config.Profiles {
+		var observed *report.ProfileResult
+		for i := range run.Profiles {
+			if run.Profiles[i].Name == configured.Name {
+				observed = &run.Profiles[i]
+				break
+			}
+		}
+		if observed == nil || observed.Journeys.Total < objectives.MinSamplesPerStep {
+			return "INSUFFICIENT_EVIDENCE", "A configured workflow is missing the predeclared journey sample minimum."
+		}
+		if !journeySLOMet(observed.Journeys, objectives) {
+			observedWorkflowFailure = true
+		}
+	}
+	if phase == "observation" || phase == "stabilization" || phase == "soak" {
+		if len(run.Windows) < objectives.MinimumObservationWindows {
+			return "INSUFFICIENT_EVIDENCE", "The phase has fewer windows than required by the predeclared objective."
+		}
+		for _, window := range run.Windows {
+			if window.Journeys.Total < objectives.MinimumSamplesPerWindow {
+				return "INSUFFICIENT_EVIDENCE", "An observation window has fewer completed journeys than the predeclared minimum."
+			}
+			for _, step := range run.Steps {
+				if step.Cleanup {
+					continue
+				}
+				found := false
+				for _, observed := range window.Steps {
+					if observed.Name == step.Name {
+						found = true
+						if observed.Metrics.Total < objectives.MinSamplesPerStep {
+							return "INSUFFICIENT_EVIDENCE", "An observation window has fewer step samples than the predeclared minimum."
+						}
+						break
+					}
+				}
+				if !found {
+					return "INSUFFICIENT_EVIDENCE", "An observation window is missing a configured step sample ledger."
+				}
+			}
+			for _, profile := range run.Config.Profiles {
+				found := false
+				for _, observed := range window.Profiles {
+					if observed.Name == profile.Name {
+						found = true
+						if observed.Metrics.Total < objectives.MinimumSamplesPerWindow {
+							return "INSUFFICIENT_EVIDENCE", "An observation window has fewer completed journeys for a configured workflow than the predeclared minimum."
+						}
+						if !journeySLOMet(observed.Metrics, objectives) {
+							observedWorkflowFailure = true
+						}
+						break
+					}
+				}
+				if !found {
+					return "INSUFFICIENT_EVIDENCE", "An observation window is missing a configured workflow sample ledger."
+				}
+			}
+		}
+	}
+	requiredSteps := 0
+	for _, step := range run.Steps {
+		if step.Cleanup {
+			continue
+		}
+		requiredSteps++
+	}
+	if requiredSteps == 0 {
+		return "INSUFFICIENT_EVIDENCE", "The phase has no per-step samples for the predeclared minimum coverage objective."
+	}
+	for _, step := range run.Steps {
+		if step.Cleanup {
+			continue
+		}
+		if step.Metrics.Total < objectives.MinSamplesPerStep {
+			return "INSUFFICIENT_EVIDENCE", "A configured step has fewer samples than the predeclared minimum."
+		}
+	}
+	if observedWorkflowFailure {
+		return "FAIL_OBSERVED", "A configured workflow did not meet its predeclared journey p95 or error objective."
+	}
+	return state, reason
+}
+
+func journeySLOMet(metrics report.MetricSet, objectives ObjectiveContract) bool {
+	if metrics.Total <= 0 || metrics.Success <= 0 || metrics.P95MS > objectives.JourneyP95LimitMS {
+		return false
+	}
+	return float64(metrics.Failures)/float64(metrics.Total) <= objectives.MaxJourneyErrorRate
+}
+
+// ClassifyPhase preserves historical campaign semantics and applies the
+// predeclared contract to campaign schema v13 and later.
+func ClassifyPhase(evidence Result, run report.Result, phase string) (string, string) {
+	if phase != "warmup" && evidence.SchemaVersion >= 13 && evidence.Objectives != nil {
+		return ClassifyEvidenceWithObjectives(run, *evidence.Objectives, phase)
+	}
+	return ClassifyEvidence(run)
 }
 
 func summarizeObservationVariability(trials []Trial) *Variability {

@@ -15,7 +15,7 @@ This assessment describes the saved evidence under its declared conditions. It d
 ## Technical evidence
 
 - **Campaign evidence ID:** `sha256:campaign-fixture`
-- **Campaign schema:** 12
+- **Campaign schema:** 13
 - **Campaign execution state:** COMPLETED
 - **Scenario:** synthetic local fixture
 - **Declared environment:** development
@@ -29,6 +29,12 @@ This assessment describes the saved evidence under its declared conditions. It d
 - **Effective drift screen policy** (historical default when not persisted): minimum 3 windows, 20 samples/window, p95 increase 20.000% and 5.000 ms, throughput decrease 20.000%
 - **Generator guardrails:** disabled
 - **Exact calibration required:** no exact coverage requirement
+
+### Predeclared objectives
+
+- Journey scope: AGGREGATE_AND_EACH_WORKFLOW; p95 ≤ 500.000 ms; maximum journey error rate 1.00000%.
+- Minimum samples per step: 1; minimum observation windows: 3 with at least 20 completed journeys/window.
+- Completed-work ratio: 100%; maximum dropped arrivals: 0; window duration: 2.5s.
 
 ### Recorded phase workload controls
 

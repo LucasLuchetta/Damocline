@@ -4,6 +4,7 @@ This project follows a human-maintained changelog. No release exists yet.
 
 ## [Unreleased]
 
+- Snapshot predeclared closed-loop campaign objectives in schema v13, validate them before traffic, replay SLO/sample/window/completed-work/drop criteria offline, and include the declared contract in capacity reports.
 - Report the highest passing and first failing tested campaign levels explicitly; retain an unknown upper bound when observations are all-pass or non-monotonic.
 - Run the repeated 39-profile G0 acceptance lab on Windows and a resource-bounded Linux container in CI for every pull request; archive only its synthetic reports and bounded logs for 14 days to support failure review.
 - Persist path-free runner build identity in run report schema v31 and expose per-phase identity and effective CPU consistency in offline campaign capacity reports; changed or missing provenance prevents same-environment claims.

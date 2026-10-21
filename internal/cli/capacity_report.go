@@ -37,6 +37,9 @@ func renderCampaignCapacityReport(assessment capacityplan.Assessment, source, re
 	stability := evidence.EffectiveStabilityPolicy()
 	fmt.Fprintf(&b, "- **Effective drift screen policy** (historical default when not persisted): minimum %d windows, %d samples/window, p95 increase %.3f%% and %.3f ms, throughput decrease %.3f%%\n", stability.MinimumWindows, stability.MinimumSamplesPerWindow, stability.MaxP95IncreasePercent, stability.MaxP95IncreaseMS, stability.MaxThroughputDropPercent)
 	fmt.Fprintf(&b, "- **Generator guardrails:** %s\n- **Exact calibration required:** %s\n", markdownText(generatorGuardrailSummary(evidence.GeneratorGuardrails)), markdownText(calibrationSummary(evidence)))
+	if a.Objectives != nil {
+		writeMarkdownObjectives(&b, a.Objectives)
+	}
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "### Recorded phase workload controls")
 	fmt.Fprintln(&b)
@@ -121,6 +124,9 @@ func renderCampaignCollectionCapacityReport(assessment capacityplan.CampaignColl
 	fmt.Fprintln(&b, "## Technical evidence")
 	fmt.Fprintln(&b)
 	fmt.Fprintf(&b, "- **Scenario:** %s\n- **Target origin:** %s\n- **Declared workload fingerprint:** `%s`\n- **Collection assessment type:** `%s`\n", markdownText(assessment.Scenario), markdownText(assessment.Target), markdownCode(assessment.WorkloadFingerprint), markdownCode(assessment.AssessmentType))
+	if len(assessment.Levels) > 0 && assessment.Levels[0].Assessment.Audit.Objectives != nil {
+		writeMarkdownObjectives(&b, assessment.Levels[0].Assessment.Audit.Objectives)
+	}
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "### Campaigns by tested level")
 	fmt.Fprintln(&b)
@@ -178,6 +184,17 @@ func optionalLevel(level *int) string {
 		return "UNKNOWN"
 	}
 	return strconv.Itoa(*level) + " active users (tested)"
+}
+
+func writeMarkdownObjectives(b *strings.Builder, objectives *campaign.ObjectiveContract) {
+	fmt.Fprint(b, "\n### Predeclared objectives\n\n")
+	if objectives == nil {
+		fmt.Fprintln(b, "Not recorded by this historical campaign schema.")
+		return
+	}
+	fmt.Fprintf(b, "- Journey scope: %s; p95 ≤ %.3f ms; maximum journey error rate %.5f%%.\n", markdownText(objectives.JourneyScope), objectives.JourneyP95LimitMS, objectives.MaxJourneyErrorRate*100)
+	fmt.Fprintf(b, "- Minimum samples per step: %d; minimum observation windows: %d with at least %d completed journeys/window.\n", objectives.MinSamplesPerStep, objectives.MinimumObservationWindows, objectives.MinimumSamplesPerWindow)
+	fmt.Fprintf(b, "- Completed-work ratio: %.0f%%; maximum dropped arrivals: %d; window duration: %s.\n", objectives.MinCompletedWorkRatio*100, objectives.MaxDroppedArrivals, markdownText(objectives.WindowDuration))
 }
 
 func writeMarkdownDemand(b *strings.Builder, inputs *capacitygoal.Goal, result *capacityplan.Result) {
