@@ -16,6 +16,7 @@ import (
 	"net/http/httptrace"
 	"net/url"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -288,6 +289,11 @@ func RunConfigFor(v config.Validated) report.RunConfig {
 
 func runWithTransport(parent context.Context, v config.Validated, transport *http.Transport) report.Result {
 	started := time.Now()
+	runnerIdentityMethod, runnerIdentity := calibration.SourceIdentity()
+	generatorIdentity := report.GeneratorIdentity{
+		OS: runtime.GOOS, Architecture: runtime.GOARCH, GoVersion: runtime.Version(),
+		RunnerIdentityMethod: runnerIdentityMethod, RunnerIdentity: runnerIdentity,
+	}
 	scheduleDeadline := started.Add(v.Duration)
 	// Stop admitting new work at the configured boundary, then allow any
 	// already-started journey a bounded time to finish.
@@ -609,7 +615,7 @@ func runWithTransport(parent context.Context, v config.Validated, transport *htt
 	result := report.Result{SchemaVersion: report.CurrentSchemaVersion, StatisticalMethods: report.CurrentStatisticalMethods(), Name: v.Scenario.Name, Target: v.Base.Scheme + "://" + v.Base.Host, StartedAt: started.UTC().Format(time.RFC3339Nano), ElapsedSeconds: round(elapsed.Seconds()), ObservationSeconds: round(v.Duration.Seconds()),
 		Config:  RunConfigFor(v),
 		Metrics: agg, Journeys: journeyMetrics, Steps: steps, Profiles: profileResults, Windows: windows, Outcome: "PASS", ErrorsRate: round(errorsRate), IterationsStarted: startedIterations.Load(), IterationsCompleted: completedIterations.Load(), ArrivalsScheduled: scheduledIterations.Load(), ArrivalsAdmitted: &arrivalsAdmitted, ArrivalsDropped: droppedIterations.Load(), ArrivalsDroppedLate: arrivalStats.DroppedLate, ArrivalsDroppedBusy: arrivalStats.DroppedBusy, ArrivalsCancelledBeforeAdmission: &cancelledBeforeAdmission, SchedulerLagSamples: arrivalStats.LagSamples, SchedulerLagP50MS: float64(arrivalStats.P50Lag.Microseconds()) / 1000, SchedulerLagP95MS: float64(arrivalStats.P95Lag.Microseconds()) / 1000, SchedulerLagMaxMS: float64(arrivalStats.MaxLag.Microseconds()) / 1000, SchedulerLagMethod: calibration.SchedulerDispatchLagMethod, AverageInFlight: round(averageInFlight), LittleLawEstimate: round(littleLawEstimate), ObservedThinkTimeMS: ms(coll.thinkTime), ThinkTimeObservations: coll.thinkSamples,
-		Note: "Measured synthetic HTTP actors under the configured workload; not a universal server capacity or a browser-user count.", Generator: &generatorSnapshot}
+		Note: "Measured synthetic HTTP actors under the configured workload; not a universal server capacity or a browser-user count.", GeneratorIdentity: generatorIdentity, Generator: &generatorSnapshot}
 	if agg.Total == 0 || agg.Success == 0 || errorsRate > v.Scenario.MaxErrorRate || agg.P95MS > v.Scenario.P95LimitMS || result.ArrivalsDropped > 0 {
 		result.Outcome = "FAIL"
 	}

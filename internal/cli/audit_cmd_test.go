@@ -63,7 +63,7 @@ func TestAuditCommandIsOfflineAndProducesMachineReadableEvidence(t *testing.T) {
 			ReservePercent float64 `json:"reserve_percent"`
 		} `json:"demand_inputs"`
 	}
-	if err := json.Unmarshal(raw, &audit); err != nil || audit.SchemaVersion != 3 || audit.Audit.State != "INCONCLUSIVE" || audit.State != "INSUFFICIENT_EVIDENCE" {
+	if err := json.Unmarshal(raw, &audit); err != nil || audit.SchemaVersion != 4 || audit.Audit.State != "INCONCLUSIVE" || audit.State != "INSUFFICIENT_EVIDENCE" {
 		t.Fatalf("invalid audit JSON: %+v %v", audit, err)
 	}
 	if audit.Audit.EvidenceID == "" || audit.Demand == nil || audit.Demand.TargetUsers != 2 || audit.DemandInputs == nil || audit.DemandInputs.PeakUsers != 2 || audit.DemandInputs.GrowthPercent != 0 || audit.DemandInputs.ReservePercent != 0 {

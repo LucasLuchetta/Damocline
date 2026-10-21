@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/LucasLuchetta/Damocline/internal/appmetrics"
@@ -27,8 +28,18 @@ import (
 // per-workflow cookie-session scope names, v28 records configured connection
 // limits and observed connection-acquisition waits, v29 records local
 // request-construction rejections caused by bounded template expansion, and
-// v30 records percentile methods and exact IID order-statistic rank intervals.
-const CurrentSchemaVersion = 30
+// v30 records percentile methods and exact IID order-statistic rank intervals; v31 records path-free generator runtime and executable provenance.
+const CurrentSchemaVersion = 31
+
+// GeneratorIdentity records path-free runtime and executable provenance.
+// It identifies the generator process, not the physical host or target.
+type GeneratorIdentity struct {
+	OS                   string `json:"os"`
+	Architecture         string `json:"architecture"`
+	GoVersion            string `json:"go_version"`
+	RunnerIdentityMethod string `json:"runner_identity_method"`
+	RunnerIdentity       string `json:"runner_identity"`
+}
 
 const (
 	PercentileEstimatorNearestRank       = "NEAREST_RANK"
@@ -442,12 +453,58 @@ type Result struct {
 	ObservedThinkTimeMS              float64                      `json:"observed_think_time_ms,omitempty"`
 	ThinkTimeObservations            int                          `json:"think_time_observations,omitempty"`
 	Warnings                         []string                     `json:"warnings,omitempty"`
+	GeneratorIdentity                GeneratorIdentity            `json:"generator_identity,omitzero"`
 	Generator                        *generatorhealth.Summary     `json:"generator,omitempty"`
 	ApplicationMetrics               *appmetrics.Timeline         `json:"application_metrics,omitempty"`
 	Calibration                      *CalibrationEvidence         `json:"calibration,omitempty"`
 	ReferenceEvidence                *ControlledReferenceEvidence `json:"controlled_reference_evidence,omitempty"`
 	Quality                          *Quality                     `json:"data_quality,omitempty"`
 	Signals                          []Signal                     `json:"diagnostic_signals,omitempty"`
+}
+
+// HasValidGeneratorIdentity validates path-free provenance introduced in v31.
+// Historical schemas must not be assigned identity retroactively.
+func HasValidGeneratorIdentity(r Result) bool {
+	i := r.GeneratorIdentity
+	if r.SchemaVersion < 31 {
+		return i == (GeneratorIdentity{})
+	}
+	if !safeIdentityPart(i.OS) || !safeIdentityPart(i.Architecture) || !safeIdentityPart(i.GoVersion) {
+		return false
+	}
+	switch i.RunnerIdentityMethod {
+	case "git_commit":
+		return len(i.RunnerIdentity) == 40 && isHex(i.RunnerIdentity)
+	case "executable_sha256":
+		return len(i.RunnerIdentity) == 64 && isHex(i.RunnerIdentity)
+	case "module_version":
+		return safeIdentityPart(i.RunnerIdentity) && i.RunnerIdentity != "(devel)"
+	case "unavailable":
+		return i.RunnerIdentity == ""
+	default:
+		return false
+	}
+}
+
+func safeIdentityPart(value string) bool {
+	if value == "" || len(value) > 120 {
+		return false
+	}
+	for _, r := range value {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("._@+-", r)) {
+			return false
+		}
+	}
+	return true
+}
+
+func isHex(value string) bool {
+	for _, r := range value {
+		if !(r >= '0' && r <= '9' || r >= 'a' && r <= 'f' || r >= 'A' && r <= 'F') {
+			return false
+		}
+	}
+	return true
 }
 
 // HasValidStatisticalMethods validates versioned method metadata across all

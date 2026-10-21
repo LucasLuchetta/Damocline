@@ -49,6 +49,30 @@ func renderCampaignCapacityReport(assessment capacityplan.Assessment, source, re
 		}
 	}
 	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "### Generator environment by phase")
+	fmt.Fprintln(&b)
+	fmt.Fprintf(&b, "Runtime identity consistency: **%s**; effective CPU capacity consistency: **%s**. Physical host type: **%s**.\n\n", markdownText(a.GeneratorRuntimeStatus), markdownText(a.GeneratorCapacityStatus), markdownText(a.HostType))
+	fmt.Fprintln(&b, "| Trial | Phase | OS / architecture | Go version | Runner identity | Logical CPUs | GOMAXPROCS | Effective CPU cores | CPU evidence source |")
+	fmt.Fprintln(&b, "| ---: | --- | --- | --- | --- | ---: | ---: | ---: | --- |")
+	for _, environment := range a.GeneratorEnvironments {
+		identityMethod, identity := "not recorded", "not recorded"
+		osArch, goVersion := "not recorded", "not recorded"
+		if environment.Identity != nil {
+			identityMethod, identity = environment.Identity.RunnerIdentityMethod, environment.Identity.RunnerIdentity
+			osArch = environment.Identity.OS + "/" + environment.Identity.Architecture
+			goVersion = environment.Identity.GoVersion
+		}
+		capacity := "not recorded"
+		if environment.CPUCapacityKnown {
+			capacity = fmt.Sprintf("%.3f", environment.CPUCapacityCores)
+		}
+		runner := "not recorded"
+		if identity != "not recorded" {
+			runner = identityMethod + ":" + identity
+		}
+		fmt.Fprintf(&b, "| %d | %s | %s | %s | %s | %d | %d | %s | %s |\n", environment.Trial, markdownText(environment.Phase), markdownText(osArch), markdownText(goVersion), markdownCode(runner), environment.LogicalCPUs, environment.GOMAXPROCS, capacity, markdownText(environment.CPUCapacitySource))
+	}
+	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "The phase configuration and fingerprint do not contain a complete request definition. Preserve the private scenario/profile and inputs; verify a saved profile against this campaign with `damocline campaign profile verify --name NAME --campaign <campaign-file>`. Profile verification is offline and generates no traffic.")
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "### Phase replay")
@@ -100,11 +124,11 @@ func renderCampaignCollectionCapacityReport(assessment capacityplan.CampaignColl
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "### Campaigns by tested level")
 	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, "| Tested active users | Observed outcome | Audit verdict | Measurement quality | Campaign evidence ID |")
-	fmt.Fprintln(&b, "| ---: | --- | --- | --- | --- |")
+	fmt.Fprintln(&b, "| Tested active users | Observed outcome | Audit verdict | Measurement quality | Generator identity | CPU capacity | Campaign evidence ID |")
+	fmt.Fprintln(&b, "| ---: | --- | --- | --- | --- | --- | --- |")
 	for _, level := range assessment.Levels {
 		a := level.Assessment.Audit
-		fmt.Fprintf(&b, "| %d | %s | %s | %s | `%s` |\n", level.TestedUsers, markdownText(level.Outcome), markdownText(a.State), markdownText(a.MeasurementQuality), a.EvidenceID)
+		fmt.Fprintf(&b, "| %d | %s | %s | %s | %s | %s | `%s` |\n", level.TestedUsers, markdownText(level.Outcome), markdownText(a.State), markdownText(a.MeasurementQuality), markdownText(a.GeneratorRuntimeStatus), markdownText(a.GeneratorCapacityStatus), a.EvidenceID)
 	}
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "### Replayed phase evidence")

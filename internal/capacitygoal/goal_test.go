@@ -188,7 +188,7 @@ func TestArrivalCampaignCheckpointIsAuditedAsIncomplete(t *testing.T) {
 	var checkpoint arrivalcampaign.Result
 	_, err = arrivalcampaign.WithRunnerProgress(context.Background(), base, options, func(_ context.Context, phaseBase config.Validated) report.Result {
 		run := report.Result{
-			SchemaVersion: report.CurrentSchemaVersion, Name: phaseBase.Scenario.Name,
+			SchemaVersion: report.CurrentSchemaVersion, GeneratorIdentity: report.GeneratorIdentity{OS: "linux", Architecture: "amd64", GoVersion: "go1.24.0", RunnerIdentityMethod: "git_commit", RunnerIdentity: strings.Repeat("a", 40)}, Name: phaseBase.Scenario.Name,
 			Target: phaseBase.Base.Scheme + "://" + phaseBase.Base.Host, StartedAt: time.Now().UTC().Format(time.RFC3339), Outcome: "PASS",
 			Config: report.RunConfig{Mode: "arrival", ArrivalRate: phaseBase.Scenario.ArrivalRate, Users: phaseBase.Scenario.Users,
 				Duration: phaseBase.Scenario.Duration, WorkloadFingerprint: phaseBase.WorkloadFingerprint, MaxRPS: phaseBase.Scenario.MaxRPS,

@@ -277,6 +277,34 @@ var versionPattern = regexp.MustCompile(`^[A-Za-z0-9._@+-]{1,120}$`)
 
 // SourceRunnerVersion records either the VCS source revision or the module
 // build version. It never embeds working-tree paths or local build settings.
+// SourceIdentity returns a path-free identity for the running generator binary.
+// A commit identifies source when VCS build metadata is present; otherwise the
+// complete executable digest identifies the exact bytes that ran.
+func SourceIdentity() (method, identity string) {
+	info, ok := debug.ReadBuildInfo()
+	if ok {
+		for _, item := range info.Settings {
+			if item.Key == "vcs.revision" && regexp.MustCompile(`^[0-9a-fA-F]{40}$`).MatchString(item.Value) {
+				return "git_commit", strings.ToLower(item.Value)
+			}
+		}
+	}
+	if executable, err := os.Executable(); err == nil {
+		file, openErr := os.Open(executable)
+		if openErr == nil {
+			defer file.Close()
+			hash := sha256.New()
+			if _, copyErr := io.Copy(hash, file); copyErr == nil {
+				return "executable_sha256", hex.EncodeToString(hash.Sum(nil))
+			}
+		}
+	}
+	if ok && versionPattern.MatchString(info.Main.Version) && info.Main.Version != "(devel)" {
+		return "module_version", info.Main.Version
+	}
+	return "unavailable", ""
+}
+
 func SourceRunnerVersion() string {
 	info, ok := debug.ReadBuildInfo()
 	if ok {

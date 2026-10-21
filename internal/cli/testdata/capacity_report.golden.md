@@ -36,6 +36,13 @@ This assessment describes the saved evidence under its declared conditions. It d
 | ---: | --- | ---: | --- | ---: | ---: | ---: | --- | --- | --- |
 | 1 | observation | 2 | 10s | 20 | 500.000 | 0.01000 | 2s | reuse | `sha256:workload-fixture` |
 
+### Generator environment by phase
+
+Runtime identity consistency: ****; effective CPU capacity consistency: ****. Physical host type: **NOT_RECORDED**.
+
+| Trial | Phase | OS / architecture | Go version | Runner identity | Logical CPUs | GOMAXPROCS | Effective CPU cores | CPU evidence source |
+| ---: | --- | --- | --- | --- | ---: | ---: | ---: | --- |
+
 The phase configuration and fingerprint do not contain a complete request definition. Preserve the private scenario/profile and inputs; verify a saved profile against this campaign with `damocline campaign profile verify --name NAME --campaign <campaign-file>`. Profile verification is offline and generates no traffic.
 
 ### Phase replay

@@ -26,6 +26,10 @@ func synthetic() report.Result {
 		Outcome: "PASS", IterationsCompleted: 20,
 	}
 }
+
+func currentGeneratorIdentity() report.GeneratorIdentity {
+	return report.GeneratorIdentity{OS: "linux", Architecture: "amd64", GoVersion: "go1.24.0", RunnerIdentityMethod: "git_commit", RunnerIdentity: strings.Repeat("a", 40)}
+}
 func TestReportCallsOutSingleVUAndTailNotServerUpgrade(t *testing.T) {
 	r := synthetic()
 	r.ObservationSeconds = 30
@@ -466,6 +470,7 @@ func TestReadRunAcceptsSchemaTwelveResponseBodyMeasurements(t *testing.T) {
 func TestReadRunAcceptsCurrentSchemaFourteenConnectionPolicyAndWindowLedgers(t *testing.T) {
 	r := synthetic()
 	r.SchemaVersion = report.CurrentSchemaVersion
+	r.GeneratorIdentity = currentGeneratorIdentity()
 	r.StatisticalMethods = report.CurrentStatisticalMethods()
 	r.Config.ConnectionPolicy = "reuse"
 	zeroCancelledBeforeAdmission := int64(0)
@@ -491,6 +496,7 @@ func TestReadRunAcceptsCurrentSchemaFourteenConnectionPolicyAndWindowLedgers(t *
 func TestReadRunRejectsUnknownCurrentConnectionPolicy(t *testing.T) {
 	r := synthetic()
 	r.SchemaVersion = report.CurrentSchemaVersion
+	r.GeneratorIdentity = currentGeneratorIdentity()
 	r.StatisticalMethods = report.CurrentStatisticalMethods()
 	r.Config.ConnectionPolicy = "unknown"
 	zero := int64(0)
@@ -667,6 +673,10 @@ func TestSupportedReportSchemaGoldensRoundTrip(t *testing.T) {
 			case 30:
 				if got.StatisticalMethods != report.CurrentStatisticalMethods() {
 					t.Fatal("schema-v30 percentile and confidence methods were not preserved")
+				}
+			case 31:
+				if !report.HasValidGeneratorIdentity(got) || got.GeneratorIdentity.RunnerIdentity == "" {
+					t.Fatal("schema-v31 generator identity was not preserved")
 				}
 			}
 		})

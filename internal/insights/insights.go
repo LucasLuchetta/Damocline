@@ -67,6 +67,9 @@ func ValidateRunReport(r report.Result) error {
 	if !report.HasValidStatisticalMethods(r) {
 		return errors.New("report statistical-method evidence does not match its schema")
 	}
+	if r.SchemaVersion >= 31 && !report.HasValidGeneratorIdentity(r) {
+		return errors.New("report generator identity evidence does not match its schema")
+	}
 	if !validThinkTimeProvenance(r) {
 		return errors.New("report think-time provenance does not match its schema")
 	}
