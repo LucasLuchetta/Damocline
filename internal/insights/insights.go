@@ -39,8 +39,15 @@ type Assessment struct {
 
 func ReadRun(path string) (report.Result, error) {
 	var r report.Result
-	if err := readJSON(path, &r); err != nil {
+	data, err := readJSONData(path)
+	if err != nil {
 		return r, err
+	}
+	if err := report.ValidateMetricCountersInArtifactJSON(data); err != nil {
+		return report.Result{}, fmt.Errorf("invalid run metric evidence: %w", err)
+	}
+	if err := json.Unmarshal(data, &r); err != nil {
+		return report.Result{}, fmt.Errorf("decode report: %w", err)
 	}
 	if err := ValidateRunReport(r); err != nil {
 		return report.Result{}, err
@@ -165,26 +172,34 @@ func ReadHost(path string) (hostmon.Result, error) {
 	return r, nil
 }
 func readJSON(path string, out any) error {
-	f, err := os.Open(path)
+	data, err := readJSONData(path)
 	if err != nil {
-		return fmt.Errorf("open report: %w", err)
-	}
-	defer f.Close()
-	var data []byte
-	data, err = io.ReadAll(io.LimitReader(f, maxReportFile+1))
-	if err != nil {
-		return fmt.Errorf("read report: %w", err)
-	}
-	if len(data) > maxReportFile {
-		return errors.New("report exceeds 16 MiB maximum")
-	}
-	if err := jsonartifact.RejectDuplicateKeys(data); err != nil {
-		return fmt.Errorf("report contains ambiguous JSON: %w", err)
+		return err
 	}
 	if err := json.Unmarshal(data, out); err != nil {
 		return fmt.Errorf("decode report: %w", err)
 	}
 	return nil
+}
+
+func readJSONData(path string) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("open report: %w", err)
+	}
+	defer f.Close()
+	var data []byte
+	data, err = io.ReadAll(io.LimitReader(f, maxReportFile+1))
+	if err != nil {
+		return nil, fmt.Errorf("read report: %w", err)
+	}
+	if len(data) > maxReportFile {
+		return nil, errors.New("report exceeds 16 MiB maximum")
+	}
+	if err := jsonartifact.RejectDuplicateKeys(data); err != nil {
+		return nil, fmt.Errorf("report contains ambiguous JSON: %w", err)
+	}
+	return data, nil
 }
 
 // Evaluate distinguishes meeting configured objectives from proving capacity.

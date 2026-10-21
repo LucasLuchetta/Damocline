@@ -4,6 +4,7 @@ This project follows a human-maintained changelog. No release exists yet.
 
 ## [Unreleased]
 
+- Reject run, campaign, and exploration artifacts that omit required request total, success, or failure counters, so JSON zero values cannot be mistaken for measured zero; validate these fields through report, dashboard, goal, and export readers.
 - Preserve native open-arrival campaign PASS artifacts when phase SLOs pass but measurement quality is insufficient for a capacity decision; offline `goal` now reports `INSUFFICIENT_EVIDENCE` with the quality limitation instead of rejecting the valid campaign. Add a bounded subprocess test using the built CLI and a real loopback campaign; replay produces byte-identical outputs without traffic.
 - Include declared environment, workload revision, and application revision in open-arrival campaign goal assessments; missing identity stays unknown and prevents a positive exact-target decision. Record auditor version and executable SHA-256, and pin both source bytes and auditor binary in deterministic offline replay.
 - Preserve declared workload revision, application revision, and environment in single-campaign capacity assessments; mark missing or changing phase identity unknown/inconclusive, and require stable matching identity across levels before aggregating a tested boundary.

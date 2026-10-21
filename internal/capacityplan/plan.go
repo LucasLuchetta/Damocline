@@ -287,6 +287,9 @@ func ReadCampaignWithFileSHA256(path string) (campaign.Result, string, error) {
 	if err != nil {
 		return campaign.Result{}, "", err
 	}
+	if err := report.ValidateMetricCountersInArtifactJSON(data); err != nil {
+		return campaign.Result{}, "", fmt.Errorf("invalid campaign metric evidence: %w", err)
+	}
 	var result campaign.Result
 	if err := json.Unmarshal(data, &result); err != nil {
 		return campaign.Result{}, "", err
@@ -324,6 +327,9 @@ func ReadCampaignCollectionWithFileSHA256(paths []string) ([]campaign.Result, []
 			return nil, nil, err
 		}
 		totalBytes += int64(len(data))
+		if err := report.ValidateMetricCountersInArtifactJSON(data); err != nil {
+			return nil, nil, fmt.Errorf("campaign %q has invalid metric evidence: %w", path, err)
+		}
 		var result campaign.Result
 		if err := json.Unmarshal(data, &result); err != nil {
 			return nil, nil, fmt.Errorf("cannot decode campaign %q: %w", path, err)

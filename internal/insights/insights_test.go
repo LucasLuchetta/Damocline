@@ -3,6 +3,7 @@ package insights
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -283,6 +284,54 @@ func TestReadRunRejectsDuplicateJSONKeys(t *testing.T) {
 	}
 	if _, err := ReadRun(path); err == nil || !strings.Contains(err.Error(), "ambiguous JSON") {
 		t.Fatalf("duplicate report schema key was not rejected clearly: %v", err)
+	}
+}
+
+func TestReadRunRejectsMissingAggregateCountersAcrossSupportedSchemas(t *testing.T) {
+	for version := 1; version <= report.CurrentSchemaVersion; version++ {
+		t.Run(fmt.Sprintf("schema_%d", version), func(t *testing.T) {
+			data, err := os.ReadFile(filepath.Join("testdata", "reports", fmt.Sprintf("schema-v%d.json", version)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var root map[string]json.RawMessage
+			if err := json.Unmarshal(data, &root); err != nil {
+				t.Fatal(err)
+			}
+			var metrics map[string]json.RawMessage
+			if err := json.Unmarshal(root["metrics"], &metrics); err != nil {
+				t.Fatal(err)
+			}
+			for _, field := range []string{"total", "success", "failures"} {
+				t.Run("missing_"+field, func(t *testing.T) {
+					candidate := make(map[string]json.RawMessage, len(metrics))
+					candidateRoot := make(map[string]json.RawMessage, len(root))
+					for key, value := range root {
+						candidateRoot[key] = value
+					}
+					for key, value := range metrics {
+						candidate[key] = value
+					}
+					delete(candidate, field)
+					encodedMetrics, err := json.Marshal(candidate)
+					if err != nil {
+						t.Fatal(err)
+					}
+					candidateRoot["metrics"] = encodedMetrics
+					encoded, err := json.Marshal(candidateRoot)
+					if err != nil {
+						t.Fatal(err)
+					}
+					path := filepath.Join(t.TempDir(), "missing-counter.json")
+					if err := os.WriteFile(path, encoded, 0o600); err != nil {
+						t.Fatal(err)
+					}
+					if _, err := ReadRun(path); err == nil || !strings.Contains(err.Error(), "absence cannot be interpreted as zero") {
+						t.Fatalf("missing %s counter was not rejected as unknown: %v", field, err)
+					}
+				})
+			}
+		})
 	}
 }
 

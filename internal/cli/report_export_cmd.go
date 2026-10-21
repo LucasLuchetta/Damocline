@@ -51,6 +51,10 @@ func reportExportCmd(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "source artifact contains ambiguous JSON: %v\n", err)
 		return 2
 	}
+	if err := report.ValidateMetricCountersInArtifactJSON(data); err != nil {
+		fmt.Fprintf(stderr, "source artifact has incomplete metric evidence: %v\n", err)
+		return 2
+	}
 	var shape struct {
 		SchemaVersion      *int            `json:"schema_version"`
 		ArrivalCampaign    *int            `json:"arrival_campaign_schema_version"`

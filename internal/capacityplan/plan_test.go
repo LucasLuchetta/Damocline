@@ -31,6 +31,35 @@ func TestReadCampaignRejectsDuplicateJSONKeys(t *testing.T) {
 	}
 }
 
+func TestReadCampaignRejectsMissingEmbeddedRunCounters(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("testdata", "campaigns", "schema-v4.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var root map[string]any
+	if err := json.Unmarshal(data, &root); err != nil {
+		t.Fatal(err)
+	}
+	trials := root["trials"].([]any)
+	trial := trials[0].(map[string]any)
+	phases := trial["phases"].([]any)
+	phase := phases[0].(map[string]any)
+	run := phase["run"].(map[string]any)
+	metrics := run["metrics"].(map[string]any)
+	delete(metrics, "total")
+	encoded, err := json.Marshal(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "missing-run-counter.json")
+	if err := os.WriteFile(path, encoded, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadCampaign(path); err == nil || !strings.Contains(err.Error(), "absence cannot be interpreted as zero") {
+		t.Fatalf("missing embedded run counter was not rejected as unknown: %v", err)
+	}
+}
+
 func TestHistoricalCampaignFixturesRemainReadableAndAuditable(t *testing.T) {
 	for _, version := range []int{2, 4} {
 		t.Run(fmt.Sprintf("schema_v%d", version), func(t *testing.T) {

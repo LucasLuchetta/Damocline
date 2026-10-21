@@ -14,6 +14,7 @@ import (
 	"github.com/LucasLuchetta/Damocline/internal/capacityplan"
 	"github.com/LucasLuchetta/Damocline/internal/explorer"
 	"github.com/LucasLuchetta/Damocline/internal/jsonartifact"
+	"github.com/LucasLuchetta/Damocline/internal/report"
 )
 
 const maxGoalReportBytes = 16 << 20
@@ -87,8 +88,9 @@ func goalCmd(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	var shape struct {
-		JourneyWorkerLimit     *int `json:"journey_worker_limit"`
-		ArrivalCampaignVersion *int `json:"arrival_campaign_schema_version"`
+		JourneyWorkerLimit     *int            `json:"journey_worker_limit"`
+		ArrivalCampaignVersion *int            `json:"arrival_campaign_schema_version"`
+		Probes                 json.RawMessage `json:"probes"`
 	}
 	if err := json.Unmarshal(data, &shape); err != nil {
 		fmt.Fprintf(stderr, "invalid capacity report JSON: %v\n", err)
@@ -103,6 +105,10 @@ func goalCmd(args []string, stdout, stderr io.Writer) int {
 	if shape.ArrivalCampaignVersion != nil {
 		if *peakUsers != 0 {
 			fmt.Fprintln(stderr, "arrival campaign reports require --peak-journeys-per-second; VUs cannot be substituted")
+			return 2
+		}
+		if err := report.ValidateMetricCountersInArtifactJSON(data); err != nil {
+			fmt.Fprintf(stderr, "arrival campaign has incomplete metric evidence: %v\n", err)
 			return 2
 		}
 		var saved arrivalcampaign.Result
@@ -167,6 +173,10 @@ func goalCmd(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stderr, "arrival exploration reports require --peak-journeys-per-second; VUs cannot be substituted")
 			return 2
 		}
+		if err := report.ValidateMetricCountersInArtifactJSON(data); err != nil {
+			fmt.Fprintf(stderr, "arrival exploration has incomplete metric evidence: %v\n", err)
+			return 2
+		}
 		var saved arrivalexplorer.Result
 		if err := json.Unmarshal(data, &saved); err != nil {
 			fmt.Fprintf(stderr, "invalid arrival capacity report JSON: %v\n", err)
@@ -198,6 +208,12 @@ func goalCmd(args []string, stdout, stderr io.Writer) int {
 		if *peakStarts != 0 {
 			fmt.Fprintln(stderr, "closed-loop exploration reports require --peak-users; journey starts/s cannot be substituted")
 			return 2
+		}
+		if len(shape.Probes) > 0 && string(shape.Probes) != "null" {
+			if err := report.ValidateMetricCountersInArtifactJSON(data); err != nil {
+				fmt.Fprintf(stderr, "closed-loop exploration has incomplete metric evidence: %v\n", err)
+				return 2
+			}
 		}
 		var saved explorer.Result
 		if err := json.Unmarshal(data, &saved); err != nil {
