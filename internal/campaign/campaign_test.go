@@ -246,7 +246,9 @@ func TestCampaignSkipsSoakWhenAnyRepeatedTrialFails(t *testing.T) {
 	result, err := WithRunner(context.Background(), scenario(t), Options{Observation: 10 * time.Second, Recovery: 10 * time.Second, Soak: 10 * time.Second, Repeats: 2}, func(_ context.Context, v config.Validated) report.Result {
 		calls++
 		if calls == 3 { // the first recovery phase follows one passing observation
-			return report.Result{Outcome: "FAIL", Config: report.RunConfig{Users: 1, Duration: v.Duration.String()}, Target: "http://127.0.0.1:8080"}
+			run := stableResult(v)
+			run.Outcome = "FAIL"
+			return run
 		}
 		return stableResult(v)
 	})
@@ -347,9 +349,11 @@ func TestCampaignFailsObservationAndStops(t *testing.T) {
 	result, err := WithRunner(context.Background(), scenario(t), Options{Observation: 10 * time.Second, Recovery: 10 * time.Second, Repeats: 2}, func(_ context.Context, v config.Validated) report.Result {
 		calls++
 		if v.Duration == 10*time.Second && calls == 1 {
-			return report.Result{Outcome: "FAIL"}
+			run := stableResult(v)
+			run.Outcome = "FAIL"
+			return run
 		}
-		return report.Result{Outcome: "PASS"}
+		return stableResult(v)
 	})
 	if err != nil || result.Outcome != "FAIL" || len(result.Trials) != 1 || calls != 1 {
 		t.Fatalf("failed observation was not terminal: %+v err=%v calls=%d", result, err, calls)
@@ -425,9 +429,10 @@ func TestSoakBudgetIncludesOneFinalPhaseDrain(t *testing.T) {
 }
 
 func stableResult(v config.Validated) report.Result {
-	run := report.Result{Outcome: "PASS", ElapsedSeconds: v.Duration.Seconds(), ObservationSeconds: v.Duration.Seconds(), Metrics: report.MetricSet{Total: 80, Success: 80, P95MS: 100}, Journeys: report.MetricSet{Total: 80, Success: 80, P95MS: 100}, Config: report.RunConfig{Users: v.Scenario.Users, Duration: v.Duration.String(), WindowDuration: v.Window.String()}, Target: v.Base.Scheme + "://" + v.Base.Host}
+	run := report.Result{SchemaVersion: 22, Outcome: "PASS", IterationsStarted: 80, IterationsCompleted: 80, ElapsedSeconds: v.Duration.Seconds(), ObservationSeconds: v.Duration.Seconds(), Metrics: report.MetricSet{Total: 80, Success: 80, P95MS: 100}, Journeys: report.MetricSet{Total: 80, Success: 80, P95MS: 100}, Config: report.RunConfig{Users: v.Scenario.Users, Duration: v.Duration.String(), WindowDuration: v.Window.String(), P95LimitMS: v.Scenario.P95LimitMS, MaxErrorRate: v.Scenario.MaxErrorRate, MinSamplesPerStep: v.Scenario.MinSamplesPerStep}, Target: v.Base.Scheme + "://" + v.Base.Host}
+	run.Steps = []report.StepResult{{Name: "page", Metrics: report.MetricSet{Total: 80, Success: 80, P95MS: 100}}}
 	for i := 0; i < 4; i++ {
-		run.Windows = append(run.Windows, report.WindowResult{StartSeconds: float64(i) * v.Duration.Seconds() / 4, EndSeconds: float64(i+1) * v.Duration.Seconds() / 4, Metrics: report.MetricSet{Total: 20, Success: 20, P95MS: 100}, Journeys: report.MetricSet{Total: 20, Success: 20, P95MS: 100}})
+		run.Windows = append(run.Windows, report.WindowResult{StartSeconds: float64(i) * v.Duration.Seconds() / 4, EndSeconds: float64(i+1) * v.Duration.Seconds() / 4, Metrics: report.MetricSet{Total: 20, Success: 20, P95MS: 100}, Journeys: report.MetricSet{Total: 20, Success: 20, P95MS: 100}, Steps: []report.WindowMetric{{Name: "page", Metrics: report.MetricSet{Total: 20, Success: 20, P95MS: 100}}}})
 	}
 	return run
 }

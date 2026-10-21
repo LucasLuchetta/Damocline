@@ -63,6 +63,7 @@ type campaignLevelShape struct {
 	LongRun             bool                        `json:"long_run,omitempty"`
 	Environment         string                      `json:"declared_environment,omitempty"`
 	StabilityPolicy     campaign.StabilityPolicy    `json:"stability_policy"`
+	Objectives          *campaign.ObjectiveContract `json:"objectives,omitempty"`
 	GeneratorGuardrails *generatorhealth.Guardrails `json:"generator_guardrails,omitempty"`
 	Budget              string                      `json:"budget,omitempty"`
 	Repeats             int                         `json:"repeats"`
@@ -115,9 +116,10 @@ func BuildCampaignCollectionAssessment(evidence []campaign.Result, goal *capacit
 		},
 	}
 	type levelEvidence struct {
-		campaign campaign.Result
-		shape    string
-		reason   string
+		campaign   campaign.Result
+		shape      string
+		reason     string
+		comparable bool
 	}
 	levels := make([]levelEvidence, 0, len(evidence))
 	seen := make(map[int]bool, len(evidence))
@@ -130,7 +132,7 @@ func BuildCampaignCollectionAssessment(evidence []campaign.Result, goal *capacit
 		if err != nil {
 			shape = ""
 		}
-		levels = append(levels, levelEvidence{campaign: item, shape: shape, reason: errorText(err)})
+		levels = append(levels, levelEvidence{campaign: item, shape: shape, reason: errorText(err), comparable: err == nil})
 	}
 	sort.Slice(levels, func(i, j int) bool { return levels[i].campaign.BaseUsers < levels[j].campaign.BaseUsers })
 	comparable := true
@@ -141,7 +143,7 @@ func BuildCampaignCollectionAssessment(evidence []campaign.Result, goal *capacit
 		if err != nil {
 			return CampaignCollectionAssessment{}, err
 		}
-		if assessment.Audit.State == "INVALID_EVIDENCE" {
+		if assessment.Audit.State == "INVALID_EVIDENCE" && item.comparable {
 			invalid = true
 		}
 		result.Levels = append(result.Levels, CampaignLevelAssessment{
@@ -241,6 +243,7 @@ func campaignCollectionShape(e campaign.Result) (string, error) {
 		Warmup: e.Warmup, Observation: e.Observation,
 		SpikeDuration: e.SpikeDuration, Recovery: e.Recovery, Soak: e.Soak, Cooldown: e.Cooldown, StabilityPolicy: e.EffectiveStabilityPolicy(), Budget: e.Budget, Repeats: e.Repeats,
 		LongRun: e.LongRun, Environment: e.DeclaredEnvironment,
+		Objectives:          normalizedCollectionObjectives(e.Objectives),
 		GeneratorGuardrails: e.GeneratorGuardrails,
 	}
 	if e.SpikeUsers == 0 {
@@ -295,8 +298,11 @@ func campaignCollectionShape(e campaign.Result) (string, error) {
 			if r.Config.P95LimitMS < 0 || r.Config.MaxErrorRate < 0 || math.IsNaN(r.Config.P95LimitMS) || math.IsInf(r.Config.P95LimitMS, 0) || math.IsNaN(r.Config.MaxErrorRate) || math.IsInf(r.Config.MaxErrorRate, 0) {
 				return "", errors.New("invalid control signature")
 			}
+			if e.SchemaVersion >= 13 && (e.Objectives == nil || !e.Objectives.MatchesRun(r)) {
+				return "", errors.New("campaign phase controls do not match the predeclared objectives")
+			}
 			candidate := campaignRunShape{
-				RunSchemaVersion: r.SchemaVersion,
+				RunSchemaVersion: comparableRunSchemaVersion(r.SchemaVersion),
 				WorkloadRevision: r.Config.WorkloadRevision, ApplicationRevision: r.Config.ApplicationRevision,
 				WorkloadFingerprint: fingerprint, Environment: r.Config.Environment,
 				ProfileMixBasis: r.Config.ProfileMixBasis, ProfileMixReference: r.Config.ProfileMixReference,
@@ -307,7 +313,7 @@ func campaignCollectionShape(e campaign.Result) (string, error) {
 				P95LimitMS: r.Config.P95LimitMS, MaxErrorRate: r.Config.MaxErrorRate,
 				Mode: r.Config.Mode, ArrivalRate: r.Config.ArrivalRate,
 				SeparateSessions: r.Config.SeparateSessions, MinSamplesPerStep: r.Config.MinSamplesPerStep,
-				Profiles: r.Config.Profiles, WindowDuration: r.Config.WindowDuration,
+				Profiles: r.Config.Profiles, WindowDuration: "AUTO_PER_PHASE",
 			}
 			if !controlSet {
 				shape.Controls = &candidate
@@ -321,6 +327,22 @@ func campaignCollectionShape(e campaign.Result) (string, error) {
 		return "", errors.New("no required phase controls")
 	}
 	return digestCampaignShape(shape)
+}
+
+func comparableRunSchemaVersion(version int) int {
+	if version >= 14 {
+		return 14
+	}
+	return version
+}
+
+func normalizedCollectionObjectives(objectives *campaign.ObjectiveContract) *campaign.ObjectiveContract {
+	if objectives == nil {
+		return nil
+	}
+	copy := *objectives
+	copy.WindowDuration = "AUTO_PER_PHASE"
+	return &copy
 }
 
 func digestCampaignShape(shape campaignLevelShape) (string, error) {

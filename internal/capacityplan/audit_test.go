@@ -8,6 +8,7 @@ import (
 
 	"github.com/LucasLuchetta/Damocline/internal/campaign"
 	"github.com/LucasLuchetta/Damocline/internal/capacitygoal"
+	"github.com/LucasLuchetta/Damocline/internal/generatorhealth"
 	"github.com/LucasLuchetta/Damocline/internal/report"
 )
 
@@ -19,6 +20,7 @@ func auditFixture() campaign.Result {
 
 func auditFixtureAtUsers(users int) campaign.Result {
 	stabilityPolicy := campaign.DefaultStabilityPolicy()
+	zero := int64(0)
 	phaseRun := func() report.Result {
 		metricSet := func(total int) report.MetricSet {
 			return report.MetricSet{
@@ -28,20 +30,30 @@ func auditFixtureAtUsers(users int) campaign.Result {
 			}
 		}
 		metrics := metricSet(80)
+		metrics.P95IID95Exact, metrics.P95IID95LowerMS, metrics.P95IID95UpperMS = true, 80, 120
 		trace := report.HTTPTrace{RateWaitCount: 80, RequestAttemptCount: 80, CompleteCount: 80, FirstByteCount: 80, BodyCount: 80, WriteCount: 80}
+		generator := generatorhealth.Summary{Samples: 2, ObservedSeconds: 10, SamplingIntervalMS: 500, MaxSampleGapMS: 500, LogicalCPUs: 1, GOMAXPROCS: 1,
+			CPUCapacityCores: 1, CPUCapacitySource: "runtime.NumCPU", GoCPUCapacitySeconds: 10, GoCPUValid: true, GoCPUUtilizationRatio: 0.1,
+			ProcessSamples: 2, ProcessCPUSamples: 2, ProcessCPUValid: true, PeakProcessRSSBytes: 1, PeakHeapAllocBytes: 1, PeakGoroutines: 1, MeanProcessCPUUtilizationRatio: 0.1}
 		r := report.Result{
-			SchemaVersion: 14, Outcome: "PASS", Target: "http://127.0.0.1:18080",
+			SchemaVersion: report.CurrentSchemaVersion, Outcome: "PASS", Target: "http://127.0.0.1:18080", IterationsStarted: 80, IterationsCompleted: 80,
 			ElapsedSeconds: 10, ObservationSeconds: 10,
 			Config: report.RunConfig{Users: users, Duration: "10s", WindowDuration: "2.5s", MaxRPS: 40, P95LimitMS: 1000, MaxErrorRate: 0.1,
 				Mode: "closed", ConnectionPolicy: "reuse", MinSamplesPerStep: 1, WorkloadFingerprint: "sha256:" + strings.Repeat("a", 64),
-				WorkloadRevision: "workload-v1", ApplicationRevision: "app-v1", Environment: "synthetic"},
-			Metrics: metrics, Journeys: report.MetricSet{Total: 80, Success: 80, P95MS: 100},
-			Steps: []report.StepResult{{Name: "request", Method: "GET", Path: "/", Metrics: metrics, HTTPTrace: trace}},
+				WorkloadRevision: "workload-v1", ApplicationRevision: "app-v1", Environment: "synthetic", MaxConnectionsPerHost: 10},
+			StatisticalMethods: report.CurrentStatisticalMethods(), Metrics: metrics, Journeys: metrics,
+			ArrivalsAdmitted: &zero, ArrivalsCancelledBeforeAdmission: &zero, Generator: &generator,
+			GeneratorIdentity: report.GeneratorIdentity{OS: "windows", Architecture: "amd64", GoVersion: "go1.26.0", RunnerIdentityMethod: "git_commit", RunnerIdentity: strings.Repeat("a", 40)},
+			Steps:             []report.StepResult{{Name: "request", Method: "GET", Path: "/", Metrics: metrics, HTTPTrace: trace}},
 		}
 		for i := 0; i < 4; i++ {
+			windowStepMetrics := metricSet(20)
+			windowStepMetrics.P95IID95Exact, windowStepMetrics.P95IID95LowerMS, windowStepMetrics.P95IID95UpperMS = true, 80, 120
+			windowMetrics := metricSet(20)
+			windowMetrics.P95IID95Exact, windowMetrics.P95IID95LowerMS, windowMetrics.P95IID95UpperMS = true, 80, 120
 			r.Windows = append(r.Windows, report.WindowResult{StartSeconds: float64(i) * 2.5, EndSeconds: float64(i+1) * 2.5,
-				Metrics: metricSet(20), Journeys: report.MetricSet{Total: 20, Success: 20, P95MS: 100},
-				Steps: []report.WindowMetric{{Name: "request", Metrics: metricSet(20)}}})
+				Metrics: windowMetrics, Journeys: windowMetrics,
+				Steps: []report.WindowMetric{{Name: "request", Metrics: windowStepMetrics}}})
 		}
 		r.Quality = report.AssessQuality(r)
 		return r
@@ -51,6 +63,9 @@ func auditFixtureAtUsers(users int) campaign.Result {
 		SchemaVersion: campaign.CurrentSchemaVersion, ExecutionState: "COMPLETED", Scenario: "synthetic", Target: a.Target,
 		BaseUsers: users, Warmup: "0s", Stabilization: "0s", Observation: "10s", SpikeDuration: "0s", Recovery: "10s", Cooldown: "0s",
 		Budget: "3m20s", Repeats: 2, Outcome: "PASS", Soak: "10s", StabilityPolicy: &stabilityPolicy,
+		Objectives: &campaign.ObjectiveContract{Version: 1, JourneyScope: "AGGREGATE_AND_EACH_WORKFLOW", JourneyP95LimitMS: 1000, MaxJourneyErrorRate: 0.1,
+			MinSamplesPerStep: 1, MinCompletedWorkRatio: 1, MaxDroppedArrivals: 0, MinimumObservationWindows: stabilityPolicy.MinimumWindows,
+			MinimumSamplesPerWindow: stabilityPolicy.MinimumSamplesPerWindow, WindowDuration: "2.5s"},
 	}
 	for n := 1; n <= 2; n++ {
 		phases := []campaign.Phase{
@@ -96,7 +111,24 @@ func TestAuditRecomputesIndependentObservationSummaries(t *testing.T) {
 	e.ObservationVariability = nil
 	a = AuditCampaign(e)
 	if a.State == "INVALID_EVIDENCE" || a.SpreadConsistency != "NOT_RECORDED" || len(a.ObservationTrials) != 2 {
-		t.Fatalf("missing legacy summary should retain recomputable observations: %+v", a)
+		t.Fatalf("missing legacy summary should retain recomputable observations: state=%s findings=%v", a.State, a.Findings)
+	}
+}
+
+func TestCurrentCampaignRequiresPhaseControlsToMatchPredeclaredObjectives(t *testing.T) {
+	evidence := auditFixture()
+	if err := validateEvidence(evidence); err != nil {
+		state, reason := campaign.ClassifyPhase(evidence, evidence.Trials[0].Phases[0].Run, "observation")
+		t.Fatalf("valid current objective contract was rejected: %v classification=%s/%s", err, state, reason)
+	}
+	evidence.Trials[0].Phases[0].Run.Config.P95LimitMS++
+	if err := validateEvidence(evidence); err == nil || !strings.Contains(err.Error(), "do not match predeclared objectives") {
+		t.Fatalf("phase SLO drift from the predeclared objective was accepted: %v", err)
+	}
+	evidence = auditFixture()
+	evidence.Objectives = nil
+	if err := validateEvidence(evidence); err == nil || !strings.Contains(err.Error(), "objective contract is missing") {
+		t.Fatalf("current campaign without predeclared objectives was accepted: %v", err)
 	}
 }
 

@@ -20,36 +20,37 @@ import (
 // campaign evidence. It is not an attestation of target identity, a
 // confidence interval, or a sustainable-capacity certificate.
 type CampaignAudit struct {
-	SchemaVersion           int                    `json:"schema_version"`
-	ExecutionState          string                 `json:"execution_state,omitempty"`
-	EvidenceID              string                 `json:"evidence_id"`
-	ScenarioFingerprint     string                 `json:"scenario_fingerprint,omitempty"`
-	Scenario                string                 `json:"scenario"`
-	Target                  string                 `json:"target,omitempty"`
-	StartedAt               string                 `json:"started_at,omitempty"`
-	DemandTargetUsers       int                    `json:"demand_target_users,omitempty"`
-	TestedBaseUsers         int                    `json:"tested_base_users"`
-	HostType                string                 `json:"host_type"`
-	GeneratorRuntimeStatus  string                 `json:"generator_runtime_identity_status"`
-	GeneratorCapacityStatus string                 `json:"generator_capacity_status"`
-	GeneratorEnvironments   []GeneratorEnvironment `json:"generator_environments"`
-	PassingLevels           []int                  `json:"observed_passing_levels"`
-	FailingLevels           []int                  `json:"observed_failing_levels"`
-	TestedDuration          string                 `json:"tested_duration"`
-	Confidence              string                 `json:"confidence"` // Legacy campaign-level marker; use Assessment.Confidence for dimensions.
-	LimitingWorkflows       []string               `json:"limiting_workflows"`
-	WorkflowBreaches        []WorkflowBreach       `json:"workflow_breaches,omitempty"`
-	ObservationTrials       []ObservationTrial     `json:"observation_trials,omitempty"`
-	ObservationSpread       *campaign.Variability  `json:"recomputed_observation_spread,omitempty"`
-	SpreadConsistency       string                 `json:"observation_spread_consistency"`
-	Repeatability           RepeatabilityEvidence  `json:"repeatability_evidence"`
-	Unknowns                []string               `json:"known_unknowns"`
-	State                   string                 `json:"state"`
-	MeasurementQuality      string                 `json:"measurement_quality"`
-	ObservedOutcome         string                 `json:"observed_outcome"`
-	RequiredPhases          int                    `json:"required_phases"`
-	Findings                []string               `json:"findings"`
-	Phases                  []PhaseAudit           `json:"phases"`
+	SchemaVersion           int                         `json:"schema_version"`
+	ExecutionState          string                      `json:"execution_state,omitempty"`
+	EvidenceID              string                      `json:"evidence_id"`
+	ScenarioFingerprint     string                      `json:"scenario_fingerprint,omitempty"`
+	Scenario                string                      `json:"scenario"`
+	Target                  string                      `json:"target,omitempty"`
+	StartedAt               string                      `json:"started_at,omitempty"`
+	DemandTargetUsers       int                         `json:"demand_target_users,omitempty"`
+	TestedBaseUsers         int                         `json:"tested_base_users"`
+	HostType                string                      `json:"host_type"`
+	GeneratorRuntimeStatus  string                      `json:"generator_runtime_identity_status"`
+	GeneratorCapacityStatus string                      `json:"generator_capacity_status"`
+	GeneratorEnvironments   []GeneratorEnvironment      `json:"generator_environments"`
+	PassingLevels           []int                       `json:"observed_passing_levels"`
+	FailingLevels           []int                       `json:"observed_failing_levels"`
+	TestedDuration          string                      `json:"tested_duration"`
+	Confidence              string                      `json:"confidence"` // Legacy campaign-level marker; use Assessment.Confidence for dimensions.
+	LimitingWorkflows       []string                    `json:"limiting_workflows"`
+	WorkflowBreaches        []WorkflowBreach            `json:"workflow_breaches,omitempty"`
+	ObservationTrials       []ObservationTrial          `json:"observation_trials,omitempty"`
+	ObservationSpread       *campaign.Variability       `json:"recomputed_observation_spread,omitempty"`
+	SpreadConsistency       string                      `json:"observation_spread_consistency"`
+	Repeatability           RepeatabilityEvidence       `json:"repeatability_evidence"`
+	Unknowns                []string                    `json:"known_unknowns"`
+	State                   string                      `json:"state"`
+	MeasurementQuality      string                      `json:"measurement_quality"`
+	ObservedOutcome         string                      `json:"observed_outcome"`
+	RequiredPhases          int                         `json:"required_phases"`
+	Objectives              *campaign.ObjectiveContract `json:"predeclared_objectives,omitempty"`
+	Findings                []string                    `json:"findings"`
+	Phases                  []PhaseAudit                `json:"phases"`
 }
 
 // GeneratorEnvironment records path-free runtime identity and effective CPU
@@ -246,6 +247,7 @@ func AuditCampaign(e campaign.Result) CampaignAudit {
 	}
 	a := CampaignAudit{
 		SchemaVersion:          e.SchemaVersion,
+		Objectives:             e.Objectives,
 		ExecutionState:         original.ExecutionState,
 		EvidenceID:             evidenceDigest(original),
 		Scenario:               e.Scenario,
@@ -356,7 +358,7 @@ func AuditCampaign(e campaign.Result) CampaignAudit {
 				continue
 			}
 			a.RequiredPhases++
-			state, reason := campaign.ClassifyEvidence(phase.Run)
+			state, reason := campaign.ClassifyPhase(e, phase.Run, phase.Name)
 			quality := report.AssessQuality(phase.Run)
 			stability := ""
 			if phase.Name == "observation" || phase.Name == "soak" {
