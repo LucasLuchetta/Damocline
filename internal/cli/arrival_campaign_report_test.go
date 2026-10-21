@@ -91,16 +91,19 @@ func TestOpenArrivalLoopbackCampaignGoalReportReplaysWithoutTraffic(t *testing.T
 	if err := json.Unmarshal(campaignBytes, &saved); err != nil {
 		t.Fatalf("decode campaign artifact: %v", err)
 	}
-	if saved.SchemaVersion != arrivalcampaign.CurrentSchemaVersion || saved.Outcome != "PASS" || len(saved.Trials) != 2 || len(saved.Trials[0].Phases) == 0 {
+	if saved.SchemaVersion != arrivalcampaign.CurrentSchemaVersion || (saved.Outcome != "PASS" && saved.Outcome != "INCONCLUSIVE") || len(saved.Trials) != 2 || len(saved.Trials[0].Phases) == 0 {
 		t.Fatalf("campaign did not retain complete bounded phase evidence: schema=%d trials=%+v", saved.SchemaVersion, saved.Trials)
 	}
 	for _, trial := range saved.Trials {
-		if trial.Outcome != "PASS" {
-			t.Fatalf("loopback campaign did not pass its native phase SLO outcomes: trial=%+v", trial)
+		if trial.Outcome != "PASS" && trial.Outcome != "INCONCLUSIVE" {
+			t.Fatalf("loopback campaign produced an unexpected native outcome: trial=%+v", trial)
 		}
 		for _, phase := range trial.Phases {
 			if phase.Name == "warmup" {
 				continue
+			}
+			if phase.EvidenceState != "PASS_OBSERVED" || phase.Run.Outcome != "PASS" {
+				t.Fatalf("loopback phase did not retain passing native SLO evidence: phase=%+v", phase)
 			}
 			cfg := phase.Run.Config
 			if cfg.WorkloadRevision != scenario.WorkloadRevision || cfg.ApplicationRevision != scenario.ApplicationRevision || cfg.Environment != scenario.Environment {

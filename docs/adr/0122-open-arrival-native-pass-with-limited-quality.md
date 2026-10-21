@@ -37,3 +37,9 @@ generator evidence.
 - A bounded loopback end-to-end test verifies campaign persistence, identity,
   offline assessment, deterministic replay, and zero replay traffic; it does
   not certify application capacity.
+- The end-to-end replay test accepts a terminal native `INCONCLUSIVE` when each
+  observed phase still records passing SLO evidence. Its purpose is to validate
+  report persistence and replay, not to certify the cross-window stability
+  screen on a shared operating-system runner. Stability classifications remain
+  in the campaign and offline audit; positive conclusions still require their
+  predeclared stability checks to pass.
