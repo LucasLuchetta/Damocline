@@ -42,10 +42,15 @@ jobs:
         run: >-
           docker run --rm --cpus=4 --memory=4g --pids-limit=256
           -v "$PWD:/workspace" -w /workspace golang:1.24.13-bookworm
-          bash -c 'go build -o /tmp/damocline-calibrate ./cmd/damocline-calibrate &&
-          go build -o /tmp/damocline-acceptance ./cmd/damocline-acceptance &&
+          bash -c 'go build -buildvcs=false -o /tmp/damocline-calibrate ./cmd/damocline-calibrate &&
+          go build -buildvcs=false -o /tmp/damocline-acceptance ./cmd/damocline-acceptance && {
           /tmp/damocline-acceptance --calibrator /tmp/damocline-calibrate
-          --out-dir .damocline/acceptance/ci-linux --repeats 2 --run-timeout 4m'
+          --out-dir .damocline/acceptance/ci-linux --repeats 2 --run-timeout 4m;
+          status=$?;
+          chmod o+rx .damocline .damocline/acceptance 2>/dev/null || true;
+          chmod -R a+rX .damocline/acceptance/ci-linux 2>/dev/null || true;
+          exit "$status";
+          }'
       - name: Archive Linux G0 acceptance evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -54,6 +59,7 @@ jobs:
           path: .damocline/acceptance/ci-linux/
           if-no-files-found: ignore
           retention-days: 14
+          include-hidden-files: true
 
 # CI verifies source compatibility but intentionally does not publish prebuilt binaries.
 
@@ -135,3 +141,4 @@ jobs:
           path: .damocline/acceptance/ci-windows/
           if-no-files-found: ignore
           retention-days: 14
+          include-hidden-files: true
