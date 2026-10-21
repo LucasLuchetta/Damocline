@@ -15,7 +15,7 @@ This assessment describes the saved evidence under its declared conditions. It d
 ## Technical evidence
 
 - **Campaign evidence ID:** `sha256:campaign-fixture`
-- **Campaign schema:** 13
+- **Campaign schema:** 14
 - **Campaign execution state:** COMPLETED
 - **Scenario:** synthetic local fixture
 - **Declared environment:** development
@@ -67,6 +67,7 @@ The phase configuration and fingerprint do not contain a complete request defini
 P99 values are nearest-rank descriptive estimates. Exact 95% rank intervals require at least 1000 observations and assume IID stationary latency samples; these states do not establish independence, a p99 objective, or capacity confidence.
 
 Repeat-trial pass fraction: **2/2** evaluable; excluded incomplete trials: 0; method: `EXACT_CLOPPER_PEARSON_BINOMIAL`; interval assumption: `INDEPENDENT_STATIONARY_REPEAT_TRIALS`. The interval is conditional and is not capacity confidence.
+Repeat-level request p95: median **125.00 ms**, MAD 0.00 ms; descriptive median +/- 3 MAD band 125.00–125.00 ms (`MEDIAN_PLUS_MINUS_3_MAD`). This is not a confidence interval and does not account for sequential dependence or non-stationarity.
 
 Confidence dimensions: measurement **LIMITED**, workload representativeness **NOT_ASSESSED**, decision **NOT_ESTABLISHED**.
 

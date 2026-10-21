@@ -6,6 +6,7 @@ This project follows a human-maintained changelog. No release exists yet.
 
 - Clarify that HTTP trace phase counts remain authoritative when a measured duration is below clock resolution, and validate immediate refusals plus delayed transport errors against independent loopback observations and serialized report data.
 - Report descriptive p99 adequacy and conditional exact IID 95% order-statistic intervals in schema v32 run evidence, insights, capacity reports, and redacted exports; intervals are bounded from 1,000 to 1,000,000 samples and never imply dependence-aware confidence or a p99 objective.
+- Persist schema-v14 repeat-level request-p95 median, median absolute deviation, and a descriptive median +/- 3 MAD band for independent campaign observation phases; recompute from source phases during offline audit and label the band as descriptive under sequential-dependence/stationarity limits.
 - Exercise redacted run, campaign, and exploration exports through CLI validation using representative historical schemas; verify nested-field redaction and byte-identical source preservation.
 - Bind open-arrival assessment JSON and Markdown reports to the exact campaign source bytes, verify an optional expected SHA-256 before writing, and include that check in the generated offline replay command.
 - Persist a predeclared objective contract and matching stability screen for open-arrival campaigns; replay phase coverage/delivery policy offline, and include the validated criteria in `goal` output and redacted campaign exports.

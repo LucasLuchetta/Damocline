@@ -25,6 +25,7 @@ func TestCampaignCapacityReportSnapshotAndVerdictSeparation(t *testing.T) {
 			DemandTargetUsers: 3, TestedBaseUsers: 2, HostType: "NOT_RECORDED", PassingLevels: []int{2}, FailingLevels: []int{},
 			TestedDuration: "20s", Confidence: "NOT_ESTABLISHED", LimitingWorkflows: []string{},
 			ObservationTrials: []capacityplan.ObservationTrial{{Trial: 1, Requests: 100, RequestP95MS: 125, RequestP99MS: 300, RequestP99IntervalState: "INSUFFICIENT_SAMPLES", CompletedJourneys: 50, JourneyP95MS: 250, JourneyP99MS: 450, JourneyP99IntervalState: "INSUFFICIENT_SAMPLES", SuccessfulJourneysPerSec: 5}},
+			ObservationSpread: &campaign.Variability{Runs: 1, P95MinMS: 125, P95MaxMS: 125, RequestP95MedianMS: 125, RequestP95RobustLowerMS: 125, RequestP95RobustUpperMS: 125, RequestP95RobustMethod: "MEDIAN_PLUS_MINUS_3_MAD"},
 			SpreadConsistency: "MATCHED", Repeatability: capacityplan.RepeatabilityEvidence{Status: "CONDITIONAL_INTERVAL", EvaluatedTrials: 2, PassingTrials: 2, Lower95: 0.158, Upper95: 1, Method: "EXACT_CLOPPER_PEARSON_BINOMIAL", Assumption: "INDEPENDENT_STATIONARY_REPEAT_TRIALS"},
 			Unknowns: []string{"Physical host identity is not verified."}, State: "OBSERVED_PASS_ONLY", MeasurementQuality: report.QualityLimited, ObservedOutcome: "PASS", RequiredPhases: 2,
 			Findings: []string{"Observed phase SLOs passed; sustainable capacity remains unproven."},
@@ -47,7 +48,7 @@ func TestCampaignCapacityReportSnapshotAndVerdictSeparation(t *testing.T) {
 	if strings.Contains(got, "**Assessment:** OBSERVED_PASS_ONLY") || !strings.Contains(got, "**Assessment:** INSUFFICIENT_EVIDENCE") || !strings.Contains(got, "**Observed campaign:** OBSERVED_PASS_ONLY") {
 		t.Fatalf("executive and observed verdicts were conflated: %s", got)
 	}
-	for _, expected := range []string{"Request p99 interval", "Journey p99 interval", "INSUFFICIENT_SAMPLES", "intervals require at least 1000 observations", "assume IID stationary latency samples"} {
+	for _, expected := range []string{"Request p99 interval", "Journey p99 interval", "INSUFFICIENT_SAMPLES", "intervals require at least 1000 observations", "assume IID stationary latency samples", "Repeat-level request p95", "median +/- 3 MAD band", "not a confidence interval"} {
 		if !strings.Contains(got, expected) {
 			t.Fatalf("capacity report omitted p99 limitation %q", expected)
 		}

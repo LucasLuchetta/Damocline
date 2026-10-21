@@ -758,8 +758,7 @@ func campaignCmd(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	if variability := result.ObservationVariability; variability != nil {
-		fmt.Fprintf(stdout, "Observation spread across %d trials: p95 %.0f-%.0fms | errors %.2f%%-%.2f%% | requests %.2f-%.2f/s | successful journeys %.2f-%.2f/s\n", variability.Runs, variability.P95MinMS, variability.P95MaxMS, variability.ErrorRateMin*100, variability.ErrorRateMax*100, variability.ThroughputMinRPS, variability.ThroughputMaxRPS, variability.SuccessfulJourneysMinPerSec, variability.SuccessfulJourneysMaxPerSec)
-		fmt.Fprintln(stdout, "This is observed run-to-run spread, not a statistical confidence interval.")
+		writeCampaignObservationSummary(stdout, variability)
 	}
 	fmt.Fprintf(stdout, "Campaign outcome: %s\n", result.Outcome)
 	fmt.Fprintln(stdout, "This is repeated observed evidence under the configured workload. It is not a universal capacity certification or infrastructure recommendation.")
@@ -770,6 +769,12 @@ func campaignCmd(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+func writeCampaignObservationSummary(stdout io.Writer, variability *campaign.Variability) {
+	fmt.Fprintf(stdout, "Observation spread across %d trials: p95 %.0f-%.0fms | errors %.2f%%-%.2f%% | requests %.2f-%.2f/s | successful journeys %.2f-%.2f/s\n", variability.Runs, variability.P95MinMS, variability.P95MaxMS, variability.ErrorRateMin*100, variability.ErrorRateMax*100, variability.ThroughputMinRPS, variability.ThroughputMaxRPS, variability.SuccessfulJourneysMinPerSec, variability.SuccessfulJourneysMaxPerSec)
+	fmt.Fprintf(stdout, "Request p95 repeat summary: median %.0fms | MAD %.0fms | descriptive median +/- 3 MAD band %.0f-%.0fms.\n", variability.RequestP95MedianMS, variability.RequestP95MADMS, variability.RequestP95RobustLowerMS, variability.RequestP95RobustUpperMS)
+	fmt.Fprintln(stdout, "Repeat summaries use one request p95 per independent observation phase. The median +/- 3 MAD band is descriptive, not a confidence interval; repeated trials can remain dependent or non-stationary.")
 }
 
 func dashboardCmd(args []string, stdout, stderr io.Writer) int {

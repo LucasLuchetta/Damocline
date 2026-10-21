@@ -220,10 +220,11 @@ func TestAuditObservationSummaryOutputKeepsUnitsAndLimitationsExplicit(t *testin
 			Runs: 1, P95MinMS: 125, P95MaxMS: 125, ErrorRateMin: 0.025, ErrorRateMax: 0.025,
 			ThroughputMinRPS: 4, ThroughputMaxRPS: 4,
 			SuccessfulJourneysMinPerSec: 2, SuccessfulJourneysMaxPerSec: 2,
+			RequestP95MedianMS: 125, RequestP95MADMS: 0, RequestP95RobustLowerMS: 125, RequestP95RobustUpperMS: 125,
 		},
 	}
 	writeObservationEvidence(&output, audit, "")
-	for _, want := range []string{"2/2 evaluable trials passed", "exact 95% interval 15.8%–100.0%", "not capacity confidence", "request-p95=125.00 ms", "request-errors=2.50%", "completed-journeys=20", "successful-journeys=2.00/s", "request-rate 4.00–4.00/s", "not a confidence interval"} {
+	for _, want := range []string{"2/2 evaluable trials passed", "exact 95% interval 15.8%–100.0%", "not capacity confidence", "request-p95=125.00 ms", "request-errors=2.50%", "completed-journeys=20", "successful-journeys=2.00/s", "request-rate 4.00–4.00/s", "not a confidence interval", "median 125.00 ms, MAD 0.00 ms, descriptive median +/- 3 MAD band 125.00-125.00 ms"} {
 		if !strings.Contains(output.String(), want) {
 			t.Fatalf("observation summary omitted %q: %s", want, output.String())
 		}

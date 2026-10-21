@@ -14,7 +14,7 @@ and the measurement quality recomputed from the saved report. Stale or altered
 stage labels and self-declared positive quality are flagged as
 `INVALID_EVIDENCE`. Missing telemetry is not filled in or treated as zero.
 
-Closed-loop campaign schema v13 also records the objective contract before
+Closed-loop campaign schema v14 also records the objective contract before
 traffic: aggregate and per-workflow journey p95/error limits, minimum samples,
 window coverage for journeys, steps, and configured workflows, a 100%
 started-work completion ratio, and zero dropped arrivals. The offline audit checks those declarations against each required
@@ -33,6 +33,14 @@ The audit distinguishes:
   or unstable windows prevent a clean observed limit.
 - `INVALID_EVIDENCE`: malformed or internally contradictory persisted
   evidence, including fabricated or stale stage/quality labels.
+
+Schema-v14 campaign results retain one aggregate request p95 per completed
+observation trial and summarize those repeat-level values with the median, MAD,
+and a descriptive median +/- 3 MAD band. The offline audit recomputes these
+fields from saved phases. This is an outlier/spread summary over 2–5 trials,
+not a confidence interval. It does not treat requests inside a trial as
+independent experiments, account for dependence between sequential trials, or
+test stationarity; those statistical methods remain open work.
 
 Recomputed quality `LIMITED` remains visible *separately* from the
 observational verdict. Only the separately validated loopback calibration
