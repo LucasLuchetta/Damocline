@@ -120,25 +120,31 @@ func validateMetricSetCounters(raw json.RawMessage, path string) error {
 	if err := json.Unmarshal(raw, &metric); err != nil || metric == nil {
 		return fmt.Errorf("%s must be an object", path)
 	}
+	counters := make(map[string]int64, 3)
 	for _, key := range []string{"total", "success", "failures"} {
 		value, ok := metric[key]
 		if !ok {
 			return fmt.Errorf("%s omits required %s counter; absence cannot be interpreted as zero", path, key)
 		}
-		if !isJSONInteger(value) {
+		parsed, valid := parseJSONCounter(value)
+		if !valid {
 			return fmt.Errorf("%s.%s must be a non-negative integer counter", path, key)
 		}
+		counters[key] = parsed
+	}
+	if counters["success"] > counters["total"] || counters["failures"] != counters["total"]-counters["success"] {
+		return fmt.Errorf("%s counters are inconsistent: success plus failures must equal total", path)
 	}
 	return nil
 }
 
-func isJSONInteger(raw json.RawMessage) bool {
+func parseJSONCounter(raw json.RawMessage) (int64, bool) {
 	value := bytes.TrimSpace(raw)
 	if len(value) == 0 {
-		return false
+		return 0, false
 	}
 	parsed, err := strconv.ParseInt(string(value), 10, 64)
-	return err == nil && parsed >= 0
+	return parsed, err == nil && parsed >= 0
 }
 
 func validateMetricList(raw json.RawMessage, path, metricKey string) error {

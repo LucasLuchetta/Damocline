@@ -34,7 +34,7 @@ func TestValidateMetricCountersInArtifactJSONRequiresIntegerCounters(t *testing.
 	}
 	for _, valid := range []string{`0`, `7`, `9223372036854775807`} {
 		t.Run("valid_"+valid, func(t *testing.T) {
-			candidate := `{"schema_version":1,"metrics":{"total":` + valid + `,"success":0,"failures":0}}`
+			candidate := `{"schema_version":1,"metrics":{"total":` + valid + `,"success":` + valid + `,"failures":0}}`
 			if err := ValidateMetricCountersInArtifactJSON([]byte(candidate)); err != nil {
 				t.Fatalf("integer counter %s should be accepted: %v", valid, err)
 			}
@@ -42,6 +42,25 @@ func TestValidateMetricCountersInArtifactJSONRequiresIntegerCounters(t *testing.
 	}
 	if err := ValidateMetricCountersInArtifactJSON([]byte(`{"metrics":{"total":9223372036854775808,"success":0,"failures":0}}`)); err == nil {
 		t.Fatal("counter outside the supported signed integer range was accepted")
+	}
+}
+
+func TestValidateMetricCountersInArtifactJSONRequiresConservedOutcomes(t *testing.T) {
+	for _, counters := range []struct {
+		name, json string
+	}{
+		{name: "success_exceeds_total", json: `{"metrics":{"total":1,"success":2,"failures":0}}`},
+		{name: "sum_below_total", json: `{"metrics":{"total":2,"success":1,"failures":0}}`},
+		{name: "sum_above_total", json: `{"metrics":{"total":1,"success":1,"failures":1}}`},
+	} {
+		t.Run(counters.name, func(t *testing.T) {
+			if err := ValidateMetricCountersInArtifactJSON([]byte(counters.json)); err == nil {
+				t.Fatal("inconsistent success/failure counters were accepted")
+			}
+		})
+	}
+	if err := ValidateMetricCountersInArtifactJSON([]byte(`{"metrics":{"total":2,"success":1,"failures":1}}`)); err != nil {
+		t.Fatalf("conserved request counters should be accepted: %v", err)
 	}
 }
 
