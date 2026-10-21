@@ -191,7 +191,7 @@ func Decode(data []byte) (Profile, bool, error) {
 	}
 	version := 0
 	if raw, ok := envelope["schema_version"]; ok {
-		if err := json.Unmarshal(raw, &version); err != nil || version < 0 {
+		if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) || json.Unmarshal(raw, &version) != nil || version < 0 {
 			return Profile{}, false, errors.New("campaign profile has an invalid schema_version")
 		}
 	}

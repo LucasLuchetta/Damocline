@@ -79,6 +79,9 @@ func TestV0MigrationAndFutureSchemaRejected(t *testing.T) {
 	if _, _, err := Decode([]byte(`{"schema_version":999}`)); err == nil {
 		t.Fatal("accepted future schema")
 	}
+	if _, _, err := Decode([]byte(`{"schema_version":null}`)); err == nil {
+		t.Fatal("accepted null schema version as a legacy profile")
+	}
 }
 
 func TestDecodeRejectsUnknownFieldsAndTrailingJSON(t *testing.T) {
