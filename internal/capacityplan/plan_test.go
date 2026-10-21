@@ -86,6 +86,120 @@ func TestReadCampaignRequiresValidStartTimestampFromSchemaV5(t *testing.T) {
 	writeCampaignAndAssertAccepted(t, root)
 }
 
+func TestReadCampaignRequiresPersistedNestedTrialAndPhaseEvidence(t *testing.T) {
+	valid, err := json.Marshal(auditFixture())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name   string
+		mutate func(map[string]json.RawMessage) error
+	}{
+		{name: "trial_number", mutate: func(root map[string]json.RawMessage) error {
+			return mutateCampaignTrial(root, func(trial map[string]json.RawMessage) { delete(trial, "number") })
+		}},
+		{name: "trial_phases", mutate: func(root map[string]json.RawMessage) error {
+			return mutateCampaignTrial(root, func(trial map[string]json.RawMessage) { delete(trial, "phases") })
+		}},
+		{name: "trial_phases_null", mutate: func(root map[string]json.RawMessage) error {
+			return mutateCampaignTrial(root, func(trial map[string]json.RawMessage) { trial["phases"] = json.RawMessage(`null`) })
+		}},
+		{name: "trial_outcome", mutate: func(root map[string]json.RawMessage) error {
+			return mutateCampaignTrial(root, func(trial map[string]json.RawMessage) { delete(trial, "outcome") })
+		}},
+		{name: "phase_name", mutate: func(root map[string]json.RawMessage) error {
+			return mutateCampaignPhase(root, func(phase map[string]json.RawMessage) { delete(phase, "name") })
+		}},
+		{name: "phase_run", mutate: func(root map[string]json.RawMessage) error {
+			return mutateCampaignPhase(root, func(phase map[string]json.RawMessage) { delete(phase, "run") })
+		}},
+		{name: "phase_run_null", mutate: func(root map[string]json.RawMessage) error {
+			return mutateCampaignPhase(root, func(phase map[string]json.RawMessage) { phase["run"] = json.RawMessage(`null`) })
+		}},
+		{name: "embedded_run_schema", mutate: func(root map[string]json.RawMessage) error {
+			return mutateCampaignPhaseRun(root, func(run map[string]json.RawMessage) { delete(run, "schema_version") })
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var root map[string]json.RawMessage
+			if err := json.Unmarshal(valid, &root); err != nil {
+				t.Fatal(err)
+			}
+			if err := tc.mutate(root); err != nil {
+				t.Fatal(err)
+			}
+			writeCampaignAndAssertRejected(t, root)
+		})
+	}
+	var root map[string]json.RawMessage
+	if err := json.Unmarshal(valid, &root); err != nil {
+		t.Fatal(err)
+	}
+	var trials []json.RawMessage
+	if err := json.Unmarshal(root["trials"], &trials); err != nil {
+		t.Fatal(err)
+	}
+	var pending map[string]json.RawMessage
+	if err := json.Unmarshal(trials[0], &pending); err != nil {
+		t.Fatal(err)
+	}
+	var phases []json.RawMessage
+	if err := json.Unmarshal(pending["phases"], &phases); err != nil {
+		t.Fatal(err)
+	}
+	var phase map[string]json.RawMessage
+	if err := json.Unmarshal(phases[0], &phase); err != nil {
+		t.Fatal(err)
+	}
+	delete(phase, "run")
+	phases[0], _ = json.Marshal(phase)
+	pending["phases"], _ = json.Marshal(phases)
+	root["pending_trial"], _ = json.Marshal(pending)
+	writeCampaignAndAssertRejected(t, root)
+}
+
+func mutateCampaignTrial(root map[string]json.RawMessage, mutate func(map[string]json.RawMessage)) error {
+	var trials []json.RawMessage
+	if err := json.Unmarshal(root["trials"], &trials); err != nil {
+		return err
+	}
+	var trial map[string]json.RawMessage
+	if err := json.Unmarshal(trials[0], &trial); err != nil {
+		return err
+	}
+	mutate(trial)
+	trials[0], _ = json.Marshal(trial)
+	root["trials"], _ = json.Marshal(trials)
+	return nil
+}
+
+func mutateCampaignPhase(root map[string]json.RawMessage, mutate func(map[string]json.RawMessage)) error {
+	return mutateCampaignTrial(root, func(trial map[string]json.RawMessage) {
+		var phases []json.RawMessage
+		if err := json.Unmarshal(trial["phases"], &phases); err != nil {
+			return
+		}
+		var phase map[string]json.RawMessage
+		if err := json.Unmarshal(phases[0], &phase); err != nil {
+			return
+		}
+		mutate(phase)
+		phases[0], _ = json.Marshal(phase)
+		trial["phases"], _ = json.Marshal(phases)
+	})
+}
+
+func mutateCampaignPhaseRun(root map[string]json.RawMessage, mutate func(map[string]json.RawMessage)) error {
+	return mutateCampaignPhase(root, func(phase map[string]json.RawMessage) {
+		var run map[string]json.RawMessage
+		if err := json.Unmarshal(phase["run"], &run); err != nil {
+			return
+		}
+		mutate(run)
+		phase["run"], _ = json.Marshal(run)
+	})
+}
+
 func writeCampaignAndAssertRejected(t *testing.T, fields map[string]json.RawMessage) {
 	t.Helper()
 	data, err := json.Marshal(fields)

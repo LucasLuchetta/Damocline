@@ -24,12 +24,20 @@ their explicitly empty timestamp.
 
 Apply the same bounded structural check to individual campaign reads,
 collections, the dashboard, and redacted exports while raw bytes are available.
-Keep explicit zero durations valid when their JSON fields are present.
+Require trial objects to contain number, phase array, and outcome, and phase
+objects to contain name and a non-null embedded run object. Apply the same rule
+to pending checkpoint trials. Each embedded run also requires an explicit
+schema marker; metric counters are validated by the shared report-artifact
+validator. Empty phase arrays remain valid for an aborted trial that stopped
+before recording a phase. Keep explicit zero durations valid when their JSON
+fields are present.
 
 ## Consequences
 
 - Missing required top-level fields can no longer silently become Go zero
   values during offline campaign assessment.
+- Missing trial/phase structure can no longer silently become empty arrays or
+  zero-value run reports, including in checkpoint and redacted-report paths.
 - Schema-v5+ start times have a reproducible timestamp representation;
   historical v2/v4 fixtures remain readable under their original semantics.
 - This check validates structure and timestamp syntax only. It does not

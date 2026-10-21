@@ -137,7 +137,7 @@ func TestReportExportValidHistoricalCampaignsThroughCLIWithoutChangingSources(t 
 
 	closedV9 := campaign.Result{SchemaVersion: 9, Scenario: marker, Target: "https://app.example.com/private", StartedAt: "2026-01-02T03:04:05Z",
 		Warmup: "0s", Observation: "10s", Recovery: "0s", Cooldown: "0s", StabilityPolicy: &policy,
-		BaseUsers: 2, Repeats: 2, Outcome: "INCONCLUSIVE", Trials: []campaign.Trial{{RunID: strings.Repeat("a", 32), Number: 1, Outcome: "INCONCLUSIVE"}}}
+		BaseUsers: 2, Repeats: 2, Outcome: "INCONCLUSIVE", Trials: []campaign.Trial{{RunID: strings.Repeat("a", 32), Number: 1, Phases: []campaign.Phase{}, Outcome: "INCONCLUSIVE"}}}
 	closedV13 := closedV9
 	closedV13.SchemaVersion = campaign.CurrentSchemaVersion
 	closedV13.ExecutionState = "COMPLETED"

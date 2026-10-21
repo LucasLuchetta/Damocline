@@ -2,6 +2,7 @@
 package capacityplan
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -381,6 +382,57 @@ func validateCampaignArtifactPresence(data []byte) error {
 		}
 		if _, err := time.Parse(time.RFC3339Nano, startedAt); err != nil {
 			return errors.New("current campaign started_at must be a non-empty RFC3339 timestamp")
+		}
+	}
+	var trials []json.RawMessage
+	if err := json.Unmarshal(fields["trials"], &trials); err != nil || trials == nil || !bytes.HasPrefix(bytes.TrimSpace(fields["trials"]), []byte("[")) {
+		return errors.New("campaign trials must be a JSON array")
+	}
+	for index, rawTrial := range trials {
+		if err := validateCampaignTrialPresence(rawTrial); err != nil {
+			return fmt.Errorf("campaign trial %d: %w", index+1, err)
+		}
+	}
+	if pending, ok := fields["pending_trial"]; ok && string(pending) != "null" {
+		if err := validateCampaignTrialPresence(pending); err != nil {
+			return fmt.Errorf("campaign pending_trial: %w", err)
+		}
+	}
+	return nil
+}
+
+func validateCampaignTrialPresence(data []byte) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil || fields == nil {
+		return errors.New("trial must be a JSON object")
+	}
+	for _, name := range []string{"number", "phases", "outcome"} {
+		value, ok := fields[name]
+		if !ok || string(value) == "null" {
+			return fmt.Errorf("trial is missing required field %q; absence cannot be interpreted as zero", name)
+		}
+	}
+	var phases []json.RawMessage
+	if err := json.Unmarshal(fields["phases"], &phases); err != nil || phases == nil || !bytes.HasPrefix(bytes.TrimSpace(fields["phases"]), []byte("[")) {
+		return errors.New("trial phases must be a JSON array")
+	}
+	for index, rawPhase := range phases {
+		var phase map[string]json.RawMessage
+		if err := json.Unmarshal(rawPhase, &phase); err != nil || phase == nil {
+			return fmt.Errorf("phase %d must be a JSON object", index+1)
+		}
+		for _, name := range []string{"name", "run"} {
+			value, ok := phase[name]
+			if !ok || string(value) == "null" {
+				return fmt.Errorf("phase %d is missing required field %q; absence cannot be interpreted as zero", index+1, name)
+			}
+		}
+		var run map[string]json.RawMessage
+		if err := json.Unmarshal(phase["run"], &run); err != nil || run == nil {
+			return fmt.Errorf("phase %d run must be a JSON object", index+1)
+		}
+		if schema, ok := run["schema_version"]; !ok || string(schema) == "null" {
+			return fmt.Errorf("phase %d run is missing required field %q; absence cannot be interpreted as zero", index+1, "schema_version")
 		}
 	}
 	return nil

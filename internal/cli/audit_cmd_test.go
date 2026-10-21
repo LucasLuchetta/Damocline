@@ -31,7 +31,7 @@ func TestAuditCommandIsOfflineAndProducesMachineReadableEvidence(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "audit.json")
 	evidence := campaign.Result{SchemaVersion: campaign.CurrentSchemaVersion, ExecutionState: "COMPLETED", Stabilization: "0s", Cooldown: "0s", StabilityPolicy: defaultCampaignStabilityPolicy(), Objectives: defaultCampaignObjectives(),
 		Scenario: "offline", BaseUsers: 2, Target: "http://127.0.0.1:18080", StartedAt: "2026-01-02T03:04:05Z", Warmup: "0s", Observation: "10s", Recovery: "10s", Repeats: 2, Outcome: "INCONCLUSIVE",
-		Trials: []campaign.Trial{{RunID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Number: 1, Outcome: "INCONCLUSIVE"}, {RunID: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", Number: 2, Outcome: "INCONCLUSIVE"}},
+		Trials: []campaign.Trial{{RunID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Number: 1, Phases: []campaign.Phase{}, Outcome: "INCONCLUSIVE"}, {RunID: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", Number: 2, Phases: []campaign.Phase{}, Outcome: "INCONCLUSIVE"}},
 	}
 	if err := report.WriteAnyJSON(path, evidence); err != nil {
 		t.Fatal(err)
@@ -95,7 +95,7 @@ func TestAuditReportOutContainsExecutiveTechnicalReplayWithoutConflictingVerdict
 	evidence := campaign.Result{
 		SchemaVersion: campaign.CurrentSchemaVersion, ExecutionState: "COMPLETED", Stabilization: "0s", Cooldown: "0s", StabilityPolicy: defaultCampaignStabilityPolicy(), Objectives: defaultCampaignObjectives(),
 		Scenario: "synthetic local fixture", BaseUsers: 2, Target: "http://127.0.0.1:18080", StartedAt: "2026-01-02T03:04:05Z", Warmup: "0s", Observation: "10s", Recovery: "10s", Repeats: 2, Outcome: "INCONCLUSIVE",
-		Trials: []campaign.Trial{{RunID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Number: 1, Outcome: "INCONCLUSIVE"}, {RunID: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", Number: 2, Outcome: "INCONCLUSIVE"}},
+		Trials: []campaign.Trial{{RunID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Number: 1, Phases: []campaign.Phase{}, Outcome: "INCONCLUSIVE"}, {RunID: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", Number: 2, Phases: []campaign.Phase{}, Outcome: "INCONCLUSIVE"}},
 	}
 	if err := report.WriteAnyJSON(path, evidence); err != nil {
 		t.Fatal(err)
@@ -155,7 +155,7 @@ func TestAuditCommandRejectsChangedCampaignBeforeWritingAssessment(t *testing.T)
 	evidence := campaign.Result{
 		SchemaVersion: campaign.CurrentSchemaVersion, ExecutionState: "COMPLETED", Scenario: "synthetic local fixture", BaseUsers: 2, Target: "http://127.0.0.1:18080", StartedAt: "2026-01-02T03:04:05Z", Warmup: "0s", Observation: "10s", Recovery: "10s", Repeats: 2,
 		Outcome: "INCONCLUSIVE", Stabilization: "0s", Cooldown: "0s", StabilityPolicy: defaultCampaignStabilityPolicy(), Objectives: defaultCampaignObjectives(),
-		Trials: []campaign.Trial{{RunID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Number: 1, Outcome: "INCONCLUSIVE"}, {RunID: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", Number: 2, Outcome: "INCONCLUSIVE"}},
+		Trials: []campaign.Trial{{RunID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Number: 1, Phases: []campaign.Phase{}, Outcome: "INCONCLUSIVE"}, {RunID: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", Number: 2, Phases: []campaign.Phase{}, Outcome: "INCONCLUSIVE"}},
 	}
 	if err := report.WriteAnyJSON(campaignPath, evidence); err != nil {
 		t.Fatal(err)
@@ -197,7 +197,7 @@ func TestAuditCommandRejectsChangedSourceBytesBeforeWritingAssessment(t *testing
 	campaignPath := filepath.Join(directory, "campaign.json")
 	evidence := campaign.Result{SchemaVersion: campaign.CurrentSchemaVersion, ExecutionState: "COMPLETED", Stabilization: "0s", Cooldown: "0s", StabilityPolicy: defaultCampaignStabilityPolicy(), Objectives: defaultCampaignObjectives(),
 		Scenario: "synthetic local fixture", BaseUsers: 2, Target: "http://127.0.0.1:18080", StartedAt: "2026-01-02T03:04:05Z", Warmup: "0s", Observation: "10s", Recovery: "10s", Repeats: 2, Outcome: "INCONCLUSIVE",
-		Trials: []campaign.Trial{{RunID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Number: 1, Outcome: "INCONCLUSIVE"}, {RunID: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", Number: 2, Outcome: "INCONCLUSIVE"}},
+		Trials: []campaign.Trial{{RunID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Number: 1, Phases: []campaign.Phase{}, Outcome: "INCONCLUSIVE"}, {RunID: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", Number: 2, Phases: []campaign.Phase{}, Outcome: "INCONCLUSIVE"}},
 	}
 	original, err := json.Marshal(evidence)
 	if err != nil {
@@ -355,7 +355,7 @@ func TestAuditCommandAcceptsMultipleCampaignsAndKeepsExactDemandUnknown(t *testi
 			SchemaVersion: campaign.CurrentSchemaVersion, ExecutionState: "COMPLETED", Scenario: "offline", BaseUsers: []int{2, 4}[i], StartedAt: "2026-01-02T03:04:05Z", Stabilization: "0s", Cooldown: "0s", StabilityPolicy: defaultCampaignStabilityPolicy(), Objectives: defaultCampaignObjectives(),
 			Target: "http://127.0.0.1:18080", Warmup: "0s", Observation: "10s", SpikeDuration: "0s", Recovery: "10s", Budget: budget.String(),
 			Repeats: 2, Outcome: "ABORTED", Trials: []campaign.Trial{
-				{RunID: []string{"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "cccccccccccccccccccccccccccccccc"}[i], Number: 1, Outcome: "ABORTED", AbortReason: "The campaign was interrupted by its caller."},
+				{RunID: []string{"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "cccccccccccccccccccccccccccccccc"}[i], Number: 1, Phases: []campaign.Phase{}, Outcome: "ABORTED", AbortReason: "The campaign was interrupted by its caller."},
 			},
 		}
 		if err := report.WriteAnyJSON(path, evidence); err != nil {
