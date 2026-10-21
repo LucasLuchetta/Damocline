@@ -1,0 +1,2669 @@
+{
+  "schema_version": 4,
+  "scenario": "synthetic",
+  "base_users": 10,
+  "target": "http://127.0.0.1:18080",
+  "started_at": "",
+  "warmup": "0s",
+  "observation": "10s",
+  "spike_duration": "0s",
+  "recovery": "10s",
+  "soak": "10s",
+  "budget": "3m20s",
+  "repeats": 2,
+  "trials": [
+    {
+      "number": 1,
+      "phases": [
+        {
+          "name": "observation",
+          "evidence_state": "PASS_OBSERVED",
+          "stability": "NO_LARGE_DRIFT_DETECTED",
+          "run": {
+            "schema_version": 6,
+            "statistical_methods": {
+              "percentile_estimator": "NEAREST_RANK",
+              "p95_interval_method": "EXACT_BINOMIAL_ORDER_STATISTIC_RANKS",
+              "p95_interval_confidence": 0.95,
+              "p95_interval_assumption": "IID_STATIONARY_OBSERVATIONS",
+              "p99_interval_method": "EXACT_BINOMIAL_ORDER_STATISTIC_RANKS",
+              "p99_interval_confidence": 0.95,
+              "p99_interval_assumption": "IID_STATIONARY_OBSERVATIONS"
+            },
+            "name": "",
+            "target": "http://127.0.0.1:18080",
+            "started_at": "",
+            "elapsed_seconds": 10,
+            "observation_seconds": 10,
+            "config": {
+              "users": 10,
+              "duration": "10s",
+              "request_timeout": "",
+              "max_rps": 1000,
+              "p95_limit_ms": 100,
+              "max_error_rate": 0.01,
+              "mode": "",
+              "separate_sessions": false,
+              "min_samples_per_step": 1,
+              "window_duration": "2.5s"
+            },
+            "metrics": {
+              "total": 1200,
+              "success": 1200,
+              "failures": 0,
+              "cancelled": 0,
+              "p50_ms": 0,
+              "mean_ms": 0,
+              "p95_ms": 30,
+              "p99_ms": 0,
+              "http_diagnostics": {
+                "status_1xx": 0,
+                "status_2xx": 0,
+                "status_3xx": 0,
+                "status_4xx": 0,
+                "status_5xx": 0,
+                "redirect_responses": 0,
+                "rate_limited_responses": 0,
+                "assertion_failures": 0,
+                "network_timeouts": 0,
+                "dns_failures": 0,
+                "connection_failures": 0,
+                "tls_failures": 0,
+                "transport_failures": 0,
+                "unexpected_response_sizes": 0
+              }
+            },
+            "journeys": {
+              "total": 1200,
+              "success": 1200,
+              "failures": 0,
+              "cancelled": 0,
+              "p50_ms": 0,
+              "mean_ms": 0,
+              "p95_ms": 30,
+              "p99_ms": 0,
+              "http_diagnostics": {
+                "status_1xx": 0,
+                "status_2xx": 0,
+                "status_3xx": 0,
+                "status_4xx": 0,
+                "status_5xx": 0,
+                "redirect_responses": 0,
+                "rate_limited_responses": 0,
+                "assertion_failures": 0,
+                "network_timeouts": 0,
+                "dns_failures": 0,
+                "connection_failures": 0,
+                "tls_failures": 0,
+                "transport_failures": 0,
+                "unexpected_response_sizes": 0
+              }
+            },
+            "steps": [
+              {
+                "name": "step",
+                "method": "",
+                "path": "",
+                "metrics": {
+                  "total": 1200,
+                  "success": 1200,
+                  "failures": 0,
+                  "cancelled": 0,
+                  "p50_ms": 0,
+                  "mean_ms": 0,
+                  "p95_ms": 30,
+                  "p99_ms": 0,
+                  "http_diagnostics": {
+                    "status_1xx": 0,
+                    "status_2xx": 0,
+                    "status_3xx": 0,
+                    "status_4xx": 0,
+                    "status_5xx": 0,
+                    "redirect_responses": 0,
+                    "rate_limited_responses": 0,
+                    "assertion_failures": 0,
+                    "network_timeouts": 0,
+                    "dns_failures": 0,
+                    "connection_failures": 0,
+                    "tls_failures": 0,
+                    "transport_failures": 0,
+                    "unexpected_response_sizes": 0
+                  }
+                },
+                "http_trace": {
+                  "request_attempt_count": 0,
+                  "request_write_count": 0,
+                  "dns_start_count": 0,
+                  "rate_wait_count": 0,
+                  "dns_count": 0,
+                  "connect_count": 0,
+                  "connect_start_count": 0,
+                  "tls_count": 0,
+                  "tls_start_count": 0,
+                  "first_byte_count": 0,
+                  "body_count": 0,
+                  "complete_count": 0
+                }
+              }
+            ],
+            "windows": [
+              {
+                "start_seconds": 0,
+                "end_seconds": 2.5,
+                "metrics": {
+                  "total": 300,
+                  "success": 300,
+                  "failures": 0,
+                  "cancelled": 0,
+                  "p50_ms": 0,
+                  "mean_ms": 0,
+                  "p95_ms": 30,
+                  "p99_ms": 0,
+                  "http_diagnostics": {
+                    "status_1xx": 0,
+                    "status_2xx": 0,
+                    "status_3xx": 0,
+                    "status_4xx": 0,
+                    "status_5xx": 0,
+                    "redirect_responses": 0,
+                    "rate_limited_responses": 0,
+                    "assertion_failures": 0,
+                    "network_timeouts": 0,
+                    "dns_failures": 0,
+                    "connection_failures": 0,
+                    "tls_failures": 0,
+                    "transport_failures": 0,
+                    "unexpected_response_sizes": 0
+                  }
+                },
+                "journeys": {
+                  "total": 0,
+                  "success": 0,
+                  "failures": 0,
+                  "cancelled": 0,
+                  "p50_ms": 0,
+                  "mean_ms": 0,
+                  "p95_ms": 0,
+                  "p99_ms": 0,
+                  "http_diagnostics": {
+                    "status_1xx": 0,
+                    "status_2xx": 0,
+                    "status_3xx": 0,
+                    "status_4xx": 0,
+                    "status_5xx": 0,
+                    "redirect_responses": 0,
+                    "rate_limited_responses": 0,
+                    "assertion_failures": 0,
+                    "network_timeouts": 0,
+                    "dns_failures": 0,
+                    "connection_failures": 0,
+                    "tls_failures": 0,
+                    "transport_failures": 0,
+                    "unexpected_response_sizes": 0
+                  }
+                },
+                "steps": [
+                  {
+                    "name": "step",
+                    "metrics": {
+                      "total": 300,
+                      "success": 300,
+                      "failures": 0,
+                      "cancelled": 0,
+                      "p50_ms": 0,
+                      "mean_ms": 0,
+                      "p95_ms": 30,
+                      "p99_ms": 0,
+                      "http_diagnostics": {
+                        "status_1xx": 0,
+                        "status_2xx": 0,
+                        "status_3xx": 0,
+                        "status_4xx": 0,
+                        "status_5xx": 0,
+                        "redirect_responses": 0,
+                        "rate_limited_responses": 0,
+                        "assertion_failures": 0,
+                        "network_timeouts": 0,
+                        "dns_failures": 0,
+                        "connection_failures": 0,
+                        "tls_failures": 0,
+                        "transport_failures": 0,
+                        "unexpected_response_sizes": 0
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "start_seconds": 2.5,
+                "end_seconds": 5,
+                "metrics": {
+                  "total": 300,
+                  "success": 300,
+                  "failures": 0,
+                  "cancelled": 0,
+                  "p50_ms": 0,
+                  "mean_ms": 0,
+                  "p95_ms": 30,
+                  "p99_ms": 0,
+                  "http_diagnostics": {
+                    "status_1xx": 0,
+                    "status_2xx": 0,
+                    "status_3xx": 0,
+                    "status_4xx": 0,
+                    "status_5xx": 0,
+                    "redirect_responses": 0,
+                    "rate_limited_responses": 0,
+                    "assertion_failures": 0,
+                    "network_timeouts": 0,
+                    "dns_failures": 0,
+                    "connection_failures": 0,
+                    "tls_failures": 0,
+                    "transport_failures": 0,
+                    "unexpected_response_sizes": 0
+                  }
+                },
+                "journeys": {
+                  "total": 0,
+                  "success": 0,
+                  "failures": 0,
+                  "cancelled": 0,
+                  "p50_ms": 0,
+                  "mean_ms": 0,
+                  "p95_ms": 0,
+                  "p99_ms": 0,
+                  "http_diagnostics": {
+                    "status_1xx": 0,
+                    "status_2xx": 0,
+                    "status_3xx": 0,
+                    "status_4xx": 0,
+                    "status_5xx": 0,
+                    "redirect_responses": 0,
+                    "rate_limited_responses": 0,
+                    "assertion_failures": 0,
+                    "network_timeouts": 0,
+                    "dns_failures": 0,
+                    "connection_failures": 0,
+                    "tls_failures": 0,
+                    "transport_failures": 0,
+                    "unexpected_response_sizes": 0
+                  }
+                },
+                "steps": [
+                  {
+                    "name": "step",
+                    "metrics": {
+                      "total": 300,
+                      "success": 300,
+                      "failures": 0,
+                      "cancelled": 0,
+                      "p50_ms": 0,
+                      "mean_ms": 0,
+                      "p95_ms": 30,
+                      "p99_ms": 0,
+                      "http_diagnostics": {
+                        "status_1xx": 0,
+                        "status_2xx": 0,
+                        "status_3xx": 0,
+                        "status_4xx": 0,
+                        "status_5xx": 0,
+                        "redirect_responses": 0,
+                        "rate_limited_responses": 0,
+                        "assertion_failures": 0,
+                        "network_timeouts": 0,
+                        "dns_failures": 0,
+                        "connection_failures": 0,
+                        "tls_failures": 0,
+                        "transport_failures": 0,
+                        "unexpected_response_sizes": 0
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "start_seconds": 5,
+                "end_seconds": 7.5,
+                "metrics": {
+                  "total": 300,
+                  "success": 300,
+                  "failures": 0,
+                  "cancelled": 0,
+                  "p50_ms": 0,
+                  "mean_ms": 0,
+                  "p95_ms": 30,
+                  "p99_ms": 0,
+                  "http_diagnostics": {
+                    "status_1xx": 0,
+                    "status_2xx": 0,
+                    "status_3xx": 0,
+                    "status_4xx": 0,
+                    "status_5xx": 0,
+                    "redirect_responses": 0,
+                    "rate_limited_responses": 0,
+                    "assertion_failures": 0,
+                    "network_timeouts": 0,
+                    "dns_failures": 0,
+                    "connection_failures": 0,
+                    "tls_failures": 0,
+                    "transport_failures": 0,
+                    "unexpected_response_sizes": 0
+                  }
+                },
+                "journeys": {
+                  "total": 0,
+                  "success": 0,
+                  "failures": 0,
+                  "cancelled": 0,
+                  "p50_ms": 0,
+                  "mean_ms": 0,
+                  "p95_ms": 0,
+                  "p99_ms": 0,
+                  "http_diagnostics": {
+                    "status_1xx": 0,
+                    "status_2xx": 0,
+                    "status_3xx": 0,
+                    "status_4xx": 0,
+                    "status_5xx": 0,
+                    "redirect_responses": 0,
+                    "rate_limited_responses": 0,
+                    "assertion_failures": 0,
+                    "network_timeouts": 0,
+                    "dns_failures": 0,
+                    "connection_failures": 0,
+                    "tls_failures": 0,
+                    "transport_failures": 0,
+                    "unexpected_response_sizes": 0
+                  }
+                },
+                "steps": [
+                  {
+                    "name": "step",
+                    "metrics": {
+                      "total": 300,
+                      "success": 300,
+                      "failures": 0,
+                      "cancelled": 0,
+                      "p50_ms": 0,
+                      "mean_ms": 0,
+                      "p95_ms": 30,
+                      "p99_ms": 0,
+                      "http_diagnostics": {
+                        "status_1xx": 0,
+                        "status_2xx": 0,
+                        "status_3xx": 0,
+                        "status_4xx": 0,
+                        "status_5xx": 0,
+                        "redirect_responses": 0,
+                        "rate_limited_responses": 0,
+                        "assertion_failures": 0,
+                        "network_timeouts": 0,
+                        "dns_failures": 0,
+                        "connection_failures": 0,
+                        "tls_failures": 0,
+                        "transport_failures": 0,
+                        "unexpected_response_sizes": 0
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "start_seconds": 7.5,
+                "end_seconds": 10,
+                "metrics": {
+                  "total": 300,
+                  "success": 300,
+                  "failures": 0,
+                  "cancelled": 0,
+                  "p50_ms": 0,
+                  "mean_ms": 0,
+                  "p95_ms": 30,
+                  "p99_ms": 0,
+                  "http_diagnostics": {
+                    "status_1xx": 0,
+                    "status_2xx": 0,
+                    "status_3xx": 0,
+                    "status_4xx": 0,
+                    "status_5xx": 0,
+                    "redirect_responses": 0,
+                    "rate_limited_responses": 0,
+                    "assertion_failures": 0,
+                    "network_timeouts": 0,
+                    "dns_failures": 0,
+                    "connection_failures": 0,
+                    "tls_failures": 0,
+                    "transport_failures": 0,
+                    "unexpected_response_sizes": 0
+                  }
+                },
+                "journeys": {
+                  "total": 0,
+                  "success": 0,
+                  "failures": 0,
+                  "cancelled": 0,
+                  "p50_ms": 0,
+                  "mean_ms": 0,
+                  "p95_ms": 0,
+                  "p99_ms": 0,
+                  "http_diagnostics": {
+                    "status_1xx": 0,
+                    "status_2xx": 0,
+                    "status_3xx": 0,
+                    "status_4xx": 0,
+                    "status_5xx": 0,
+                    "redirect_responses": 0,
+                    "rate_limited_responses": 0,
+                    "assertion_failures": 0,
+                    "network_timeouts": 0,
+                    "dns_failures": 0,
+                    "connection_failures": 0,
+                    "tls_failures": 0,
+                    "transport_failures": 0,
+                    "unexpected_response_sizes": 0
+                  }
+                },
+                "steps": [
+                  {
+                    "name": "step",
+                    "metrics": {
+                      "total": 300,
+                      "success": 300,
+                      "failures": 0,
+                      "cancelled": 0,
+                      "p50_ms": 0,
+                      "mean_ms": 0,
+                      "p95_ms": 30,
+                      "p99_ms": 0,
+                      "http_diagnostics": {
+                        "status_1xx": 0,
+                        "status_2xx": 0,
+                        "status_3xx": 0,
+                        "status_4xx": 0,
+                        "status_5xx": 0,
+                        "redirect_responses": 0,
+                        "rate_limited_responses": 0,
+                        "assertion_failures": 0,
+                        "network_timeouts": 0,
+                        "dns_failures": 0,
+                        "connection_failures": 0,
+                        "tls_failures": 0,
+                        "transport_failures": 0,
+                        "unexpected_response_sizes": 0
+                      }
+                    }
+                  }
+                ]
+              }
+            ],
+            "outcome": "PASS",
+            "error_rate": 0,
+            "note": "",
+            "iterations_started": 1200,
+            "iterations_completed": 1200,
+            "arrivals_scheduled": 0,
+            "arrivals_dropped": 0,
+            "generator_identity": {
+              "os": "linux",
+              "architecture": "amd64",
+              "go_version": "go1.24.0",
+              "runner_identity_method": "git_commit",
+              "runner_identity": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            },
+            "generator": {
+              "samples": 4,
+              "observed_seconds": 0,
+              "logical_cpus": 4,
+              "gomaxprocs": 2,
+              "cpu_capacity_cores": 1.5,
+              "cpu_capacity_source": "cgroup_cpu_quota",
+              "cpu_capacity_known": true,
+              "peak_heap_alloc_bytes": 0,
+              "peak_goroutines": 0,
+              "gc_cycles": 0,
+              "go_cpu_busy_seconds": 0,
+              "go_cpu_capacity_seconds": 0,
+              "go_cpu_utilization_ratio": 0,
+              "go_cpu_valid": true,
+              "process_samples": 4,
+              "process_cpu_samples": 0,
+              "peak_process_rss_bytes": 1024,
+              "peak_process_cpu_utilization_ratio": 0,
+              "mean_process_cpu_utilization_ratio": 0,
+              "process_cpu_valid": true,
+              "note": ""
+            },
+            "data_quality": {
+              "state": "LIMITED",
+              "findings": [
+                "No local generator preflight is attached; workload-specific generator equivalence is unverified."
+              ]
+            }
+          }
+        },
+        {
+          "name": "recovery",
+          "evidence_state": "PASS_OBSERVED",
+          "run": {
+            "schema_version": 6,
+            "statistical_methods": {
+              "percentile_estimator": "NEAREST_RANK",
+              "p95_interval_method": "EXACT_BINOMIAL_ORDER_STATISTIC_RANKS",
+              "p95_interval_confidence": 0.95,
+              "p95_interval_assumption": "IID_STATIONARY_OBSERVATIONS",
+              "p99_interval_method": "EXACT_BINOMIAL_ORDER_STATISTIC_RANKS",
+              "p99_interval_confidence": 0.95,
+              "p99_interval_assumption": "IID_STATIONARY_OBSERVATIONS"
+            },
+            "name": "",
+            "target": "http://127.0.0.1:18080",
+            "started_at": "",
+            "elapsed_seconds": 10,
+            "observation_seconds": 10,
+            "config": {
+              "users": 10,
+              "duration": "10s",
+              "request_timeout": "",
+              "max_rps": 1000,
+              "p95_limit_ms": 100,
+              "max_error_rate": 0.01,
+              "mode": "",
+              "separate_sessions": false,
+              "min_samples_per_step": 1,
+              "window_duration": "2.5s"
+            },
+            "metrics": {
+              "total": 1200,
+              "success": 1200,
+              "failures": 0,
+              "cancelled": 0,
+              "p50_ms": 0,
+              "mean_ms": 0,
+              "p95_ms": 30,
+              "p99_ms": 0,
+              "http_diagnostics": {
+                "status_1xx": 0,
+                "status_2xx": 0,
+                "status_3xx": 0,
+                "status_4xx": 0,
+                "status_5xx": 0,
+                "redirect_responses": 0,
+                "rate_limited_responses": 0,
+                "assertion_failures": 0,
+                "network_timeouts": 0,
+                "dns_failures": 0,
+                "connection_failures": 0,
+                "tls_failures": 0,
+                "transport_failures": 0,
+                "unexpected_response_sizes": 0
+              }
+            },
+            "journeys": {
+              "total": 1200,
+              "success": 1200,
+              "failures": 0,
+              "cancelled": 0,
+              "p50_ms": 0,
+              "mean_ms": 0,
+              "p95_ms": 30,
+              "p99_ms": 0,
+              "http_diagnostics": {
+                "status_1xx": 0,
+                "status_2xx": 0,
+                "status_3xx": 0,
+                "status_4xx": 0,
+                "status_5xx": 0,
+                "redirect_responses": 0,
+                "rate_limited_responses": 0,
+                "assertion_failures": 0,
+                "network_timeouts": 0,
+                "dns_failures": 0,
+                "connection_failures": 0,
+                "tls_failures": 0,
+                "transport_failures": 0,
+                "unexpected_response_sizes": 0
+              }
+            },
+            "steps": [
+              {
+                "name": "step",
+                "method": "",
+                "path": "",
+                "metrics": {
+                  "total": 1200,
+                  "success": 1200,
+                  "failures": 0,
+                  "cancelled": 0,
+                  "p50_ms": 0,
+                  "mean_ms": 0,
+                  "p95_ms": 30,
+                  "p99_ms": 0,
+                  "http_diagnostics": {
+                    "status_1xx": 0,
+                    "status_2xx": 0,
+                    "status_3xx": 0,
+                    "status_4xx": 0,
+                    "status_5xx": 0,
+                    "redirect_responses": 0,
+                    "rate_limited_responses": 0,
+                    "assertion_failures": 0,
+                    "network_timeouts": 0,
+                    "dns_failures": 0,
+                    "connection_failures": 0,
+                    "tls_failures": 0,
+                    "transport_failures": 0,
+                    "unexpected_response_sizes": 0
+                  }
+                },
+                "http_trace": {
+                  "request_attempt_count": 0,
+                  "request_write_count": 0,
+                  "dns_start_count": 0,
+                  "rate_wait_count": 0,
+                  "dns_count": 0,
+                  "connect_count": 0,
+                  "connect_start_count": 0,
+                  "tls_count": 0,
+                  "tls_start_count": 0,
+                  "first_byte_count": 0,
+                  "body_count": 0,
+                  "complete_count": 0
+                }
+              }
+            ],
+            "windows": [
+              {
+                "start_seconds": 0,
+                "end_seconds": 2.5,
+                "metrics": {
+                  "total": 300,
+                  "success": 300,
+                  "failures": 0,
+                  "cancelled": 0,
+                  "p50_ms": 0,
+                  "mean_ms": 0,
+                  "p95_ms": 30,
+                  "p99_ms": 0,
+                  "http_diagnostics": {
+                    "status_1xx": 0,
+                    "status_2xx": 0,
+                    "status_3xx": 0,
+                    "status_4xx": 0,
+                    "status_5xx": 0,
+                    "redirect_responses": 0,
+                    "rate_limited_responses": 0,
+                    "assertion_failures": 0,
+                    "network_timeouts": 0,
+                    "dns_failures": 0,
+                    "connection_failures": 0,
+                    "tls_failures": 0,
+                    "transport_failures": 0,
+                    "unexpected_response_sizes": 0
+                  }
+                },
+                "journeys": {
+                  "total": 0,
+                  "success": 0,
+                  "failures": 0,
+                  "cancelled": 0,
+                  "p50_ms": 0,
+                  "mean_ms": 0,
+                  "p95_ms": 0,
+                  "p99_ms": 0,
+                  "http_diagnostics": {
+                    "status_1xx": 0,
+                    "status_2xx": 0,
+                    "status_3xx": 0,
+                    "status_4xx": 0,
+                    "status_5xx": 0,
+                    "redirect_responses": 0,
+                    "rate_limited_responses": 0,
+                    "assertion_failures": 0,
+                    "network_timeouts": 0,
+                    "dns_failures": 0,
+                    "connection_failures": 0,
+                    "tls_failures": 0,
+                    "transport_failures": 0,
+                    "unexpected_response_sizes": 0
+                  }
+                },
+                "steps": [
+                  {
+                    "name": "step",
+                    "metrics": {
+                      "total": 300,
+                      "success": 300,
+                      "failures": 0,
+                      "cancelled": 0,
+                      "p50_ms": 0,
+                      "mean_ms": 0,
+                      "p95_ms": 30,
+                      "p99_ms": 0,
+                      "http_diagnostics": {
+                        "status_1xx": 0,
+                        "status_2xx": 0,
+                        "status_3xx": 0,
+                        "status_4xx": 0,
+                        "status_5xx": 0,
+                        "redirect_responses": 0,
+                        "rate_limited_responses": 0,
+                        "assertion_failures": 0,
+                        "network_timeouts": 0,
+                        "dns_failures": 0,
+                        "connection_failures": 0,
+                        "tls_failures": 0,
+                        "transport_failures": 0,
+                        "unexpected_response_sizes": 0
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "start_seconds": 2.5,
+                "end_seconds": 5,
+                "metrics": {
+                  "total": 300,
+                  "success": 300,
+                  "failures": 0,
+                  "cancelled": 0,
+                  "p50_ms": 0,
+                  "mean_ms": 0,
+                  "p95_ms": 30,
+                  "p99_ms": 0,
+                  "http_diagnostics": {
+                    "status_1xx": 0,
+                    "status_2xx": 0,
+                    "status_3xx": 0,
+                    "status_4xx": 0,
+                    "status_5xx": 0,
+                    "redirect_responses": 0,
+                    "rate_limited_responses": 0,
+                    "assertion_failures": 0,
+                    "network_timeouts": 0,
+                    "dns_failures": 0,
+                    "connection_failures": 0,
+                    "tls_failures": 0,
+                    "transport_failures": 0,
+                    "unexpected_response_sizes": 0
+                  }
+                },
+                "journeys": {
+                  "total": 0,
+                  "success": 0,
+                  "failures": 0,
+                  "cancelled": 0,
+                  "p50_ms": 0,
+                  "mean_ms": 0,
+                  "p95_ms": 0,
+                  "p99_ms": 0,
+                  "http_diagnostics": {
+                    "status_1xx": 0,
+                    "status_2xx": 0,
+                    "status_3xx": 0,
+                    "status_4xx": 0,
+                    "status_5xx": 0,
+                    "redirect_responses": 0,
+                    "rate_limited_responses": 0,
+                    "assertion_failures": 0,
+                    "network_timeouts": 0,
+                    "dns_failures": 0,
+                    "connection_failures": 0,
+                    "tls_failures": 0,
+                    "transport_failures": 0,
+                    "unexpected_response_sizes": 0
+                  }
+                },
+                "steps": [
+                  {
+                    "name": "step",
+                    "metrics": {
+                      "total": 300,
+                      "success": 300,
+                      "failures": 0,
+                      "cancelled": 0,
+                      "p50_ms": 0,
+                      "mean_ms": 0,
+                      "p95_ms": 30,
+                      "p99_ms": 0,
+                      "http_diagnostics": {
+                        "status_1xx": 0,
+                        "status_2xx": 0,
+                        "status_3xx": 0,
+                        "status_4xx": 0,
+                        "status_5xx": 0,
+                        "redirect_responses": 0,
+                        "rate_limited_responses": 0,
+                        "assertion_failures": 0,
+                        "network_timeouts": 0,
+                        "dns_failures": 0,
+                        "connection_failures": 0,
+                        "tls_failures": 0,
+                        "transport_failures": 0,
+                        "unexpected_response_sizes": 0
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "start_seconds": 5,
+                "end_seconds": 7.5,
+                "metrics": {
+                  "total": 300,
+                  "success": 300,
+                  "failures": 0,
+                  "cancelled": 0,
+                  "p50_ms": 0,
+                  "mean_ms": 0,
+                  "p95_ms": 30,
+                  "p99_ms": 0,
+                  "http_diagnostics": {
+                    "status_1xx": 0,
+                    "status_2xx": 0,
+                    "status_3xx": 0,
+                    "status_4xx": 0,
+                    "status_5xx": 0,
+                    "redirect_responses": 0,
+                    "rate_limited_responses": 0,
+                    "assertion_failures": 0,
+                    "network_timeouts": 0,
+                    "dns_failures": 0,
+                    "connection_failures": 0,
+                    "tls_failures": 0,
+                    "transport_failures": 0,
+                    "unexpected_response_sizes": 0
+                  }
+                },
+                "journeys": {
+                  "total": 0,
+                  "success": 0,
+                  "failures": 0,
+                  "cancelled": 0,
+                  "p50_ms": 0,
+                  "mean_ms": 0,
+                  "p95_ms": 0,
+                  "p99_ms": 0,
+                  "http_diagnostics": {
+                    "status_1xx": 0,
+                    "status_2xx": 0,
+                    "status_3xx": 0,
+                    "status_4xx": 0,
+                    "status_5xx": 0,
+                    "redirect_responses": 0,
+                    "rate_limited_responses": 0,
+                    "assertion_failures": 0,
+                    "network_timeouts": 0,
+                    "dns_failures": 0,
+                    "connection_failures": 0,
+                    "tls_failures": 0,
+                    "transport_failures": 0,
+                    "unexpected_response_sizes": 0
+                  }
+                },
+                "steps": [
+                  {
+                    "name": "step",
+                    "metrics": {
+                      "total": 300,
+                      "success": 300,
+                      "failures": 0,
+                      "cancelled": 0,
+                      "p50_ms": 0,
+                      "mean_ms": 0,
+                      "p95_ms": 30,
+                      "p99_ms": 0,
+                      "http_diagnostics": {
+                        "status_1xx": 0,
+                        "status_2xx": 0,
+                        "status_3xx": 0,
+                        "status_4xx": 0,
+                        "status_5xx": 0,
+                        "redirect_responses": 0,
+                        "rate_limited_responses": 0,
+                        "assertion_failures": 0,
+                        "network_timeouts": 0,
+                        "dns_failures": 0,
+                        "connection_failures": 0,
+                        "tls_failures": 0,
+                        "transport_failures": 0,
+                        "unexpected_response_sizes": 0
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "start_seconds": 7.5,
+                "end_seconds": 10,
+                "metrics": {
+                  "total": 300,
+                  "success": 300,
+                  "failures": 0,
+                  "cancelled": 0,
+                  "p50_ms": 0,
+                  "mean_ms": 0,
+                  "p95_ms": 30,
+                  "p99_ms": 0,
+                  "http_diagnostics": {
+                    "status_1xx": 0,
+                    "status_2xx": 0,
+                    "status_3xx": 0,
+                    "status_4xx": 0,
+                    "status_5xx": 0,
+                    "redirect_responses": 0,
+                    "rate_limited_responses": 0,
+                    "assertion_failures": 0,
+                    "network_timeouts": 0,
+                    "dns_failures": 0,
+                    "connection_failures": 0,
+                    "tls_failures": 0,
+                    "transport_failures": 0,
+                    "unexpected_response_sizes": 0
+                  }
+                },
+                "journeys": {
+                  "total": 0,
+                  "success": 0,
+                  "failures": 0,
+                  "cancelled": 0,
+                  "p50_ms": 0,
+                  "mean_ms": 0,
+                  "p95_ms": 0,
+                  "p99_ms": 0,
+                  "http_diagnostics": {
+                    "status_1xx": 0,
+                    "status_2xx": 0,
+                    "status_3xx": 0,
+                    "status_4xx": 0,
+                    "status_5xx": 0,
+                    "redirect_responses": 0,
+                    "rate_limited_responses": 0,
+                    "assertion_failures": 0,
+                    "network_timeouts": 0,
+                    "dns_failures": 0,
+                    "connection_failures": 0,
+                    "tls_failures": 0,
+                    "transport_failures": 0,
+                    "unexpected_response_sizes": 0
+                  }
+                },
+                "steps": [
+                  {
+                    "name": "step",
+                    "metrics": {
+                      "total": 300,
+                      "success": 300,
+                      "failures": 0,
+                      "cancelled": 0,
+                      "p50_ms": 0,
+                      "mean_ms": 0,
+                      "p95_ms": 30,
+                      "p99_ms": 0,
+                      "http_diagnostics": {
+                        "status_1xx": 0,
+                        "status_2xx": 0,
+                        "status_3xx": 0,
+                        "status_4xx": 0,
+                        "status_5xx": 0,
+                        "redirect_responses": 0,
+                        "rate_limited_responses": 0,
+                        "assertion_failures": 0,
+                        "network_timeouts": 0,
+                        "dns_failures": 0,
+                        "connection_failures": 0,
+                        "tls_failures": 0,
+                        "transport_failures": 0,
+                        "unexpected_response_sizes": 0
+                      }
+                    }
+                  }
+                ]
+              }
+            ],
+            "outcome": "PASS",
+            "error_rate": 0,
+            "note": "",
+            "iterations_started": 1200,
+            "iterations_completed": 1200,
+            "arrivals_scheduled": 0,
+            "arrivals_dropped": 0,
+            "generator_identity": {
+              "os": "linux",
+              "architecture": "amd64",
+              "go_version": "go1.24.0",
+              "runner_identity_method": "git_commit",
+              "runner_identity": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            },
+            "generator": {
+              "samples": 4,
+              "observed_seconds": 0,
+              "logical_cpus": 4,
+              "gomaxprocs": 2,
+              "cpu_capacity_cores": 1.5,
+              "cpu_capacity_source": "cgroup_cpu_quota",
+              "cpu_capacity_known": true,
+              "peak_heap_alloc_bytes": 0,
+              "peak_goroutines": 0,
+              "gc_cycles": 0,
+              "go_cpu_busy_seconds": 0,
+              "go_cpu_capacity_seconds": 0,
+              "go_cpu_utilization_ratio": 0,
+              "go_cpu_valid": true,
+              "process_samples": 4,
+              "process_cpu_samples": 0,
+              "peak_process_rss_bytes": 1024,
+              "peak_process_cpu_utilization_ratio": 0,
+              "mean_process_cpu_utilization_ratio": 0,
+              "process_cpu_valid": true,
+              "note": ""
+            },
+            "data_quality": {
+              "state": "LIMITED",
+              "findings": [
+                "No local generator preflight is attached; workload-specific generator equivalence is unverified."
+              ]
+            }
+          }
+        }
+      ],
+      "outcome": "PASS"
+    },
+    {
+      "number": 2,
+      "phases": [
+        {
+          "name": "observation",
+          "evidence_state": "PASS_OBSERVED",
+          "stability": "NO_LARGE_DRIFT_DETECTED",
+          "run": {
+            "schema_version": 6,
+            "statistical_methods": {
+              "percentile_estimator": "NEAREST_RANK",
+              "p95_interval_method": "EXACT_BINOMIAL_ORDER_STATISTIC_RANKS",
+              "p95_interval_confidence": 0.95,
+              "p95_interval_assumption": "IID_STATIONARY_OBSERVATIONS",
+              "p99_interval_method": "EXACT_BINOMIAL_ORDER_STATISTIC_RANKS",
+              "p99_interval_confidence": 0.95,
+              "p99_interval_assumption": "IID_STATIONARY_OBSERVATIONS"
+            },
+            "name": "",
+            "target": "http://127.0.0.1:18080",
+            "started_at": "",
+            "elapsed_seconds": 10,
+            "observation_seconds": 10,
+            "config": {
+              "users": 10,
+              "duration": "10s",
+              "request_timeout": "",
+              "max_rps": 1000,
+              "p95_limit_ms": 100,
+              "max_error_rate": 0.01,
+              "mode": "",
+              "separate_sessions": false,
+              "min_samples_per_step": 1,
+              "window_duration": "2.5s"
+            },
+            "metrics": {
+              "total": 1200,
+              "success": 1200,
+              "failures": 0,
+              "cancelled": 0,
+              "p50_ms": 0,
+              "mean_ms": 0,
+              "p95_ms": 30,
+              "p99_ms": 0,
+              "http_diagnostics": {
+                "status_1xx": 0,
+                "status_2xx": 0,
+                "status_3xx": 0,
+                "status_4xx": 0,
+                "status_5xx": 0,
+                "redirect_responses": 0,
+                "rate_limited_responses": 0,
+                "assertion_failures": 0,
+                "network_timeouts": 0,
+                "dns_failures": 0,
+                "connection_failures": 0,
+                "tls_failures": 0,
+                "transport_failures": 0,
+                "unexpected_response_sizes": 0
+              }
+            },
+            "journeys": {
+              "total": 1200,
+              "success": 1200,
+              "failures": 0,
+              "cancelled": 0,
+              "p50_ms": 0,
+              "mean_ms": 0,
+              "p95_ms": 30,
+              "p99_ms": 0,
+              "http_diagnostics": {
+                "status_1xx": 0,
+                "status_2xx": 0,
+                "status_3xx": 0,
+                "status_4xx": 0,
+                "status_5xx": 0,
+                "redirect_responses": 0,
+                "rate_limited_responses": 0,
+                "assertion_failures": 0,
+                "network_timeouts": 0,
+                "dns_failures": 0,
+                "connection_failures": 0,
+                "tls_failures": 0,
+                "transport_failures": 0,
+                "unexpected_response_sizes": 0
+              }
+            },
+            "steps": [
+              {
+                "name": "step",
+                "method": "",
+                "path": "",
+                "metrics": {
+                  "total": 1200,
+                  "success": 1200,
+                  "failures": 0,
+                  "cancelled": 0,
+                  "p50_ms": 0,
+                  "mean_ms": 0,
+                  "p95_ms": 30,
+                  "p99_ms": 0,
+                  "http_diagnostics": {
+                    "status_1xx": 0,
+                    "status_2xx": 0,
+                    "status_3xx": 0,
+                    "status_4xx": 0,
+                    "status_5xx": 0,
+                    "redirect_responses": 0,
+                    "rate_limited_responses": 0,
+                    "assertion_failures": 0,
+                    "network_timeouts": 0,
+                    "dns_failures": 0,
+                    "connection_failures": 0,
+                    "tls_failures": 0,
+                    "transport_failures": 0,
+                    "unexpected_response_sizes": 0
+                  }
+                },
+                "http_trace": {
+                  "request_attempt_count": 0,
+                  "request_write_count": 0,
+                  "dns_start_count": 0,
+                  "rate_wait_count": 0,
+                  "dns_count": 0,
+                  "connect_count": 0,
+                  "connect_start_count": 0,
+                  "tls_count": 0,
+                  "tls_start_count": 0,
+                  "first_byte_count": 0,
+                  "body_count": 0,
+                  "complete_count": 0
+                }
+              }
+            ],
+            "windows": [
+              {
+                "start_seconds": 0,
+                "end_seconds": 2.5,
+                "metrics": {
+                  "total": 300,
+                  "success": 300,
+                  "failures": 0,
+                  "cancelled": 0,
+                  "p50_ms": 0,
+                  "mean_ms": 0,
+                  "p95_ms": 30,
+                  "p99_ms": 0,
+                  "http_diagnostics": {
+                    "status_1xx": 0,
+                    "status_2xx": 0,
+                    "status_3xx": 0,
+                    "status_4xx": 0,
+                    "status_5xx": 0,
+                    "redirect_responses": 0,
+                    "rate_limited_responses": 0,
+                    "assertion_failures": 0,
+                    "network_timeouts": 0,
+                    "dns_failures": 0,
+                    "connection_failures": 0,
+                    "tls_failures": 0,
+                    "transport_failures": 0,
+                    "unexpected_response_sizes": 0
+                  }
+                },
+                "journeys": {
+                  "total": 0,
+                  "success": 0,
+                  "failures": 0,
+                  "cancelled": 0,
+                  "p50_ms": 0,
+                  "mean_ms": 0,
+                  "p95_ms": 0,
+                  "p99_ms": 0,
+                  "http_diagnostics": {
+                    "status_1xx": 0,
+                    "status_2xx": 0,
+                    "status_3xx": 0,
+                    "status_4xx": 0,
+                    "status_5xx": 0,
+                    "redirect_responses": 0,
+                    "rate_limited_responses": 0,
+                    "assertion_failures": 0,
+                    "network_timeouts": 0,
+                    "dns_failures": 0,
+                    "connection_failures": 0,
+                    "tls_failures": 0,
+                    "transport_failures": 0,
+                    "unexpected_response_sizes": 0
+                  }
+                },
+                "steps": [
+                  {
+                    "name": "step",
+                    "metrics": {
+                      "total": 300,
+                      "success": 300,
+                      "failures": 0,
+                      "cancelled": 0,
+                      "p50_ms": 0,
+                      "mean_ms": 0,
+                      "p95_ms": 30,
+                      "p99_ms": 0,
+                      "http_diagnostics": {
+                        "status_1xx": 0,
+                        "status_2xx": 0,
+                        "status_3xx": 0,
+                        "status_4xx": 0,
+                        "status_5xx": 0,
+                        "redirect_responses": 0,
+                        "rate_limited_responses": 0,
+                        "assertion_failures": 0,
+                        "network_timeouts": 0,
+                        "dns_failures": 0,
+                        "connection_failures": 0,
+                        "tls_failures": 0,
+                        "transport_failures": 0,
+                        "unexpected_response_sizes": 0
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "start_seconds": 2.5,
+                "end_seconds": 5,
+                "metrics": {
+                  "total": 300,
+                  "success": 300,
+                  "failures": 0,
+                  "cancelled": 0,
+                  "p50_ms": 0,
+                  "mean_ms": 0,
+                  "p95_ms": 30,
+                  "p99_ms": 0,
+                  "http_diagnostics": {
+                    "status_1xx": 0,
+                    "status_2xx": 0,
+                    "status_3xx": 0,
+                    "status_4xx": 0,
+                    "status_5xx": 0,
+                    "redirect_responses": 0,
+                    "rate_limited_responses": 0,
+                    "assertion_failures": 0,
+                    "network_timeouts": 0,
+                    "dns_failures": 0,
+                    "connection_failures": 0,
+                    "tls_failures": 0,
+                    "transport_failures": 0,
+                    "unexpected_response_sizes": 0
+                  }
+                },
+                "journeys": {
+                  "total": 0,
+                  "success": 0,
+                  "failures": 0,
+                  "cancelled": 0,
+                  "p50_ms": 0,
+                  "mean_ms": 0,
+                  "p95_ms": 0,
+                  "p99_ms": 0,
+                  "http_diagnostics": {
+                    "status_1xx": 0,
+                    "status_2xx": 0,
+                    "status_3xx": 0,
+                    "status_4xx": 0,
+                    "status_5xx": 0,
+                    "redirect_responses": 0,
+                    "rate_limited_responses": 0,
+                    "assertion_failures": 0,
+                    "network_timeouts": 0,
+                    "dns_failures": 0,
+                    "connection_failures": 0,
+                    "tls_failures": 0,
+                    "transport_failures": 0,
+                    "unexpected_response_sizes": 0
+                  }
+                },
+                "steps": [
+                  {
+                    "name": "step",
+                    "metrics": {
+                      "total": 300,
+                      "success": 300,
+                      "failures": 0,
+                      "cancelled": 0,
+                      "p50_ms": 0,
+                      "mean_ms": 0,
+                      "p95_ms": 30,
+                      "p99_ms": 0,
+                      "http_diagnostics": {
+                        "status_1xx": 0,
+                        "status_2xx": 0,
+                        "status_3xx": 0,
+                        "status_4xx": 0,
+                        "status_5xx": 0,
+                        "redirect_responses": 0,
+                        "rate_limited_responses": 0,
+                        "assertion_failures": 0,
+                        "network_timeouts": 0,
+                        "dns_failures": 0,
+                        "connection_failures": 0,
+                        "tls_failures": 0,
+                        "transport_failures": 0,
+                        "unexpected_response_sizes": 0
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "start_seconds": 5,
+                "end_seconds": 7.5,
+                "metrics": {
+                  "total": 300,
+                  "success": 300,
+                  "failures": 0,
+                  "cancelled": 0,
+                  "p50_ms": 0,
+                  "mean_ms": 0,
+                  "p95_ms": 30,
+                  "p99_ms": 0,
+                  "http_diagnostics": {
+                    "status_1xx": 0,
+                    "status_2xx": 0,
+                    "status_3xx": 0,
+                    "status_4xx": 0,
+                    "status_5xx": 0,
+                    "redirect_responses": 0,
+                    "rate_limited_responses": 0,
+                    "assertion_failures": 0,
+                    "network_timeouts": 0,
+                    "dns_failures": 0,
+                    "connection_failures": 0,
+                    "tls_failures": 0,
+                    "transport_failures": 0,
+                    "unexpected_response_sizes": 0
+                  }
+                },
+                "journeys": {
+                  "total": 0,
+                  "success": 0,
+                  "failures": 0,
+                  "cancelled": 0,
+                  "p50_ms": 0,
+                  "mean_ms": 0,
+                  "p95_ms": 0,
+                  "p99_ms": 0,
+                  "http_diagnostics": {
+                    "status_1xx": 0,
+                    "status_2xx": 0,
+                    "status_3xx": 0,
+                    "status_4xx": 0,
+                    "status_5xx": 0,
+                    "redirect_responses": 0,
+                    "rate_limited_responses": 0,
+                    "assertion_failures": 0,
+                    "network_timeouts": 0,
+                    "dns_failures": 0,
+                    "connection_failures": 0,
+                    "tls_failures": 0,
+                    "transport_failures": 0,
+                    "unexpected_response_sizes": 0
+                  }
+                },
+                "steps": [
+                  {
+                    "name": "step",
+                    "metrics": {
+                      "total": 300,
+                      "success": 300,
+                      "failures": 0,
+                      "cancelled": 0,
+                      "p50_ms": 0,
+                      "mean_ms": 0,
+                      "p95_ms": 30,
+                      "p99_ms": 0,
+                      "http_diagnostics": {
+                        "status_1xx": 0,
+                        "status_2xx": 0,
+                        "status_3xx": 0,
+                        "status_4xx": 0,
+                        "status_5xx": 0,
+                        "redirect_responses": 0,
+                        "rate_limited_responses": 0,
+                        "assertion_failures": 0,
+                        "network_timeouts": 0,
+                        "dns_failures": 0,
+                        "connection_failures": 0,
+                        "tls_failures": 0,
+                        "transport_failures": 0,
+                        "unexpected_response_sizes": 0
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "start_seconds": 7.5,
+                "end_seconds": 10,
+                "metrics": {
+                  "total": 300,
+                  "success": 300,
+                  "failures": 0,
+                  "cancelled": 0,
+                  "p50_ms": 0,
+                  "mean_ms": 0,
+                  "p95_ms": 30,
+                  "p99_ms": 0,
+                  "http_diagnostics": {
+                    "status_1xx": 0,
+                    "status_2xx": 0,
+                    "status_3xx": 0,
+                    "status_4xx": 0,
+                    "status_5xx": 0,
+                    "redirect_responses": 0,
+                    "rate_limited_responses": 0,
+                    "assertion_failures": 0,
+                    "network_timeouts": 0,
+                    "dns_failures": 0,
+                    "connection_failures": 0,
+                    "tls_failures": 0,
+                    "transport_failures": 0,
+                    "unexpected_response_sizes": 0
+                  }
+                },
+                "journeys": {
+                  "total": 0,
+                  "success": 0,
+                  "failures": 0,
+                  "cancelled": 0,
+                  "p50_ms": 0,
+                  "mean_ms": 0,
+                  "p95_ms": 0,
+                  "p99_ms": 0,
+                  "http_diagnostics": {
+                    "status_1xx": 0,
+                    "status_2xx": 0,
+                    "status_3xx": 0,
+                    "status_4xx": 0,
+                    "status_5xx": 0,
+                    "redirect_responses": 0,
+                    "rate_limited_responses": 0,
+                    "assertion_failures": 0,
+                    "network_timeouts": 0,
+                    "dns_failures": 0,
+                    "connection_failures": 0,
+                    "tls_failures": 0,
+                    "transport_failures": 0,
+                    "unexpected_response_sizes": 0
+                  }
+                },
+                "steps": [
+                  {
+                    "name": "step",
+                    "metrics": {
+                      "total": 300,
+                      "success": 300,
+                      "failures": 0,
+                      "cancelled": 0,
+                      "p50_ms": 0,
+                      "mean_ms": 0,
+                      "p95_ms": 30,
+                      "p99_ms": 0,
+                      "http_diagnostics": {
+                        "status_1xx": 0,
+                        "status_2xx": 0,
+                        "status_3xx": 0,
+                        "status_4xx": 0,
+                        "status_5xx": 0,
+                        "redirect_responses": 0,
+                        "rate_limited_responses": 0,
+                        "assertion_failures": 0,
+                        "network_timeouts": 0,
+                        "dns_failures": 0,
+                        "connection_failures": 0,
+                        "tls_failures": 0,
+                        "transport_failures": 0,
+                        "unexpected_response_sizes": 0
+                      }
+                    }
+                  }
+                ]
+              }
+            ],
+            "outcome": "PASS",
+            "error_rate": 0,
+            "note": "",
+            "iterations_started": 1200,
+            "iterations_completed": 1200,
+            "arrivals_scheduled": 0,
+            "arrivals_dropped": 0,
+            "generator_identity": {
+              "os": "linux",
+              "architecture": "amd64",
+              "go_version": "go1.24.0",
+              "runner_identity_method": "git_commit",
+              "runner_identity": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            },
+            "generator": {
+              "samples": 4,
+              "observed_seconds": 0,
+              "logical_cpus": 4,
+              "gomaxprocs": 2,
+              "cpu_capacity_cores": 1.5,
+              "cpu_capacity_source": "cgroup_cpu_quota",
+              "cpu_capacity_known": true,
+              "peak_heap_alloc_bytes": 0,
+              "peak_goroutines": 0,
+              "gc_cycles": 0,
+              "go_cpu_busy_seconds": 0,
+              "go_cpu_capacity_seconds": 0,
+              "go_cpu_utilization_ratio": 0,
+              "go_cpu_valid": true,
+              "process_samples": 4,
+              "process_cpu_samples": 0,
+              "peak_process_rss_bytes": 1024,
+              "peak_process_cpu_utilization_ratio": 0,
+              "mean_process_cpu_utilization_ratio": 0,
+              "process_cpu_valid": true,
+              "note": ""
+            },
+            "data_quality": {
+              "state": "LIMITED",
+              "findings": [
+                "No local generator preflight is attached; workload-specific generator equivalence is unverified."
+              ]
+            }
+          }
+        },
+        {
+          "name": "recovery",
+          "evidence_state": "PASS_OBSERVED",
+          "run": {
+            "schema_version": 6,
+            "statistical_methods": {
+              "percentile_estimator": "NEAREST_RANK",
+              "p95_interval_method": "EXACT_BINOMIAL_ORDER_STATISTIC_RANKS",
+              "p95_interval_confidence": 0.95,
+              "p95_interval_assumption": "IID_STATIONARY_OBSERVATIONS",
+              "p99_interval_method": "EXACT_BINOMIAL_ORDER_STATISTIC_RANKS",
+              "p99_interval_confidence": 0.95,
+              "p99_interval_assumption": "IID_STATIONARY_OBSERVATIONS"
+            },
+            "name": "",
+            "target": "http://127.0.0.1:18080",
+            "started_at": "",
+            "elapsed_seconds": 10,
+            "observation_seconds": 10,
+            "config": {
+              "users": 10,
+              "duration": "10s",
+              "request_timeout": "",
+              "max_rps": 1000,
+              "p95_limit_ms": 100,
+              "max_error_rate": 0.01,
+              "mode": "",
+              "separate_sessions": false,
+              "min_samples_per_step": 1,
+              "window_duration": "2.5s"
+            },
+            "metrics": {
+              "total": 1200,
+              "success": 1200,
+              "failures": 0,
+              "cancelled": 0,
+              "p50_ms": 0,
+              "mean_ms": 0,
+              "p95_ms": 30,
+              "p99_ms": 0,
+              "http_diagnostics": {
+                "status_1xx": 0,
+                "status_2xx": 0,
+                "status_3xx": 0,
+                "status_4xx": 0,
+                "status_5xx": 0,
+                "redirect_responses": 0,
+                "rate_limited_responses": 0,
+                "assertion_failures": 0,
+                "network_timeouts": 0,
+                "dns_failures": 0,
+                "connection_failures": 0,
+                "tls_failures": 0,
+                "transport_failures": 0,
+                "unexpected_response_sizes": 0
+              }
+            },
+            "journeys": {
+              "total": 1200,
+              "success": 1200,
+              "failures": 0,
+              "cancelled": 0,
+              "p50_ms": 0,
+              "mean_ms": 0,
+              "p95_ms": 30,
+              "p99_ms": 0,
+              "http_diagnostics": {
+                "status_1xx": 0,
+                "status_2xx": 0,
+                "status_3xx": 0,
+                "status_4xx": 0,
+                "status_5xx": 0,
+                "redirect_responses": 0,
+                "rate_limited_responses": 0,
+                "assertion_failures": 0,
+                "network_timeouts": 0,
+                "dns_failures": 0,
+                "connection_failures": 0,
+                "tls_failures": 0,
+                "transport_failures": 0,
+                "unexpected_response_sizes": 0
+              }
+            },
+            "steps": [
+              {
+                "name": "step",
+                "method": "",
+                "path": "",
+                "metrics": {
+                  "total": 1200,
+                  "success": 1200,
+                  "failures": 0,
+                  "cancelled": 0,
+                  "p50_ms": 0,
+                  "mean_ms": 0,
+                  "p95_ms": 30,
+                  "p99_ms": 0,
+                  "http_diagnostics": {
+                    "status_1xx": 0,
+                    "status_2xx": 0,
+                    "status_3xx": 0,
+                    "status_4xx": 0,
+                    "status_5xx": 0,
+                    "redirect_responses": 0,
+                    "rate_limited_responses": 0,
+                    "assertion_failures": 0,
+                    "network_timeouts": 0,
+                    "dns_failures": 0,
+                    "connection_failures": 0,
+                    "tls_failures": 0,
+                    "transport_failures": 0,
+                    "unexpected_response_sizes": 0
+                  }
+                },
+                "http_trace": {
+                  "request_attempt_count": 0,
+                  "request_write_count": 0,
+                  "dns_start_count": 0,
+                  "rate_wait_count": 0,
+                  "dns_count": 0,
+                  "connect_count": 0,
+                  "connect_start_count": 0,
+                  "tls_count": 0,
+                  "tls_start_count": 0,
+                  "first_byte_count": 0,
+                  "body_count": 0,
+                  "complete_count": 0
+                }
+              }
+            ],
+            "windows": [
+              {
+                "start_seconds": 0,
+                "end_seconds": 2.5,
+                "metrics": {
+                  "total": 300,
+                  "success": 300,
+                  "failures": 0,
+                  "cancelled": 0,
+                  "p50_ms": 0,
+                  "mean_ms": 0,
+                  "p95_ms": 30,
+                  "p99_ms": 0,
+                  "http_diagnostics": {
+                    "status_1xx": 0,
+                    "status_2xx": 0,
+                    "status_3xx": 0,
+                    "status_4xx": 0,
+                    "status_5xx": 0,
+                    "redirect_responses": 0,
+                    "rate_limited_responses": 0,
+                    "assertion_failures": 0,
+                    "network_timeouts": 0,
+                    "dns_failures": 0,
+                    "connection_failures": 0,
+                    "tls_failures": 0,
+                    "transport_failures": 0,
+                    "unexpected_response_sizes": 0
+                  }
+                },
+                "journeys": {
+                  "total": 0,
+                  "success": 0,
+                  "failures": 0,
+                  "cancelled": 0,
+                  "p50_ms": 0,
+                  "mean_ms": 0,
+                  "p95_ms": 0,
+                  "p99_ms": 0,
+                  "http_diagnostics": {
+                    "status_1xx": 0,
+                    "status_2xx": 0,
+                    "status_3xx": 0,
+                    "status_4xx": 0,
+                    "status_5xx": 0,
+                    "redirect_responses": 0,
+                    "rate_limited_responses": 0,
+                    "assertion_failures": 0,
+                    "network_timeouts": 0,
+                    "dns_failures": 0,
+                    "connection_failures": 0,
+                    "tls_failures": 0,
+                    "transport_failures": 0,
+                    "unexpected_response_sizes": 0
+                  }
+                },
+                "steps": [
+                  {
+                    "name": "step",
+                    "metrics": {
+                      "total": 300,
+                      "success": 300,
+                      "failures": 0,
+                      "cancelled": 0,
+                      "p50_ms": 0,
+                      "mean_ms": 0,
+                      "p95_ms": 30,
+                      "p99_ms": 0,
+                      "http_diagnostics": {
+                        "status_1xx": 0,
+                        "status_2xx": 0,
+                        "status_3xx": 0,
+                        "status_4xx": 0,
+                        "status_5xx": 0,
+                        "redirect_responses": 0,
+                        "rate_limited_responses": 0,
+                        "assertion_failures": 0,
+                        "network_timeouts": 0,
+                        "dns_failures": 0,
+                        "connection_failures": 0,
+                        "tls_failures": 0,
+                        "transport_failures": 0,
+                        "unexpected_response_sizes": 0
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "start_seconds": 2.5,
+                "end_seconds": 5,
+                "metrics": {
+                  "total": 300,
+                  "success": 300,
+                  "failures": 0,
+                  "cancelled": 0,
+                  "p50_ms": 0,
+                  "mean_ms": 0,
+                  "p95_ms": 30,
+                  "p99_ms": 0,
+                  "http_diagnostics": {
+                    "status_1xx": 0,
+                    "status_2xx": 0,
+                    "status_3xx": 0,
+                    "status_4xx": 0,
+                    "status_5xx": 0,
+                    "redirect_responses": 0,
+                    "rate_limited_responses": 0,
+                    "assertion_failures": 0,
+                    "network_timeouts": 0,
+                    "dns_failures": 0,
+                    "connection_failures": 0,
+                    "tls_failures": 0,
+                    "transport_failures": 0,
+                    "unexpected_response_sizes": 0
+                  }
+                },
+                "journeys": {
+                  "total": 0,
+                  "success": 0,
+                  "failures": 0,
+                  "cancelled": 0,
+                  "p50_ms": 0,
+                  "mean_ms": 0,
+                  "p95_ms": 0,
+                  "p99_ms": 0,
+                  "http_diagnostics": {
+                    "status_1xx": 0,
+                    "status_2xx": 0,
+                    "status_3xx": 0,
+                    "status_4xx": 0,
+                    "status_5xx": 0,
+                    "redirect_responses": 0,
+                    "rate_limited_responses": 0,
+                    "assertion_failures": 0,
+                    "network_timeouts": 0,
+                    "dns_failures": 0,
+                    "connection_failures": 0,
+                    "tls_failures": 0,
+                    "transport_failures": 0,
+                    "unexpected_response_sizes": 0
+                  }
+                },
+                "steps": [
+                  {
+                    "name": "step",
+                    "metrics": {
+                      "total": 300,
+                      "success": 300,
+                      "failures": 0,
+                      "cancelled": 0,
+                      "p50_ms": 0,
+                      "mean_ms": 0,
+                      "p95_ms": 30,
+                      "p99_ms": 0,
+                      "http_diagnostics": {
+                        "status_1xx": 0,
+                        "status_2xx": 0,
+                        "status_3xx": 0,
+                        "status_4xx": 0,
+                        "status_5xx": 0,
+                        "redirect_responses": 0,
+                        "rate_limited_responses": 0,
+                        "assertion_failures": 0,
+                        "network_timeouts": 0,
+                        "dns_failures": 0,
+                        "connection_failures": 0,
+                        "tls_failures": 0,
+                        "transport_failures": 0,
+                        "unexpected_response_sizes": 0
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "start_seconds": 5,
+                "end_seconds": 7.5,
+                "metrics": {
+                  "total": 300,
+                  "success": 300,
+                  "failures": 0,
+                  "cancelled": 0,
+                  "p50_ms": 0,
+                  "mean_ms": 0,
+                  "p95_ms": 30,
+                  "p99_ms": 0,
+                  "http_diagnostics": {
+                    "status_1xx": 0,
+                    "status_2xx": 0,
+                    "status_3xx": 0,
+                    "status_4xx": 0,
+                    "status_5xx": 0,
+                    "redirect_responses": 0,
+                    "rate_limited_responses": 0,
+                    "assertion_failures": 0,
+                    "network_timeouts": 0,
+                    "dns_failures": 0,
+                    "connection_failures": 0,
+                    "tls_failures": 0,
+                    "transport_failures": 0,
+                    "unexpected_response_sizes": 0
+                  }
+                },
+                "journeys": {
+                  "total": 0,
+                  "success": 0,
+                  "failures": 0,
+                  "cancelled": 0,
+                  "p50_ms": 0,
+                  "mean_ms": 0,
+                  "p95_ms": 0,
+                  "p99_ms": 0,
+                  "http_diagnostics": {
+                    "status_1xx": 0,
+                    "status_2xx": 0,
+                    "status_3xx": 0,
+                    "status_4xx": 0,
+                    "status_5xx": 0,
+                    "redirect_responses": 0,
+                    "rate_limited_responses": 0,
+                    "assertion_failures": 0,
+                    "network_timeouts": 0,
+                    "dns_failures": 0,
+                    "connection_failures": 0,
+                    "tls_failures": 0,
+                    "transport_failures": 0,
+                    "unexpected_response_sizes": 0
+                  }
+                },
+                "steps": [
+                  {
+                    "name": "step",
+                    "metrics": {
+                      "total": 300,
+                      "success": 300,
+                      "failures": 0,
+                      "cancelled": 0,
+                      "p50_ms": 0,
+                      "mean_ms": 0,
+                      "p95_ms": 30,
+                      "p99_ms": 0,
+                      "http_diagnostics": {
+                        "status_1xx": 0,
+                        "status_2xx": 0,
+                        "status_3xx": 0,
+                        "status_4xx": 0,
+                        "status_5xx": 0,
+                        "redirect_responses": 0,
+                        "rate_limited_responses": 0,
+                        "assertion_failures": 0,
+                        "network_timeouts": 0,
+                        "dns_failures": 0,
+                        "connection_failures": 0,
+                        "tls_failures": 0,
+                        "transport_failures": 0,
+                        "unexpected_response_sizes": 0
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "start_seconds": 7.5,
+                "end_seconds": 10,
+                "metrics": {
+                  "total": 300,
+                  "success": 300,
+                  "failures": 0,
+                  "cancelled": 0,
+                  "p50_ms": 0,
+                  "mean_ms": 0,
+                  "p95_ms": 30,
+                  "p99_ms": 0,
+                  "http_diagnostics": {
+                    "status_1xx": 0,
+                    "status_2xx": 0,
+                    "status_3xx": 0,
+                    "status_4xx": 0,
+                    "status_5xx": 0,
+                    "redirect_responses": 0,
+                    "rate_limited_responses": 0,
+                    "assertion_failures": 0,
+                    "network_timeouts": 0,
+                    "dns_failures": 0,
+                    "connection_failures": 0,
+                    "tls_failures": 0,
+                    "transport_failures": 0,
+                    "unexpected_response_sizes": 0
+                  }
+                },
+                "journeys": {
+                  "total": 0,
+                  "success": 0,
+                  "failures": 0,
+                  "cancelled": 0,
+                  "p50_ms": 0,
+                  "mean_ms": 0,
+                  "p95_ms": 0,
+                  "p99_ms": 0,
+                  "http_diagnostics": {
+                    "status_1xx": 0,
+                    "status_2xx": 0,
+                    "status_3xx": 0,
+                    "status_4xx": 0,
+                    "status_5xx": 0,
+                    "redirect_responses": 0,
+                    "rate_limited_responses": 0,
+                    "assertion_failures": 0,
+                    "network_timeouts": 0,
+                    "dns_failures": 0,
+                    "connection_failures": 0,
+                    "tls_failures": 0,
+                    "transport_failures": 0,
+                    "unexpected_response_sizes": 0
+                  }
+                },
+                "steps": [
+                  {
+                    "name": "step",
+                    "metrics": {
+                      "total": 300,
+                      "success": 300,
+                      "failures": 0,
+                      "cancelled": 0,
+                      "p50_ms": 0,
+                      "mean_ms": 0,
+                      "p95_ms": 30,
+                      "p99_ms": 0,
+                      "http_diagnostics": {
+                        "status_1xx": 0,
+                        "status_2xx": 0,
+                        "status_3xx": 0,
+                        "status_4xx": 0,
+                        "status_5xx": 0,
+                        "redirect_responses": 0,
+                        "rate_limited_responses": 0,
+                        "assertion_failures": 0,
+                        "network_timeouts": 0,
+                        "dns_failures": 0,
+                        "connection_failures": 0,
+                        "tls_failures": 0,
+                        "transport_failures": 0,
+                        "unexpected_response_sizes": 0
+                      }
+                    }
+                  }
+                ]
+              }
+            ],
+            "outcome": "PASS",
+            "error_rate": 0,
+            "note": "",
+            "iterations_started": 1200,
+            "iterations_completed": 1200,
+            "arrivals_scheduled": 0,
+            "arrivals_dropped": 0,
+            "generator_identity": {
+              "os": "linux",
+              "architecture": "amd64",
+              "go_version": "go1.24.0",
+              "runner_identity_method": "git_commit",
+              "runner_identity": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            },
+            "generator": {
+              "samples": 4,
+              "observed_seconds": 0,
+              "logical_cpus": 4,
+              "gomaxprocs": 2,
+              "cpu_capacity_cores": 1.5,
+              "cpu_capacity_source": "cgroup_cpu_quota",
+              "cpu_capacity_known": true,
+              "peak_heap_alloc_bytes": 0,
+              "peak_goroutines": 0,
+              "gc_cycles": 0,
+              "go_cpu_busy_seconds": 0,
+              "go_cpu_capacity_seconds": 0,
+              "go_cpu_utilization_ratio": 0,
+              "go_cpu_valid": true,
+              "process_samples": 4,
+              "process_cpu_samples": 0,
+              "peak_process_rss_bytes": 1024,
+              "peak_process_cpu_utilization_ratio": 0,
+              "mean_process_cpu_utilization_ratio": 0,
+              "process_cpu_valid": true,
+              "note": ""
+            },
+            "data_quality": {
+              "state": "LIMITED",
+              "findings": [
+                "No local generator preflight is attached; workload-specific generator equivalence is unverified."
+              ]
+            }
+          }
+        },
+        {
+          "name": "soak",
+          "evidence_state": "PASS_OBSERVED",
+          "stability": "NO_LARGE_DRIFT_DETECTED",
+          "run": {
+            "schema_version": 6,
+            "statistical_methods": {
+              "percentile_estimator": "NEAREST_RANK",
+              "p95_interval_method": "EXACT_BINOMIAL_ORDER_STATISTIC_RANKS",
+              "p95_interval_confidence": 0.95,
+              "p95_interval_assumption": "IID_STATIONARY_OBSERVATIONS",
+              "p99_interval_method": "EXACT_BINOMIAL_ORDER_STATISTIC_RANKS",
+              "p99_interval_confidence": 0.95,
+              "p99_interval_assumption": "IID_STATIONARY_OBSERVATIONS"
+            },
+            "name": "",
+            "target": "http://127.0.0.1:18080",
+            "started_at": "",
+            "elapsed_seconds": 10,
+            "observation_seconds": 10,
+            "config": {
+              "users": 10,
+              "duration": "10s",
+              "request_timeout": "",
+              "max_rps": 1000,
+              "p95_limit_ms": 100,
+              "max_error_rate": 0.01,
+              "mode": "",
+              "separate_sessions": false,
+              "min_samples_per_step": 1,
+              "window_duration": "2.5s"
+            },
+            "metrics": {
+              "total": 1200,
+              "success": 1200,
+              "failures": 0,
+              "cancelled": 0,
+              "p50_ms": 0,
+              "mean_ms": 0,
+              "p95_ms": 30,
+              "p99_ms": 0,
+              "http_diagnostics": {
+                "status_1xx": 0,
+                "status_2xx": 0,
+                "status_3xx": 0,
+                "status_4xx": 0,
+                "status_5xx": 0,
+                "redirect_responses": 0,
+                "rate_limited_responses": 0,
+                "assertion_failures": 0,
+                "network_timeouts": 0,
+                "dns_failures": 0,
+                "connection_failures": 0,
+                "tls_failures": 0,
+                "transport_failures": 0,
+                "unexpected_response_sizes": 0
+              }
+            },
+            "journeys": {
+              "total": 1200,
+              "success": 1200,
+              "failures": 0,
+              "cancelled": 0,
+              "p50_ms": 0,
+              "mean_ms": 0,
+              "p95_ms": 30,
+              "p99_ms": 0,
+              "http_diagnostics": {
+                "status_1xx": 0,
+                "status_2xx": 0,
+                "status_3xx": 0,
+                "status_4xx": 0,
+                "status_5xx": 0,
+                "redirect_responses": 0,
+                "rate_limited_responses": 0,
+                "assertion_failures": 0,
+                "network_timeouts": 0,
+                "dns_failures": 0,
+                "connection_failures": 0,
+                "tls_failures": 0,
+                "transport_failures": 0,
+                "unexpected_response_sizes": 0
+              }
+            },
+            "steps": [
+              {
+                "name": "step",
+                "method": "",
+                "path": "",
+                "metrics": {
+                  "total": 1200,
+                  "success": 1200,
+                  "failures": 0,
+                  "cancelled": 0,
+                  "p50_ms": 0,
+                  "mean_ms": 0,
+                  "p95_ms": 30,
+                  "p99_ms": 0,
+                  "http_diagnostics": {
+                    "status_1xx": 0,
+                    "status_2xx": 0,
+                    "status_3xx": 0,
+                    "status_4xx": 0,
+                    "status_5xx": 0,
+                    "redirect_responses": 0,
+                    "rate_limited_responses": 0,
+                    "assertion_failures": 0,
+                    "network_timeouts": 0,
+                    "dns_failures": 0,
+                    "connection_failures": 0,
+                    "tls_failures": 0,
+                    "transport_failures": 0,
+                    "unexpected_response_sizes": 0
+                  }
+                },
+                "http_trace": {
+                  "request_attempt_count": 0,
+                  "request_write_count": 0,
+                  "dns_start_count": 0,
+                  "rate_wait_count": 0,
+                  "dns_count": 0,
+                  "connect_count": 0,
+                  "connect_start_count": 0,
+                  "tls_count": 0,
+                  "tls_start_count": 0,
+                  "first_byte_count": 0,
+                  "body_count": 0,
+                  "complete_count": 0
+                }
+              }
+            ],
+            "windows": [
+              {
+                "start_seconds": 0,
+                "end_seconds": 2.5,
+                "metrics": {
+                  "total": 300,
+                  "success": 300,
+                  "failures": 0,
+                  "cancelled": 0,
+                  "p50_ms": 0,
+                  "mean_ms": 0,
+                  "p95_ms": 30,
+                  "p99_ms": 0,
+                  "http_diagnostics": {
+                    "status_1xx": 0,
+                    "status_2xx": 0,
+                    "status_3xx": 0,
+                    "status_4xx": 0,
+                    "status_5xx": 0,
+                    "redirect_responses": 0,
+                    "rate_limited_responses": 0,
+                    "assertion_failures": 0,
+                    "network_timeouts": 0,
+                    "dns_failures": 0,
+                    "connection_failures": 0,
+                    "tls_failures": 0,
+                    "transport_failures": 0,
+                    "unexpected_response_sizes": 0
+                  }
+                },
+                "journeys": {
+                  "total": 0,
+                  "success": 0,
+                  "failures": 0,
+                  "cancelled": 0,
+                  "p50_ms": 0,
+                  "mean_ms": 0,
+                  "p95_ms": 0,
+                  "p99_ms": 0,
+                  "http_diagnostics": {
+                    "status_1xx": 0,
+                    "status_2xx": 0,
+                    "status_3xx": 0,
+                    "status_4xx": 0,
+                    "status_5xx": 0,
+                    "redirect_responses": 0,
+                    "rate_limited_responses": 0,
+                    "assertion_failures": 0,
+                    "network_timeouts": 0,
+                    "dns_failures": 0,
+                    "connection_failures": 0,
+                    "tls_failures": 0,
+                    "transport_failures": 0,
+                    "unexpected_response_sizes": 0
+                  }
+                },
+                "steps": [
+                  {
+                    "name": "step",
+                    "metrics": {
+                      "total": 300,
+                      "success": 300,
+                      "failures": 0,
+                      "cancelled": 0,
+                      "p50_ms": 0,
+                      "mean_ms": 0,
+                      "p95_ms": 30,
+                      "p99_ms": 0,
+                      "http_diagnostics": {
+                        "status_1xx": 0,
+                        "status_2xx": 0,
+                        "status_3xx": 0,
+                        "status_4xx": 0,
+                        "status_5xx": 0,
+                        "redirect_responses": 0,
+                        "rate_limited_responses": 0,
+                        "assertion_failures": 0,
+                        "network_timeouts": 0,
+                        "dns_failures": 0,
+                        "connection_failures": 0,
+                        "tls_failures": 0,
+                        "transport_failures": 0,
+                        "unexpected_response_sizes": 0
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "start_seconds": 2.5,
+                "end_seconds": 5,
+                "metrics": {
+                  "total": 300,
+                  "success": 300,
+                  "failures": 0,
+                  "cancelled": 0,
+                  "p50_ms": 0,
+                  "mean_ms": 0,
+                  "p95_ms": 30,
+                  "p99_ms": 0,
+                  "http_diagnostics": {
+                    "status_1xx": 0,
+                    "status_2xx": 0,
+                    "status_3xx": 0,
+                    "status_4xx": 0,
+                    "status_5xx": 0,
+                    "redirect_responses": 0,
+                    "rate_limited_responses": 0,
+                    "assertion_failures": 0,
+                    "network_timeouts": 0,
+                    "dns_failures": 0,
+                    "connection_failures": 0,
+                    "tls_failures": 0,
+                    "transport_failures": 0,
+                    "unexpected_response_sizes": 0
+                  }
+                },
+                "journeys": {
+                  "total": 0,
+                  "success": 0,
+                  "failures": 0,
+                  "cancelled": 0,
+                  "p50_ms": 0,
+                  "mean_ms": 0,
+                  "p95_ms": 0,
+                  "p99_ms": 0,
+                  "http_diagnostics": {
+                    "status_1xx": 0,
+                    "status_2xx": 0,
+                    "status_3xx": 0,
+                    "status_4xx": 0,
+                    "status_5xx": 0,
+                    "redirect_responses": 0,
+                    "rate_limited_responses": 0,
+                    "assertion_failures": 0,
+                    "network_timeouts": 0,
+                    "dns_failures": 0,
+                    "connection_failures": 0,
+                    "tls_failures": 0,
+                    "transport_failures": 0,
+                    "unexpected_response_sizes": 0
+                  }
+                },
+                "steps": [
+                  {
+                    "name": "step",
+                    "metrics": {
+                      "total": 300,
+                      "success": 300,
+                      "failures": 0,
+                      "cancelled": 0,
+                      "p50_ms": 0,
+                      "mean_ms": 0,
+                      "p95_ms": 30,
+                      "p99_ms": 0,
+                      "http_diagnostics": {
+                        "status_1xx": 0,
+                        "status_2xx": 0,
+                        "status_3xx": 0,
+                        "status_4xx": 0,
+                        "status_5xx": 0,
+                        "redirect_responses": 0,
+                        "rate_limited_responses": 0,
+                        "assertion_failures": 0,
+                        "network_timeouts": 0,
+                        "dns_failures": 0,
+                        "connection_failures": 0,
+                        "tls_failures": 0,
+                        "transport_failures": 0,
+                        "unexpected_response_sizes": 0
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "start_seconds": 5,
+                "end_seconds": 7.5,
+                "metrics": {
+                  "total": 300,
+                  "success": 300,
+                  "failures": 0,
+                  "cancelled": 0,
+                  "p50_ms": 0,
+                  "mean_ms": 0,
+                  "p95_ms": 30,
+                  "p99_ms": 0,
+                  "http_diagnostics": {
+                    "status_1xx": 0,
+                    "status_2xx": 0,
+                    "status_3xx": 0,
+                    "status_4xx": 0,
+                    "status_5xx": 0,
+                    "redirect_responses": 0,
+                    "rate_limited_responses": 0,
+                    "assertion_failures": 0,
+                    "network_timeouts": 0,
+                    "dns_failures": 0,
+                    "connection_failures": 0,
+                    "tls_failures": 0,
+                    "transport_failures": 0,
+                    "unexpected_response_sizes": 0
+                  }
+                },
+                "journeys": {
+                  "total": 0,
+                  "success": 0,
+                  "failures": 0,
+                  "cancelled": 0,
+                  "p50_ms": 0,
+                  "mean_ms": 0,
+                  "p95_ms": 0,
+                  "p99_ms": 0,
+                  "http_diagnostics": {
+                    "status_1xx": 0,
+                    "status_2xx": 0,
+                    "status_3xx": 0,
+                    "status_4xx": 0,
+                    "status_5xx": 0,
+                    "redirect_responses": 0,
+                    "rate_limited_responses": 0,
+                    "assertion_failures": 0,
+                    "network_timeouts": 0,
+                    "dns_failures": 0,
+                    "connection_failures": 0,
+                    "tls_failures": 0,
+                    "transport_failures": 0,
+                    "unexpected_response_sizes": 0
+                  }
+                },
+                "steps": [
+                  {
+                    "name": "step",
+                    "metrics": {
+                      "total": 300,
+                      "success": 300,
+                      "failures": 0,
+                      "cancelled": 0,
+                      "p50_ms": 0,
+                      "mean_ms": 0,
+                      "p95_ms": 30,
+                      "p99_ms": 0,
+                      "http_diagnostics": {
+                        "status_1xx": 0,
+                        "status_2xx": 0,
+                        "status_3xx": 0,
+                        "status_4xx": 0,
+                        "status_5xx": 0,
+                        "redirect_responses": 0,
+                        "rate_limited_responses": 0,
+                        "assertion_failures": 0,
+                        "network_timeouts": 0,
+                        "dns_failures": 0,
+                        "connection_failures": 0,
+                        "tls_failures": 0,
+                        "transport_failures": 0,
+                        "unexpected_response_sizes": 0
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "start_seconds": 7.5,
+                "end_seconds": 10,
+                "metrics": {
+                  "total": 300,
+                  "success": 300,
+                  "failures": 0,
+                  "cancelled": 0,
+                  "p50_ms": 0,
+                  "mean_ms": 0,
+                  "p95_ms": 30,
+                  "p99_ms": 0,
+                  "http_diagnostics": {
+                    "status_1xx": 0,
+                    "status_2xx": 0,
+                    "status_3xx": 0,
+                    "status_4xx": 0,
+                    "status_5xx": 0,
+                    "redirect_responses": 0,
+                    "rate_limited_responses": 0,
+                    "assertion_failures": 0,
+                    "network_timeouts": 0,
+                    "dns_failures": 0,
+                    "connection_failures": 0,
+                    "tls_failures": 0,
+                    "transport_failures": 0,
+                    "unexpected_response_sizes": 0
+                  }
+                },
+                "journeys": {
+                  "total": 0,
+                  "success": 0,
+                  "failures": 0,
+                  "cancelled": 0,
+                  "p50_ms": 0,
+                  "mean_ms": 0,
+                  "p95_ms": 0,
+                  "p99_ms": 0,
+                  "http_diagnostics": {
+                    "status_1xx": 0,
+                    "status_2xx": 0,
+                    "status_3xx": 0,
+                    "status_4xx": 0,
+                    "status_5xx": 0,
+                    "redirect_responses": 0,
+                    "rate_limited_responses": 0,
+                    "assertion_failures": 0,
+                    "network_timeouts": 0,
+                    "dns_failures": 0,
+                    "connection_failures": 0,
+                    "tls_failures": 0,
+                    "transport_failures": 0,
+                    "unexpected_response_sizes": 0
+                  }
+                },
+                "steps": [
+                  {
+                    "name": "step",
+                    "metrics": {
+                      "total": 300,
+                      "success": 300,
+                      "failures": 0,
+                      "cancelled": 0,
+                      "p50_ms": 0,
+                      "mean_ms": 0,
+                      "p95_ms": 30,
+                      "p99_ms": 0,
+                      "http_diagnostics": {
+                        "status_1xx": 0,
+                        "status_2xx": 0,
+                        "status_3xx": 0,
+                        "status_4xx": 0,
+                        "status_5xx": 0,
+                        "redirect_responses": 0,
+                        "rate_limited_responses": 0,
+                        "assertion_failures": 0,
+                        "network_timeouts": 0,
+                        "dns_failures": 0,
+                        "connection_failures": 0,
+                        "tls_failures": 0,
+                        "transport_failures": 0,
+                        "unexpected_response_sizes": 0
+                      }
+                    }
+                  }
+                ]
+              }
+            ],
+            "outcome": "PASS",
+            "error_rate": 0,
+            "note": "",
+            "iterations_started": 1200,
+            "iterations_completed": 1200,
+            "arrivals_scheduled": 0,
+            "arrivals_dropped": 0,
+            "generator_identity": {
+              "os": "linux",
+              "architecture": "amd64",
+              "go_version": "go1.24.0",
+              "runner_identity_method": "git_commit",
+              "runner_identity": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            },
+            "generator": {
+              "samples": 4,
+              "observed_seconds": 0,
+              "logical_cpus": 4,
+              "gomaxprocs": 2,
+              "cpu_capacity_cores": 1.5,
+              "cpu_capacity_source": "cgroup_cpu_quota",
+              "cpu_capacity_known": true,
+              "peak_heap_alloc_bytes": 0,
+              "peak_goroutines": 0,
+              "gc_cycles": 0,
+              "go_cpu_busy_seconds": 0,
+              "go_cpu_capacity_seconds": 0,
+              "go_cpu_utilization_ratio": 0,
+              "go_cpu_valid": true,
+              "process_samples": 4,
+              "process_cpu_samples": 0,
+              "peak_process_rss_bytes": 1024,
+              "peak_process_cpu_utilization_ratio": 0,
+              "mean_process_cpu_utilization_ratio": 0,
+              "process_cpu_valid": true,
+              "note": ""
+            },
+            "data_quality": {
+              "state": "LIMITED",
+              "findings": [
+                "No local generator preflight is attached; workload-specific generator equivalence is unverified."
+              ]
+            }
+          }
+        }
+      ],
+      "outcome": "PASS"
+    }
+  ],
+  "observation_variability": {
+    "runs": 2,
+    "p95_min_ms": 30,
+    "p95_max_ms": 30,
+    "error_rate_min": 0,
+    "error_rate_max": 0,
+    "throughput_min_rps": 120,
+    "throughput_max_rps": 120,
+    "successful_journeys_min_per_second": 120,
+    "successful_journeys_max_per_second": 120
+  },
+  "outcome": "PASS",
+  "notes": null
+}

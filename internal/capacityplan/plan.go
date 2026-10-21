@@ -849,6 +849,16 @@ func validateStageEvidence(evidence campaign.Result) error {
 			if !campaignRunGuardrailsMatch(evidence, phase.Run) {
 				return fmt.Errorf("trial %d has mismatched %s generator guardrails", i+1, want.Name)
 			}
+			if evidence.SchemaVersion == 2 || evidence.SchemaVersion == 4 {
+				// Historical campaign schemas recorded phase classifications but
+				// their embedded run reports predate several fields used by today's
+				// classifier. Preserve readability without promoting those reports:
+				// AuditCampaign independently recomputes current quality and stability.
+				if phase.Name != "warmup" && phase.EvidenceState != "PASS_OBSERVED" {
+					return fmt.Errorf("trial %d has inconsistent %s phase classification", i+1, want.Name)
+				}
+				continue
+			}
 			state, _ := campaign.ClassifyPhase(evidence, phase.Run, phase.Name)
 			if phase.EvidenceState != state || phase.EvidenceState == "INVALID_DELIVERY" || (phase.Name != "warmup" && phase.EvidenceState != "PASS_OBSERVED") {
 				return fmt.Errorf("trial %d has inconsistent %s phase classification", i+1, want.Name)

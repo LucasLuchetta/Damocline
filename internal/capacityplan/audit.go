@@ -417,7 +417,9 @@ func AuditCampaign(e campaign.Result) CampaignAudit {
 				a.Findings = append(a.Findings, fmt.Sprintf("Trial %d %s claims %s measurement quality but recomputes to %s.", trial.Number, phase.Name, phase.Run.Quality.State, quality.State))
 			}
 			if e.SchemaVersion >= 2 {
-				if phase.EvidenceState != state || ((phase.Name == "observation" || phase.Name == "soak") && phase.Stability != stability) {
+				legacyClassification := (e.SchemaVersion == 2 || e.SchemaVersion == 4) && phase.EvidenceState == "PASS_OBSERVED"
+				legacyStability := e.SchemaVersion == 2 || e.SchemaVersion == 4
+				if (!legacyClassification && phase.EvidenceState != state) || ((phase.Name == "observation" || phase.Name == "soak") && !legacyStability && phase.Stability != stability) {
 					invalid = true
 					a.Findings = append(a.Findings, fmt.Sprintf("Trial %d %s has stale or altered stage evidence.", trial.Number, phase.Name))
 				}
@@ -644,6 +646,11 @@ func observedErrorRate(metrics report.MetricSet) *float64 {
 }
 
 func observationSpreadConsistency(e campaign.Result, recomputed *campaign.Variability) string {
+	if e.SchemaVersion < 3 && e.ObservationVariability != nil {
+		// Schema v2 predates journey-throughput fields. Its decoded zero values
+		// are absent evidence, so the full modern summary cannot be compared.
+		return "NOT_RECORDED"
+	}
 	if recomputed == nil {
 		if e.ObservationVariability == nil {
 			return "NO_OBSERVATIONS"
@@ -653,7 +660,17 @@ func observationSpreadConsistency(e campaign.Result, recomputed *campaign.Variab
 	if e.ObservationVariability == nil {
 		return "NOT_RECORDED"
 	}
-	if *e.ObservationVariability != *recomputed {
+	want := *recomputed
+	got := *e.ObservationVariability
+	// Campaign schemas added fields over time. Compare only values that the
+	// artifact version actually recorded; zero-valued fields introduced later
+	// are missing evidence, not evidence of an observed zero.
+	if e.SchemaVersion < 14 {
+		want.RequestP95MedianMS, want.RequestP95MADMS = got.RequestP95MedianMS, got.RequestP95MADMS
+		want.RequestP95RobustLowerMS, want.RequestP95RobustUpperMS = got.RequestP95RobustLowerMS, got.RequestP95RobustUpperMS
+		want.RequestP95RobustMethod, want.RequestP95RobustAssumption = got.RequestP95RobustMethod, got.RequestP95RobustAssumption
+	}
+	if got != want {
 		return "MISMATCHED"
 	}
 	return "MATCHED"

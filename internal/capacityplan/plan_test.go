@@ -2,6 +2,7 @@ package capacityplan
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"os"
@@ -27,6 +28,74 @@ func TestReadCampaignRejectsDuplicateJSONKeys(t *testing.T) {
 	}
 	if _, err := ReadCampaign(path); err == nil {
 		t.Fatal("campaign with duplicate JSON keys was accepted")
+	}
+}
+
+func TestHistoricalCampaignFixturesRemainReadableAndAuditable(t *testing.T) {
+	for _, version := range []int{2, 4} {
+		t.Run(fmt.Sprintf("schema_v%d", version), func(t *testing.T) {
+			path := filepath.Join("testdata", "campaigns", fmt.Sprintf("schema-v%d.json", version))
+			evidence, digest, err := ReadCampaignWithFileSHA256(path)
+			if err != nil {
+				t.Fatalf("read historical fixture: %v", err)
+			}
+			if evidence.SchemaVersion != version {
+				t.Fatalf("fixture schema = %d, want %d", evidence.SchemaVersion, version)
+			}
+			if !strings.HasPrefix(digest, "sha256:") || len(digest) != len("sha256:")+64 {
+				t.Fatalf("invalid exact source digest %q", digest)
+			}
+			if err := ValidateSavedCampaign(evidence); err != nil {
+				t.Fatalf("historical campaign no longer validates: %v", err)
+			}
+			audit := AuditCampaign(evidence)
+			wantSpread := "MATCHED"
+			if version == 2 {
+				wantSpread = "NOT_RECORDED"
+			}
+			if audit.State != "INCONCLUSIVE" || audit.SpreadConsistency != wantSpread {
+				t.Fatalf("historical campaign audit changed: state=%s spread=%s findings=%v", audit.State, audit.SpreadConsistency, audit.Findings)
+			}
+			if audit.ObservationSpread == nil || audit.ObservationSpread.Runs != 2 {
+				t.Fatalf("observation evidence was not recomputed: %+v", audit.ObservationSpread)
+			}
+			if version == 2 {
+				data, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var artifact map[string]json.RawMessage
+				if err := json.Unmarshal(data, &artifact); err != nil {
+					t.Fatal(err)
+				}
+				var spread map[string]json.RawMessage
+				if err := json.Unmarshal(artifact["observation_variability"], &spread); err != nil {
+					t.Fatal(err)
+				}
+				delete(spread, "successful_journeys_min_per_second")
+				delete(spread, "successful_journeys_max_per_second")
+				artifact["observation_variability"], err = json.Marshal(spread)
+				if err != nil {
+					t.Fatal(err)
+				}
+				missingPath := filepath.Join(t.TempDir(), "schema-v2-missing-journey-throughput.json")
+				missingData, err := json.Marshal(artifact)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(missingPath, missingData, 0o600); err != nil {
+					t.Fatal(err)
+				}
+				missing, err := ReadCampaign(missingPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				missingAudit := AuditCampaign(missing)
+				if missingAudit.State != "INCONCLUSIVE" || missingAudit.SpreadConsistency != "NOT_RECORDED" {
+					t.Fatalf("missing legacy throughput was inferred as zero: state=%s spread=%s", missingAudit.State, missingAudit.SpreadConsistency)
+				}
+			}
+		})
 	}
 }
 

@@ -4,6 +4,7 @@ This project follows a human-maintained changelog. No release exists yet.
 
 ## [Unreleased]
 
+- Preserve offline readability for historical closed-loop campaign schemas v2 and v4 with end-to-end JSON fixtures. Compare only fields present in each campaign schema, report later-added journey-throughput and repeat-p95 summaries as unrecorded when absent, and keep historical evidence inconclusive when current quality or stability requirements cannot be recomputed.
 - Reject JSON artifacts whose object keys repeat after escape decoding across scenario/profile loading, campaign and calibration audit, run inspection, reference acceptance, local history, dashboard, demand assessment, and redacted export. This prevents parsers from deriving different workload controls or evidence from the same bytes.
 - Reject campaign phases that embed unsupported HTTP report schema versions during offline audit, instead of interpreting unknown future fields using current semantics.
 - Require a nonzero recovery phase for closed-loop campaigns before traffic starts, so a live `PASS` cannot produce evidence that offline capacity audit must reject as missing recovery. Saved profiles with `recovery: "0s"` are rejected rather than silently lengthened.
