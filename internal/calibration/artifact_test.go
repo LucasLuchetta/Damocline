@@ -98,7 +98,7 @@ func passingWorkloadObservations() []WorkloadObservation {
 			ClientResponseMinBytes: int64(profile.ResponseBodyBytes),
 			ClientResponseMaxBytes: int64(profile.ResponseBodyBytes), ClientResponseTotalBytes: responseBytes,
 			ServerReceived: planned, ServerCompleted: planned,
-			ServerTCPConnections:   tcpConnections,
+			ServerTCPConnections: tcpConnections, ServerAcceptedTLSConnections: tlsHandshakes,
 			ServerRequestBodyBytes: requestBytes, ServerResponseBodyBytes: responseBytes,
 		})
 		if closedLoop {
@@ -378,6 +378,33 @@ func TestSchemaTenRequiresExactHigherRateTLSHandshakes(t *testing.T) {
 	}
 }
 
+func TestSchemaElevenUsesAcceptedTLSSocketsForHandshakeReconciliation(t *testing.T) {
+	a := passingArtifact(t)
+	index := -1
+	for i, profile := range a.Preflight.Fixture.WorkloadProfiles {
+		if profile.ID == "https-get-4k-response-shape-r40" {
+			index = i
+			break
+		}
+	}
+	if index < 0 {
+		t.Fatal("higher-rate TLS profile is missing")
+	}
+	observation := &a.Preflight.WorkloadObservations[index]
+	// A TLS connection can complete its handshake and be accepted without
+	// carrying a request when concurrent dials race to establish reuse.
+	observation.ClientTLSHandshakes = 2
+	observation.ServerAcceptedTLSConnections = 2
+	observation.ServerTCPConnections = 1
+	if err := ValidateRecord(a.Preflight); err != nil {
+		t.Fatalf("schema-v11 artifact rejected a reconciled idle TLS connection: %v", err)
+	}
+	observation.ServerAcceptedTLSConnections = 1
+	if err := ValidateRecord(a.Preflight); err == nil {
+		t.Fatal("schema-v11 artifact accepted client handshake count that differs from accepted TLS sockets")
+	}
+}
+
 func TestSchemaSixRejectsAlteredConnectionPolicyTuple(t *testing.T) {
 	a := passingArtifact(t)
 	a.Preflight.Fixture.WorkloadProfiles[15].Duration = "5s"
@@ -437,7 +464,7 @@ func passingObservationsForProfiles(profiles []WorkloadProfile) []WorkloadObserv
 			ClientResponseMinBytes: int64(profile.ResponseBodyBytes),
 			ClientResponseMaxBytes: int64(profile.ResponseBodyBytes), ClientResponseTotalBytes: responseBytes,
 			ServerReceived: planned, ServerCompleted: planned,
-			ServerTCPConnections:   tcpConnections,
+			ServerTCPConnections: tcpConnections, ServerAcceptedTLSConnections: tlsHandshakes,
 			ServerRequestBodyBytes: requestBytes, ServerResponseBodyBytes: responseBytes,
 		})
 		if profile.Mode == "closed" {

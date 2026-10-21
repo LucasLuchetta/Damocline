@@ -763,12 +763,13 @@ func workloadProfileObservation(profile calibration.WorkloadProfile, run report.
 		ClientCompleteBodyObservations: body.CompleteObservations,
 		ClientTLSHandshakes:            totalTLSHandshakes(run),
 		ClientResponseMinBytes:         body.MinBytes, ClientResponseMaxBytes: body.MaxBytes,
-		ClientResponseTotalBytes: body.TotalBytes,
-		ServerReceived:           after.ProfileReceived[counterID] - before.ProfileReceived[counterID],
-		ServerCompleted:          after.ProfileCompleted[counterID] - before.ProfileCompleted[counterID],
-		ServerTCPConnections:     after.ProfileTCPConnections[counterID] - before.ProfileTCPConnections[counterID],
-		ServerRequestBodyBytes:   after.ProfileRequestBytes[counterID] - before.ProfileRequestBytes[counterID],
-		ServerResponseBodyBytes:  after.ProfileResponseBytes[counterID] - before.ProfileResponseBytes[counterID],
+		ClientResponseTotalBytes:     body.TotalBytes,
+		ServerReceived:               after.ProfileReceived[counterID] - before.ProfileReceived[counterID],
+		ServerCompleted:              after.ProfileCompleted[counterID] - before.ProfileCompleted[counterID],
+		ServerTCPConnections:         after.ProfileTCPConnections[counterID] - before.ProfileTCPConnections[counterID],
+		ServerAcceptedTLSConnections: after.AcceptedTLSConnections - before.AcceptedTLSConnections,
+		ServerRequestBodyBytes:       after.ProfileRequestBytes[counterID] - before.ProfileRequestBytes[counterID],
+		ServerResponseBodyBytes:      after.ProfileResponseBytes[counterID] - before.ProfileResponseBytes[counterID],
 	}
 }
 
@@ -842,7 +843,11 @@ func checkWorkloadProfile(profile calibration.WorkloadProfile, run report.Result
 			traceHandshakes = int64(run.Steps[0].HTTPTrace.TLSCount)
 		}
 		tlsHandshakeLedgerMatches = observation.ClientTLSHandshakes == traceHandshakes &&
-			observation.ClientTLSHandshakes == observation.ServerTCPConnections && observation.ClientTLSHandshakes >= 1 && observation.ClientTLSHandshakes <= planned
+			observation.ClientTLSHandshakes == observation.ServerAcceptedTLSConnections && observation.ClientTLSHandshakes >= 1 && observation.ClientTLSHandshakes <= planned && observation.ServerTCPConnections <= observation.ServerAcceptedTLSConnections
+	} else if profile.TransportScheme == "https" {
+		tlsHandshakeLedgerMatches = tlsHandshakeLedgerMatches && observation.ClientTLSHandshakes == observation.ServerAcceptedTLSConnections
+	} else {
+		tlsHandshakeLedgerMatches = tlsHandshakeLedgerMatches && observation.ClientTLSHandshakes == 0 && observation.ServerAcceptedTLSConnections == 0
 	}
 	var issues []string
 	if !hasRecognizedMeasurementQuality(quality) {

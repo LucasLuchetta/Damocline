@@ -389,7 +389,7 @@ func syntheticCalibration() calibrationDocument {
 	var document calibrationDocument
 	document.SchemaVersion = 1
 	document.Status = "REFERENCE_SMOKE_PASSED"
-	document.Preflight.SchemaVersion = 10
+	document.Preflight.SchemaVersion = 11
 	document.Preflight.ScenarioFingerprint = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	runtimeInfo := verifiedTestRuntime()
 	document.Preflight.Generator = calibration.Generator{
@@ -456,11 +456,15 @@ func syntheticCalibration() calibrationDocument {
 			ResponseBodyBytes: 4096, ArrivalRate: rate, MaxRPS: 50, Users: 10, Duration: "5s", Timeout: "1s", ConnectionPolicy: "reuse"}
 		document.Preflight.Fixture.WorkloadProfiles = append(document.Preflight.Fixture.WorkloadProfiles, profile)
 		planned := int64(rate * 5)
+		handshakes := int64(1)
+		if rate >= 20 {
+			handshakes = 2 // one accepted TLS connection carried no request
+		}
 		document.WorkloadObservations = append(document.WorkloadObservations, workloadObservation{
 			ProfileID: profile.ID, Mode: "arrival", ArrivalAccountingApplicable: true, Scheduled: planned, Admitted: planned, Started: planned, Completed: planned,
-			Outcome: "PASS", ClientCompleteBodyObservations: planned, ClientTLSHandshakes: 1,
+			Outcome: "PASS", ClientCompleteBodyObservations: planned, ClientTLSHandshakes: handshakes,
 			ClientResponseMinBytes: 4096, ClientResponseMaxBytes: 4096, ClientResponseTotalBytes: planned * 4096,
-			ServerReceived: planned, ServerCompleted: planned, ServerTCPConnections: 1, ServerResponseBodyBytes: planned * 4096,
+			ServerReceived: planned, ServerCompleted: planned, ServerTCPConnections: 1, ServerAcceptedTLSConnections: handshakes, ServerResponseBodyBytes: planned * 4096,
 		})
 		metric := report.MetricSet{Total: int(planned), Success: int(planned), P95MS: 21,
 			HTTP:         report.HTTPDiagnostics{StatusCodes: map[int]int{200: int(planned)}, Status2xx: int(planned)},
@@ -468,7 +472,7 @@ func syntheticCalibration() calibrationDocument {
 		document.WorkloadRuns = append(document.WorkloadRuns, report.Result{
 			ArrivalsScheduled: planned, ArrivalsAdmitted: intPointer64(planned), IterationsStarted: planned, IterationsCompleted: planned, Outcome: "PASS",
 			Metrics: metric, Config: report.RunConfig{Users: 10, Duration: "5s", RequestTimeout: "1s", ConnectionPolicy: "reuse", MaxRPS: 50, Mode: "arrival", ArrivalRate: rate},
-			Steps: []report.StepResult{{Method: "GET", Path: profile.Path, Metrics: metric, HTTPTrace: report.HTTPTrace{TLSCount: 1}}},
+			Steps: []report.StepResult{{Method: "GET", Path: profile.Path, Metrics: metric, HTTPTrace: report.HTTPTrace{TLSCount: int(handshakes)}}},
 		})
 	}
 	for _, users := range []int{1, 2, 5, 10, 20, 50} {

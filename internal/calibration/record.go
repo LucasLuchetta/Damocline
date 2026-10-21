@@ -17,7 +17,7 @@ import (
 
 // The preflight record is embedded in the existing calibration JSON. It
 // identifies the tested loopback fixture, never a customer target or session.
-const SchemaVersion = 10
+const SchemaVersion = 11
 const minimumSupportedSchemaVersion = 1
 
 // Healthy response latency bounds are the fixed coarse guardrail used by the
@@ -101,6 +101,7 @@ type WorkloadObservation struct {
 	ServerReceived                 int64  `json:"server_received"`
 	ServerCompleted                int64  `json:"server_completed"`
 	ServerTCPConnections           int64  `json:"server_tcp_connections,omitempty"`
+	ServerAcceptedTLSConnections   int64  `json:"server_accepted_tls_connections,omitempty"`
 	ServerRequestBodyBytes         int64  `json:"server_request_body_bytes"`
 	ServerResponseBodyBytes        int64  `json:"server_response_body_bytes"`
 }
@@ -569,7 +570,7 @@ func validateWorkloadMatrix(rec Record) error {
 			observation.ClientTLSHandshakes >= 0 && observation.ClientTLSHandshakes <= observation.Started &&
 			observation.ClientResponseMaxBytes >= observation.ClientResponseMinBytes &&
 			observation.ClientResponseTotalBytes >= 0 && observation.ServerReceived >= 0 &&
-			observation.ServerCompleted >= 0 && observation.ServerTCPConnections >= 0 &&
+			observation.ServerCompleted >= 0 && observation.ServerTCPConnections >= 0 && observation.ServerAcceptedTLSConnections >= 0 && observation.ServerAcceptedTLSConnections <= observation.Started &&
 			observation.ServerTCPConnections <= observation.ServerReceived && observation.ServerRequestBodyBytes >= 0 &&
 			observation.ServerResponseBodyBytes >= 0
 		if observation.ProfileID != profile.ID || !workloadFingerprintPattern.MatchString(profile.Fingerprint) ||
@@ -614,6 +615,15 @@ func validateWorkloadMatrix(rec Record) error {
 			if rec.SchemaVersion >= 10 && profile.TransportScheme == "https" && profile.ArrivalRate >= 20 {
 				expectedHandshakes = observation.ServerTCPConnections
 				supported = expectedHandshakes >= 1 && expectedHandshakes <= observation.Started
+			}
+			if rec.SchemaVersion >= 11 {
+				if profile.TransportScheme == "https" {
+					expectedHandshakes = observation.ServerAcceptedTLSConnections
+					supported = expectedHandshakes >= 1 && expectedHandshakes <= observation.Started && observation.ServerTCPConnections <= expectedHandshakes
+				} else {
+					expectedHandshakes = 0
+					supported = observation.ServerAcceptedTLSConnections == 0
+				}
 			}
 			if !supported || observation.ClientTLSHandshakes != expectedHandshakes {
 				return errors.New("passing calibration has inconsistent profile TLS handshake counts")
