@@ -125,9 +125,14 @@ func TestCampaignProfileRunDryRunAndLoopbackReport(t *testing.T) {
 	}
 
 	campaignEvidenceID := capacityplan.AuditCampaign(first).EvidenceID
+	campaignFileSHA256 := campaignFileSHA256(t, firstOut)
+	auditor, err := currentAuditorIdentity()
+	if err != nil {
+		t.Fatalf("identify auditor executable: %v", err)
+	}
 	assessmentOut := filepath.Join(outDir, "assessment.json")
 	capacityReportOut := filepath.Join(outDir, "capacity.md")
-	auditArgs := []string{"audit", "--campaign", firstOut, "--expect-evidence-id", campaignEvidenceID, "--peak-users", "2", "--out", assessmentOut, "--report-out", capacityReportOut}
+	auditArgs := []string{"audit", "--campaign", firstOut, "--expect-evidence-id", campaignEvidenceID, "--expect-campaign-file-sha256", campaignFileSHA256, "--expect-auditor-sha256", auditor.ExecutableSHA256, "--peak-users", "2", "--out", assessmentOut, "--report-out", capacityReportOut}
 	beforeAuditRequests := requests.Load()
 	stdout.Reset()
 	stderr.Reset()
@@ -142,8 +147,10 @@ func TestCampaignProfileRunDryRunAndLoopbackReport(t *testing.T) {
 	if err != nil {
 		t.Fatalf("capacity report was not written: %v", err)
 	}
-	if !strings.Contains(string(capacityReportData), "--expect-evidence-id '"+campaignEvidenceID+"'") {
-		t.Fatalf("capacity report replay does not pin its campaign evidence: %s", capacityReportData)
+	for _, expected := range []string{"--expect-evidence-id '" + campaignEvidenceID + "'", "--expect-campaign-file-sha256 '" + campaignFileSHA256 + "'", "--expect-auditor-sha256 '" + auditor.ExecutableSHA256 + "'"} {
+		if !strings.Contains(string(capacityReportData), expected) {
+			t.Fatalf("capacity report replay does not pin %q: %s", expected, capacityReportData)
+		}
 	}
 	if got := requests.Load(); got != beforeAuditRequests {
 		t.Fatalf("offline audit generated %d target request(s)", got-beforeAuditRequests)
@@ -151,7 +158,7 @@ func TestCampaignProfileRunDryRunAndLoopbackReport(t *testing.T) {
 
 	replayAssessmentOut := filepath.Join(outDir, "replay-assessment.json")
 	replayReportOut := filepath.Join(outDir, "replay-capacity.md")
-	replayArgs := []string{"audit", "--campaign", firstOut, "--expect-evidence-id", campaignEvidenceID, "--peak-users", "2", "--out", replayAssessmentOut, "--report-out", replayReportOut}
+	replayArgs := []string{"audit", "--campaign", firstOut, "--expect-evidence-id", campaignEvidenceID, "--expect-campaign-file-sha256", campaignFileSHA256, "--expect-auditor-sha256", auditor.ExecutableSHA256, "--peak-users", "2", "--out", replayAssessmentOut, "--report-out", replayReportOut}
 	stdout.Reset()
 	stderr.Reset()
 	if code := Run(replayArgs, &stdout, &stderr); code != 0 {
