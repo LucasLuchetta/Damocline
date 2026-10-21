@@ -113,7 +113,7 @@ func renderCampaignCollectionCapacityReport(assessment capacityplan.CampaignColl
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "## Executive summary")
 	fmt.Fprintln(&b)
-	fmt.Fprintf(&b, "- **Collection verdict:** %s\n- **Scenario:** %s\n- **Observed passing levels:** %v; **failing levels:** %v; **inconclusive levels:** %v\n- **Observed pattern:** %s\n", assessment.State, markdownText(assessment.Scenario), assessment.PassingLevels, assessment.FailingLevels, assessment.InconclusiveLevels, markdownText(assessment.ObservationPattern))
+	fmt.Fprintf(&b, "- **Collection verdict:** %s\n- **Scenario:** %s\n- **Highest passing tested level:** %s\n- **First failing tested level:** %s\n- **Upper bound:** %s\n- **Observed passing levels:** %v; **failing levels:** %v; **inconclusive levels:** %v\n- **Observed pattern:** %s\n", assessment.State, markdownText(assessment.Scenario), optionalLevel(assessment.HighestPassingLevel), optionalLevel(assessment.FirstFailingLevel), markdownText(assessment.UpperBound), assessment.PassingLevels, assessment.FailingLevels, assessment.InconclusiveLevels, markdownText(assessment.ObservationPattern))
 	writeMarkdownDemand(&b, assessment.DemandInputs, assessment.Demand)
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "Tested levels are observations only. The collection does not interpolate untested workloads or certify human-user capacity.")
@@ -171,6 +171,13 @@ func renderCampaignCollectionCapacityReport(assessment capacityplan.CampaignColl
 	fmt.Fprintf(&b, "%s\n", markdownCodeFence("powershell", markdownReplayCommand(sources, expectedEvidenceIDs, assessment.DemandInputs)))
 	fmt.Fprintf(&b, "\nReport generated locally at %s. Keep all source campaign files with this assessment.\n", markdownCode(reportPath))
 	return b.String()
+}
+
+func optionalLevel(level *int) string {
+	if level == nil {
+		return "UNKNOWN"
+	}
+	return strconv.Itoa(*level) + " active users (tested)"
 }
 
 func writeMarkdownDemand(b *strings.Builder, inputs *capacitygoal.Goal, result *capacityplan.Result) {

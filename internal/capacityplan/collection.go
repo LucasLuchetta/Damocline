@@ -33,6 +33,9 @@ type CampaignCollectionAssessment struct {
 	PassingLevels       []int                     `json:"observed_passing_levels"`
 	FailingLevels       []int                     `json:"observed_failing_levels"`
 	InconclusiveLevels  []int                     `json:"inconclusive_levels"`
+	HighestPassingLevel *int                      `json:"highest_passing_tested_level,omitempty"`
+	FirstFailingLevel   *int                      `json:"first_failing_tested_level,omitempty"`
+	UpperBound          string                    `json:"upper_bound_state"`
 	ObservationPattern  string                    `json:"observation_pattern"`
 	DemandInputs        *capacitygoal.Goal        `json:"demand_inputs,omitempty"`
 	Demand              *Result                   `json:"demand,omitempty"`
@@ -105,6 +108,7 @@ func BuildCampaignCollectionAssessment(evidence []campaign.Result, goal *capacit
 		Levels:         make([]CampaignLevelAssessment, 0, len(evidence)),
 		PassingLevels:  []int{}, FailingLevels: []int{}, InconclusiveLevels: []int{},
 		ObservationPattern: "UNAVAILABLE",
+		UpperBound:         "UNKNOWN",
 		Findings: []string{
 			"Each level is audited independently; no result is interpolated or extrapolated to an untested workload.",
 			"Observed passing and failing levels do not establish a monotone capacity boundary or sustainable human-user capacity.",
@@ -174,6 +178,19 @@ func BuildCampaignCollectionAssessment(evidence []campaign.Result, goal *capacit
 			}
 		}
 		result.ObservationPattern = observationPattern(result.PassingLevels, result.FailingLevels)
+		if len(result.PassingLevels) > 0 {
+			highest := result.PassingLevels[len(result.PassingLevels)-1]
+			result.HighestPassingLevel = &highest
+		}
+		if len(result.FailingLevels) > 0 {
+			first := result.FailingLevels[0]
+			result.FirstFailingLevel = &first
+		}
+		if result.ObservationPattern == "PASS_BELOW_FAIL" && result.HighestPassingLevel != nil && result.FirstFailingLevel != nil {
+			result.UpperBound = "BRACKETED_BY_TESTED_LEVELS"
+		} else if result.ObservationPattern == "NON_MONOTONIC" {
+			result.UpperBound = "NON_MONOTONIC_UNKNOWN"
+		}
 		if len(result.PassingLevels)+len(result.FailingLevels) == 0 {
 			result.State = "INCONCLUSIVE"
 			result.Findings = append(result.Findings, "No campaign level has a decisive observed pass or fail outcome.")

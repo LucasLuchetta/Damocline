@@ -87,6 +87,14 @@ level is labeled `NON_MONOTONIC`; the tool will not infer a capacity threshold.
 A demand target still requires a campaign at its exact
 calculated level and is never interpolated from neighboring campaigns.
 
+The collection also reports the highest passing tested level and first failing
+tested level as separate observations. `upper_bound_state` is
+`BRACKETED_BY_TESTED_LEVELS` only for a monotonic pass-below-fail pattern;
+when all tested levels pass, the upper bound remains `UNKNOWN`. A
+non-monotonic pattern is labeled `NON_MONOTONIC_UNKNOWN`. These labels describe
+the tested points and do not claim that every level between them was tested or
+that the application has a universal capacity ceiling.
+
 A campaign that stops at its first failing required phase can still contribute
 that observed failure. The audit replays the terminal trial against the exact
 planned phase prefix; unrun recovery or later phases are not filled in. An
