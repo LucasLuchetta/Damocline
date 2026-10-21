@@ -85,6 +85,8 @@ func auditFixtureAtUsers(users int) campaign.Result {
 		Runs: 2, P95MinMS: 100, P95MaxMS: 100, ErrorRateMin: 0, ErrorRateMax: 0,
 		ThroughputMinRPS: 8, ThroughputMaxRPS: 8,
 		SuccessfulJourneysMinPerSec: 8, SuccessfulJourneysMaxPerSec: 8,
+		RequestP95MedianMS: 100, RequestP95RobustLowerMS: 100, RequestP95RobustUpperMS: 100,
+		RequestP95RobustMethod: "MEDIAN_PLUS_MINUS_3_MAD", RequestP95RobustAssumption: "INDEPENDENT_OBSERVATION_PHASES_DESCRIPTIVE_ONLY",
 	}
 	return e
 }
@@ -145,6 +147,19 @@ func TestAuditRecomputesRobustSpreadFromTrialP95WithoutUpgradingVerdict(t *testi
 	}
 	if a.Repeatability.EvaluatedTrials != 5 || a.Repeatability.Method != "EXACT_CLOPPER_PEARSON_BINOMIAL" || a.Repeatability.Assumption != "INDEPENDENT_STATIONARY_REPEAT_TRIALS" {
 		t.Fatalf("descriptive spread changed the conditional pass interval: repeat=%+v", a.Repeatability)
+	}
+}
+
+func TestAuditMatchesPersistedRobustSpreadForCurrentCampaignSchema(t *testing.T) {
+	e := auditFixture()
+	recomputed := AuditCampaign(e)
+	if recomputed.ObservationSpread == nil || recomputed.ObservationSpread.RequestP95RobustMethod == "" {
+		t.Fatalf("fixture did not produce a current-schema robust summary: %+v", recomputed.ObservationSpread)
+	}
+	e.ObservationVariability = recomputed.ObservationSpread
+	a := AuditCampaign(e)
+	if a.SpreadConsistency != "MATCHED" || a.State == "INVALID_EVIDENCE" {
+		t.Fatalf("valid persisted schema-v14 robust spread was rejected: consistency=%s state=%s spread=%+v", a.SpreadConsistency, a.State, a.ObservationSpread)
 	}
 }
 

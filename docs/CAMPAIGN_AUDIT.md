@@ -44,6 +44,12 @@ not a confidence interval. It does not treat requests inside a trial as
 independent experiments, account for dependence between sequential trials, or
 test stationarity; those statistical methods remain open work.
 
+The terminal audit calls these repeated phases observations; it does not assert
+that they are independent. With one completed observation, it prints that
+single result and says the robust summary is unavailable. The offline audit
+recomputes schema-v14 robust fields before checking the persisted summary, so
+valid saved summaries remain `MATCHED` while altered values remain invalid.
+
 Recomputed quality `LIMITED` remains visible *separately* from the
 observational verdict. Only the separately validated loopback calibration
 owns the current positive generator measurement envelope. For a specific

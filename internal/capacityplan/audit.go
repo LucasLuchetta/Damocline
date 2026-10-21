@@ -271,8 +271,7 @@ func AuditCampaign(e campaign.Result) CampaignAudit {
 	}
 	a.GeneratorEnvironments, a.GeneratorRuntimeStatus, a.GeneratorCapacityStatus = summarizeGeneratorEnvironments(e)
 	a.ObservationTrials, a.ObservationSpread = recomputeObservationEvidence(e)
-	a.SpreadConsistency = observationSpreadConsistency(e, a.ObservationSpread)
-	if a.ObservationSpread != nil {
+	if a.ObservationSpread != nil && e.SchemaVersion >= 14 {
 		// Recompute the robust repeat-level summary from saved observation
 		// phases; persisted aggregate fields are never treated as authority.
 		var p95s []float64
@@ -288,6 +287,7 @@ func AuditCampaign(e campaign.Result) CampaignAudit {
 			a.ObservationSpread.RequestP95RobustAssumption = "INDEPENDENT_OBSERVATION_PHASES_DESCRIPTIVE_ONLY"
 		}
 	}
+	a.SpreadConsistency = observationSpreadConsistency(e, a.ObservationSpread)
 	a.Repeatability = summarizeRepeatability(e.Trials)
 	if a.SpreadConsistency == "MISMATCHED" {
 		a.State = "INVALID_EVIDENCE"

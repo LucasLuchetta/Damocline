@@ -37,9 +37,13 @@ func renderCampaignCapacityReport(assessment capacityplan.Assessment, source, re
 	fmt.Fprintln(&b)
 	fmt.Fprintf(&b, "- **Campaign evidence ID:** %s\n- **Campaign schema:** %d\n- **Campaign execution state:** %s\n- **Scenario:** %s\n- **Declared environment:** %s\n- **Target origin:** %s\n- **Start time:** %s\n- **Host type:** %s\n- **Required phase duration reviewed:** %s\n- **Base active users:** %d\n- **Workload fingerprint:** %s\n", markdownCode(a.EvidenceID), a.SchemaVersion, markdownText(evidence.ExecutionState), markdownText(evidence.Scenario), markdownText(evidence.DeclaredEnvironment), markdownText(a.Target), markdownText(a.StartedAt), markdownText(a.HostType), markdownText(a.TestedDuration), evidence.BaseUsers, markdownCode(a.ScenarioFingerprint))
 	fmt.Fprintln(&b, "- **Evidence ID scope:** SHA-256 of canonical decoded campaign fields; it is not a hash of original file bytes, a signature, or producer/host/target attestation. Whitespace-only changes and fields unknown to this reader are outside this ID.")
-	fmt.Fprintf(&b, "- **Campaign schedule:** warm-up %s; stabilization %s; observation %s; spike %d users for %s; recovery %s; soak %s; cooldown %s; repeats %d; wall-time budget %s\n", markdownText(evidence.Warmup), markdownText(evidence.Stabilization), markdownText(evidence.Observation), evidence.SpikeUsers, markdownText(evidence.SpikeDuration), markdownText(evidence.Recovery), markdownText(evidence.Soak), markdownText(evidence.Cooldown), evidence.Repeats, markdownText(evidence.Budget))
+	fmt.Fprintf(&b, "- **Campaign schedule:** warm-up %s; stabilization %s; observation %s; spike %d users for %s; recovery %s; soak %s; cooldown %s; repeats %d; wall-time budget %s\n", markdownOptionalDuration(evidence.Warmup), markdownOptionalDuration(evidence.Stabilization), markdownOptionalDuration(evidence.Observation), evidence.SpikeUsers, markdownOptionalDuration(evidence.SpikeDuration), markdownOptionalDuration(evidence.Recovery), markdownOptionalDuration(evidence.Soak), markdownOptionalDuration(evidence.Cooldown), evidence.Repeats, markdownOptionalDuration(evidence.Budget))
 	stability := evidence.EffectiveStabilityPolicy()
-	fmt.Fprintf(&b, "- **Effective drift screen policy** (historical default when not persisted): minimum %d windows, %d samples/window, p95 increase %.3f%% and %.3f ms, throughput decrease %.3f%%\n", stability.MinimumWindows, stability.MinimumSamplesPerWindow, stability.MaxP95IncreasePercent, stability.MaxP95IncreaseMS, stability.MaxThroughputDropPercent)
+	policySource := "persisted"
+	if evidence.SchemaVersion < 11 || evidence.StabilityPolicy == nil {
+		policySource = "historical default; not persisted in this evidence"
+	}
+	fmt.Fprintf(&b, "- **Effective drift screen policy** (%s): minimum %d windows, %d samples/window, p95 increase %.3f%% and %.3f ms, throughput decrease %.3f%%\n", policySource, stability.MinimumWindows, stability.MinimumSamplesPerWindow, stability.MaxP95IncreasePercent, stability.MaxP95IncreaseMS, stability.MaxThroughputDropPercent)
 	fmt.Fprintf(&b, "- **Generator guardrails:** %s\n- **Exact calibration required:** %s\n", markdownText(generatorGuardrailSummary(evidence.GeneratorGuardrails)), markdownText(calibrationSummary(evidence)))
 	if a.Objectives != nil {
 		writeMarkdownObjectives(&b, a.Objectives)
@@ -90,7 +94,7 @@ func renderCampaignCapacityReport(assessment capacityplan.Assessment, source, re
 		fmt.Fprintf(&b, "| %d | %s | %s | %s | %s | %.3f | `%s` |\n", phase.Trial, markdownText(phase.Name), markdownText(phase.EvidenceState), markdownText(phase.Measurement), markdownText(phase.Stability), phase.ObservationSecs, phase.EvidenceID)
 	}
 	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, "### Independent observation trials")
+	fmt.Fprintln(&b, "### Observation trials")
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "| Trial | Requests | Request p95 (ms) | Request p99 (ms) | Request p99 interval | Request errors | Completed journeys | Journey p95 (ms) | Journey p99 (ms) | Journey p99 interval | Journey errors | Successful journeys/s |")
 	fmt.Fprintln(&b, "| ---: | ---: | ---: | ---: | --- | ---: | ---: | ---: | ---: | --- | ---: | ---: |")
@@ -102,6 +106,11 @@ func renderCampaignCapacityReport(assessment capacityplan.Assessment, source, re
 	fmt.Fprintf(&b, "P99 values are nearest-rank descriptive estimates. Exact 95%% rank intervals require at least %d observations and assume IID stationary latency samples; these states do not establish independence, a p99 objective, or capacity confidence.\n", minimumP99Samples)
 	fmt.Fprintln(&b)
 	fmt.Fprintf(&b, "Repeat-trial pass fraction: **%d/%d** evaluable; excluded incomplete trials: %d; method: %s; interval assumption: %s. The interval is conditional and is not capacity confidence.\n", a.Repeatability.PassingTrials, a.Repeatability.EvaluatedTrials, a.Repeatability.ExcludedTrials, markdownCode(a.Repeatability.Method), markdownCode(a.Repeatability.Assumption))
+	if a.ObservationSpread != nil && a.ObservationSpread.Runs == 1 {
+		fmt.Fprintln(&b, "Only one completed observation phase is available; independence and repeat spread cannot be assessed.")
+	} else if a.ObservationSpread != nil && a.ObservationSpread.Runs > 1 {
+		fmt.Fprintf(&b, "Observed request-p95 spread across %d completed observation phases is descriptive; independence is not established.\n", a.ObservationSpread.Runs)
+	}
 	if a.ObservationSpread != nil && a.ObservationSpread.RequestP95RobustMethod != "" {
 		fmt.Fprintf(&b, "Repeat-level request p95: median **%.2f ms**, MAD %.2f ms; descriptive median +/- 3 MAD band %.2f–%.2f ms (%s). This is not a confidence interval and does not account for sequential dependence or non-stationarity.\n",
 			a.ObservationSpread.RequestP95MedianMS, a.ObservationSpread.RequestP95MADMS, a.ObservationSpread.RequestP95RobustLowerMS, a.ObservationSpread.RequestP95RobustUpperMS, markdownCode(a.ObservationSpread.RequestP95RobustMethod))
@@ -346,6 +355,13 @@ func markdownOptionalPercent(value *float64) string {
 		return "not recorded"
 	}
 	return fmt.Sprintf("%.3f%%", *value*100)
+}
+
+func markdownOptionalDuration(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return "not configured"
+	}
+	return markdownText(value)
 }
 
 func markdownText(value string) string {

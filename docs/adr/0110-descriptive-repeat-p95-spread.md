@@ -16,7 +16,7 @@ The method is labeled `MEDIAN_PLUS_MINUS_3_MAD`; its assumption is labeled `INDE
 
 ## Validation
 
-Deterministic tests cover median/MAD arithmetic, rejection of a single completed phase and non-finite values, campaign persistence, offline recomputation from five trial summaries with an outlier, and preservation of the separate conditional pass interval. Historical campaign schemas are not assigned synthesized values for schema-v14 fields.
+Deterministic tests cover median/MAD arithmetic, rejection of a single completed phase and non-finite values, campaign persistence, offline recomputation and comparison of persisted fields from five trial summaries with an outlier, CLI rendering without an independence claim, and preservation of the separate conditional pass interval. Historical campaign schemas are not assigned synthesized values for schema-v14 fields.
 
 ## Consequences
 

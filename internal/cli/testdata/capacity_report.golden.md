@@ -27,7 +27,7 @@ This assessment describes the saved evidence under its declared conditions. It d
 - **Workload fingerprint:** `sha256:workload-fixture`
 - **Evidence ID scope:** SHA-256 of canonical decoded campaign fields; it is not a hash of original file bytes, a signature, or producer/host/target attestation. Whitespace-only changes and fields unknown to this reader are outside this ID.
 - **Campaign schedule:** warm-up 0s; stabilization 0s; observation 10s; spike 0 users for 0s; recovery 10s; soak 0s; cooldown 0s; repeats 2; wall-time budget 3m20s
-- **Effective drift screen policy** (historical default when not persisted): minimum 3 windows, 20 samples/window, p95 increase 20.000% and 5.000 ms, throughput decrease 20.000%
+- **Effective drift screen policy** (persisted): minimum 3 windows, 20 samples/window, p95 increase 20.000% and 5.000 ms, throughput decrease 20.000%
 - **Generator guardrails:** disabled
 - **Exact calibration required:** no exact coverage requirement
 
@@ -42,6 +42,7 @@ This assessment describes the saved evidence under its declared conditions. It d
 | Trial | Phase | Active users | Duration | max_rps | p95 limit (ms) | max error rate | Request timeout | Connection policy | Workload fingerprint |
 | ---: | --- | ---: | --- | ---: | ---: | ---: | --- | --- | --- |
 | 1 | observation | 2 | 10s | 20 | 500.000 | 0.01000 | 2s | reuse | `sha256:workload-fixture` |
+| 2 | observation | 2 | 10s | 20 | 500.000 | 0.01000 | 2s | reuse | `sha256:workload-fixture` |
 
 ### Generator environment by phase
 
@@ -58,16 +59,18 @@ The phase configuration and fingerprint do not contain a complete request defini
 | ---: | --- | --- | --- | --- | ---: | --- |
 | 1 | observation | PASS_OBSERVED | LIMITED | NO_LARGE_DRIFT_DETECTED | 10.000 | `sha256:phase-fixture` |
 
-### Independent observation trials
+### Observation trials
 
 | Trial | Requests | Request p95 (ms) | Request p99 (ms) | Request p99 interval | Request errors | Completed journeys | Journey p95 (ms) | Journey p99 (ms) | Journey p99 interval | Journey errors | Successful journeys/s |
 | ---: | ---: | ---: | ---: | --- | ---: | ---: | ---: | ---: | --- | ---: | ---: |
 | 1 | 100 | 125.000 | 300.000 | `INSUFFICIENT_SAMPLES` | not recorded | 50 | 250.000 | 450.000 | `INSUFFICIENT_SAMPLES` | not recorded | 5.000 |
+| 2 | 100 | 130.000 | 310.000 | `INSUFFICIENT_SAMPLES` | not recorded | 52 | 255.000 | 455.000 | `INSUFFICIENT_SAMPLES` | not recorded | 5.200 |
 
 P99 values are nearest-rank descriptive estimates. Exact 95% rank intervals require at least 1000 observations and assume IID stationary latency samples; these states do not establish independence, a p99 objective, or capacity confidence.
 
 Repeat-trial pass fraction: **2/2** evaluable; excluded incomplete trials: 0; method: `EXACT_CLOPPER_PEARSON_BINOMIAL`; interval assumption: `INDEPENDENT_STATIONARY_REPEAT_TRIALS`. The interval is conditional and is not capacity confidence.
-Repeat-level request p95: median **125.00 ms**, MAD 0.00 ms; descriptive median +/- 3 MAD band 125.00–125.00 ms (`MEDIAN_PLUS_MINUS_3_MAD`). This is not a confidence interval and does not account for sequential dependence or non-stationarity.
+Observed request-p95 spread across 2 completed observation phases is descriptive; independence is not established.
+Repeat-level request p95: median **127.50 ms**, MAD 2.50 ms; descriptive median +/- 3 MAD band 120.00–135.00 ms (`MEDIAN_PLUS_MINUS_3_MAD`). This is not a confidence interval and does not account for sequential dependence or non-stationarity.
 
 Confidence dimensions: measurement **LIMITED**, workload representativeness **NOT_ASSESSED**, decision **NOT_ESTABLISHED**.
 
