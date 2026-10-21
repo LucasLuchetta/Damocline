@@ -16,6 +16,7 @@ import (
 	"github.com/LucasLuchetta/Damocline/internal/capacityplan"
 	"github.com/LucasLuchetta/Damocline/internal/generatorhealth"
 	"github.com/LucasLuchetta/Damocline/internal/report"
+	"github.com/LucasLuchetta/Damocline/internal/statistics"
 )
 
 func renderCampaignCapacityReport(assessment capacityplan.Assessment, source, reportPath string, evidence campaign.Result) string {
@@ -97,7 +98,8 @@ func renderCampaignCapacityReport(assessment capacityplan.Assessment, source, re
 		fmt.Fprintf(&b, "| %d | %d | %.3f | %.3f | %s | %s | %d | %.3f | %.3f | %s | %s | %.3f |\n", trial.Trial, trial.Requests, trial.RequestP95MS, trial.RequestP99MS, markdownCode(trial.RequestP99IntervalState), markdownOptionalPercent(trial.RequestErrorRate), trial.CompletedJourneys, trial.JourneyP95MS, trial.JourneyP99MS, markdownCode(trial.JourneyP99IntervalState), markdownOptionalPercent(trial.JourneyErrorRate), trial.SuccessfulJourneysPerSec)
 	}
 	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, "P99 values are nearest-rank descriptive estimates. Exact 95% rank intervals require at least 1,000 observations and assume IID stationary latency samples; these states do not establish independence, a p99 objective, or capacity confidence.")
+	minimumP99Samples, _ := statistics.MinimumSamplesForPercentileRankInterval95(0.99)
+	fmt.Fprintf(&b, "P99 values are nearest-rank descriptive estimates. Exact 95%% rank intervals require at least %d observations and assume IID stationary latency samples; these states do not establish independence, a p99 objective, or capacity confidence.\n", minimumP99Samples)
 	fmt.Fprintln(&b)
 	fmt.Fprintf(&b, "Repeat-trial pass fraction: **%d/%d** evaluable; excluded incomplete trials: %d; method: %s; interval assumption: %s. The interval is conditional and is not capacity confidence.\n", a.Repeatability.PassingTrials, a.Repeatability.EvaluatedTrials, a.Repeatability.ExcludedTrials, markdownCode(a.Repeatability.Method), markdownCode(a.Repeatability.Assumption))
 	fmt.Fprintln(&b)
@@ -146,7 +148,8 @@ func renderArrivalCampaignCapacityReport(assessment capacitygoal.JourneyStartAss
 		}
 	}
 	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, "P99 values are nearest-rank descriptive estimates. Exact 95% rank intervals require at least 1,000 observations and assume IID stationary latency samples; these states do not establish independence, a p99 objective, or capacity confidence.")
+	minimumP99Samples, _ := statistics.MinimumSamplesForPercentileRankInterval95(0.99)
+	fmt.Fprintf(&b, "P99 values are nearest-rank descriptive estimates. Exact 95%% rank intervals require at least %d observations and assume IID stationary latency samples; these states do not establish independence, a p99 objective, or capacity confidence.\n", minimumP99Samples)
 	fmt.Fprintln(&b)
 	writeMarkdownList(&b, "Findings", assessment.Findings)
 	writeMarkdownList(&b, "Next experiments", assessment.Next)

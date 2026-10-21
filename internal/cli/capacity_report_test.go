@@ -47,7 +47,7 @@ func TestCampaignCapacityReportSnapshotAndVerdictSeparation(t *testing.T) {
 	if strings.Contains(got, "**Assessment:** OBSERVED_PASS_ONLY") || !strings.Contains(got, "**Assessment:** INSUFFICIENT_EVIDENCE") || !strings.Contains(got, "**Observed campaign:** OBSERVED_PASS_ONLY") {
 		t.Fatalf("executive and observed verdicts were conflated: %s", got)
 	}
-	for _, expected := range []string{"Request p99 interval", "Journey p99 interval", "INSUFFICIENT_SAMPLES", "assume IID stationary latency samples"} {
+	for _, expected := range []string{"Request p99 interval", "Journey p99 interval", "INSUFFICIENT_SAMPLES", "intervals require at least 1000 observations", "assume IID stationary latency samples"} {
 		if !strings.Contains(got, expected) {
 			t.Fatalf("capacity report omitted p99 limitation %q", expected)
 		}
