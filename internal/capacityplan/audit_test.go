@@ -2,6 +2,7 @@ package capacityplan
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -114,6 +115,19 @@ func TestAuditRecomputesIndependentObservationSummaries(t *testing.T) {
 	a = AuditCampaign(e)
 	if a.State == "INVALID_EVIDENCE" || a.SpreadConsistency != "NOT_RECORDED" || len(a.ObservationTrials) != 2 {
 		t.Fatalf("missing legacy summary should retain recomputable observations: state=%s findings=%v", a.State, a.Findings)
+	}
+}
+
+func TestAuditRejectsUnsupportedEmbeddedRunReportSchemas(t *testing.T) {
+	for _, schema := range []int{0, report.CurrentSchemaVersion + 1} {
+		t.Run(fmt.Sprintf("schema_%d", schema), func(t *testing.T) {
+			e := auditFixture()
+			e.Trials[0].Phases[0].Run.SchemaVersion = schema
+			a := AuditCampaign(e)
+			if a.State != "INVALID_EVIDENCE" {
+				t.Fatalf("unsupported embedded run schema %d was accepted: state=%s findings=%v", schema, a.State, a.Findings)
+			}
+		})
 	}
 }
 

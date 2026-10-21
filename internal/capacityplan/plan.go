@@ -379,6 +379,23 @@ func validateEvidence(evidence campaign.Result) error {
 	if evidence.SchemaVersion < 1 || evidence.SchemaVersion > campaign.CurrentSchemaVersion || evidence.Scenario == "" || evidence.BaseUsers < 1 || evidence.Repeats < 2 || evidence.Repeats > 5 || len(evidence.Trials) == 0 || len(evidence.Trials) > evidence.Repeats {
 		return errors.New("expected a complete supported repeated campaign")
 	}
+	for _, trial := range evidence.Trials {
+		for _, phase := range trial.Phases {
+			if phase.Name == "warmup" {
+				continue
+			}
+			if phase.Run.SchemaVersion < 1 || phase.Run.SchemaVersion > report.CurrentSchemaVersion {
+				return fmt.Errorf("trial %d %s phase has an unsupported run-report schema", trial.Number, phase.Name)
+			}
+		}
+	}
+	if evidence.PendingTrial != nil {
+		for _, phase := range evidence.PendingTrial.Phases {
+			if phase.Run.SchemaVersion < 1 || phase.Run.SchemaVersion > report.CurrentSchemaVersion {
+				return fmt.Errorf("pending trial %d %s phase has an unsupported run-report schema", evidence.PendingTrial.Number, phase.Name)
+			}
+		}
+	}
 	if err := validateWorkloadSource(evidence); err != nil {
 		return err
 	}

@@ -41,7 +41,7 @@ func TestPlanCommandRejectsSelfDeclaredQualityWithoutGeneratingTraffic(t *testin
 
 func TestPlanCommandKeepsLimitedCampaignInsufficient(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "campaign.json")
-	limited := report.Result{Outcome: "PASS", Quality: &report.Quality{State: report.QualityLimited}}
+	limited := report.Result{SchemaVersion: 29, Outcome: "PASS", Quality: &report.Quality{State: report.QualityLimited}}
 	evidence := campaign.Result{
 		SchemaVersion: 1, Scenario: "synthetic app", BaseUsers: 20, Repeats: 2, Outcome: "PASS",
 		Trials: []campaign.Trial{
@@ -86,7 +86,7 @@ func planReadyReport() report.Result {
 		P95IID95LowerMS: 20, P95IID95UpperMS: 50, P95IID95Approximation: true,
 	}
 	return report.Result{
-		Outcome: "PASS", ObservationSeconds: 10,
+		SchemaVersion: 29, Outcome: "PASS", ObservationSeconds: 10,
 		Config:  report.RunConfig{P95LimitMS: 100, MaxErrorRate: 0.01, MinSamplesPerStep: 1, WindowDuration: "10s"},
 		Metrics: metrics, Steps: []report.StepResult{{Name: "step", Metrics: metrics}},
 		Windows: []report.WindowResult{{StartSeconds: 0, EndSeconds: 10, Metrics: metrics}},
