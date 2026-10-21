@@ -4,6 +4,7 @@ This project follows a human-maintained changelog. No release exists yet.
 
 ## [Unreleased]
 
+- Exercise redacted run, campaign, and exploration exports through CLI validation using representative historical schemas; verify nested-field redaction and byte-identical source preservation.
 - Bind open-arrival assessment JSON and Markdown reports to the exact campaign source bytes, verify an optional expected SHA-256 before writing, and include that check in the generated offline replay command.
 - Persist a predeclared objective contract and matching stability screen for open-arrival campaigns; replay phase coverage/delivery policy offline, and include the validated criteria in `goal` output and redacted campaign exports.
 - Allow open-arrival campaigns to predeclare the same bounded stability thresholds as closed-loop campaigns, preserving the exact drift policy in offline evidence and making controlled spike/recovery validation resilient to unrelated runner p95 jitter.
