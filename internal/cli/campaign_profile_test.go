@@ -23,11 +23,15 @@ func TestCampaignProfileRunDryRunAndLoopbackReport(t *testing.T) {
 	var requests atomic.Int64
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
-		time.Sleep(25 * time.Millisecond)
+		time.Sleep(40 * time.Millisecond)
 		fmt.Fprint(w, "ok")
 	}))
 	defer server.Close()
-	profile, err := campaignprofile.New("loopback", "", config.Scenario{Name: "loopback", Environment: "development", BaseURL: server.URL, Users: 2, Duration: "10s", Timeout: "1s", MaxRPS: 100, P95LimitMS: 1000, MaxErrorRate: 0.1, Steps: []config.Step{{Name: "health", Method: "GET", Path: "/"}}}, campaign.Options{Observation: 10 * time.Second, Recovery: 10 * time.Second, Repeats: 2})
+	stability := campaign.DefaultStabilityPolicy()
+	stability.MaxP95IncreasePercent = 100
+	stability.MaxP95IncreaseMS = 100
+	stability.MaxThroughputDropPercent = 100
+	profile, err := campaignprofile.New("loopback", "", config.Scenario{Name: "loopback", Environment: "development", BaseURL: server.URL, Users: 2, Duration: "10s", Timeout: "1s", MaxRPS: 100, P95LimitMS: 1000, MaxErrorRate: 0.1, Steps: []config.Step{{Name: "health", Method: http.MethodGet, Path: "/"}}}, campaign.Options{Observation: 10 * time.Second, Recovery: 10 * time.Second, Repeats: 2, Stability: stability})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +71,7 @@ func TestCampaignProfileRunDryRunAndLoopbackReport(t *testing.T) {
 		t.Fatalf("decode first campaign report: %v", err)
 	}
 	if first.SchemaVersion != campaign.CurrentSchemaVersion || len(first.Trials) != 2 || len(first.Trials[0].Phases) == 0 || first.Trials[0].Phases[0].Run.Config.WorkloadFingerprint == "" {
-		t.Fatalf("first report lacks reproducible campaign evidence: schema=%d trials=%d", first.SchemaVersion, len(first.Trials))
+		t.Fatalf("first report lacks reproducible campaign evidence: schema=%d trials=%+v stability=%+v", first.SchemaVersion, first.Trials, first.StabilityPolicy)
 	}
 	verification, err := verifyCampaignProfile(profile, first)
 	if err != nil || verification.State != "MATCHED" || verification.ComparedPhases != 4 {

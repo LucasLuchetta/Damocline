@@ -7,6 +7,7 @@ This project follows a human-maintained changelog. No release exists yet.
 - Persist a predeclared objective contract and matching stability screen for open-arrival campaigns; replay phase coverage/delivery policy offline, and include the validated criteria in `goal` output and redacted campaign exports.
 - Allow open-arrival campaigns to predeclare the same bounded stability thresholds as closed-loop campaigns, preserving the exact drift policy in offline evidence and making controlled spike/recovery validation resilient to unrelated runner p95 jitter.
 - Keep the controlled spike/recovery fixture's native p95/error SLOs strict while widening only its predeclared drift-screen allowance for small ambient runner variation; the product default remains 20% plus 5 ms.
+- Keep the profile/replay fixture's loopback throughput below the configured 100 requests/s client ceiling so runner speed cannot turn it into invalid delivery; predeclare its p95 drift allowance while retaining strict native SLOs and production defaults.
 - Include the exact source campaign byte digest in open-arrival capacity Markdown reports so copied evidence remains identifiable during offline replay.
 - Snapshot predeclared closed-loop campaign objectives in schema v13, validate them before traffic, replay SLO/sample/window/completed-work/drop criteria offline, and include the declared contract in capacity reports.
 - Report the highest passing and first failing tested campaign levels explicitly; retain an unknown upper bound when observations are all-pass or non-monotonic.
