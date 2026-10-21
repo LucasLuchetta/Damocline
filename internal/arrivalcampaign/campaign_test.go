@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/LucasLuchetta/Damocline/internal/campaign"
 	"github.com/LucasLuchetta/Damocline/internal/config"
 	"github.com/LucasLuchetta/Damocline/internal/generatorhealth"
 	"github.com/LucasLuchetta/Damocline/internal/report"
@@ -39,6 +40,41 @@ func TestWithRunnerKeepsArrivalScheduleAndAbortsWithinBudget(t *testing.T) {
 	})
 	if err != nil || result.Outcome != "ABORTED" || calls != 1 || len(result.Trials) != 1 {
 		t.Fatalf("campaign = outcome %s, calls %d, err %v", result.Outcome, calls, err)
+	}
+}
+
+func TestWithRunnerPersistsConfiguredStabilityPolicy(t *testing.T) {
+	base := validatedArrival(t)
+	policy := campaign.DefaultStabilityPolicy()
+	policy.MaxP95IncreasePercent = 75
+	policy.MaxP95IncreaseMS = 25
+	result, err := WithRunner(context.Background(), base, Options{
+		Observation: 10 * time.Second, Recovery: 10 * time.Second, Repeats: 2, Stability: policy,
+	}, func(_ context.Context, phase config.Validated) report.Result {
+		return syntheticArrivalPhase(phase, "PASS")
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.StabilityPolicy == nil || *result.StabilityPolicy != policy || result.Objectives == nil ||
+		result.Objectives.MinimumObservationWindows != policy.MinimumWindows || result.Objectives.MinimumSamplesPerWindow != policy.MinimumSamplesPerWindow {
+		t.Fatalf("configured arrival stability policy was not persisted with matching objectives: policy=%+v objectives=%+v", result.StabilityPolicy, result.Objectives)
+	}
+}
+
+func TestValidateRejectsInvalidStabilityPolicyBeforeTraffic(t *testing.T) {
+	base := validatedArrival(t)
+	policy := campaign.DefaultStabilityPolicy()
+	policy.MaxP95IncreaseMS = -1
+	called := false
+	_, err := WithRunner(context.Background(), base, Options{
+		Observation: 10 * time.Second, Recovery: 10 * time.Second, Repeats: 2, Stability: policy,
+	}, func(context.Context, config.Validated) report.Result {
+		called = true
+		return report.Result{Outcome: "PASS"}
+	})
+	if err == nil || called {
+		t.Fatalf("invalid arrival stability policy reached traffic: called=%v err=%v", called, err)
 	}
 }
 

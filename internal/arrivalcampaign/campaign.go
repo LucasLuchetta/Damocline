@@ -36,6 +36,7 @@ type Options struct {
 	Cooldown         time.Duration
 	Repeats          int
 	Budget           time.Duration
+	Stability        campaign.StabilityPolicy
 	Guardrails       generatorhealth.Guardrails
 	PeakRate         int
 	GrowthPercent    float64
@@ -144,6 +145,13 @@ func RequiredStartsPerSecond(peak int, growth, reserve float64) (int, error) {
 }
 
 func Validate(base config.Validated, options Options) error {
+	stability := options.Stability
+	if stability == (campaign.StabilityPolicy{}) {
+		stability = campaign.DefaultStabilityPolicy()
+	}
+	if err := campaign.ValidateStabilityPolicy(stability); err != nil {
+		return err
+	}
 	if err := validateGeneratorGuardrails(effectiveGeneratorGuardrails(options.Guardrails)); err != nil {
 		return err
 	}
@@ -323,7 +331,10 @@ func WithRunnerProgress(parent context.Context, base config.Validated, options O
 	if err := Validate(base, options); err != nil {
 		return Result{}, err
 	}
-	stability := campaign.DefaultStabilityPolicy()
+	stability := options.Stability
+	if stability == (campaign.StabilityPolicy{}) {
+		stability = campaign.DefaultStabilityPolicy()
+	}
 	objectives := campaign.NewObjectiveContract(base, stability)
 	if err := objectives.Validate(); err != nil {
 		return Result{}, fmt.Errorf("invalid predeclared arrival campaign objectives: %w", err)

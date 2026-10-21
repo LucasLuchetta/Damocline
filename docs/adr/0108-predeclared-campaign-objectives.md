@@ -10,7 +10,7 @@ Campaign acceptance criteria were distributed across scenario fields, run-phase 
 
 ## Decision
 
-Closed-loop campaign schema v13 and open-arrival campaign schema v8 persist an objective contract before phase execution. The contract records aggregate and per-workflow journey p95/error limits, per-step and per-window journey/step/workflow sample minima, required observation windows, 100% completion of started journeys, zero dropped arrivals, and fixed or automatic per-phase window sizing. Campaign preflight validates the contract. Offline audits validate its shape, check it against each phase's saved controls, and replay completion, drop, and window-coverage rules while preserving each campaign family's native delivery classifier. Markdown capacity reports and redacted evidence exports render the criteria.
+Closed-loop campaign schema v13 and open-arrival campaign schema v8 persist an objective contract before phase execution. The contract records aggregate and per-workflow journey p95/error limits, per-step and per-window journey/step/workflow sample minima, required observation windows, 100% completion of started journeys, zero dropped arrivals, and fixed or automatic per-phase window sizing. Both campaign modes persist a validated bounded stability policy; open-arrival campaigns expose the same preflight thresholds as closed-loop campaigns. Campaign preflight validates the contract and policy. Offline audits validate their shape, check them against each phase's saved controls, and replay completion, drop, window-coverage, and stability rules while preserving each campaign family's native delivery classifier. Markdown capacity reports and redacted evidence exports render the criteria.
 
 ## Consequences
 
