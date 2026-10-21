@@ -19,6 +19,7 @@ import (
 	"github.com/LucasLuchetta/Damocline/internal/capacityplan"
 	"github.com/LucasLuchetta/Damocline/internal/explorer"
 	"github.com/LucasLuchetta/Damocline/internal/insights"
+	"github.com/LucasLuchetta/Damocline/internal/jsonartifact"
 	"github.com/LucasLuchetta/Damocline/internal/report"
 	"github.com/LucasLuchetta/Damocline/internal/reportexport"
 )
@@ -44,6 +45,10 @@ func reportExportCmd(args []string, stdout, stderr io.Writer) int {
 	data, err := readExportInput(*input)
 	if err != nil {
 		fmt.Fprintf(stderr, "cannot read source artifact: %v\n", err)
+		return 2
+	}
+	if err := jsonartifact.RejectDuplicateKeys(data); err != nil {
+		fmt.Fprintf(stderr, "source artifact contains ambiguous JSON: %v\n", err)
 		return 2
 	}
 	var shape struct {

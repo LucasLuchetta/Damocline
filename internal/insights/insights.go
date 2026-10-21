@@ -16,6 +16,7 @@ import (
 
 	"github.com/LucasLuchetta/Damocline/internal/appmetrics"
 	"github.com/LucasLuchetta/Damocline/internal/hostmon"
+	"github.com/LucasLuchetta/Damocline/internal/jsonartifact"
 	"github.com/LucasLuchetta/Damocline/internal/report"
 	"github.com/LucasLuchetta/Damocline/internal/statistics"
 )
@@ -176,6 +177,9 @@ func readJSON(path string, out any) error {
 	}
 	if len(data) > maxReportFile {
 		return errors.New("report exceeds 16 MiB maximum")
+	}
+	if err := jsonartifact.RejectDuplicateKeys(data); err != nil {
+		return fmt.Errorf("report contains ambiguous JSON: %w", err)
 	}
 	if err := json.Unmarshal(data, out); err != nil {
 		return fmt.Errorf("decode report: %w", err)

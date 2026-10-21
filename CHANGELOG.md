@@ -4,6 +4,7 @@ This project follows a human-maintained changelog. No release exists yet.
 
 ## [Unreleased]
 
+- Reject duplicate JSON object keys, including escaped-key collisions, across scenario/profile loading, campaign and calibration audit, run inspection, acceptance/history, dashboard, goal, and redacted export inputs.
 - Snapshot predeclared closed-loop campaign objectives in schema v13, validate them before traffic, replay SLO/sample/window/completed-work/drop criteria offline, and include the declared contract in capacity reports.
 - Report the highest passing and first failing tested campaign levels explicitly; retain an unknown upper bound when observations are all-pass or non-monotonic.
 - Run the repeated 39-profile G0 acceptance lab on Windows and a resource-bounded Linux container in CI for every pull request; archive only its synthetic reports and bounded logs for 14 days to support failure review.

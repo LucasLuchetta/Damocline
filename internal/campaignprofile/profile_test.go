@@ -39,6 +39,13 @@ func TestProfileRoundTripAndRuntimeConsentAbsent(t *testing.T) {
 	}
 }
 
+func TestDecodeRejectsDuplicateJSONKeys(t *testing.T) {
+	data := []byte(`{"schema_version":1,"schema_\u0076ersion":1}`)
+	if _, _, err := Decode(data); err == nil || !strings.Contains(err.Error(), "ambiguous JSON") {
+		t.Fatalf("duplicate profile schema key was not rejected clearly: %v", err)
+	}
+}
+
 func TestV0MigrationAndFutureSchemaRejected(t *testing.T) {
 	legacy := fixtureProfile(t)
 	legacy.SchemaVersion = 0

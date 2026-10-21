@@ -1,10 +1,12 @@
 package calibration
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -273,6 +275,20 @@ func TestSchemaFiveArtifactsRemainReadableWithoutTCPConnectionEvidence(t *testin
 	}
 	if _, err := ValidateArtifactBytes(data, true); err != nil {
 		t.Fatalf("schema-v5 calibration JSON without TCP connection fields no longer loads: %v", err)
+	}
+}
+
+func TestCalibrationArtifactRejectsDuplicateJSONKeys(t *testing.T) {
+	data, err := json.Marshal(passingArtifact(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	duplicate := bytes.Replace(data, []byte(`"schema_version":1`), []byte(`"schema_version":1,"schema_version":1`), 1)
+	if bytes.Equal(data, duplicate) {
+		t.Fatal("test fixture has no schema_version field")
+	}
+	if _, err := ValidateArtifactBytes(duplicate, true); err == nil || !strings.Contains(err.Error(), "ambiguous JSON") {
+		t.Fatalf("duplicate calibration schema key was not rejected clearly: %v", err)
 	}
 }
 

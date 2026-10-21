@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/LucasLuchetta/Damocline/internal/calibration"
+	"github.com/LucasLuchetta/Damocline/internal/jsonartifact"
 	"github.com/LucasLuchetta/Damocline/internal/protocolcheck"
 	"github.com/LucasLuchetta/Damocline/internal/report"
 )
@@ -543,6 +544,9 @@ func assessCalibrationArtifact(path string, attempt *Attempt, extended bool, qua
 	hash := sha256.Sum256(data)
 	attempt.ArtifactSHA256 = hex.EncodeToString(hash[:])
 	attempt.ArtifactBytes = int64(len(data))
+	if err := jsonartifact.RejectDuplicateKeys(data); err != nil {
+		return []Gate{{Name: "calibration_artifact", Status: "FAILED", Expected: "calibration JSON has unique object keys", Observed: "duplicate or malformed JSON keys"}}
+	}
 	var document calibrationDocument
 	if err := json.Unmarshal(data, &document); err != nil {
 		return []Gate{{Name: "calibration_artifact", Status: "FAILED", Expected: "well-formed calibration JSON", Observed: "JSON decode failed"}}
@@ -772,6 +776,9 @@ func assessTransportArtifact(path string) []Gate {
 	data, err := readBounded(path, MaxArtifactBytes)
 	if err != nil {
 		return []Gate{{Name: "transport_artifact", Status: "INCONCLUSIVE", Expected: "bounded readable transport JSON is preserved", Observed: err.Error()}}
+	}
+	if err := jsonartifact.RejectDuplicateKeys(data); err != nil {
+		return []Gate{{Name: "transport_artifact", Status: "FAILED", Expected: "transport JSON has unique object keys", Observed: "duplicate or malformed JSON keys"}}
 	}
 	var document protocolcheck.Result
 	if err := json.Unmarshal(data, &document); err != nil {

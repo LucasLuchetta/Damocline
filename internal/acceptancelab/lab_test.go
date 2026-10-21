@@ -254,6 +254,19 @@ func TestTransportMatrixRequiresExactPassingFixtureSet(t *testing.T) {
 	}
 }
 
+func TestTransportArtifactRejectsDuplicateJSONKeys(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "duplicate-transport.json")
+	if err := os.WriteFile(path, []byte(`{"schema_version":1,"schema_\u0076ersion":1}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, gate := range assessTransportArtifact(path) {
+		if gate.Name == "transport_artifact" && gate.Status == "FAILED" {
+			return
+		}
+	}
+	t.Fatal("transport artifact with duplicate schema keys was not rejected")
+}
+
 func TestQualityRecomputationRejectsSelfDeclaredPositiveState(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "calibration.json")
 	data, err := json.Marshal(syntheticCalibration())

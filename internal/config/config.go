@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/LucasLuchetta/Damocline/internal/generatorhealth"
+	"github.com/LucasLuchetta/Damocline/internal/jsonartifact"
 )
 
 type Scenario struct {
@@ -155,6 +156,9 @@ func Load(path string) (Scenario, error) {
 	}
 	if len(data) > maxScenarioBytes {
 		return Scenario{}, fmt.Errorf("scenario exceeds the %d-byte input limit", maxScenarioBytes)
+	}
+	if err := jsonartifact.RejectDuplicateKeys(data); err != nil {
+		return Scenario{}, "", fmt.Errorf("scenario contains ambiguous JSON: %w", err)
 	}
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()

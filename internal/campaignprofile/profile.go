@@ -16,6 +16,7 @@ import (
 	"github.com/LucasLuchetta/Damocline/internal/campaign"
 	"github.com/LucasLuchetta/Damocline/internal/config"
 	"github.com/LucasLuchetta/Damocline/internal/generatorhealth"
+	"github.com/LucasLuchetta/Damocline/internal/jsonartifact"
 )
 
 const CurrentSchemaVersion = 1
@@ -181,6 +182,9 @@ func ValidateScenarioSecrets(s config.Scenario) error {
 // Decode migrates schema-less and schema-v0 presets in memory to schema v1.
 // Unknown future versions and unknown fields fail closed.
 func Decode(data []byte) (Profile, bool, error) {
+	if err := jsonartifact.RejectDuplicateKeys(data); err != nil {
+		return Profile{}, false, fmt.Errorf("campaign profile contains ambiguous JSON: %w", err)
+	}
 	var envelope map[string]json.RawMessage
 	if err := json.Unmarshal(data, &envelope); err != nil || envelope == nil {
 		return Profile{}, false, errors.New("campaign profile must be a JSON object")

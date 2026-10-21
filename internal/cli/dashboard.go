@@ -13,6 +13,7 @@ import (
 	"github.com/LucasLuchetta/Damocline/internal/capacitygoal"
 	"github.com/LucasLuchetta/Damocline/internal/capacityplan"
 	"github.com/LucasLuchetta/Damocline/internal/insights"
+	"github.com/LucasLuchetta/Damocline/internal/jsonartifact"
 	"github.com/LucasLuchetta/Damocline/internal/report"
 	"github.com/LucasLuchetta/Damocline/internal/reportui"
 )
@@ -37,6 +38,9 @@ func loadDashboardHandler(path string) (http.Handler, error) {
 	}
 	if len(data) > maxDashboardArtifactBytes {
 		return nil, errors.New("dashboard artifact exceeds the 16 MiB safety limit")
+	}
+	if err := jsonartifact.RejectDuplicateKeys(data); err != nil {
+		return nil, fmt.Errorf("dashboard artifact contains ambiguous JSON: %w", err)
 	}
 	var shape dashboardArtifactShape
 	if err := json.Unmarshal(data, &shape); err != nil {
