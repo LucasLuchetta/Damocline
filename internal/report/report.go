@@ -579,7 +579,7 @@ func HasValidStatisticalMethods(r Result) bool {
 			return false
 		}
 		if r.SchemaVersion < 30 {
-			validP95 = !metrics.P95IID95Exact
+			validP95 = !metrics.P95IID95Exact || metrics.P95IID95Approximation
 		} else if metrics.P95IID95Exact {
 			validP95 = !metrics.P95IID95Approximation && metrics.P95IID95LowerMS <= metrics.P95MS && metrics.P95MS <= metrics.P95IID95UpperMS
 		} else {
