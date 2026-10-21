@@ -17,8 +17,12 @@ could silently produce a new assessment with a different auditor build.
 
 Open-arrival campaign goal assessments summarize the three identity fields
 across all non-warm-up phases. Missing identity is `UNKNOWN`; changed identity
-is `CHANGED`. Neither can support a positive exact-target result. The report
-records the auditor version and exact executable SHA-256.
+is `CHANGED`. The assessor examines all required phases; an observed change is
+reported as `CHANGED` even when another phase also lacks identity fields, so an
+early missing value cannot hide contradictory evidence. When both conditions
+occur, separate findings disclose both. Neither status can support a positive
+exact-target result. The report records the auditor version and exact
+executable SHA-256.
 
 Generated replay commands require both the saved campaign's exact byte
 SHA-256 and the expected auditor executable SHA-256. The CLI verifies these

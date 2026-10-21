@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/LucasLuchetta/Damocline/internal/appmetrics"
@@ -99,9 +100,16 @@ func EvaluateJourneyCampaign(saved arrivalcampaign.Result, goal JourneyStartGoal
 			"The campaign is repeated and sustained only for its recorded phases and duration; passing evidence does not establish universal or long-term production capacity.",
 			"No infrastructure upgrade is justified by this HTTP evidence alone."},
 		Next: []string{"Use representative, independently verified workflows and session identities at the exact demand target.", "Collect time-aligned application and dependency evidence before making a capacity or infrastructure decision."}}
-	assessment.ScenarioIdentityStatus, assessment.WorkloadRevision, assessment.ApplicationRevision, assessment.DeclaredEnvironment = arrivalCampaignIdentity(saved)
-	if assessment.ScenarioIdentityStatus == "UNKNOWN" {
+	var identityMissing bool
+	assessment.ScenarioIdentityStatus, assessment.WorkloadRevision, assessment.ApplicationRevision, assessment.DeclaredEnvironment, identityMissing = arrivalCampaignIdentity(saved)
+	switch assessment.ScenarioIdentityStatus {
+	case "UNKNOWN":
 		assessment.Findings = append(assessment.Findings, "Workload revision, application revision, or declared environment is missing from one or more required phases; scenario identity is not established.")
+	case "CHANGED":
+		assessment.Findings = append(assessment.Findings, "Workload revision, application revision, or declared environment changes between required phases; the exact scenario identity is not consistent.")
+		if identityMissing {
+			assessment.Findings = append(assessment.Findings, "One or more required phases also lack workload revision, application revision, or environment identity metadata.")
+		}
 	}
 	if saved.SchemaVersion >= 8 {
 		assessment.Objectives = saved.Objectives
@@ -320,16 +328,18 @@ func EvaluateJourneyCampaign(saved arrivalcampaign.Result, goal JourneyStartGoal
 	return assessment, nil
 }
 
-func arrivalCampaignIdentity(saved arrivalcampaign.Result) (status, workloadRevision, applicationRevision, environment string) {
+func arrivalCampaignIdentity(saved arrivalcampaign.Result) (status, workloadRevision, applicationRevision, environment string, missing bool) {
 	seen := false
+	changed := false
 	for _, trial := range saved.Trials {
 		for _, phase := range trial.Phases {
 			if phase.Name == "warmup" {
 				continue
 			}
 			config := phase.Run.Config
-			if config.WorkloadRevision == "" || config.ApplicationRevision == "" || config.Environment == "" {
-				return "UNKNOWN", "", "", ""
+			if strings.TrimSpace(config.WorkloadRevision) == "" || strings.TrimSpace(config.ApplicationRevision) == "" || strings.TrimSpace(config.Environment) == "" {
+				missing = true
+				continue
 			}
 			if !seen {
 				workloadRevision, applicationRevision, environment = config.WorkloadRevision, config.ApplicationRevision, config.Environment
@@ -337,14 +347,17 @@ func arrivalCampaignIdentity(saved arrivalcampaign.Result) (status, workloadRevi
 				continue
 			}
 			if config.WorkloadRevision != workloadRevision || config.ApplicationRevision != applicationRevision || config.Environment != environment {
-				return "CHANGED", "", "", ""
+				changed = true
 			}
 		}
 	}
-	if !seen {
-		return "UNKNOWN", "", "", ""
+	if changed {
+		return "CHANGED", "", "", "", missing
 	}
-	return "CONSISTENT", workloadRevision, applicationRevision, environment
+	if !seen || missing {
+		return "UNKNOWN", "", "", "", missing
+	}
+	return "CONSISTENT", workloadRevision, applicationRevision, environment, false
 }
 
 func comparableCampaignConfig(config report.RunConfig) ([]byte, error) {

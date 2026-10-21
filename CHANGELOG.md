@@ -4,6 +4,7 @@ This project follows a human-maintained changelog. No release exists yet.
 
 ## [Unreleased]
 
+- Preserve detected workload/application/environment identity changes when other required campaign phases also lack identity fields, and report both facts; apply the same logic in closed-loop audit and open-arrival goal assessment.
 - Reject current campaign profiles and calibration artifacts that omit required persisted controls or generator/fixture evidence, while preserving schema-versioned historical calibration fields and explicit zero values.
 - Reject campaign artifacts missing required top-level evidence fields; require schema-v5+ campaign timestamps to be valid RFC3339 values while preserving earlier historical timestamp semantics. Apply the same raw-byte checks in audit, collection, dashboard, and redacted export paths.
 - Reject campaign trials or phases that omit their recorded number, phase list, outcome, phase name, or embedded run schema/object before zero-value decoding; validate completed and pending trials consistently.

@@ -165,19 +165,25 @@ func TestArrivalCampaignIdentityIsExplicitAndMissingIdentityCannotUpgradeEvidenc
 		{Name: "warmup", Run: report.Result{Config: report.RunConfig{WorkloadRevision: "ignored"}}},
 		{Name: "observation", Run: report.Result{Config: report.RunConfig{WorkloadRevision: "workload-v1", ApplicationRevision: "app-v1", Environment: "staging"}}},
 		{Name: "recovery", Run: report.Result{Config: report.RunConfig{WorkloadRevision: "workload-v1", ApplicationRevision: "app-v1", Environment: "staging"}}},
+		{Name: "soak", Run: report.Result{Config: report.RunConfig{WorkloadRevision: "workload-v1", ApplicationRevision: "app-v1", Environment: "staging"}}},
 	}}}}
-	status, workload, application, environment := arrivalCampaignIdentity(base)
+	status, workload, application, environment, _ := arrivalCampaignIdentity(base)
 	if status != "CONSISTENT" || workload != "workload-v1" || application != "app-v1" || environment != "staging" {
 		t.Fatalf("arrival campaign identity summary = %q %q %q %q", status, workload, application, environment)
 	}
 	base.Trials[0].Phases[1].Run.Config.ApplicationRevision = "app-v2"
-	if status, _, _, _ := arrivalCampaignIdentity(base); status != "CHANGED" {
+	if status, _, _, _, _ := arrivalCampaignIdentity(base); status != "CHANGED" {
 		t.Fatalf("changed phase identity status = %q, want CHANGED", status)
 	}
 	base.Trials[0].Phases[1].Run.Config.ApplicationRevision = "app-v1"
 	base.Trials[0].Phases[1].Run.Config.Environment = ""
-	if status, _, _, _ := arrivalCampaignIdentity(base); status != "UNKNOWN" {
+	if status, _, _, _, _ := arrivalCampaignIdentity(base); status != "UNKNOWN" {
 		t.Fatalf("missing phase identity status = %q, want UNKNOWN", status)
+	}
+	base.Trials[0].Phases[1].Run.Config.Environment = ""
+	base.Trials[0].Phases[2].Run.Config.ApplicationRevision = "app-v2"
+	if status, _, _, _, missing := arrivalCampaignIdentity(base); status != "CHANGED" || !missing {
+		t.Fatalf("identity change was hidden by missing phase metadata: status = %q, want CHANGED", status)
 	}
 
 	saved := arrivalcampaign.Result{SchemaVersion: 1, Scenario: "synthetic", Target: "https://app.example.com", StartedAt: time.Now().UTC().Format(time.RFC3339), WorkloadFingerprint: "fingerprint", WorkerLimit: 2,

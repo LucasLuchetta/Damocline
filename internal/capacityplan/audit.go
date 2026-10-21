@@ -358,9 +358,13 @@ func AuditCampaign(e campaign.Result) CampaignAudit {
 	if len(e.Trials) > 0 && len(e.Trials[0].Phases) > 0 {
 		a.Target = e.Trials[0].Phases[0].Run.Target
 	}
-	a.IdentityStatus, a.WorkloadRevision, a.ApplicationRevision, a.DeclaredEnvironment = campaignIdentity(e)
+	var identityMissing bool
+	a.IdentityStatus, a.WorkloadRevision, a.ApplicationRevision, a.DeclaredEnvironment, identityMissing = campaignIdentity(e)
 	if a.IdentityStatus == "CHANGED" {
 		a.Findings = append(a.Findings, "Scenario identity or declared environment changes between required phases; results cannot be treated as one scenario/environment observation.")
+		if identityMissing {
+			a.Findings = append(a.Findings, "One or more required phases also lack workload revision, application revision, or environment identity metadata.")
+		}
 	} else if a.IdentityStatus == "UNKNOWN" {
 		a.Findings = append(a.Findings, "Workload revision, application revision, or environment identity is missing from one or more required phases; scenario identity is not established.")
 	}
@@ -558,9 +562,9 @@ func summarizeGeneratorEnvironments(e campaign.Result) ([]GeneratorEnvironment, 
 	return rows, identityStatus, capacityStatus
 }
 
-func campaignIdentity(e campaign.Result) (status, workloadRevision, applicationRevision, environment string) {
-	status = "UNKNOWN"
+func campaignIdentity(e campaign.Result) (status, workloadRevision, applicationRevision, environment string, missing bool) {
 	seen := false
+	changed := false
 	for _, trial := range e.Trials {
 		for _, phase := range trial.Phases {
 			if phase.Name == "warmup" {
@@ -568,7 +572,8 @@ func campaignIdentity(e campaign.Result) (status, workloadRevision, applicationR
 			}
 			run := phase.Run.Config
 			if strings.TrimSpace(run.WorkloadRevision) == "" || strings.TrimSpace(run.ApplicationRevision) == "" || strings.TrimSpace(run.Environment) == "" {
-				return "UNKNOWN", "", "", ""
+				missing = true
+				continue
 			}
 			if !seen {
 				workloadRevision, applicationRevision, environment = run.WorkloadRevision, run.ApplicationRevision, run.Environment
@@ -576,14 +581,17 @@ func campaignIdentity(e campaign.Result) (status, workloadRevision, applicationR
 				continue
 			}
 			if run.WorkloadRevision != workloadRevision || run.ApplicationRevision != applicationRevision || run.Environment != environment {
-				return "CHANGED", "", "", ""
+				changed = true
 			}
 		}
 	}
-	if seen {
-		return "CONSISTENT", workloadRevision, applicationRevision, environment
+	if changed {
+		return "CHANGED", "", "", "", missing
 	}
-	return "UNKNOWN", "", "", ""
+	if !seen || missing {
+		return "UNKNOWN", "", "", "", missing
+	}
+	return "CONSISTENT", workloadRevision, applicationRevision, environment, false
 }
 
 func summarizeRepeatability(trials []campaign.Trial) RepeatabilityEvidence {

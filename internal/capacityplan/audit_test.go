@@ -135,6 +135,13 @@ func TestAuditPreservesScenarioIdentityAndRequiresConsistency(t *testing.T) {
 	if a.State != "INCONCLUSIVE" || a.IdentityStatus != "UNKNOWN" {
 		t.Fatalf("missing phase identity was not kept unknown: state=%s identity=%s", a.State, a.IdentityStatus)
 	}
+	e = auditFixture()
+	e.Trials[0].Phases[0].Run.Config.Environment = ""
+	e.Trials[1].Phases[0].Run.Config.ApplicationRevision = "app-v2"
+	a = AuditCampaign(e)
+	if a.IdentityStatus != "CHANGED" || a.ApplicationRevision != "" || a.DeclaredEnvironment != "" || !strings.Contains(strings.Join(a.Findings, " "), "also lack") {
+		t.Fatalf("identity change was hidden by missing metadata: status=%s application=%q environment=%q", a.IdentityStatus, a.ApplicationRevision, a.DeclaredEnvironment)
+	}
 }
 
 func TestAuditRejectsUnsupportedEmbeddedRunReportSchemas(t *testing.T) {
