@@ -10,7 +10,7 @@ Closed-loop campaign schemas evolved additively. Campaign schemas v2 and v4 pred
 
 ## Decision
 
-Keep historical campaign schemas readable and validate their recorded schedule and phase labels under the rules available to those schemas. For schemas v2 and v4, treat recorded `PASS_OBSERVED` phase labels as historical observations; do not recompute them into a modern pass claim. Schema v3 and newer retain their stricter recomputation gates. Compare only persisted spread fields. Schema v2 journey-throughput spread is `NOT_RECORDED`, not zero. Later-added robust repeat-p95 fields are never synthesized for older schemas. Independently recompute current run quality and stability where possible; missing evidence leaves the audit inconclusive or limited and never upgrades a historical campaign to capacity certification.
+Keep historical campaign schemas readable and validate their recorded schedule and phase labels under the rules available to those schemas. For schemas v2 and v4, treat recorded `PASS_OBSERVED` phase labels as historical observations and require `NO_LARGE_DRIFT_DETECTED` on observation/soak phases; do not recompute them into a modern pass claim. Unknown or failed historical phase labels are rejected for a campaign that claims `PASS`. Schema v3 and newer retain their stricter recomputation gates. Compare only persisted spread fields. Schema v2 journey-throughput spread is `NOT_RECORDED`, not zero. Later-added robust repeat-p95 fields are never synthesized for older schemas. Independently recompute current run quality and stability where possible; missing evidence leaves the audit inconclusive or limited and never upgrades a historical campaign to capacity certification.
 
 ## Consequences
 

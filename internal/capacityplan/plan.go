@@ -857,6 +857,9 @@ func validateStageEvidence(evidence campaign.Result) error {
 				if phase.Name != "warmup" && phase.EvidenceState != "PASS_OBSERVED" {
 					return fmt.Errorf("trial %d has inconsistent %s phase classification", i+1, want.Name)
 				}
+				if (phase.Name == "observation" || phase.Name == "soak") && phase.Stability != "NO_LARGE_DRIFT_DETECTED" {
+					return fmt.Errorf("trial %d has inconsistent %s stability classification", i+1, want.Name)
+				}
 				continue
 			}
 			state, _ := campaign.ClassifyPhase(evidence, phase.Run, phase.Name)

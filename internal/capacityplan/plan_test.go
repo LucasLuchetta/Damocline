@@ -59,6 +59,15 @@ func TestHistoricalCampaignFixturesRemainReadableAndAuditable(t *testing.T) {
 			if audit.ObservationSpread == nil || audit.ObservationSpread.Runs != 2 {
 				t.Fatalf("observation evidence was not recomputed: %+v", audit.ObservationSpread)
 			}
+			for _, altered := range []string{"UNKNOWN", "NON_STATIONARY"} {
+				candidate := evidence
+				candidate.Trials = append([]campaign.Trial(nil), evidence.Trials...)
+				candidate.Trials[0].Phases = append([]campaign.Phase(nil), evidence.Trials[0].Phases...)
+				candidate.Trials[0].Phases[0].Stability = altered
+				if err := ValidateSavedCampaign(candidate); err == nil {
+					t.Fatalf("historical PASS accepted altered observation stability %q", altered)
+				}
+			}
 			if version == 2 {
 				data, err := os.ReadFile(path)
 				if err != nil {
