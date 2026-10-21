@@ -31,6 +31,10 @@ type CampaignCollectionAssessment struct {
 	Scenario                   string                    `json:"scenario,omitempty"`
 	Target                     string                    `json:"target,omitempty"`
 	WorkloadFingerprint        string                    `json:"workload_fingerprint,omitempty"`
+	WorkloadRevision           string                    `json:"workload_revision,omitempty"`
+	ApplicationRevision        string                    `json:"application_revision,omitempty"`
+	Environment                string                    `json:"environment,omitempty"`
+	ScenarioIdentityStatus     string                    `json:"scenario_identity_consistency"`
 	Levels                     []CampaignLevelAssessment `json:"levels"`
 	PassingLevels              []int                     `json:"observed_passing_levels"`
 	FailingLevels              []int                     `json:"observed_failing_levels"`
@@ -72,6 +76,48 @@ type campaignLevelShape struct {
 	Controls            *campaignRunShape           `json:"controls,omitempty"`
 }
 
+type campaignIdentityShape struct {
+	WorkloadRevision    string
+	ApplicationRevision string
+	Environment         string
+}
+
+func campaignCollectionIdentity(e campaign.Result) (campaignIdentityShape, string) {
+	var first campaignIdentityShape
+	seen := false
+	for _, trial := range e.Trials {
+		for _, phase := range trial.Phases {
+			if phase.Name == "warmup" {
+				continue
+			}
+			run := phase.Run.Config
+			if strings.TrimSpace(run.WorkloadRevision) == "" || strings.TrimSpace(run.ApplicationRevision) == "" || strings.TrimSpace(run.Environment) == "" {
+				return campaignIdentityShape{}, "UNKNOWN"
+			}
+			current := campaignIdentityShape{WorkloadRevision: run.WorkloadRevision, ApplicationRevision: run.ApplicationRevision, Environment: run.Environment}
+			if seen && current != first {
+				return campaignIdentityShape{}, "CHANGED"
+			}
+			first, seen = current, true
+		}
+	}
+	if !seen {
+		return campaignIdentityShape{}, "UNKNOWN"
+	}
+	return first, "CONSISTENT"
+}
+
+func campaignCollectionIdentityError(status string) string {
+	switch status {
+	case "UNKNOWN":
+		return "workload revision, application revision, or declared environment is missing"
+	case "CHANGED":
+		return "workload revision, application revision, or declared environment changes between required phases"
+	default:
+		return ""
+	}
+}
+
 type campaignRunShape struct {
 	RunSchemaVersion    int                    `json:"run_schema_version"`
 	WorkloadRevision    string                 `json:"workload_revision,omitempty"`
@@ -105,11 +151,12 @@ func BuildCampaignCollectionAssessment(evidence []campaign.Result, goal *capacit
 		return CampaignCollectionAssessment{}, fmt.Errorf("campaign collection must contain 2-%d reports", MaxCampaignCollectionSize)
 	}
 	result := CampaignCollectionAssessment{
-		SchemaVersion:  5,
-		AssessmentType: "CAMPAIGN_LEVEL_COLLECTION",
-		State:          "OBSERVED_LEVELS_ONLY",
-		Levels:         make([]CampaignLevelAssessment, 0, len(evidence)),
-		PassingLevels:  []int{}, FailingLevels: []int{}, InconclusiveLevels: []int{},
+		SchemaVersion:          5,
+		AssessmentType:         "CAMPAIGN_LEVEL_COLLECTION",
+		State:                  "OBSERVED_LEVELS_ONLY",
+		ScenarioIdentityStatus: "UNKNOWN",
+		Levels:                 make([]CampaignLevelAssessment, 0, len(evidence)),
+		PassingLevels:          []int{}, FailingLevels: []int{}, InconclusiveLevels: []int{},
 		ObservationPattern: "UNAVAILABLE",
 		UpperBound:         "UNKNOWN",
 		Findings: []string{
@@ -151,6 +198,9 @@ func BuildCampaignCollectionAssessment(evidence []campaign.Result, goal *capacit
 	comparable := true
 	firstShape := ""
 	firstEnvironment := ""
+	firstIdentity := campaignIdentityShape{}
+	identityUnknown := false
+	identityChanged := false
 	environmentUnknown := false
 	environmentChanged := false
 	invalid := false
@@ -174,6 +224,22 @@ func BuildCampaignCollectionAssessment(evidence []campaign.Result, goal *capacit
 			comparable = false
 			result.Findings = append(result.Findings, fmt.Sprintf("Level %d VUs has a different declared workload or control signature.", item.campaign.BaseUsers))
 		}
+		identity, identityStatus := campaignCollectionIdentity(item.campaign)
+		if identityStatus == "UNKNOWN" {
+			identityUnknown = true
+			comparable = false
+			result.Findings = append(result.Findings, fmt.Sprintf("Level %d VUs cannot be compared: workload revision, application revision, or declared environment is missing.", item.campaign.BaseUsers))
+		} else if identityStatus == "CHANGED" {
+			identityChanged = true
+			comparable = false
+			result.Findings = append(result.Findings, fmt.Sprintf("Level %d VUs changes workload, application, or environment identity between required phases.", item.campaign.BaseUsers))
+		} else if firstIdentity == (campaignIdentityShape{}) {
+			firstIdentity = identity
+		} else if identity != firstIdentity {
+			identityChanged = true
+			comparable = false
+			result.Findings = append(result.Findings, fmt.Sprintf("Level %d VUs was measured with a different workload revision, application revision, or declared environment.", item.campaign.BaseUsers))
+		}
 		if item.environmentStatus == "UNKNOWN" {
 			environmentUnknown = true
 			comparable = false
@@ -189,6 +255,14 @@ func BuildCampaignCollectionAssessment(evidence []campaign.Result, goal *capacit
 			comparable = false
 			result.Findings = append(result.Findings, fmt.Sprintf("Level %d VUs was measured with a different generator identity or effective CPU capacity.", item.campaign.BaseUsers))
 		}
+	}
+	switch {
+	case identityChanged:
+		result.ScenarioIdentityStatus = "CHANGED"
+	case identityUnknown:
+		result.ScenarioIdentityStatus = "UNKNOWN"
+	default:
+		result.ScenarioIdentityStatus = "CONSISTENT"
 	}
 	switch {
 	case environmentChanged:
@@ -208,6 +282,9 @@ func BuildCampaignCollectionAssessment(evidence []campaign.Result, goal *capacit
 		result.Scenario = levels[0].campaign.Scenario
 		result.Target = levels[0].campaign.Target
 		result.WorkloadFingerprint = firstWorkloadFingerprint(levels[0].campaign)
+		result.WorkloadRevision = firstIdentity.WorkloadRevision
+		result.ApplicationRevision = firstIdentity.ApplicationRevision
+		result.Environment = firstIdentity.Environment
 		for _, level := range result.Levels {
 			switch level.Assessment.Audit.State {
 			case "OBSERVED_PASS_ONLY":

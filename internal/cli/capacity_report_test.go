@@ -21,9 +21,10 @@ func TestCampaignCapacityReportSnapshotAndVerdictSeparation(t *testing.T) {
 		SchemaVersion: 3,
 		Audit: capacityplan.CampaignAudit{
 			SchemaVersion: campaign.CurrentSchemaVersion, EvidenceID: "sha256:campaign-fixture", ScenarioFingerprint: "sha256:workload-fixture",
-			SourceFileSHA256: "sha256:source-bytes-fixture",
-			Objectives:       &campaign.ObjectiveContract{Version: 1, JourneyScope: "AGGREGATE_AND_EACH_WORKFLOW", JourneyP95LimitMS: 500, MaxJourneyErrorRate: .01, MinSamplesPerStep: 1, MinCompletedWorkRatio: 1, MaxDroppedArrivals: 0, MinimumObservationWindows: 3, MinimumSamplesPerWindow: 20, WindowDuration: "2.5s"},
-			Scenario:         "synthetic local fixture", Target: "http://127.0.0.1:18080", StartedAt: "2026-10-19T12:00:00Z",
+			SourceFileSHA256:    "sha256:source-bytes-fixture",
+			DeclaredEnvironment: "development", WorkloadRevision: "workload-v1", ApplicationRevision: "app-v1", IdentityStatus: "CONSISTENT",
+			Objectives: &campaign.ObjectiveContract{Version: 1, JourneyScope: "AGGREGATE_AND_EACH_WORKFLOW", JourneyP95LimitMS: 500, MaxJourneyErrorRate: .01, MinSamplesPerStep: 1, MinCompletedWorkRatio: 1, MaxDroppedArrivals: 0, MinimumObservationWindows: 3, MinimumSamplesPerWindow: 20, WindowDuration: "2.5s"},
+			Scenario:   "synthetic local fixture", Target: "http://127.0.0.1:18080", StartedAt: "2026-10-19T12:00:00Z",
 			DemandTargetUsers: 3, TestedBaseUsers: 2, HostType: "NOT_RECORDED", PassingLevels: []int{2}, FailingLevels: []int{},
 			TestedDuration: "20s", Confidence: "NOT_ESTABLISHED", LimitingWorkflows: []string{},
 			ObservationTrials: []capacityplan.ObservationTrial{
@@ -67,7 +68,7 @@ func TestCampaignCapacityReportSnapshotAndVerdictSeparation(t *testing.T) {
 			t.Fatalf("capacity report omitted %q", expected)
 		}
 	}
-	for _, expected := range []string{"Campaign source file SHA-256", "sha256:source-bytes-fixture", "exact input bytes", "--expect-campaign-file-sha256 'sha256:source-bytes-fixture'"} {
+	for _, expected := range []string{"Campaign source file SHA-256", "sha256:source-bytes-fixture", "exact input bytes", "--expect-campaign-file-sha256 'sha256:source-bytes-fixture'", "Workload revision:** workload-v1", "Application revision:** app-v1", "Scenario identity consistency:** CONSISTENT"} {
 		if !strings.Contains(got, expected) {
 			t.Fatalf("capacity report omitted source-byte evidence %q", expected)
 		}
@@ -120,11 +121,12 @@ func TestCampaignCollectionCapacityReportShowsTestedBoundary(t *testing.T) {
 	highest, firstFailing := 4, 8
 	assessment := capacityplan.CampaignCollectionAssessment{
 		State: "OBSERVED_LEVELS_ONLY", Scenario: "synthetic", PassingLevels: []int{2, 4}, FailingLevels: []int{8},
+		ScenarioIdentityStatus: "CONSISTENT", Environment: "staging", WorkloadRevision: "workload-v1", ApplicationRevision: "app-v1",
 		HighestPassingLevel: &highest, FirstFailingLevel: &firstFailing, UpperBound: "BRACKETED_BY_TESTED_LEVELS",
 		ObservationPattern: "PASS_BELOW_FAIL", Levels: []capacityplan.CampaignLevelAssessment{}, Findings: []string{}, InconclusiveLevels: []int{},
 	}
 	got := renderCampaignCollectionCapacityReport(assessment, nil, nil)
-	for _, want := range []string{"Highest passing tested level:** 4 active users (tested)", "First failing tested level:** 8 active users (tested)", "Upper bound:** BRACKETED_BY_TESTED_LEVELS"} {
+	for _, want := range []string{"Highest passing tested level:** 4 active users (tested)", "First failing tested level:** 8 active users (tested)", "Upper bound:** BRACKETED_BY_TESTED_LEVELS", "Declared environment:** staging", "Workload revision:** workload-v1", "Application revision:** app-v1", "Scenario identity consistency across levels and required phases:** CONSISTENT"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("collection report does not contain %q:\n%s", want, got)
 		}

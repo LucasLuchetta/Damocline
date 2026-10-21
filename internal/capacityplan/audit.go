@@ -28,6 +28,10 @@ type CampaignAudit struct {
 	WorkloadSource          *campaign.WorkloadSource    `json:"workload_source,omitempty"`
 	Scenario                string                      `json:"scenario"`
 	Target                  string                      `json:"target,omitempty"`
+	DeclaredEnvironment     string                      `json:"declared_environment,omitempty"`
+	WorkloadRevision        string                      `json:"workload_revision,omitempty"`
+	ApplicationRevision     string                      `json:"application_revision,omitempty"`
+	IdentityStatus          string                      `json:"scenario_identity_status"`
 	StartedAt               string                      `json:"started_at,omitempty"`
 	DemandTargetUsers       int                         `json:"demand_target_users,omitempty"`
 	TestedBaseUsers         int                         `json:"tested_base_users"`
@@ -266,6 +270,7 @@ func AuditCampaign(e campaign.Result) CampaignAudit {
 		ExecutionState:         original.ExecutionState,
 		EvidenceID:             evidenceDigest(original),
 		Scenario:               e.Scenario,
+		DeclaredEnvironment:    e.DeclaredEnvironment,
 		WorkloadSource:         e.WorkloadSource,
 		TestedBaseUsers:        e.BaseUsers,
 		HostType:               "NOT_RECORDED",
@@ -353,6 +358,12 @@ func AuditCampaign(e campaign.Result) CampaignAudit {
 	if len(e.Trials) > 0 && len(e.Trials[0].Phases) > 0 {
 		a.Target = e.Trials[0].Phases[0].Run.Target
 	}
+	a.IdentityStatus, a.WorkloadRevision, a.ApplicationRevision, a.DeclaredEnvironment = campaignIdentity(e)
+	if a.IdentityStatus == "CHANGED" {
+		a.Findings = append(a.Findings, "Scenario identity or declared environment changes between required phases; results cannot be treated as one scenario/environment observation.")
+	} else if a.IdentityStatus == "UNKNOWN" {
+		a.Findings = append(a.Findings, "Workload revision, application revision, or environment identity is missing from one or more required phases; scenario identity is not established.")
+	}
 	if len(e.Trials) > 0 {
 		for _, phase := range e.Trials[0].Phases {
 			if phase.Name != "warmup" {
@@ -383,7 +394,10 @@ func AuditCampaign(e campaign.Result) CampaignAudit {
 		return a
 	}
 
-	invalid, inconclusive, limited := a.State == "INVALID_EVIDENCE", a.GeneratorRuntimeStatus == "CHANGED" || a.GeneratorCapacityStatus == "CHANGED", false
+	invalid, inconclusive, limited := a.State == "INVALID_EVIDENCE", a.GeneratorRuntimeStatus == "CHANGED" || a.GeneratorCapacityStatus == "CHANGED" || a.IdentityStatus == "CHANGED", false
+	if a.IdentityStatus == "UNKNOWN" {
+		inconclusive = true
+	}
 	for _, trial := range e.Trials {
 		for _, phase := range trial.Phases {
 			if phase.Name == "warmup" {
@@ -542,6 +556,34 @@ func summarizeGeneratorEnvironments(e campaign.Result) ([]GeneratorEnvironment, 
 		capacityStatus = "UNKNOWN"
 	}
 	return rows, identityStatus, capacityStatus
+}
+
+func campaignIdentity(e campaign.Result) (status, workloadRevision, applicationRevision, environment string) {
+	status = "UNKNOWN"
+	seen := false
+	for _, trial := range e.Trials {
+		for _, phase := range trial.Phases {
+			if phase.Name == "warmup" {
+				continue
+			}
+			run := phase.Run.Config
+			if strings.TrimSpace(run.WorkloadRevision) == "" || strings.TrimSpace(run.ApplicationRevision) == "" || strings.TrimSpace(run.Environment) == "" {
+				return "UNKNOWN", "", "", ""
+			}
+			if !seen {
+				workloadRevision, applicationRevision, environment = run.WorkloadRevision, run.ApplicationRevision, run.Environment
+				seen = true
+				continue
+			}
+			if run.WorkloadRevision != workloadRevision || run.ApplicationRevision != applicationRevision || run.Environment != environment {
+				return "CHANGED", "", "", ""
+			}
+		}
+	}
+	if seen {
+		return "CONSISTENT", workloadRevision, applicationRevision, environment
+	}
+	return "UNKNOWN", "", "", ""
 }
 
 func summarizeRepeatability(trials []campaign.Trial) RepeatabilityEvidence {

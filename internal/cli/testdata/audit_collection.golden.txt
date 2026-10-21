@@ -1,6 +1,7 @@
 --- DAMOCLINE | CAMPAIGN LEVEL AUDIT (OFFLINE) ---
 Level collection verdict: NOT_COMPARABLE
 Generator environment consistency: UNKNOWN
+Scenario identity consistency: UNKNOWN
 Scenario, target and workload match: NOT ESTABLISHED
 Observed passing levels: [] | failing levels: [] | inconclusive levels: []
 Observed pattern: UNAVAILABLE
@@ -12,7 +13,9 @@ Demand target: 3 workload-equivalent active actors | plan state: INSUFFICIENT_EV
   - A demand decision requires a campaign at the exact calculated workload level; nearby levels are not interpolated.
   - Each level is audited independently; no result is interpolated or extrapolated to an untested workload.
   - Observed passing and failing levels do not establish a monotone capacity boundary or sustainable human-user capacity.
+  - Level 2 VUs cannot be compared: workload revision, application revision, or declared environment is missing.
   - Level 2 VUs cannot be compared: campaign has no required phase generator-environment evidence.
+  - Level 4 VUs cannot be compared: workload revision, application revision, or declared environment is missing.
   - Level 4 VUs cannot be compared: campaign has no required phase generator-environment evidence.
   - Campaigns do not share complete matching workload, control, and known generator-environment signatures; per-level audits are retained, but levels are not aggregated.
 No traffic was generated; every level remains linked to its saved campaign evidence.

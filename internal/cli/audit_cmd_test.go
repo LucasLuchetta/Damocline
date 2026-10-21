@@ -369,7 +369,7 @@ func TestAuditCommandAcceptsMultipleCampaignsAndKeepsExactDemandUnknown(t *testi
 	if exit := Run(args, &stdout, &stderr); exit != 0 {
 		t.Fatalf("multi-level audit exit: %d %s", exit, stderr.String())
 	}
-	for _, expected := range []string{"CAMPAIGN LEVEL AUDIT (OFFLINE)", "NOT_COMPARABLE", "Generator environment consistency: UNKNOWN", "not interpolated", "No traffic was generated"} {
+	for _, expected := range []string{"CAMPAIGN LEVEL AUDIT (OFFLINE)", "NOT_COMPARABLE", "Generator environment consistency: UNKNOWN", "Scenario identity consistency: UNKNOWN", "workload revision, application revision, or declared environment is missing", "not interpolated", "No traffic was generated"} {
 		if !strings.Contains(stdout.String(), expected) {
 			t.Fatalf("missing %q in output: %s", expected, stdout.String())
 		}

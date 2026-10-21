@@ -19,6 +19,9 @@ This assessment describes the saved evidence under its declared conditions. It d
 - **Campaign execution state:** COMPLETED
 - **Scenario:** synthetic local fixture
 - **Declared environment:** development
+- **Workload revision:** workload-v1
+- **Application revision:** app-v1
+- **Scenario identity consistency:** CONSISTENT
 - **Target origin:** http://127.0.0.1:18080
 - **Start time:** 2026-10-19T12:00:00Z
 - **Host type:** NOT_RECORDED

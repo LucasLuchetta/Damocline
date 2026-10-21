@@ -118,6 +118,25 @@ func TestAuditRecomputesIndependentObservationSummaries(t *testing.T) {
 	}
 }
 
+func TestAuditPreservesScenarioIdentityAndRequiresConsistency(t *testing.T) {
+	e := auditFixture()
+	a := AuditCampaign(e)
+	if a.IdentityStatus != "CONSISTENT" || a.WorkloadRevision != "workload-v1" || a.ApplicationRevision != "app-v1" || a.DeclaredEnvironment != "synthetic" {
+		t.Fatalf("scenario identity was not summarized from required phase evidence: %+v", a)
+	}
+	e.Trials[1].Phases[0].Run.Config.ApplicationRevision = "app-v2"
+	a = AuditCampaign(e)
+	if a.State != "INCONCLUSIVE" || a.IdentityStatus != "CHANGED" || a.ApplicationRevision != "" {
+		t.Fatalf("campaign with changed application identity was not kept inconclusive: state=%s identity=%s revision=%q", a.State, a.IdentityStatus, a.ApplicationRevision)
+	}
+	e = auditFixture()
+	e.Trials[0].Phases[0].Run.Config.Environment = ""
+	a = AuditCampaign(e)
+	if a.State != "INCONCLUSIVE" || a.IdentityStatus != "UNKNOWN" {
+		t.Fatalf("missing phase identity was not kept unknown: state=%s identity=%s", a.State, a.IdentityStatus)
+	}
+}
+
 func TestAuditRejectsUnsupportedEmbeddedRunReportSchemas(t *testing.T) {
 	for _, schema := range []int{0, report.CurrentSchemaVersion + 1} {
 		t.Run(fmt.Sprintf("schema_%d", schema), func(t *testing.T) {

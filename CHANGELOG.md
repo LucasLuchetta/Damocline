@@ -4,6 +4,7 @@ This project follows a human-maintained changelog. No release exists yet.
 
 ## [Unreleased]
 
+- Preserve declared workload revision, application revision, and environment in single-campaign capacity assessments; mark missing or changing phase identity unknown/inconclusive, and require stable matching identity across levels before aggregating a tested boundary.
 - Keep campaign capacity Markdown content independent of the report output path so identical source, auditor, and demand inputs reproduce byte-identical reports across destinations; keep local output paths out of the report body.
 - Preserve valid partial failure evidence in historical campaign schemas v2 and v4 by validating their recorded outcome/stability vocabulary under historical rules; classify conflicts with current recomputation as inconclusive instead of invalidating the artifact.
 - Preserve offline readability for historical closed-loop campaign schemas v2 and v4 with end-to-end JSON fixtures. Compare only fields present in each campaign schema, report later-added journey-throughput and repeat-p95 summaries as unrecorded when absent, and keep historical evidence inconclusive when current quality or stability requirements cannot be recomputed or current SLO checks conflict with historical pass labels.

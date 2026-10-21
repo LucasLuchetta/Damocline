@@ -95,6 +95,15 @@ is explicitly `NOT_ESTABLISHED`: current conditional intervals assume IID
 observations and do not establish dependence-aware confidence. Demand is not
 extrapolated into untested workload levels.
 
+The audit also summarizes the declared workload revision, application revision,
+and environment across every non-warm-up phase. `CONSISTENT` means those saved
+labels match within this campaign; `UNKNOWN` means one or more required phases
+lacks a label; `CHANGED` means a label changes between phases and makes the
+campaign inconclusive. These declarations are not independently authenticated.
+Campaign collections require the labels to be present and match across every
+level before they report an aggregate tested boundary. When that check fails,
+each level's audit remains visible and the collection is `NOT_COMPARABLE`.
+
 `workflow_breaches` identifies each trial, required phase, tested VU level,
 workflow, breached p95/error objective, and observed values. A failure count
 inside the configured error budget is not labeled a breach. These observations
@@ -134,6 +143,13 @@ only recorded outcomes. A pass at a higher level after a failure at a lower
 level is labeled `NON_MONOTONIC`; the tool will not infer a capacity threshold.
 A demand target still requires a campaign at its exact
 calculated level and is never interpolated from neighboring campaigns.
+
+The human and JSON outputs expose `scenario_identity_consistency` separately
+from generator-environment consistency. `CONSISTENT` includes the shared
+workload revision, application revision, and declared environment in the
+collection summary; `UNKNOWN` or `CHANGED` prevents level aggregation and is
+shown with the individual level evidence. This status makes the comparison
+decision explicit rather than changing the declaration's trust level.
 
 The collection also records generator-environment consistency across every
 required phase and tested level. It compares the path-free runner identity
