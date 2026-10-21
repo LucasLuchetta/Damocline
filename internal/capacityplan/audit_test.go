@@ -131,6 +131,49 @@ func TestAuditRejectsUnsupportedEmbeddedRunReportSchemas(t *testing.T) {
 	}
 }
 
+func TestHistoricalPassCannotOverrideRecomputedJourneySLOFailure(t *testing.T) {
+	evidence := auditFixture()
+	evidence.SchemaVersion = 2
+	evidence.ExecutionState = ""
+	evidence.Stabilization = ""
+	evidence.Soak = ""
+	evidence.Cooldown = ""
+	evidence.StabilityPolicy = nil
+	evidence.Objectives = nil
+	evidence.CalibrationRequired = false
+	evidence.Calibration = nil
+	evidence.CalibrationSource = ""
+	for trialIndex := range evidence.Trials {
+		trial := &evidence.Trials[trialIndex]
+		trial.RunID = ""
+		trial.Phases = append([]campaign.Phase(nil), trial.Phases...)
+		if trialIndex == 1 {
+			trial.Phases = trial.Phases[:2]
+		}
+		for phaseIndex := range trial.Phases {
+			phase := &trial.Phases[phaseIndex]
+			for _, metrics := range []*report.MetricSet{&phase.Run.Journeys} {
+				metrics.Failures = metrics.Total / 5
+				metrics.Success = metrics.Total - metrics.Failures
+			}
+			for windowIndex := range phase.Run.Windows {
+				metrics := &phase.Run.Windows[windowIndex].Journeys
+				metrics.Failures = metrics.Total / 5
+				metrics.Success = metrics.Total - metrics.Failures
+			}
+			phase.Run.Quality = report.AssessQuality(phase.Run)
+		}
+	}
+
+	if err := ValidateSavedCampaign(evidence); err != nil {
+		t.Fatalf("historical campaign structure rejected before recomputed audit: %v", err)
+	}
+	audit := AuditCampaign(evidence)
+	if audit.State != "INCONCLUSIVE" || !containsFinding(audit.Findings, "historical PASS classification conflicts with the current recomputed SLO result") {
+		t.Fatalf("historical PASS overrode current journey SLO evidence: state=%s findings=%v", audit.State, audit.Findings)
+	}
+}
+
 func TestAuditRecomputesRobustSpreadFromTrialP95WithoutUpgradingVerdict(t *testing.T) {
 	e := auditFixture()
 	template := e.Trials[0]

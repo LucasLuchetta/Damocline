@@ -423,6 +423,10 @@ func AuditCampaign(e campaign.Result) CampaignAudit {
 					invalid = true
 					a.Findings = append(a.Findings, fmt.Sprintf("Trial %d %s has stale or altered stage evidence.", trial.Number, phase.Name))
 				}
+				if legacyClassification && state == "FAIL_OBSERVED" {
+					inconclusive = true
+					a.Findings = append(a.Findings, fmt.Sprintf("Trial %d %s historical PASS classification conflicts with the current recomputed SLO result.", trial.Number, phase.Name))
+				}
 			}
 			if state == "INVALID_DELIVERY" || state == "INSUFFICIENT_EVIDENCE" || stability == "NON_STATIONARY" || stability == "INSUFFICIENT_WINDOWS" {
 				inconclusive = true
