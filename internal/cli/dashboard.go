@@ -42,12 +42,17 @@ func loadDashboardHandler(path string) (http.Handler, error) {
 	if err := jsonartifact.RejectDuplicateKeys(data); err != nil {
 		return nil, fmt.Errorf("dashboard artifact contains ambiguous JSON: %w", err)
 	}
-	if err := report.ValidateMetricCountersInArtifactJSON(data); err != nil {
-		return nil, fmt.Errorf("dashboard artifact has incomplete metric evidence: %w", err)
-	}
 	var shape dashboardArtifactShape
 	if err := json.Unmarshal(data, &shape); err != nil {
 		return nil, fmt.Errorf("invalid dashboard artifact JSON: %w", err)
+	}
+	if shape.ArrivalCampaignVersion != nil {
+		if err := arrivalcampaign.ValidateArtifactJSON(data); err != nil {
+			return nil, fmt.Errorf("invalid arrival campaign evidence: %w", err)
+		}
+	}
+	if err := report.ValidateMetricCountersInArtifactJSON(data); err != nil {
+		return nil, fmt.Errorf("dashboard artifact has incomplete metric evidence: %w", err)
 	}
 	if shape.ArrivalCampaignVersion != nil {
 		var saved arrivalcampaign.Result

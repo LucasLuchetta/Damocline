@@ -51,10 +51,6 @@ func reportExportCmd(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "source artifact contains ambiguous JSON: %v\n", err)
 		return 2
 	}
-	if err := report.ValidateMetricCountersInArtifactJSON(data); err != nil {
-		fmt.Fprintf(stderr, "source artifact has incomplete metric evidence: %v\n", err)
-		return 2
-	}
 	var shape struct {
 		SchemaVersion      *int            `json:"schema_version"`
 		ArrivalCampaign    *int            `json:"arrival_campaign_schema_version"`
@@ -65,6 +61,16 @@ func reportExportCmd(args []string, stdout, stderr io.Writer) int {
 	}
 	if err := json.Unmarshal(data, &shape); err != nil {
 		fmt.Fprintf(stderr, "invalid source artifact JSON: %v\n", err)
+		return 2
+	}
+	if shape.ArrivalCampaign != nil {
+		if err := arrivalcampaign.ValidateArtifactJSON(data); err != nil {
+			fmt.Fprintf(stderr, "arrival campaign has incomplete evidence: %v\n", err)
+			return 2
+		}
+	}
+	if err := report.ValidateMetricCountersInArtifactJSON(data); err != nil {
+		fmt.Fprintf(stderr, "source artifact has incomplete metric evidence: %v\n", err)
 		return 2
 	}
 	var evidence reportexport.Evidence

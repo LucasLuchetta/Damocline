@@ -103,6 +103,10 @@ func goalCmd(args []string, stdout, stderr io.Writer) int {
 
 	fmt.Fprintln(stdout, "\n--- DAMOCLINE | CAPACITY GOAL (OFFLINE) ---")
 	if shape.ArrivalCampaignVersion != nil {
+		if err := arrivalcampaign.ValidateArtifactJSON(data); err != nil {
+			fmt.Fprintf(stderr, "arrival campaign has incomplete evidence: %v\n", err)
+			return 2
+		}
 		if *peakUsers != 0 {
 			fmt.Fprintln(stderr, "arrival campaign reports require --peak-journeys-per-second; VUs cannot be substituted")
 			return 2

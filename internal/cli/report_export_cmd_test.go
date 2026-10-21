@@ -111,6 +111,22 @@ func TestReportExportRejectsMissingMetricCounterBeforeWriting(t *testing.T) {
 	}
 }
 
+func TestReportExportRejectsIncompleteArrivalCampaignBeforeWriting(t *testing.T) {
+	dir := t.TempDir()
+	input := filepath.Join(dir, "incomplete-arrival-campaign.json")
+	output := filepath.Join(dir, "redacted.json")
+	if err := os.WriteFile(input, []byte(`{"arrival_campaign_schema_version":8}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr strings.Builder
+	if code := Run([]string{"report", "export", "--file", input, "--out", output}, &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), `"scenario"`) {
+		t.Fatalf("export accepted incomplete arrival campaign: code=%d stderr=%s", code, stderr.String())
+	}
+	if _, err := os.Stat(output); !os.IsNotExist(err) {
+		t.Fatalf("incomplete source wrote redacted output (stat error %v)", err)
+	}
+}
+
 func TestReportExportRejectsMissingCampaignTimestampBeforeWriting(t *testing.T) {
 	dir := t.TempDir()
 	input := filepath.Join(dir, "campaign.json")
@@ -153,7 +169,7 @@ func TestReportExportValidHistoricalCampaignsThroughCLIWithoutChangingSources(t 
 	arrivalV8.Cooldown = "0s"
 	arrivalV8.Objectives = &objectives
 	arrivalV8.StabilityPolicy = &policy
-	arrivalV8.Trials = []arrivalcampaign.Trial{{RunID: strings.Repeat("b", 32), Number: 1, Outcome: "ABORTED", AbortReason: "synthetic interruption"}}
+	arrivalV8.Trials = []arrivalcampaign.Trial{{RunID: strings.Repeat("b", 32), Number: 1, Phases: []arrivalcampaign.Phase{}, Outcome: "ABORTED", AbortReason: "synthetic interruption"}}
 
 	for _, tc := range []struct {
 		name string

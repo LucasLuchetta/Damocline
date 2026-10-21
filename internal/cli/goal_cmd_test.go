@@ -80,6 +80,26 @@ func TestGoalCommandRejectsExplorationWithOmittedTopLevelEvidence(t *testing.T) 
 	}
 }
 
+func TestGoalCommandRejectsIncompleteArrivalCampaignBeforeWriting(t *testing.T) {
+	dir := t.TempDir()
+	input := filepath.Join(dir, "incomplete-arrival-campaign.json")
+	assessment := filepath.Join(dir, "assessment.json")
+	reportPath := filepath.Join(dir, "capacity.md")
+	if err := os.WriteFile(input, []byte(`{"arrival_campaign_schema_version":8}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"goal", "--file", input, "--peak-journeys-per-second", "1", "--out", assessment, "--report-out", reportPath}, &stdout, &stderr)
+	if code != 2 || !strings.Contains(stderr.String(), `"scenario"`) {
+		t.Fatalf("goal accepted incomplete arrival campaign: code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	for _, path := range []string{assessment, reportPath} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("incomplete source wrote %s (stat error %v)", path, err)
+		}
+	}
+}
+
 func TestGoalCommandKeepsArrivalDemandInScheduledStartsPerSecond(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "arrival-capacity.json")
 	saved := arrivalexplorer.Result{
@@ -120,7 +140,7 @@ func TestGoalCommandWritesOpenArrivalObjectiveReportOffline(t *testing.T) {
 		P95LimitMS: 500, MaxErrorRate: .1, MinSamplesPerStep: 1, WindowDuration: "2s", BaseStartsPerSecond: 1,
 		Warmup: "0s", Stabilization: "0s", Observation: "10s", Recovery: "10s", Soak: "0s", Cooldown: "0s", Budget: "2m40s", Repeats: 2, Outcome: "ABORTED",
 		Objectives: &contract, StabilityPolicy: &policy,
-		Trials: []arrivalcampaign.Trial{{Number: 1, RunID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Outcome: "ABORTED", AbortReason: "The campaign was interrupted by its caller."}}}
+		Trials: []arrivalcampaign.Trial{{Number: 1, RunID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Phases: []arrivalcampaign.Phase{}, Outcome: "ABORTED", AbortReason: "The campaign was interrupted by its caller."}}}
 	if err := report.WriteAnyJSON(campaignPath, saved); err != nil {
 		t.Fatal(err)
 	}

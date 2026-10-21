@@ -49,6 +49,16 @@ func TestLoadDashboardRejectsMissingCampaignTimestamp(t *testing.T) {
 	}
 }
 
+func TestLoadDashboardRejectsIncompleteArrivalCampaign(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "incomplete-arrival-campaign.json")
+	if err := os.WriteFile(path, []byte(`{"arrival_campaign_schema_version":8}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadDashboardHandler(path); err == nil || !strings.Contains(err.Error(), `"scenario"`) {
+		t.Fatalf("dashboard accepted incomplete arrival campaign: %v", err)
+	}
+}
+
 func TestLoadDashboardHandlerSupportsRunAndCampaignArtifacts(t *testing.T) {
 	runPath := filepath.Join("..", "insights", "testdata", "reports", "schema-v25.json")
 	runHandler, err := loadDashboardHandler(runPath)
