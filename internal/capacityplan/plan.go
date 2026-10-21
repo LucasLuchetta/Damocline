@@ -2,6 +2,7 @@
 package capacityplan
 
 import (
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -271,28 +272,45 @@ func validObservationVariability(v *campaign.Variability, repeats int) bool {
 // ReadCampaign reads a bounded saved campaign report. It never makes a network
 // request and accepts only supported historical or current campaign schemas.
 func ReadCampaign(path string) (campaign.Result, error) {
+	result, _, err := ReadCampaignWithFileSHA256(path)
+	return result, err
+}
+
+// ReadCampaignWithFileSHA256 reads and decodes one bounded campaign report and
+// hashes the exact bytes that were decoded. The hash identifies source bytes;
+// it does not authenticate their producer or origin.
+func ReadCampaignWithFileSHA256(path string) (campaign.Result, string, error) {
 	data, err := readCampaignBytes(path, maxCampaignReportBytes)
 	if err != nil {
-		return campaign.Result{}, err
+		return campaign.Result{}, "", err
 	}
 	var result campaign.Result
 	if err := json.Unmarshal(data, &result); err != nil {
-		return campaign.Result{}, err
+		return campaign.Result{}, "", err
 	}
-	return result, nil
+	digest := sha256.Sum256(data)
+	return result, "sha256:" + hex.EncodeToString(digest[:]), nil
 }
 
 // ReadCampaignCollection reads a bounded list of local campaign reports.
 func ReadCampaignCollection(paths []string) ([]campaign.Result, error) {
+	results, _, err := ReadCampaignCollectionWithFileSHA256(paths)
+	return results, err
+}
+
+// ReadCampaignCollectionWithFileSHA256 reads a bounded list of campaign
+// reports and returns one exact-source digest per report, in input order.
+func ReadCampaignCollectionWithFileSHA256(paths []string) ([]campaign.Result, []string, error) {
 	if len(paths) < 2 || len(paths) > MaxCampaignCollectionSize {
-		return nil, fmt.Errorf("campaign collection must contain 2-%d reports", MaxCampaignCollectionSize)
+		return nil, nil, fmt.Errorf("campaign collection must contain 2-%d reports", MaxCampaignCollectionSize)
 	}
 	results := make([]campaign.Result, 0, len(paths))
+	digests := make([]string, 0, len(paths))
 	totalBytes := int64(0)
 	for _, path := range paths {
 		remaining := maxCampaignCollectionBytes - totalBytes
 		if remaining <= 0 {
-			return nil, errors.New("campaign collection exceeds the 64 MiB safety limit")
+			return nil, nil, errors.New("campaign collection exceeds the 64 MiB safety limit")
 		}
 		limit := int64(maxCampaignReportBytes)
 		if remaining < limit {
@@ -300,16 +318,18 @@ func ReadCampaignCollection(paths []string) ([]campaign.Result, error) {
 		}
 		data, err := readCampaignBytes(path, limit)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		totalBytes += int64(len(data))
 		var result campaign.Result
 		if err := json.Unmarshal(data, &result); err != nil {
-			return nil, fmt.Errorf("cannot decode campaign %q: %w", path, err)
+			return nil, nil, fmt.Errorf("cannot decode campaign %q: %w", path, err)
 		}
+		digest := sha256.Sum256(data)
+		digests = append(digests, "sha256:"+hex.EncodeToString(digest[:]))
 		results = append(results, result)
 	}
-	return results, nil
+	return results, digests, nil
 }
 
 func readCampaignBytes(path string, maxBytes int64) ([]byte, error) {

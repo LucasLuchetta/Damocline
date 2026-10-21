@@ -23,6 +23,7 @@ type CampaignAudit struct {
 	SchemaVersion           int                         `json:"schema_version"`
 	ExecutionState          string                      `json:"execution_state,omitempty"`
 	EvidenceID              string                      `json:"evidence_id"`
+	SourceFileSHA256        string                      `json:"source_file_sha256,omitempty"`
 	ScenarioFingerprint     string                      `json:"scenario_fingerprint,omitempty"`
 	Scenario                string                      `json:"scenario"`
 	Target                  string                      `json:"target,omitempty"`
@@ -155,7 +156,7 @@ type ConfidenceDimensions struct {
 
 func BuildAssessment(e campaign.Result, goal *capacitygoal.Goal) (Assessment, error) {
 	audit := AuditCampaign(e)
-	assessment := Assessment{SchemaVersion: 4, Audit: audit, Confidence: assessConfidence(e, audit), State: audit.State}
+	assessment := Assessment{SchemaVersion: 5, Audit: audit, Confidence: assessConfidence(e, audit), State: audit.State}
 	if goal != nil {
 		plan, err := Evaluate(e, *goal)
 		if err != nil {

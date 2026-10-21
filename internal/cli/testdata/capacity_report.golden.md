@@ -25,7 +25,8 @@ This assessment describes the saved evidence under its declared conditions. It d
 - **Required phase duration reviewed:** 20s
 - **Base active users:** 2
 - **Workload fingerprint:** `sha256:workload-fixture`
-- **Evidence ID scope:** SHA-256 of canonical decoded campaign fields; it is not a hash of original file bytes, a signature, or producer/host/target attestation. Whitespace-only changes and fields unknown to this reader are outside this ID.
+- **Campaign source file SHA-256:** `sha256:source-bytes-fixture`
+- **Evidence ID scope:** SHA-256 of canonical decoded campaign fields; it identifies the fields interpreted by this reader. The source file SHA-256 separately covers the exact input bytes, including whitespace and fields unknown to this reader. Neither digest is a signature or producer/host/target attestation.
 - **Campaign schedule:** warm-up 0s; stabilization 0s; observation 10s; spike 0 users for 0s; recovery 10s; soak 0s; cooldown 0s; repeats 2; wall-time budget 3m20s
 - **Effective drift screen policy** (persisted): minimum 3 windows, 20 samples/window, p95 increase 20.000% and 5.000 ms, throughput decrease 20.000%
 - **Generator guardrails:** disabled
@@ -88,10 +89,10 @@ Confidence dimensions: measurement **LIMITED**, workload representativeness **NO
 
 ### Offline replay
 
-Source campaign: `campaign.json` (verify its content against campaign evidence ID `sha256:campaign-fixture`).
+Source campaign: `campaign.json` (verify its interpreted fields against evidence ID `sha256:campaign-fixture` and exact bytes against source SHA-256 `sha256:source-bytes-fixture`).
 
 ```powershell
-damocline audit --campaign 'campaign.json' --expect-evidence-id 'sha256:campaign-fixture' --peak-users 2 --growth-percent 25 --reserve-percent 10 --out 'replayed-assessment.json' --report-out 'replayed-capacity-report.md'
+damocline audit --campaign 'campaign.json' --expect-evidence-id 'sha256:campaign-fixture' --expect-campaign-file-sha256 'sha256:source-bytes-fixture' --peak-users 2 --growth-percent 25 --reserve-percent 10 --out 'replayed-assessment.json' --report-out 'replayed-capacity-report.md'
 ```
 
 Report generated locally at `capacity.md`. The saved campaign is the source of truth; keep it with this assessment.

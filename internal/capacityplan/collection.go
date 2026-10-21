@@ -103,7 +103,7 @@ func BuildCampaignCollectionAssessment(evidence []campaign.Result, goal *capacit
 		return CampaignCollectionAssessment{}, fmt.Errorf("campaign collection must contain 2-%d reports", MaxCampaignCollectionSize)
 	}
 	result := CampaignCollectionAssessment{
-		SchemaVersion:  2,
+		SchemaVersion:  3,
 		AssessmentType: "CAMPAIGN_LEVEL_COLLECTION",
 		State:          "OBSERVED_LEVELS_ONLY",
 		Levels:         make([]CampaignLevelAssessment, 0, len(evidence)),

@@ -21,8 +21,9 @@ func TestCampaignCapacityReportSnapshotAndVerdictSeparation(t *testing.T) {
 		SchemaVersion: 3,
 		Audit: capacityplan.CampaignAudit{
 			SchemaVersion: campaign.CurrentSchemaVersion, EvidenceID: "sha256:campaign-fixture", ScenarioFingerprint: "sha256:workload-fixture",
-			Objectives: &campaign.ObjectiveContract{Version: 1, JourneyScope: "AGGREGATE_AND_EACH_WORKFLOW", JourneyP95LimitMS: 500, MaxJourneyErrorRate: .01, MinSamplesPerStep: 1, MinCompletedWorkRatio: 1, MaxDroppedArrivals: 0, MinimumObservationWindows: 3, MinimumSamplesPerWindow: 20, WindowDuration: "2.5s"},
-			Scenario:   "synthetic local fixture", Target: "http://127.0.0.1:18080", StartedAt: "2026-10-19T12:00:00Z",
+			SourceFileSHA256: "sha256:source-bytes-fixture",
+			Objectives:       &campaign.ObjectiveContract{Version: 1, JourneyScope: "AGGREGATE_AND_EACH_WORKFLOW", JourneyP95LimitMS: 500, MaxJourneyErrorRate: .01, MinSamplesPerStep: 1, MinCompletedWorkRatio: 1, MaxDroppedArrivals: 0, MinimumObservationWindows: 3, MinimumSamplesPerWindow: 20, WindowDuration: "2.5s"},
+			Scenario:         "synthetic local fixture", Target: "http://127.0.0.1:18080", StartedAt: "2026-10-19T12:00:00Z",
 			DemandTargetUsers: 3, TestedBaseUsers: 2, HostType: "NOT_RECORDED", PassingLevels: []int{2}, FailingLevels: []int{},
 			TestedDuration: "20s", Confidence: "NOT_ESTABLISHED", LimitingWorkflows: []string{},
 			ObservationTrials: []capacityplan.ObservationTrial{
@@ -64,6 +65,11 @@ func TestCampaignCapacityReportSnapshotAndVerdictSeparation(t *testing.T) {
 	for _, expected := range []string{"### Observation trials", "Repeat-level request p95", "is descriptive; independence is not established", "soak 0s", "drift screen policy** (persisted)"} {
 		if !strings.Contains(got, expected) {
 			t.Fatalf("capacity report omitted %q", expected)
+		}
+	}
+	for _, expected := range []string{"Campaign source file SHA-256", "sha256:source-bytes-fixture", "exact input bytes", "--expect-campaign-file-sha256 'sha256:source-bytes-fixture'"} {
+		if !strings.Contains(got, expected) {
+			t.Fatalf("capacity report omitted source-byte evidence %q", expected)
 		}
 	}
 	path := filepath.Join("testdata", "capacity_report.golden.md")

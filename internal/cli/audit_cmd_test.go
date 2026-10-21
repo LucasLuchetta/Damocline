@@ -53,8 +53,10 @@ func TestAuditCommandIsOfflineAndProducesMachineReadableEvidence(t *testing.T) {
 		SchemaVersion int    `json:"schema_version"`
 		State         string `json:"state"`
 		Audit         struct {
-			State      string `json:"state"`
-			EvidenceID string `json:"evidence_id"`
+			SchemaVersion    int    `json:"schema_version"`
+			State            string `json:"state"`
+			EvidenceID       string `json:"evidence_id"`
+			SourceFileSHA256 string `json:"source_file_sha256"`
 		} `json:"audit"`
 		Confidence struct {
 			Measurement string `json:"measurement_confidence"`
@@ -70,10 +72,10 @@ func TestAuditCommandIsOfflineAndProducesMachineReadableEvidence(t *testing.T) {
 			ReservePercent float64 `json:"reserve_percent"`
 		} `json:"demand_inputs"`
 	}
-	if err := json.Unmarshal(raw, &audit); err != nil || audit.SchemaVersion != 4 || audit.Audit.State != "INCONCLUSIVE" || audit.State != "INSUFFICIENT_EVIDENCE" {
+	if err := json.Unmarshal(raw, &audit); err != nil || audit.SchemaVersion != 5 || audit.Audit.SchemaVersion != 14 || audit.Audit.State != "INCONCLUSIVE" || audit.State != "INSUFFICIENT_EVIDENCE" {
 		t.Fatalf("invalid audit JSON: %+v %v", audit, err)
 	}
-	if audit.Audit.EvidenceID == "" || audit.Demand == nil || audit.Demand.TargetUsers != 2 || audit.DemandInputs == nil || audit.DemandInputs.PeakUsers != 2 || audit.DemandInputs.GrowthPercent != 0 || audit.DemandInputs.ReservePercent != 0 {
+	if audit.Audit.EvidenceID == "" || !validSHA256EvidenceID(audit.Audit.SourceFileSHA256) || audit.Demand == nil || audit.Demand.TargetUsers != 2 || audit.DemandInputs == nil || audit.DemandInputs.PeakUsers != 2 || audit.DemandInputs.GrowthPercent != 0 || audit.DemandInputs.ReservePercent != 0 {
 		t.Fatalf("combined assessment is missing traceability or demand result: %+v", audit)
 	}
 	if audit.Confidence.Workload != "NOT_ASSESSED" || audit.Confidence.Decision != "NOT_ESTABLISHED" || audit.Confidence.Measurement != "LIMITED" {
@@ -96,7 +98,7 @@ func TestAuditReportOutContainsExecutiveTechnicalReplayWithoutConflictingVerdict
 	}
 	var stdout, stderr bytes.Buffer
 	expectedID := capacityplan.AuditCampaign(evidence).EvidenceID
-	args := []string{"audit", "--campaign", path, "--expect-evidence-id", expectedID, "--peak-users", "8", "--growth-percent", "25", "--reserve-percent", "10", "--out", assessmentPath, "--report-out", reportPath}
+	args := []string{"audit", "--campaign", path, "--expect-evidence-id", expectedID, "--expect-campaign-file-sha256", campaignFileSHA256(t, path), "--peak-users", "8", "--growth-percent", "25", "--reserve-percent", "10", "--out", assessmentPath, "--report-out", reportPath}
 	if code := Run(args, &stdout, &stderr); code != 0 {
 		t.Fatalf("audit report command failed: %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 	}
@@ -105,7 +107,8 @@ func TestAuditReportOutContainsExecutiveTechnicalReplayWithoutConflictingVerdict
 		t.Fatal(err)
 	}
 	content := string(data)
-	for _, expected := range []string{"## Executive summary", "## Technical evidence", "Predeclared objectives", "maximum journey error rate 10.00000%", "Completed-work ratio: 100%", "maximum dropped arrivals: 0", "peak 8 active users, growth 25%, reserve 10%", "Calculated target:", "Campaign evidence ID", "Offline replay", "--expect-evidence-id '" + expectedID + "'", "--peak-users 8", "--growth-percent 25", "--reserve-percent 10", "canonical decoded campaign fields", "not a hash of original file bytes", "INCONCLUSIVE", "INSUFFICIENT_EVIDENCE"} {
+	fileSHA := campaignFileSHA256(t, path)
+	for _, expected := range []string{"## Executive summary", "## Technical evidence", "Predeclared objectives", "maximum journey error rate 10.00000%", "Completed-work ratio: 100%", "maximum dropped arrivals: 0", "peak 8 active users, growth 25%, reserve 10%", "Calculated target:", "Campaign evidence ID", "Campaign source file SHA-256", "Offline replay", "--expect-evidence-id '" + expectedID + "'", "--expect-campaign-file-sha256 '" + fileSHA + "'", "--peak-users 8", "--growth-percent 25", "--reserve-percent 10", "canonical decoded campaign fields", "exact input bytes", "Neither digest is a signature", "INCONCLUSIVE", "INSUFFICIENT_EVIDENCE"} {
 		if !strings.Contains(content, expected) {
 			t.Fatalf("capacity report omits %q: %s", expected, content)
 		}
@@ -117,13 +120,14 @@ func TestAuditReportOutContainsExecutiveTechnicalReplayWithoutConflictingVerdict
 	var assessment struct {
 		State string `json:"state"`
 		Audit struct {
-			State string `json:"state"`
+			State            string `json:"state"`
+			SourceFileSHA256 string `json:"source_file_sha256"`
 		} `json:"audit"`
 	}
 	if err := json.Unmarshal(assessmentData, &assessment); err != nil {
 		t.Fatal(err)
 	}
-	if assessment.State != "INSUFFICIENT_EVIDENCE" || assessment.Audit.State != "INCONCLUSIVE" || !strings.Contains(content, "**Assessment:** "+assessment.State) || !strings.Contains(content, "**Observed campaign:** "+assessment.Audit.State) {
+	if assessment.State != "INSUFFICIENT_EVIDENCE" || assessment.Audit.State != "INCONCLUSIVE" || assessment.Audit.SourceFileSHA256 != fileSHA || !strings.Contains(content, "**Assessment:** "+assessment.State) || !strings.Contains(content, "**Observed campaign:** "+assessment.Audit.State) {
 		t.Fatalf("Markdown and JSON used different assessment verdicts: markdown=%s json=%+v", content, assessment)
 	}
 	assessmentIndex := strings.Index(content, "**Assessment:** INSUFFICIENT_EVIDENCE")
@@ -180,6 +184,44 @@ func TestAuditCommandRejectsChangedCampaignBeforeWritingAssessment(t *testing.T)
 	}
 }
 
+func TestAuditCommandRejectsChangedSourceBytesBeforeWritingAssessment(t *testing.T) {
+	directory := t.TempDir()
+	campaignPath := filepath.Join(directory, "campaign.json")
+	evidence := campaign.Result{SchemaVersion: campaign.CurrentSchemaVersion, ExecutionState: "COMPLETED", Stabilization: "0s", Cooldown: "0s", StabilityPolicy: defaultCampaignStabilityPolicy(), Objectives: defaultCampaignObjectives(),
+		Scenario: "synthetic local fixture", BaseUsers: 2, Repeats: 2, Outcome: "INCONCLUSIVE",
+		Trials: []campaign.Trial{{RunID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Number: 1, Outcome: "INCONCLUSIVE"}, {RunID: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", Number: 2, Outcome: "INCONCLUSIVE"}},
+	}
+	original, err := json.Marshal(evidence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(campaignPath, original, 0600); err != nil {
+		t.Fatal(err)
+	}
+	expectedID := capacityplan.AuditCampaign(evidence).EvidenceID
+	expectedFileSHA := campaignFileSHA256(t, campaignPath)
+	changedBytes := append([]byte("  \n"), original...)
+	if err := os.WriteFile(campaignPath, changedBytes, 0600); err != nil {
+		t.Fatal(err)
+	}
+	var decoded campaign.Result
+	if err := json.Unmarshal(changedBytes, &decoded); err != nil || capacityplan.AuditCampaign(decoded).EvidenceID != expectedID {
+		t.Fatalf("byte-only change should preserve semantic ID: err=%v", err)
+	}
+	assessmentPath := filepath.Join(directory, "assessment.json")
+	reportPath := filepath.Join(directory, "capacity.md")
+	var stdout, stderr bytes.Buffer
+	args := []string{"audit", "--campaign", campaignPath, "--expect-evidence-id", expectedID, "--expect-campaign-file-sha256", expectedFileSHA, "--out", assessmentPath, "--report-out", reportPath}
+	if code := Run(args, &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "campaign file SHA-256 check failed") {
+		t.Fatalf("changed source bytes were not rejected: code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	for _, output := range []string{assessmentPath, reportPath} {
+		if _, err := os.Stat(output); !os.IsNotExist(err) {
+			t.Fatalf("byte digest mismatch left output at %s: %v", output, err)
+		}
+	}
+}
+
 func TestAuditExpectedEvidenceIDsRequireOneValidIDPerCampaign(t *testing.T) {
 	for _, test := range []struct {
 		name string
@@ -196,6 +238,33 @@ func TestAuditExpectedEvidenceIDsRequireOneValidIDPerCampaign(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestAuditExpectedCampaignFileSHA256RequiresOneValidHashPerCampaign(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "wrong count", args: []string{"--campaign", "one.json", "--campaign", "two.json", "--expect-campaign-file-sha256", "sha256:" + strings.Repeat("a", 64)}, want: "provide one hash per --campaign"},
+		{name: "malformed digest", args: []string{"--campaign", "one.json", "--expect-campaign-file-sha256", "sha256:not-a-digest"}, want: "64 lowercase hexadecimal"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			if code := Run(append([]string{"audit"}, test.args...), &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), test.want) {
+				t.Fatalf("invalid expected file SHA arguments were accepted: code=%d stderr=%s", code, stderr.String())
+			}
+		})
+	}
+}
+
+func campaignFileSHA256(t *testing.T, path string) string {
+	t.Helper()
+	_, digest, err := capacityplan.ReadCampaignWithFileSHA256(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return digest
 }
 
 func TestAuditCommandRejectsMissingCampaign(t *testing.T) {
@@ -270,8 +339,9 @@ func TestAuditCommandAcceptsMultipleCampaignsAndKeepsExactDemandUnknown(t *testi
 		}
 		expectedIDs = append(expectedIDs, capacityplan.AuditCampaign(evidence).EvidenceID)
 	}
+	expectedFileSHA256s := []string{campaignFileSHA256(t, secondPath), campaignFileSHA256(t, firstPath)}
 	var stdout, stderr bytes.Buffer
-	args := []string{"audit", "--campaign", secondPath, "--campaign", firstPath, "--expect-evidence-id", expectedIDs[1], "--expect-evidence-id", expectedIDs[0], "--peak-users", "3", "--out", out, "--report-out", markdownOut}
+	args := []string{"audit", "--campaign", secondPath, "--campaign", firstPath, "--expect-evidence-id", expectedIDs[1], "--expect-evidence-id", expectedIDs[0], "--expect-campaign-file-sha256", expectedFileSHA256s[0], "--expect-campaign-file-sha256", expectedFileSHA256s[1], "--peak-users", "3", "--out", out, "--report-out", markdownOut}
 	if exit := Run(args, &stdout, &stderr); exit != 0 {
 		t.Fatalf("multi-level audit exit: %d %s", exit, stderr.String())
 	}
@@ -305,6 +375,11 @@ func TestAuditCommandAcceptsMultipleCampaignsAndKeepsExactDemandUnknown(t *testi
 		AssessmentType string `json:"assessment_type"`
 		Levels         []struct {
 			TestedUsers int `json:"tested_users"`
+			Assessment  struct {
+				Audit struct {
+					SourceFileSHA256 string `json:"source_file_sha256"`
+				} `json:"audit"`
+			} `json:"assessment"`
 		} `json:"levels"`
 		Demand *struct {
 			TargetUsers int    `json:"target_users"`
@@ -317,7 +392,7 @@ func TestAuditCommandAcceptsMultipleCampaignsAndKeepsExactDemandUnknown(t *testi
 	if err := json.Unmarshal(raw, &assessment); err != nil {
 		t.Fatal(err)
 	}
-	if assessment.SchemaVersion != 2 || assessment.AssessmentType != "CAMPAIGN_LEVEL_COLLECTION" || assessment.State != "INCONCLUSIVE" || len(assessment.Levels) != 2 || assessment.Levels[0].TestedUsers != 2 || assessment.Levels[1].TestedUsers != 4 {
+	if assessment.SchemaVersion != 3 || assessment.AssessmentType != "CAMPAIGN_LEVEL_COLLECTION" || assessment.State != "INCONCLUSIVE" || len(assessment.Levels) != 2 || assessment.Levels[0].TestedUsers != 2 || assessment.Levels[1].TestedUsers != 4 || assessment.Levels[0].Assessment.Audit.SourceFileSHA256 != expectedFileSHA256s[1] || assessment.Levels[1].Assessment.Audit.SourceFileSHA256 != expectedFileSHA256s[0] {
 		t.Fatalf("machine-readable level collection is malformed: %+v", assessment)
 	}
 	if assessment.Demand == nil || assessment.Demand.TargetUsers != 3 || assessment.Demand.State != "INSUFFICIENT_EVIDENCE" || assessment.DemandInputs == nil || assessment.DemandInputs.PeakUsers != 3 {
@@ -327,7 +402,7 @@ func TestAuditCommandAcceptsMultipleCampaignsAndKeepsExactDemandUnknown(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, expected := range []string{"## Executive summary", "## Technical evidence", "Campaigns by tested level", "2 | ABORTED", "4 | ABORTED", "--campaign '" + secondPath + "' --expect-evidence-id '" + expectedIDs[1] + "' --campaign '" + firstPath + "' --expect-evidence-id '" + expectedIDs[0] + "'", "--peak-users 3", firstPath, secondPath} {
+	for _, expected := range []string{"## Executive summary", "## Technical evidence", "Campaigns by tested level", "Source file SHA-256", "2 | ABORTED", "4 | ABORTED", "--campaign '" + secondPath + "' --expect-evidence-id '" + expectedIDs[1] + "' --expect-campaign-file-sha256 '" + expectedFileSHA256s[0] + "' --campaign '" + firstPath + "' --expect-evidence-id '" + expectedIDs[0] + "' --expect-campaign-file-sha256 '" + expectedFileSHA256s[1] + "'", "--peak-users 3", firstPath, secondPath} {
 		if !strings.Contains(string(markdown), expected) {
 			t.Fatalf("multi-level report omits %q: %s", expected, markdown)
 		}
