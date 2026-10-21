@@ -16,19 +16,13 @@ import (
 )
 
 func TestClosedAndOpenCampaignsMeasureSpikeAndRecoveryAgainstControlledServer(t *testing.T) {
-	var saturated atomic.Bool
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		if saturated.Load() {
-			time.Sleep(450 * time.Millisecond)
-		} else {
-			time.Sleep(30 * time.Millisecond)
-		}
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer server.Close()
-
 	t.Run("closed-loop", func(t *testing.T) {
+		var saturated atomic.Bool
+		server := newSpikeRecoveryServer(&saturated)
+		defer server.Close()
 		base := integrationScenario(t, server.URL, 1, 100, "closed", 0)
+		base.Window = 1 * time.Second
+		base.Scenario.WindowDuration = base.Window.String()
 		result, err := campaign.WithRunner(context.Background(), base, campaign.Options{
 			Observation: 10 * time.Second, SpikeUsers: 4, SpikeDuration: 10 * time.Second,
 			Recovery: 10 * time.Second, Repeats: 2,
@@ -55,12 +49,17 @@ func TestClosedAndOpenCampaignsMeasureSpikeAndRecoveryAgainstControlledServer(t 
 	})
 
 	t.Run("open-arrival", func(t *testing.T) {
-		base := integrationScenario(t, server.URL, 30, 100, "arrival", 12)
+		var saturated atomic.Bool
+		server := newSpikeRecoveryServer(&saturated)
+		defer server.Close()
+		base := integrationScenario(t, server.URL, 30, 100, "arrival", 24)
+		base.Window = 1 * time.Second
+		base.Scenario.WindowDuration = base.Window.String()
 		result, err := arrivalcampaign.WithRunner(context.Background(), base, arrivalcampaign.Options{
-			Observation: 10 * time.Second, SpikeRate: 24, SpikeDuration: 10 * time.Second,
+			Observation: 10 * time.Second, SpikeRate: 48, SpikeDuration: 10 * time.Second,
 			Recovery: 10 * time.Second, Repeats: 2,
 		}, func(ctx context.Context, phase config.Validated) report.Result {
-			saturated.Store(phase.Scenario.ArrivalRate == 24)
+			saturated.Store(phase.Scenario.ArrivalRate == 48)
 			defer saturated.Store(false)
 			return engine.Run(ctx, phase)
 		})
@@ -71,15 +70,26 @@ func TestClosedAndOpenCampaignsMeasureSpikeAndRecoveryAgainstControlledServer(t 
 			t.Fatalf("arrival campaign stopped before recovery: %+v", result)
 		}
 		phases := result.Trials[0].Phases
-		assertNativePhase(t, phases[0].Run, 30, 12, "PASS")
-		assertNativePhase(t, phases[1].Run, 30, 24, "FAIL")
-		assertNativePhase(t, phases[2].Run, 30, 12, "PASS")
+		assertNativePhase(t, phases[0].Run, 30, 24, "PASS")
+		assertNativePhase(t, phases[1].Run, 30, 48, "FAIL")
+		assertNativePhase(t, phases[2].Run, 30, 24, "PASS")
 		assertObservedSpikeRecovery(t, result.Outcome, []phaseEvidence{
 			{name: phases[0].Name, state: phases[0].EvidenceState, outcome: phases[0].Run.Outcome},
 			{name: phases[1].Name, state: phases[1].EvidenceState, outcome: phases[1].Run.Outcome},
 			{name: phases[2].Name, state: phases[2].EvidenceState, outcome: phases[2].Run.Outcome},
 		})
 	})
+}
+
+func newSpikeRecoveryServer(saturated *atomic.Bool) *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if saturated.Load() {
+			time.Sleep(450 * time.Millisecond)
+		} else {
+			time.Sleep(30 * time.Millisecond)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
 }
 
 func integrationScenario(t *testing.T, target string, users, maxRPS int, mode string, arrivalRate int) config.Validated {
