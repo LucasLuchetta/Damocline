@@ -29,7 +29,7 @@ Use the validator before typed decoding in `goal`, dashboard, and redacted
 export. Keep semantic campaign verification in the existing capacity assessor.
 Preserve historical schema behavior and explicitly encoded zero values.
 `campaign profile verify` already loads its source through the validated
-profile decoder; generated assessment JSON is not currently accepted as input
+profile decoder; assessment JSON is not parsed to recompute a verdict, though `report save` can archive JSON opaquely
 by any CLI command.
 
 ## Consequences
