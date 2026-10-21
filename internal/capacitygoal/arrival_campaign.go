@@ -138,6 +138,7 @@ func EvaluateJourneyCampaign(saved arrivalcampaign.Result, goal JourneyStartGoal
 	}
 	seenStarted := map[string]bool{}
 	observedSLOFailure := false
+	assessmentLimitedNativePass := false
 	var baselineConfig []byte
 	totalMetricBytes := 0
 	for index, trial := range saved.Trials {
@@ -152,6 +153,8 @@ func EvaluateJourneyCampaign(saved arrivalcampaign.Result, goal JourneyStartGoal
 			return JourneyStartAssessment{}, errors.New("campaign continued after an aborted cooldown trial")
 		}
 		phasePass := len(trial.Phases) == len(planned)
+		qualityLimited := false
+		nonQualityAssessmentIssue := !phasePass
 		for phaseIndex, phase := range trial.Phases {
 			expected := planned[phaseIndex]
 			run := phase.Run
@@ -244,11 +247,25 @@ func EvaluateJourneyCampaign(saved arrivalcampaign.Result, goal JourneyStartGoal
 			if expected.Required && run.Outcome != "PASS" && state == "PASS_OBSERVED" {
 				return JourneyStartAssessment{}, errors.New("required phase did not pass its native outcome")
 			}
-			if expected.Required && (state != "PASS_OBSERVED" || run.Outcome != "PASS" ||
-				(expected.Name == "stabilization" || expected.Name == "observation" || expected.Name == "soak") && stability != "NO_LARGE_DRIFT_DETECTED" ||
-				report.AssessQuality(run).State != report.QualityValid || campaignSLOBreachForObjectives(run, saved.Objectives) ||
-				campaignCoverageIssue(run, expected.Name == "stabilization" || expected.Name == "observation" || expected.Name == "soak") != "" || campaignGeneratorIssue(run) != "") {
-				phasePass = false
+			if expected.Required {
+				quality := report.AssessQuality(run)
+				nativePhasePass := state == "PASS_OBSERVED" && run.Outcome == "PASS" &&
+					(!(expected.Name == "stabilization" || expected.Name == "observation" || expected.Name == "soak") || stability == "NO_LARGE_DRIFT_DETECTED") &&
+					!campaignSLOBreachForObjectives(run, saved.Objectives) &&
+					campaignCoverageIssue(run, expected.Name == "stabilization" || expected.Name == "observation" || expected.Name == "soak") == "" && campaignGeneratorIssue(run) == ""
+				if !nativePhasePass {
+					phasePass = false
+					nonQualityAssessmentIssue = true
+				}
+				switch quality.State {
+				case report.QualityValid:
+				case report.QualityLimited:
+					phasePass = false
+					qualityLimited = true
+				default:
+					phasePass = false
+					nonQualityAssessmentIssue = true
+				}
 			}
 		}
 		if trial.Outcome != "PASS" && trial.Outcome != "FAIL" && trial.Outcome != "INCONCLUSIVE" && trial.Outcome != "ABORTED" {
@@ -261,7 +278,10 @@ func EvaluateJourneyCampaign(saved arrivalcampaign.Result, goal JourneyStartGoal
 			allPass = false
 		}
 		if trial.Outcome == "PASS" && !phasePass {
-			return JourneyStartAssessment{}, errors.New("trial PASS does not match its phase evidence")
+			if !qualityLimited || nonQualityAssessmentIssue {
+				return JourneyStartAssessment{}, errors.New("trial PASS does not match its phase evidence")
+			}
+			assessmentLimitedNativePass = true
 		}
 		if trial.Outcome == "FAIL" && phasePass {
 			return JourneyStartAssessment{}, errors.New("trial FAIL does not match its phase evidence")
@@ -273,7 +293,7 @@ func EvaluateJourneyCampaign(saved arrivalcampaign.Result, goal JourneyStartGoal
 			return JourneyStartAssessment{}, errors.New("campaign continued after a non-passing or incomplete trial")
 		}
 	}
-	if saved.Outcome == "PASS" && !allPass || saved.Outcome == "ABORTED" && saved.Trials[len(saved.Trials)-1].Outcome != "ABORTED" ||
+	if saved.Outcome == "PASS" && !allPass && !assessmentLimitedNativePass || saved.Outcome == "ABORTED" && saved.Trials[len(saved.Trials)-1].Outcome != "ABORTED" ||
 		saved.Outcome == "FAIL" && saved.Trials[len(saved.Trials)-1].Outcome != "FAIL" || saved.Outcome == "INCONCLUSIVE" && saved.Trials[len(saved.Trials)-1].Outcome != "INCONCLUSIVE" {
 		return JourneyStartAssessment{}, errors.New("campaign outcome disagrees with its terminal trial")
 	}
@@ -287,6 +307,9 @@ func EvaluateJourneyCampaign(saved arrivalcampaign.Result, goal JourneyStartGoal
 	}
 	if allPass && assessment.ScenarioIdentityStatus != "CONSISTENT" {
 		assessment.Findings = append(assessment.Findings, "All native phase outcomes passed, but missing scenario identity metadata prevents a positive exact-demand assessment.")
+	}
+	if assessmentLimitedNativePass {
+		assessment.Findings = append(assessment.Findings, "One or more native trials passed their declared phase SLOs, but measurement quality does not meet the capacity-assessment threshold; the result remains insufficient evidence.")
 	}
 	if saved.Outcome == "FAIL" && observedSLOFailure {
 		assessment.State = "SLO_MISSED_AT_TESTED_TARGET"
