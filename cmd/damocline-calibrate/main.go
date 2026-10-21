@@ -827,11 +827,23 @@ func checkWorkloadProfile(profile calibration.WorkloadProfile, run report.Result
 		observation.ServerRequestBodyBytes == int64(profile.RequestBodyBytes)*completed && observation.ServerResponseBodyBytes == int64(profile.ResponseBodyBytes)*completed
 	expectedTCPConnections, hasExpectedTCPConnections := calibration.ExpectedReferenceTCPConnections(profile, measurementCount)
 	tcpConnectionLedgerMatches := hasExpectedTCPConnections && observation.ServerTCPConnections == expectedTCPConnections
+	higherRateTLS := profile.TransportScheme == "https" && profile.ArrivalRate >= 20
+	if higherRateTLS {
+		tcpConnectionLedgerMatches = observation.ServerTCPConnections >= 1 && observation.ServerTCPConnections <= planned
+	}
 	if closedLoop {
 		tcpConnectionLedgerMatches = observation.ServerTCPConnections > 0 && observation.ServerTCPConnections <= observation.ServerReceived
 	}
 	expectedTLSHandshakes, hasExpectedTLSHandshakes := calibration.ExpectedReferenceTLSHandshakes(profile, max(int64(1), completed))
 	tlsHandshakeLedgerMatches := hasExpectedTLSHandshakes && observation.ClientTLSHandshakes == expectedTLSHandshakes
+	if higherRateTLS {
+		traceHandshakes := int64(-1)
+		if len(run.Steps) == 1 {
+			traceHandshakes = int64(run.Steps[0].HTTPTrace.TLSCount)
+		}
+		tlsHandshakeLedgerMatches = observation.ClientTLSHandshakes == traceHandshakes &&
+			observation.ClientTLSHandshakes == observation.ServerTCPConnections && observation.ClientTLSHandshakes >= 1 && observation.ClientTLSHandshakes <= planned
+	}
 	var issues []string
 	if !hasRecognizedMeasurementQuality(quality) {
 		state := "missing"

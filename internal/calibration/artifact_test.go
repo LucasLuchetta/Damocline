@@ -147,8 +147,8 @@ func TestSchemaSixRejectsAlteredOrMissingWorkloadEvidence(t *testing.T) {
 
 func TestReferenceMatrixCoversOnlyExactShapeAndRatePairs(t *testing.T) {
 	profiles := ReferenceWorkloadProfiles()
-	if len(profiles) != 39 {
-		t.Fatalf("got %d workload profiles, want 30 HTTP/3 HTTPS arrival pairs plus 6 closed-loop VU levels", len(profiles))
+	if len(profiles) != 41 {
+		t.Fatalf("got %d workload profiles, want 30 HTTP/5 HTTPS arrival pairs plus 6 closed-loop VU levels", len(profiles))
 	}
 	seen := make(map[string]bool, len(profiles))
 	for _, profile := range profiles {
@@ -160,7 +160,11 @@ func TestReferenceMatrixCoversOnlyExactShapeAndRatePairs(t *testing.T) {
 			t.Fatalf("duplicate exact workload pair %s", key)
 		}
 		seen[key] = true
-		if profile.ArrivalRate != 2 && profile.ArrivalRate != 5 && profile.ArrivalRate != 10 {
+		validRate := profile.ArrivalRate == 2 || profile.ArrivalRate == 5 || profile.ArrivalRate == 10
+		if profile.TransportScheme == "https" {
+			validRate = validRate || profile.ArrivalRate == 20 || profile.ArrivalRate == 40
+		}
+		if !validRate {
 			t.Fatalf("unexpected interpolated or untested rate: %+v", profile)
 		}
 	}
@@ -174,7 +178,7 @@ func TestReferenceMatrixCoversOnlyExactShapeAndRatePairs(t *testing.T) {
 			}
 		}
 	}
-	for _, rate := range WorkloadMatrixArrivalRates() {
+	for _, rate := range []int{2, 5, 10, 20, 40} {
 		if !seen[fmt.Sprintf("/matrix/https-4k|reuse|%d", rate)] {
 			t.Fatalf("missing exact trusted HTTPS profile at %d arrivals/s", rate)
 		}
@@ -332,6 +336,32 @@ func TestSchemaEightRequiresExactTrustedTLSHandshakeEvidence(t *testing.T) {
 	}
 }
 
+func TestSchemaNineArtifactsRetainOriginalWorkloadMatrix(t *testing.T) {
+	a := passingArtifact(t)
+	a.Preflight.SchemaVersion = 9
+	a.Preflight.Fixture.WorkloadProfiles = referenceWorkloadProfilesV9()
+	a.Preflight.WorkloadObservations = passingObservationsForProfiles(referenceWorkloadProfilesV9())
+	refreshArtifactFingerprint(t, &a.Preflight)
+	if len(a.Preflight.Fixture.WorkloadProfiles) != 39 {
+		t.Fatalf("historical schema-v9 profile count = %d, want 39", len(a.Preflight.Fixture.WorkloadProfiles))
+	}
+	if err := ValidateRecord(a.Preflight); err != nil {
+		t.Fatalf("schema-v9 artifact no longer validates against its original matrix: %v", err)
+	}
+}
+
+func TestSchemaTenRequiresExactHigherRateTLSHandshakes(t *testing.T) {
+	for _, index := range []int{33, 34} {
+		t.Run(ReferenceWorkloadProfiles()[index].ID, func(t *testing.T) {
+			a := passingArtifact(t)
+			a.Preflight.WorkloadObservations[index].ClientTLSHandshakes = 0
+			if err := ValidateRecord(a.Preflight); err == nil {
+				t.Fatal("schema-v10 calibration accepted missing TLS handshake evidence at higher load")
+			}
+		})
+	}
+}
+
 func TestSchemaSixRejectsAlteredConnectionPolicyTuple(t *testing.T) {
 	a := passingArtifact(t)
 	a.Preflight.Fixture.WorkloadProfiles[15].Duration = "5s"
@@ -362,15 +392,30 @@ func TestSchemaThreeArtifactsRemainReadableWithOriginalMatrix(t *testing.T) {
 
 func passingObservationsForProfiles(profiles []WorkloadProfile) []WorkloadObservation {
 	observations := make([]WorkloadObservation, 0, len(profiles))
+	hasClosedLoop := false
+	for _, profile := range profiles {
+		hasClosedLoop = hasClosedLoop || profile.Mode == "closed"
+	}
 	for _, profile := range profiles {
 		duration, _ := time.ParseDuration(profile.Duration)
 		planned := int64(profile.ArrivalRate) * int64(duration/time.Second)
+		if profile.Mode == "closed" {
+			planned = int64(profile.Users)
+		}
 		requestBytes := int64(profile.RequestBodyBytes) * planned
 		responseBytes := int64(profile.ResponseBodyBytes) * planned
-		tcpConnections, _ := ExpectedReferenceTCPConnections(profile, planned)
+		connectionObservations := planned
+		if profile.Mode == "closed" {
+			connectionObservations = 1
+		}
+		tcpConnections, _ := ExpectedReferenceTCPConnections(profile, connectionObservations)
 		tlsHandshakes, _ := ExpectedReferenceTLSHandshakes(profile, planned)
+		mode, arrivalAccounting := "", false
+		if hasClosedLoop {
+			mode, arrivalAccounting = profile.Mode, profile.Mode == "arrival"
+		}
 		observations = append(observations, WorkloadObservation{
-			ProfileID: profile.ID, Scheduled: planned, Admitted: planned, Started: planned,
+			ProfileID: profile.ID, Mode: mode, ArrivalAccountingApplicable: arrivalAccounting, Scheduled: planned, Admitted: planned, Started: planned,
 			Completed: planned, Outcome: "PASS", ClientCompleteBodyObservations: planned,
 			ClientTLSHandshakes:    tlsHandshakes,
 			ClientResponseMinBytes: int64(profile.ResponseBodyBytes),
@@ -379,6 +424,11 @@ func passingObservationsForProfiles(profiles []WorkloadProfile) []WorkloadObserv
 			ServerTCPConnections:   tcpConnections,
 			ServerRequestBodyBytes: requestBytes, ServerResponseBodyBytes: responseBytes,
 		})
+		if profile.Mode == "closed" {
+			last := &observations[len(observations)-1]
+			last.Scheduled, last.Admitted, last.Dropped, last.ArrivalAccountingApplicable = 0, 0, 0, false
+			last.ServerTCPConnections = 1
+		}
 	}
 	return observations
 }

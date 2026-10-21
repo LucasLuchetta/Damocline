@@ -158,6 +158,11 @@ func TestValidProfileMatrixRejectsUntestedRateAndShape(t *testing.T) {
 	if validProfileMatrix(profiles) {
 		t.Fatal("unmeasured response shape was accepted")
 	}
+	profiles = syntheticCalibration().Preflight.Fixture.WorkloadProfiles
+	profiles[len(profiles)-7].ArrivalRate = 30
+	if validProfileMatrix(profiles) {
+		t.Fatal("untested TLS load rate was accepted")
+	}
 }
 
 func TestHealthyStageMatrixRequiresExactRequestedRates(t *testing.T) {
@@ -192,8 +197,8 @@ func TestHealthyStageMatrixRequiresExactRequestedRates(t *testing.T) {
 
 func TestCalibrationLedgersReconcileIndependently(t *testing.T) {
 	document := syntheticCalibration()
-	if !aggregateServerLedgerMatches(document) || !profileLedgersMatch(document.Preflight.Fixture.WorkloadProfiles, document.WorkloadObservations) || !workloadRunsMatch(document.Preflight.Fixture.WorkloadProfiles, document.WorkloadRuns) || !soakMatches(document.SoakRun) {
-		t.Fatalf("complete synthetic lab fixture failed a ledger: aggregate=%t profiles=%t runs=%t soak=%t", aggregateServerLedgerMatches(document), profileLedgersMatch(document.Preflight.Fixture.WorkloadProfiles, document.WorkloadObservations), workloadRunsMatch(document.Preflight.Fixture.WorkloadProfiles, document.WorkloadRuns), soakMatches(document.SoakRun))
+	if !aggregateServerLedgerMatches(document) || !profileLedgersMatch(document.Preflight.Fixture.WorkloadProfiles, document.WorkloadObservations) || !workloadRunsMatch(document.Preflight.Fixture.WorkloadProfiles, document.WorkloadRuns, document.WorkloadObservations) || !soakMatches(document.SoakRun) {
+		t.Fatalf("complete synthetic lab fixture failed a ledger: aggregate=%t profiles=%t runs=%t soak=%t", aggregateServerLedgerMatches(document), profileLedgersMatch(document.Preflight.Fixture.WorkloadProfiles, document.WorkloadObservations), workloadRunsMatch(document.Preflight.Fixture.WorkloadProfiles, document.WorkloadRuns, document.WorkloadObservations), soakMatches(document.SoakRun))
 	}
 	document.Server.ResponseBodyBytes++
 	if aggregateServerLedgerMatches(document) {
@@ -203,6 +208,11 @@ func TestCalibrationLedgersReconcileIndependently(t *testing.T) {
 	document.WorkloadObservations[0].ServerTCPConnections++
 	if profileLedgersMatch(document.Preflight.Fixture.WorkloadProfiles, document.WorkloadObservations) {
 		t.Fatal("independent profile TCP connection discrepancy was accepted")
+	}
+	document = syntheticCalibration()
+	document.WorkloadRuns[33].Steps[0].HTTPTrace.TLSCount++
+	if workloadRunsMatch(document.Preflight.Fixture.WorkloadProfiles, document.WorkloadRuns, document.WorkloadObservations) {
+		t.Fatal("client trace and independent TLS handshake/TCP ledgers were not cross-checked")
 	}
 }
 
@@ -366,7 +376,7 @@ func syntheticCalibration() calibrationDocument {
 	var document calibrationDocument
 	document.SchemaVersion = 1
 	document.Status = "REFERENCE_SMOKE_PASSED"
-	document.Preflight.SchemaVersion = 9
+	document.Preflight.SchemaVersion = 10
 	document.Preflight.ScenarioFingerprint = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	runtimeInfo := verifiedTestRuntime()
 	document.Preflight.Generator = calibration.Generator{
@@ -428,7 +438,7 @@ func syntheticCalibration() calibrationDocument {
 			}
 		}
 	}
-	for _, rate := range []int{2, 5, 10} {
+	for _, rate := range []int{2, 5, 10, 20, 40} {
 		profile := calibratedProfile{ID: fmt.Sprintf("https-get-4k-response-shape-r%d", rate), Mode: "arrival", TransportScheme: "https", Method: "GET", Path: "/matrix/https-4k",
 			ResponseBodyBytes: 4096, ArrivalRate: rate, MaxRPS: 50, Users: 10, Duration: "5s", Timeout: "1s", ConnectionPolicy: "reuse"}
 		document.Preflight.Fixture.WorkloadProfiles = append(document.Preflight.Fixture.WorkloadProfiles, profile)
