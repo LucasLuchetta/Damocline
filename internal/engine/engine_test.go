@@ -128,7 +128,9 @@ func TestConnectionPoolQueueWaitIsMeasuredAndReported(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	v.Duration = 350 * time.Millisecond
+	// Keep enough observation time for the first 2 RPS slot even when the
+	// Windows runner is briefly descheduled while the full suite is running.
+	v.Duration = 2 * time.Second
 	r := Run(context.Background(), v)
 	if len(r.Steps) != 1 || r.Steps[0].HTTPTrace.ConnectionWaitCount == 0 || r.Steps[0].HTTPTrace.ConnectionWaitMS < 10 {
 		t.Fatalf("limited transport did not retain a reused-connection wait: %+v", r.Steps)
