@@ -137,11 +137,20 @@ type PhaseAudit struct {
 // interval and does not establish decision confidence.
 type Assessment struct {
 	SchemaVersion int                  `json:"schema_version"`
+	Auditor       AuditorIdentity      `json:"auditor"`
 	Audit         CampaignAudit        `json:"audit"`
 	Confidence    ConfidenceDimensions `json:"confidence_dimensions"`
 	DemandInputs  *capacitygoal.Goal   `json:"demand_inputs,omitempty"`
 	Demand        *Result              `json:"demand,omitempty"`
 	State         string               `json:"state"`
+}
+
+// AuditorIdentity identifies the tool build that interpreted the campaign.
+// The executable digest identifies exact bytes, while the version is a
+// human-readable label; neither attests who built or distributed the binary.
+type AuditorIdentity struct {
+	Version          string `json:"version"`
+	ExecutableSHA256 string `json:"executable_sha256"`
 }
 
 // ConfidenceDimensions keeps measurement evidence, workload representativeness,
@@ -156,7 +165,7 @@ type ConfidenceDimensions struct {
 
 func BuildAssessment(e campaign.Result, goal *capacitygoal.Goal) (Assessment, error) {
 	audit := AuditCampaign(e)
-	assessment := Assessment{SchemaVersion: 5, Audit: audit, Confidence: assessConfidence(e, audit), State: audit.State}
+	assessment := Assessment{SchemaVersion: 6, Audit: audit, Confidence: assessConfidence(e, audit), State: audit.State}
 	if goal != nil {
 		plan, err := Evaluate(e, *goal)
 		if err != nil {

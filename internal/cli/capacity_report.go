@@ -35,6 +35,9 @@ func renderCampaignCapacityReport(assessment capacityplan.Assessment, source, re
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "## Technical evidence")
 	fmt.Fprintln(&b)
+	if assessment.Auditor.ExecutableSHA256 != "" {
+		fmt.Fprintf(&b, "- **Auditor version:** %s\n- **Auditor executable SHA-256:** %s\n", markdownText(assessment.Auditor.Version), markdownCode(assessment.Auditor.ExecutableSHA256))
+	}
 	fmt.Fprintf(&b, "- **Campaign evidence ID:** %s\n- **Campaign schema:** %d\n- **Campaign execution state:** %s\n- **Scenario:** %s\n- **Declared environment:** %s\n- **Target origin:** %s\n- **Start time:** %s\n- **Host type:** %s\n- **Required phase duration reviewed:** %s\n- **Base active users:** %d\n- **Workload fingerprint:** %s\n", markdownCode(a.EvidenceID), a.SchemaVersion, markdownText(evidence.ExecutionState), markdownText(evidence.Scenario), markdownText(evidence.DeclaredEnvironment), markdownText(a.Target), markdownText(a.StartedAt), markdownText(a.HostType), markdownText(a.TestedDuration), evidence.BaseUsers, markdownCode(a.ScenarioFingerprint))
 	fmt.Fprintf(&b, "- **Campaign source file SHA-256:** %s\n", markdownCode(a.SourceFileSHA256))
 	fmt.Fprintln(&b, "- **Evidence ID scope:** SHA-256 of canonical decoded campaign fields; it identifies the fields interpreted by this reader. The source file SHA-256 separately covers the exact input bytes, including whitespace and fields unknown to this reader. Neither digest is a signature or producer/host/target attestation.")
@@ -126,7 +129,7 @@ func renderCampaignCapacityReport(assessment capacityplan.Assessment, source, re
 	fmt.Fprintln(&b, "### Offline replay")
 	fmt.Fprintln(&b)
 	fmt.Fprintf(&b, "Source campaign: %s (verify its interpreted fields against evidence ID %s and exact bytes against source SHA-256 %s).\n\n", markdownCode(source), markdownCode(a.EvidenceID), markdownCode(a.SourceFileSHA256))
-	fmt.Fprintf(&b, "%s\n", markdownCodeFence("powershell", markdownReplayCommand([]string{source}, []string{a.EvidenceID}, []string{a.SourceFileSHA256}, assessment.DemandInputs)))
+	fmt.Fprintf(&b, "%s\n", markdownCodeFence("powershell", markdownReplayCommand([]string{source}, []string{a.EvidenceID}, []string{a.SourceFileSHA256}, assessment.Auditor.ExecutableSHA256, assessment.DemandInputs)))
 	fmt.Fprintf(&b, "\nReport generated locally at %s. The saved campaign is the source of truth; keep it with this assessment.\n", markdownCode(reportPath))
 	return b.String()
 }
@@ -194,6 +197,9 @@ func renderCampaignCollectionCapacityReport(assessment capacityplan.CampaignColl
 	fmt.Fprintln(&b, "## Technical evidence")
 	fmt.Fprintln(&b)
 	fmt.Fprintf(&b, "- **Scenario:** %s\n- **Target origin:** %s\n- **Declared workload fingerprint:** `%s`\n- **Collection assessment type:** `%s`\n", markdownText(assessment.Scenario), markdownText(assessment.Target), markdownCode(assessment.WorkloadFingerprint), markdownCode(assessment.AssessmentType))
+	if assessment.Auditor.ExecutableSHA256 != "" {
+		fmt.Fprintf(&b, "- **Auditor version:** %s\n- **Auditor executable SHA-256:** %s\n", markdownText(assessment.Auditor.Version), markdownCode(assessment.Auditor.ExecutableSHA256))
+	}
 	if len(assessment.Levels) > 0 && assessment.Levels[0].Assessment.Audit.Objectives != nil {
 		writeMarkdownObjectives(&b, assessment.Levels[0].Assessment.Audit.Objectives)
 	}
@@ -250,7 +256,7 @@ func renderCampaignCollectionCapacityReport(assessment capacityplan.CampaignColl
 		expectedEvidenceIDs[i] = capacityplan.AuditCampaign(item).EvidenceID
 		expectedFileSHA256s[i] = fileSHA256ByLevel[item.BaseUsers]
 	}
-	fmt.Fprintf(&b, "%s\n", markdownCodeFence("powershell", markdownReplayCommand(sources, expectedEvidenceIDs, expectedFileSHA256s, assessment.DemandInputs)))
+	fmt.Fprintf(&b, "%s\n", markdownCodeFence("powershell", markdownReplayCommand(sources, expectedEvidenceIDs, expectedFileSHA256s, assessment.Auditor.ExecutableSHA256, assessment.DemandInputs)))
 	fmt.Fprintf(&b, "\nReport generated locally at %s. Keep all source campaign files with this assessment.\n", markdownCode(reportPath))
 	return b.String()
 }
@@ -295,7 +301,7 @@ func writeMarkdownDemand(b *strings.Builder, inputs *capacitygoal.Goal, result *
 	fmt.Fprintf(b, "- **Calculated target:** %d workload-equivalent active actors; **plan state:** %s\n", result.TargetUsers, markdownText(result.State))
 }
 
-func markdownReplayCommand(sources, evidenceIDs, sourceFileSHA256s []string, goal *capacitygoal.Goal) string {
+func markdownReplayCommand(sources, evidenceIDs, sourceFileSHA256s []string, auditorSHA256 string, goal *capacitygoal.Goal) string {
 	var args []string
 	args = append(args, "damocline", "audit")
 	for i, source := range sources {
@@ -306,6 +312,9 @@ func markdownReplayCommand(sources, evidenceIDs, sourceFileSHA256s []string, goa
 		if i < len(sourceFileSHA256s) && sourceFileSHA256s[i] != "" {
 			args = append(args, "--expect-campaign-file-sha256", powershellQuote(sourceFileSHA256s[i]))
 		}
+	}
+	if auditorSHA256 != "" {
+		args = append(args, "--expect-auditor-sha256", powershellQuote(auditorSHA256))
 	}
 	if goal != nil {
 		args = append(args, "--peak-users", strconv.Itoa(goal.PeakUsers), "--growth-percent", markdownFloat(goal.GrowthPercent), "--reserve-percent", markdownFloat(goal.ReservePercent))

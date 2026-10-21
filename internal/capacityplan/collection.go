@@ -24,6 +24,7 @@ const MaxCampaignCollectionSize = 20
 // or interprets the observations as a sustainable-capacity curve.
 type CampaignCollectionAssessment struct {
 	SchemaVersion       int                       `json:"schema_version"`
+	Auditor             AuditorIdentity           `json:"auditor"`
 	AssessmentType      string                    `json:"assessment_type"`
 	State               string                    `json:"state"`
 	Scenario            string                    `json:"scenario,omitempty"`
@@ -103,7 +104,7 @@ func BuildCampaignCollectionAssessment(evidence []campaign.Result, goal *capacit
 		return CampaignCollectionAssessment{}, fmt.Errorf("campaign collection must contain 2-%d reports", MaxCampaignCollectionSize)
 	}
 	result := CampaignCollectionAssessment{
-		SchemaVersion:  3,
+		SchemaVersion:  4,
 		AssessmentType: "CAMPAIGN_LEVEL_COLLECTION",
 		State:          "OBSERVED_LEVELS_ONLY",
 		Levels:         make([]CampaignLevelAssessment, 0, len(evidence)),

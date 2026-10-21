@@ -22,6 +22,7 @@ func auditCmd(args []string, stdout, stderr io.Writer) int {
 	fs.Var(&expectedEvidenceIDs, "expect-evidence-id", "require the campaign SHA-256 evidence ID; repeat in --campaign order")
 	var expectedCampaignFileSHA256s stringList
 	fs.Var(&expectedCampaignFileSHA256s, "expect-campaign-file-sha256", "require the exact campaign file SHA-256; repeat in --campaign order")
+	expectedAuditorSHA256 := fs.String("expect-auditor-sha256", "", "require this exact auditor executable SHA-256 before replay")
 	out := fs.String("out", "", "optional combined assessment JSON output path")
 	reportOut := fs.String("report-out", "", "optional executive and technical Markdown report path")
 	peak := fs.Int("peak-users", 0, "optional expected simultaneous active workload-equivalent users")
@@ -31,7 +32,7 @@ func auditCmd(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	if len(paths) == 0 || len(fs.Args()) != 0 {
-		fmt.Fprintln(stderr, "usage: damocline audit --campaign campaign.json [--campaign higher-level.json] [--expect-evidence-id sha256:<64-hex>]... [--expect-campaign-file-sha256 sha256:<64-hex>]... [--peak-users 20] [--growth-percent 25] [--reserve-percent 20] [--out assessment.json] [--report-out capacity-report.md]")
+		fmt.Fprintln(stderr, "usage: damocline audit --campaign campaign.json [--campaign higher-level.json] [--expect-evidence-id sha256:<64-hex>]... [--expect-campaign-file-sha256 sha256:<64-hex>]... [--expect-auditor-sha256 sha256:<64-hex>] [--peak-users 20] [--growth-percent 25] [--reserve-percent 20] [--out assessment.json] [--report-out capacity-report.md]")
 		return 2
 	}
 	if len(paths) > capacityplan.MaxCampaignCollectionSize {
@@ -44,6 +45,19 @@ func auditCmd(args []string, stdout, stderr io.Writer) int {
 	}
 	if err := validateExpectedCampaignFileSHA256Count(expectedCampaignFileSHA256s, len(paths)); err != nil {
 		fmt.Fprintf(stderr, "invalid expected campaign file SHA-256 values: %v\n", err)
+		return 2
+	}
+	if *expectedAuditorSHA256 != "" && !validAuditorSHA256(*expectedAuditorSHA256) {
+		fmt.Fprintln(stderr, "invalid expected auditor SHA-256: use sha256:<64 lowercase hexadecimal characters>")
+		return 2
+	}
+	auditor, err := currentAuditorIdentity()
+	if err != nil {
+		fmt.Fprintf(stderr, "cannot identify audit executable: %v\n", err)
+		return 2
+	}
+	if *expectedAuditorSHA256 != "" && auditor.ExecutableSHA256 != *expectedAuditorSHA256 {
+		fmt.Fprintf(stderr, "auditor executable SHA-256 is %s; expected %s\n", auditor.ExecutableSHA256, *expectedAuditorSHA256)
 		return 2
 	}
 	demandRequested := false
@@ -61,7 +75,7 @@ func auditCmd(args []string, stdout, stderr io.Writer) int {
 		goal = &capacitygoal.Goal{PeakUsers: *peak, GrowthPercent: *growth, ReservePercent: *reserve}
 	}
 	if len(paths) > 1 {
-		return auditCampaignCollection(paths, expectedEvidenceIDs, expectedCampaignFileSHA256s, goal, *out, *reportOut, stdout, stderr)
+		return auditCampaignCollection(paths, expectedEvidenceIDs, expectedCampaignFileSHA256s, auditor, goal, *out, *reportOut, stdout, stderr)
 	}
 	evidence, sourceFileSHA256, err := capacityplan.ReadCampaignWithFileSHA256(paths[0])
 	if err != nil {
@@ -82,6 +96,7 @@ func auditCmd(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	assessment.Audit.SourceFileSHA256 = sourceFileSHA256
+	assessment.Auditor = auditor
 	audit := assessment.Audit
 	fmt.Fprintln(stdout, "--- DAMOCLINE | CAMPAIGN EVIDENCE AUDIT (OFFLINE) ---")
 	fmt.Fprintf(stdout, "Observed campaign outcome: %s\n", audit.ObservedOutcome)
@@ -156,7 +171,7 @@ func (values *stringList) Set(value string) error {
 	return nil
 }
 
-func auditCampaignCollection(paths, expectedEvidenceIDs, expectedCampaignFileSHA256s []string, goal *capacitygoal.Goal, out, reportOut string, stdout, stderr io.Writer) int {
+func auditCampaignCollection(paths, expectedEvidenceIDs, expectedCampaignFileSHA256s []string, auditor capacityplan.AuditorIdentity, goal *capacitygoal.Goal, out, reportOut string, stdout, stderr io.Writer) int {
 	evidence, sourceFileSHA256s, err := capacityplan.ReadCampaignCollectionWithFileSHA256(paths)
 	if err != nil {
 		fmt.Fprintf(stderr, "cannot read campaign collection: %v\n", err)
@@ -179,12 +194,14 @@ func auditCampaignCollection(paths, expectedEvidenceIDs, expectedCampaignFileSHA
 		fmt.Fprintf(stderr, "cannot assess campaign collection: %v\n", err)
 		return 2
 	}
+	assessment.Auditor = auditor
 	fileSHA256ByLevel := make(map[int]string, len(evidence))
 	for index, item := range evidence {
 		fileSHA256ByLevel[item.BaseUsers] = sourceFileSHA256s[index]
 	}
 	for index := range assessment.Levels {
 		assessment.Levels[index].Assessment.Audit.SourceFileSHA256 = fileSHA256ByLevel[assessment.Levels[index].TestedUsers]
+		assessment.Levels[index].Assessment.Auditor = auditor
 	}
 	fmt.Fprintln(stdout, "--- DAMOCLINE | CAMPAIGN LEVEL AUDIT (OFFLINE) ---")
 	fmt.Fprintf(stdout, "Level collection verdict: %s\n", assessment.State)

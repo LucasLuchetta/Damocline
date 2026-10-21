@@ -61,12 +61,19 @@ records an offline replay command pinned to both each source campaign's
 decoded evidence ID and exact file-byte SHA-256. You can pin an audit explicitly
 with repeated `--expect-evidence-id sha256:<64-hex>` and
 `--expect-campaign-file-sha256 sha256:<64-hex>` flags, one of each per
-`--campaign` in argument order. The audit hashes the same bounded byte buffer it
-decodes, then stops before writing assessment outputs if either digest differs.
+`--campaign` in argument order. Assessment schema v6 and collection schema v4
+also record the auditor version and exact executable SHA-256. Generated replay
+commands pass `--expect-auditor-sha256`; a different executable is rejected
+before campaign files are read or outputs are written. This lets reviewers see
+which implementation produced the assessment and reproduce it with the same
+binary. The audit hashes the same bounded campaign byte buffer it decodes, then
+stops before writing assessment outputs if any expected digest differs.
 The decoded evidence ID identifies the normalized fields interpreted by this
 auditor; the file hash also covers whitespace and fields unknown to this
-reader. Both are unkeyed digests, not signatures, immutable storage, or proof
-of who produced the evidence.
+reader. Campaign and executable hashes are unkeyed digests, not signatures,
+immutable storage, or proof of who built or produced the evidence. If the exact
+auditor binary is unavailable later, reviewers can still inspect the recorded
+version and digest but cannot satisfy the generated exact-binary replay check.
 
 Each assessment includes a SHA-256 digest of the normalized, schema-decoded
 campaign evidence, a separate SHA-256 digest of the exact source file bytes,
