@@ -335,6 +335,33 @@ func TestReadRunRejectsMissingAggregateCountersAcrossSupportedSchemas(t *testing
 	}
 }
 
+func TestReadRunRejectsMissingTargetAcrossSupportedSchemas(t *testing.T) {
+	for version := 1; version <= report.CurrentSchemaVersion; version++ {
+		t.Run(fmt.Sprintf("schema_%d", version), func(t *testing.T) {
+			data, err := os.ReadFile(filepath.Join("testdata", "reports", fmt.Sprintf("schema-v%d.json", version)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var root map[string]json.RawMessage
+			if err := json.Unmarshal(data, &root); err != nil {
+				t.Fatal(err)
+			}
+			delete(root, "target")
+			encoded, err := json.Marshal(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(t.TempDir(), "missing-target.json")
+			if err := os.WriteFile(path, encoded, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := ReadRun(path); err == nil || !strings.Contains(err.Error(), "target identity") {
+				t.Fatalf("schema-v%d report without target identity was accepted: %v", version, err)
+			}
+		})
+	}
+}
+
 func TestReadRunAcceptsSchemaThreeGeneratorHealth(t *testing.T) {
 	r := synthetic()
 	r.SchemaVersion = 3

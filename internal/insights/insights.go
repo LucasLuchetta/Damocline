@@ -58,6 +58,9 @@ func ReadRun(path string) (report.Result, error) {
 // ValidateRunReport checks an already decoded run report using the same
 // schema and evidence rules as ReadRun.
 func ValidateRunReport(r report.Result) error {
+	if r.Target == "" {
+		return errors.New("run report omits the required target identity")
+	}
 	if r.SchemaVersion < 1 || r.SchemaVersion > report.CurrentSchemaVersion || r.Name == "" || r.Metrics.Total < 0 || r.Metrics.Success < 0 || r.Metrics.Failures < 0 || r.Metrics.Success+r.Metrics.Failures != r.Metrics.Total || r.Config.Users < 1 || r.ElapsedSeconds <= 0 || (r.SchemaVersion >= 4 && r.ObservationSeconds <= 0) || (r.SchemaVersion >= 11 && !validFingerprint(r.Config.WorkloadFingerprint)) || (r.SchemaVersion >= 14 && r.Config.ConnectionPolicy != "reuse" && r.Config.ConnectionPolicy != "new_per_request") {
 		return errors.New("not a valid Damocline HTTP run report")
 	}
