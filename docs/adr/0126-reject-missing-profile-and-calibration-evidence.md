@@ -23,7 +23,10 @@ Validate top-level calibration artifact fields and required embedded
 preflight, generator, and fixture evidence before typed decoding. Require
 effective CPU evidence from calibration schema v7 onward, fixture identity
 from schema v2, and workload matrix evidence from schema v3. Preserve earlier
-schema semantics and permit explicitly encoded zero-valued fields.
+schema semantics and permit explicitly encoded zero-valued fields. The
+calibrator's `checks` list may be null or empty when no discrepancies exist,
+so it is interpreted by its existing length/status contract rather than a
+presence check.
 
 ## Consequences
 

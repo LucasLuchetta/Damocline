@@ -312,6 +312,18 @@ func TestCalibrationArtifactRejectsOmittedRequiredEvidence(t *testing.T) {
 	}
 }
 
+func TestCalibrationArtifactAllowsNullChecksWhenNoDiscrepanciesExist(t *testing.T) {
+	a := passingArtifact(t)
+	a.Checks = nil
+	data, err := json.Marshal(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ValidateArtifactBytes(data, true); err != nil {
+		t.Fatalf("valid passing calibration with an empty nil checks list was rejected: %v", err)
+	}
+}
+
 func TestSchemaSixRequiresExactTCPConnectionEvidence(t *testing.T) {
 	tests := []struct {
 		name   string

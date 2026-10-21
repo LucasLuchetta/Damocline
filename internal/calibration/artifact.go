@@ -90,7 +90,7 @@ func validateArtifactPresence(data []byte) error {
 	if err := json.Unmarshal(data, &root); err != nil || root == nil {
 		return errors.New("calibration artifact must be a JSON object")
 	}
-	if err := requireFields(root, "schema_version", "status", "preflight", "checks", "scheduler_lag_calibration", "runs"); err != nil {
+	if err := requireFields(root, "schema_version", "status", "preflight", "scheduler_lag_calibration", "runs"); err != nil {
 		return errors.New("calibration artifact omits required evidence")
 	}
 	var preflight map[string]json.RawMessage
