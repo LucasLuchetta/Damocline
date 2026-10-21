@@ -99,6 +99,10 @@ func EvaluateJourneyCampaign(saved arrivalcampaign.Result, goal JourneyStartGoal
 			"The campaign is repeated and sustained only for its recorded phases and duration; passing evidence does not establish universal or long-term production capacity.",
 			"No infrastructure upgrade is justified by this HTTP evidence alone."},
 		Next: []string{"Use representative, independently verified workflows and session identities at the exact demand target.", "Collect time-aligned application and dependency evidence before making a capacity or infrastructure decision."}}
+	assessment.ScenarioIdentityStatus, assessment.WorkloadRevision, assessment.ApplicationRevision, assessment.DeclaredEnvironment = arrivalCampaignIdentity(saved)
+	if assessment.ScenarioIdentityStatus == "UNKNOWN" {
+		assessment.Findings = append(assessment.Findings, "Workload revision, application revision, or declared environment is missing from one or more required phases; scenario identity is not established.")
+	}
 	if saved.SchemaVersion >= 8 {
 		assessment.Objectives = saved.Objectives
 		assessment.StabilityPolicy = saved.StabilityPolicy
@@ -273,13 +277,16 @@ func EvaluateJourneyCampaign(saved arrivalcampaign.Result, goal JourneyStartGoal
 		saved.Outcome == "FAIL" && saved.Trials[len(saved.Trials)-1].Outcome != "FAIL" || saved.Outcome == "INCONCLUSIVE" && saved.Trials[len(saved.Trials)-1].Outcome != "INCONCLUSIVE" {
 		return JourneyStartAssessment{}, errors.New("campaign outcome disagrees with its terminal trial")
 	}
-	if allPass {
+	if allPass && assessment.ScenarioIdentityStatus == "CONSISTENT" {
 		assessment.State = "SUSTAINED_TARGET_PASSED_UNDER_TESTED_CONDITIONS"
 		matched := target
 		assessment.MatchedStartsPerSecond = &matched
 		assessment.MatchedTrials = len(saved.Trials)
 		assessment.Findings = append(assessment.Findings, fmt.Sprintf("All %d trials passed their required phases at exactly %d scheduled journey starts/s, under the saved workload, generator limits, SLOs, and observation schedule.", len(saved.Trials), target))
 		return assessment, nil
+	}
+	if allPass && assessment.ScenarioIdentityStatus != "CONSISTENT" {
+		assessment.Findings = append(assessment.Findings, "All native phase outcomes passed, but missing scenario identity metadata prevents a positive exact-demand assessment.")
 	}
 	if saved.Outcome == "FAIL" && observedSLOFailure {
 		assessment.State = "SLO_MISSED_AT_TESTED_TARGET"
@@ -288,6 +295,33 @@ func EvaluateJourneyCampaign(saved arrivalcampaign.Result, goal JourneyStartGoal
 		assessment.Findings = append(assessment.Findings, "The campaign ended with a failing phase, but the saved evidence does not establish a valid target SLO miss with adequate delivery, measurement quality and generator headroom.")
 	}
 	return assessment, nil
+}
+
+func arrivalCampaignIdentity(saved arrivalcampaign.Result) (status, workloadRevision, applicationRevision, environment string) {
+	seen := false
+	for _, trial := range saved.Trials {
+		for _, phase := range trial.Phases {
+			if phase.Name == "warmup" {
+				continue
+			}
+			config := phase.Run.Config
+			if config.WorkloadRevision == "" || config.ApplicationRevision == "" || config.Environment == "" {
+				return "UNKNOWN", "", "", ""
+			}
+			if !seen {
+				workloadRevision, applicationRevision, environment = config.WorkloadRevision, config.ApplicationRevision, config.Environment
+				seen = true
+				continue
+			}
+			if config.WorkloadRevision != workloadRevision || config.ApplicationRevision != applicationRevision || config.Environment != environment {
+				return "CHANGED", "", "", ""
+			}
+		}
+	}
+	if !seen {
+		return "UNKNOWN", "", "", ""
+	}
+	return "CONSISTENT", workloadRevision, applicationRevision, environment
 }
 
 func comparableCampaignConfig(config report.RunConfig) ([]byte, error) {

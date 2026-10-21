@@ -28,6 +28,12 @@ type JourneyStartGoal struct {
 // journey-start rate. It does not estimate a continuous capacity curve.
 type JourneyStartAssessment struct {
 	SourceEvidenceID              string `json:"source_evidence_id,omitempty"`
+	ScenarioIdentityStatus        string `json:"scenario_identity_status,omitempty"`
+	WorkloadRevision              string `json:"workload_revision,omitempty"`
+	ApplicationRevision           string `json:"application_revision,omitempty"`
+	DeclaredEnvironment           string `json:"declared_environment,omitempty"`
+	AuditorVersion                string `json:"auditor_version,omitempty"`
+	AuditorExecutableSHA256       string `json:"auditor_executable_sha256,omitempty"`
 	PeakStartsPerSecond           int
 	TargetStartsPerSecond         int
 	GrowthPercent                 float64

@@ -4,6 +4,7 @@ This project follows a human-maintained changelog. No release exists yet.
 
 ## [Unreleased]
 
+- Include declared environment, workload revision, and application revision in open-arrival campaign goal assessments; missing identity stays unknown and prevents a positive exact-target decision. Record auditor version and executable SHA-256, and pin both source bytes and auditor binary in deterministic offline replay.
 - Preserve declared workload revision, application revision, and environment in single-campaign capacity assessments; mark missing or changing phase identity unknown/inconclusive, and require stable matching identity across levels before aggregating a tested boundary.
 - Keep campaign capacity Markdown content independent of the report output path so identical source, auditor, and demand inputs reproduce byte-identical reports across destinations; keep local output paths out of the report body.
 - Preserve valid partial failure evidence in historical campaign schemas v2 and v4 by validating their recorded outcome/stability vocabulary under historical rules; classify conflicts with current recomputation as inconclusive instead of invalidating the artifact.

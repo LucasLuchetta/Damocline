@@ -104,6 +104,17 @@ Campaign collections require the labels to be present and match across every
 level before they report an aggregate tested boundary. When that check fails,
 each level's audit remains visible and the collection is `NOT_COMPARABLE`.
 
+Open-arrival `goal` assessments apply the same declared-identity rule across
+every non-warm-up phase. Missing labels remain `UNKNOWN`, and changed labels
+cannot produce a positive exact-target result. The generated replay command
+pins both the exact source campaign bytes and the auditor executable SHA-256;
+each mismatch is rejected before output files are written. These hashes are
+unkeyed change identifiers, not signatures or proof of build origin. The
+auditor pin is supported for open-arrival campaign assessments, whose JSON and
+Markdown output records the auditor version and executable digest. Older
+campaigns without phase identity remain readable but cannot establish that
+identity.
+
 `workflow_breaches` identifies each trial, required phase, tested VU level,
 workflow, breached p95/error objective, and observed values. A failure count
 inside the configured error budget is not labeled a breach. These observations

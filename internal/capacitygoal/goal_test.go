@@ -160,6 +160,36 @@ func TestArrivalCampaignDemandRequiresExactBaseAndConsistentArtifact(t *testing.
 	}
 }
 
+func TestArrivalCampaignIdentityIsExplicitAndMissingIdentityCannotUpgradeEvidence(t *testing.T) {
+	base := arrivalcampaign.Result{Trials: []arrivalcampaign.Trial{{Phases: []arrivalcampaign.Phase{
+		{Name: "warmup", Run: report.Result{Config: report.RunConfig{WorkloadRevision: "ignored"}}},
+		{Name: "observation", Run: report.Result{Config: report.RunConfig{WorkloadRevision: "workload-v1", ApplicationRevision: "app-v1", Environment: "staging"}}},
+		{Name: "recovery", Run: report.Result{Config: report.RunConfig{WorkloadRevision: "workload-v1", ApplicationRevision: "app-v1", Environment: "staging"}}},
+	}}}}
+	status, workload, application, environment := arrivalCampaignIdentity(base)
+	if status != "CONSISTENT" || workload != "workload-v1" || application != "app-v1" || environment != "staging" {
+		t.Fatalf("arrival campaign identity summary = %q %q %q %q", status, workload, application, environment)
+	}
+	base.Trials[0].Phases[1].Run.Config.ApplicationRevision = "app-v2"
+	if status, _, _, _ := arrivalCampaignIdentity(base); status != "CHANGED" {
+		t.Fatalf("changed phase identity status = %q, want CHANGED", status)
+	}
+	base.Trials[0].Phases[1].Run.Config.ApplicationRevision = "app-v1"
+	base.Trials[0].Phases[1].Run.Config.Environment = ""
+	if status, _, _, _ := arrivalCampaignIdentity(base); status != "UNKNOWN" {
+		t.Fatalf("missing phase identity status = %q, want UNKNOWN", status)
+	}
+
+	saved := arrivalcampaign.Result{SchemaVersion: 1, Scenario: "synthetic", Target: "https://app.example.com", StartedAt: time.Now().UTC().Format(time.RFC3339), WorkloadFingerprint: "fingerprint", WorkerLimit: 2,
+		RequestTimeout: "2s", RequestRateCeiling: 10, P95LimitMS: 500, MaxErrorRate: .1, MinSamplesPerStep: 1,
+		BaseStartsPerSecond: 3, Warmup: "0s", Observation: "30s", Recovery: "10s", Budget: "4m", Repeats: 2,
+		Trials: []arrivalcampaign.Trial{{Number: 1, Outcome: "ABORTED", AbortReason: "interrupted"}}, Outcome: "ABORTED"}
+	assessment, err := EvaluateJourneyCampaign(saved, JourneyStartGoal{PeakStartsPerSecond: 2})
+	if err != nil || assessment.State != "TARGET_NOT_DIRECTLY_TESTED" || assessment.ScenarioIdentityStatus != "UNKNOWN" {
+		t.Fatalf("missing arrival identity was not retained as unknown evidence: assessment=%+v err=%v", assessment, err)
+	}
+}
+
 func TestCurrentArrivalCampaignRejectsDuplicateTrialRunIDs(t *testing.T) {
 	saved := arrivalcampaign.Result{
 		SchemaVersion: arrivalcampaign.CurrentSchemaVersion, ExecutionState: "COMPLETED", Scenario: "synthetic", Target: "https://app.example.com",

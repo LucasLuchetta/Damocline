@@ -11,6 +11,7 @@ import (
 	"github.com/LucasLuchetta/Damocline/internal/arrivalcampaign"
 	"github.com/LucasLuchetta/Damocline/internal/arrivalexplorer"
 	"github.com/LucasLuchetta/Damocline/internal/capacitygoal"
+	"github.com/LucasLuchetta/Damocline/internal/capacityplan"
 	"github.com/LucasLuchetta/Damocline/internal/explorer"
 	"github.com/LucasLuchetta/Damocline/internal/jsonartifact"
 )
@@ -30,12 +31,30 @@ func goalCmd(args []string, stdout, stderr io.Writer) int {
 	out := fs.String("out", "", "optional offline assessment JSON output path")
 	reportOut := fs.String("report-out", "", "optional executive and technical Markdown report path")
 	expectedSourceSHA256 := fs.String("expect-source-sha256", "", "require the exact source file SHA-256 as sha256:<64 lowercase hexadecimal characters>")
+	expectedAuditorSHA256 := fs.String("expect-auditor-sha256", "", "require the exact auditor executable SHA-256 as sha256:<64 lowercase hexadecimal characters>")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 	if *path == "" || *peakUsers < 0 || *peakStarts < 0 || (*peakUsers == 0) == (*peakStarts == 0) || len(fs.Args()) != 0 {
-		fmt.Fprintln(stderr, "usage: damocline goal --file capacity.json (--peak-users 20 | --peak-journeys-per-second 5) [--growth-percent 25] [--reserve-percent 20] [--out assessment.json] [--report-out capacity.md]")
+		fmt.Fprintln(stderr, "usage: damocline goal --file capacity.json (--peak-users 20 | --peak-journeys-per-second 5) [--growth-percent 25] [--reserve-percent 20] [--expect-source-sha256 sha256:<64-hex>] [--expect-auditor-sha256 sha256:<64-hex>] [--out assessment.json] [--report-out capacity.md]")
 		return 2
+	}
+	var pinnedAuditor capacityplan.AuditorIdentity
+	if *expectedAuditorSHA256 != "" {
+		if !validAuditorSHA256(*expectedAuditorSHA256) {
+			fmt.Fprintln(stderr, "invalid expected auditor SHA-256: use sha256:<64 lowercase hexadecimal characters>")
+			return 2
+		}
+		var err error
+		pinnedAuditor, err = currentAuditorIdentity()
+		if err != nil {
+			fmt.Fprintf(stderr, "cannot identify audit executable: %v\n", err)
+			return 2
+		}
+		if pinnedAuditor.ExecutableSHA256 != *expectedAuditorSHA256 {
+			fmt.Fprintf(stderr, "auditor executable SHA-256 is %s; expected %s\n", pinnedAuditor.ExecutableSHA256, *expectedAuditorSHA256)
+			return 2
+		}
 	}
 	file, err := os.Open(*path)
 	if err != nil {
@@ -75,6 +94,10 @@ func goalCmd(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "invalid capacity report JSON: %v\n", err)
 		return 2
 	}
+	if *expectedAuditorSHA256 != "" && shape.ArrivalCampaignVersion == nil {
+		fmt.Fprintln(stderr, "--expect-auditor-sha256 is supported only for open-arrival campaign assessments")
+		return 2
+	}
 
 	fmt.Fprintln(stdout, "\n--- DAMOCLINE | CAPACITY GOAL (OFFLINE) ---")
 	if shape.ArrivalCampaignVersion != nil {
@@ -94,6 +117,17 @@ func goalCmd(args []string, stdout, stderr io.Writer) int {
 		}
 		sourceDigest := fmt.Sprintf("sha256:%x", sha256.Sum256(data))
 		assessment.SourceEvidenceID = sourceDigest
+		auditor := pinnedAuditor
+		if auditor.ExecutableSHA256 == "" {
+			auditor, err = currentAuditorIdentity()
+			if err != nil {
+				fmt.Fprintf(stderr, "cannot identify audit executable: %v\n", err)
+				return 2
+			}
+		}
+		assessment.AuditorVersion = auditor.Version
+		assessment.AuditorExecutableSHA256 = auditor.ExecutableSHA256
+		fmt.Fprintf(stdout, "Scenario identity consistency: %s\n", assessment.ScenarioIdentityStatus)
 		fmt.Fprintf(stdout, "Expected peak: %d scheduled journey starts/s\n", assessment.PeakStartsPerSecond)
 		fmt.Fprintf(stdout, "Planned growth: %.1f%% | Reserve: %.1f%%\n", assessment.GrowthPercent, assessment.ReservePercent)
 		fmt.Fprintf(stdout, "DEMAND TO VALIDATE: %d scheduled journey starts/s\n", assessment.TargetStartsPerSecond)

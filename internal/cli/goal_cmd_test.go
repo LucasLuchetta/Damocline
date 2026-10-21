@@ -108,8 +108,12 @@ func TestGoalCommandWritesOpenArrivalObjectiveReportOffline(t *testing.T) {
 		t.Fatal(err)
 	}
 	expectedDigest := fmt.Sprintf("sha256:%x", sha256.Sum256(sourceBytes))
+	auditor, err := currentAuditorIdentity()
+	if err != nil {
+		t.Fatalf("identify auditor: %v", err)
+	}
 	var stdout, stderr bytes.Buffer
-	code := Run([]string{"goal", "--file", campaignPath, "--expect-source-sha256", expectedDigest, "--peak-journeys-per-second", "1", "--out", assessmentPath, "--report-out", markdownPath}, &stdout, &stderr)
+	code := Run([]string{"goal", "--file", campaignPath, "--expect-source-sha256", expectedDigest, "--expect-auditor-sha256", auditor.ExecutableSHA256, "--peak-journeys-per-second", "1", "--out", assessmentPath, "--report-out", markdownPath}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("goal exited %d: %s", code, stderr.String())
 	}
@@ -117,14 +121,29 @@ func TestGoalCommandWritesOpenArrivalObjectiveReportOffline(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"Open-arrival capacity assessment", "Predeclared objectives", "maximum dropped arrivals: 0", "maximum p95 increase", "SHA-256 of the exact source bytes: `" + expectedDigest + "`", "digest identifies the saved campaign bytes", "Offline replay", "--expect-source-sha256 '" + expectedDigest + "'", "--peak-journeys-per-second 1"} {
+	for _, want := range []string{"Open-arrival capacity assessment", "Predeclared objectives", "maximum dropped arrivals: 0", "maximum p95 increase", "SHA-256 of the exact source bytes: `" + expectedDigest + "`", "digest identifies the saved campaign bytes", "Scenario identity consistency:** UNKNOWN", "Auditor executable SHA-256:** `" + auditor.ExecutableSHA256 + "`", "Offline replay", "--expect-source-sha256 '" + expectedDigest + "'", "--expect-auditor-sha256 '" + auditor.ExecutableSHA256 + "'", "--peak-journeys-per-second 1"} {
 		if !strings.Contains(string(data), want) {
 			t.Fatalf("capacity report missing %q:\n%s", want, data)
 		}
 	}
 	assessmentData, err := os.ReadFile(assessmentPath)
-	if err != nil || !strings.Contains(string(assessmentData), `"predeclared_objectives"`) || !strings.Contains(string(assessmentData), `"stability_policy"`) || !strings.Contains(string(assessmentData), `"source_evidence_id": "`+expectedDigest+`"`) {
+	if err != nil || !strings.Contains(string(assessmentData), `"predeclared_objectives"`) || !strings.Contains(string(assessmentData), `"stability_policy"`) || !strings.Contains(string(assessmentData), `"source_evidence_id": "`+expectedDigest+`"`) || !strings.Contains(string(assessmentData), `"auditor_executable_sha256": "`+auditor.ExecutableSHA256+`"`) {
 		t.Fatalf("assessment did not retain its replay criteria: err=%v json=%s", err, assessmentData)
+	}
+	replayAssessmentPath := filepath.Join(dir, "replay-assessment.json")
+	replayMarkdownPath := filepath.Join(dir, "replay-capacity.md")
+	stdout.Reset()
+	stderr.Reset()
+	if code := Run([]string{"goal", "--file", campaignPath, "--expect-source-sha256", expectedDigest, "--expect-auditor-sha256", auditor.ExecutableSHA256, "--peak-journeys-per-second", "1", "--out", replayAssessmentPath, "--report-out", replayMarkdownPath}, &stdout, &stderr); code != 0 {
+		t.Fatalf("open-arrival report replay failed: code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	replayAssessment, err := os.ReadFile(replayAssessmentPath)
+	if err != nil || string(replayAssessment) != string(assessmentData) {
+		t.Fatalf("open-arrival assessment replay changed JSON: err=%v first=%s replay=%s", err, assessmentData, replayAssessment)
+	}
+	replayMarkdown, err := os.ReadFile(replayMarkdownPath)
+	if err != nil || string(replayMarkdown) != string(data) {
+		t.Fatalf("open-arrival assessment replay changed Markdown: err=%v first=%s replay=%s", err, data, replayMarkdown)
 	}
 
 	blockedAssessment := filepath.Join(dir, "must-not-write-assessment.json")
@@ -136,7 +155,20 @@ func TestGoalCommandWritesOpenArrivalObjectiveReportOffline(t *testing.T) {
 	}
 	for _, path := range []string{blockedAssessment, blockedReport} {
 		if _, err := os.Stat(path); !os.IsNotExist(err) {
-			t.Fatalf("digest mismatch wrote %s (stat error %v)", path, err)
+			t.Fatalf("source mismatch wrote %s (stat error %v)", path, err)
+		}
+	}
+	blockedAssessment = filepath.Join(dir, "wrong-auditor-assessment.json")
+	blockedReport = filepath.Join(dir, "wrong-auditor-report.md")
+	stdout.Reset()
+	stderr.Reset()
+	wrongAuditor := "sha256:" + strings.Repeat("0", 64)
+	if code := Run([]string{"goal", "--file", campaignPath, "--expect-auditor-sha256", wrongAuditor, "--peak-journeys-per-second", "1", "--out", blockedAssessment, "--report-out", blockedReport}, &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "auditor executable SHA-256") {
+		t.Fatalf("mismatched auditor digest was accepted: code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	for _, path := range []string{blockedAssessment, blockedReport} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("auditor mismatch wrote %s (stat error %v)", path, err)
 		}
 	}
 	stdout.Reset()
@@ -146,6 +178,20 @@ func TestGoalCommandWritesOpenArrivalObjectiveReportOffline(t *testing.T) {
 	}
 }
 
+func TestGoalRejectsAuditorPinForNonCampaignArtifact(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "exploration.json")
+	if err := report.WriteAnyJSON(path, map[string]any{"journey_worker_limit": 2}); err != nil {
+		t.Fatal(err)
+	}
+	auditor, err := currentAuditorIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	if code := Run([]string{"goal", "--file", path, "--peak-journeys-per-second", "1", "--expect-auditor-sha256", auditor.ExecutableSHA256}, &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "supported only for open-arrival campaign") {
+		t.Fatalf("auditor pin was silently accepted for another artifact: code=%d stderr=%s", code, stderr.String())
+	}
+}
 func TestGoalCommandRejectsInvalidJSONAndMissingFlags(t *testing.T) {
 	var out, errOut bytes.Buffer
 	if c := Run([]string{"goal"}, &out, &errOut); c != 2 {
