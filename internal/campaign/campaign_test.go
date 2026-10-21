@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -601,9 +602,35 @@ func TestNativeEngineCampaignRecordsStableLoopbackWindows(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := Run(context.Background(), v, Options{Observation: 10 * time.Second, Recovery: 10 * time.Second, Repeats: 2})
+	// This end-to-end fixture verifies native window and campaign evidence.
+	// Keep enough drift tolerance for hosted-runner scheduling noise; deterministic
+	// tests above exercise the default policy thresholds and boundary behavior.
+	stability := DefaultStabilityPolicy()
+	stability.MaxP95IncreasePercent = 50
+	stability.MaxP95IncreaseMS = 20
+	stability.MaxThroughputDropPercent = 50
+	result, err := Run(context.Background(), v, Options{Observation: 10 * time.Second, Recovery: 10 * time.Second, Repeats: 2, Stability: stability})
 	if err != nil || result.Outcome != "PASS" || len(result.Trials) != 2 || received.Load() < 400 {
-		t.Fatalf("bounded local campaign failed: outcome=%s trials=%d received=%d err=%v", result.Outcome, len(result.Trials), received.Load(), err)
+		var phases []string
+		for _, trial := range result.Trials {
+			for _, phase := range trial.Phases {
+				minP95, maxP95 := math.Inf(1), 0.0
+				generatorCPU := 0.0
+				if phase.Run.Generator != nil {
+					generatorCPU = phase.Run.Generator.MeanProcessCPUUtilizationRatio * 100
+				}
+				for _, window := range phase.Run.Windows {
+					if window.Metrics.P95MS < minP95 {
+						minP95 = window.Metrics.P95MS
+					}
+					if window.Metrics.P95MS > maxP95 {
+						maxP95 = window.Metrics.P95MS
+					}
+				}
+				phases = append(phases, fmt.Sprintf("trial=%d phase=%s evidence=%s stability=%s reason=%q outcome=%s requests=%d windows=%d window_p95_range_ms=%.1f..%.1f generator_cpu=%.2f%%", trial.Number, phase.Name, phase.EvidenceState, phase.Stability, phase.Reason, phase.Run.Outcome, phase.Run.Metrics.Total, len(phase.Run.Windows), minP95, maxP95, generatorCPU))
+			}
+		}
+		t.Fatalf("bounded local campaign failed: outcome=%s trials=%d received=%d err=%v phases=%v", result.Outcome, len(result.Trials), received.Load(), err, phases)
 	}
 	for _, trial := range result.Trials {
 		if len(trial.Phases) != 2 || trial.Phases[0].Name != "observation" || trial.Phases[0].Stability != "NO_LARGE_DRIFT_DETECTED" || trial.Phases[0].EvidenceState != "PASS_OBSERVED" || len(trial.Phases[0].Run.Windows) != 4 || trial.Phases[1].Name != "recovery" || trial.Phases[1].EvidenceState != "PASS_OBSERVED" {

@@ -14,16 +14,18 @@ received the measured workload.
 
 ## Decision
 
-Require a non-empty `target` in every supported run-report schema. Reject a
-missing or empty target at the shared typed-report validation boundary used by
-run inspection, dashboard, export, and campaign phase validation. Preserve
-existing historical schemas when they contain target identity. Do not infer a
-target from a workload fingerprint, scenario name, or external metadata.
+Require a valid absolute HTTP(S) origin in `target` for every supported
+run-report schema. Reject missing targets and values containing credentials,
+paths, queries, or fragments at the shared typed-report validation boundary
+used by run inspection, dashboard, export, and campaign phase validation.
+Preserve existing historical schemas when they contain a valid target origin.
+Do not infer a target from a workload fingerprint, scenario name, or external
+metadata.
 
 ## Consequences
 
-- A report cannot be presented as attributable run evidence when the target
-  identity is absent.
+- A report cannot be presented as attributable run evidence when its target
+  identity is missing or is not an HTTP(S) origin.
 - Tests remove `target` from every supported run-schema fixture and require
   rejection; current and historical fixtures with the field remain readable.
 - The recorded target is still a declaration, not cryptographic attestation

@@ -362,6 +362,28 @@ func TestReadRunRejectsMissingTargetAcrossSupportedSchemas(t *testing.T) {
 	}
 }
 
+func TestValidateRunReportRequiresHTTPOriginTarget(t *testing.T) {
+	for _, target := range []string{"", "app.example.com", "file://app.example.com", "https://user:secret@app.example.com", "https://app.example.com/path", "https://app.example.com?tenant=private", "https://app.example.com#section"} {
+		t.Run(target, func(t *testing.T) {
+			r := synthetic()
+			r.Target = target
+			if err := ValidateRunReport(r); err == nil || !strings.Contains(err.Error(), "target identity") {
+				t.Fatalf("invalid target identity %q was accepted: %v", target, err)
+			}
+		})
+	}
+	for _, target := range []string{"http://127.0.0.1", "https://app.example.com", "http://[::1]:8080"} {
+		t.Run("valid_"+target, func(t *testing.T) {
+			r := synthetic()
+			r.Target = target
+			r.ObservationSeconds = 30
+			if err := ValidateRunReport(r); err != nil {
+				t.Fatalf("valid HTTP origin %q was rejected: %v", target, err)
+			}
+		})
+	}
+}
+
 func TestReadRunAcceptsSchemaThreeGeneratorHealth(t *testing.T) {
 	r := synthetic()
 	r.SchemaVersion = 3

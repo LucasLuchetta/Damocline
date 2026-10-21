@@ -26,7 +26,7 @@ func TestReportExportWritesAllowlistedRedactedRunAndPreservesSource(t *testing.T
 	input := filepath.Join(dir, "private-run.json")
 	output := filepath.Join(dir, "public", "redacted.json")
 	secret := "customer-731-secret.example.internal"
-	source := `{"schema_version":10,"name":"` + secret + `","target":"https://` + secret + `/private/route","started_at":"2026-04-03T12:30:00Z","elapsed_seconds":2,"observation_seconds":2,"config":{"users":2,"duration":"2s","request_timeout":"1s","max_rps":20,"p95_limit_ms":250,"max_error_rate":0.01,"mode":"closed"},"metrics":{"total":2,"success":2,"failures":0,"p95_ms":35},"steps":[{"name":"checkout-` + secret + `","method":"GET","path":"/private/customer-731","metrics":{"total":2,"success":2,"failures":0}}],"warnings":["` + secret + `"]}`
+	source := `{"schema_version":10,"name":"` + secret + `","target":"https://` + secret + `","started_at":"2026-04-03T12:30:00Z","elapsed_seconds":2,"observation_seconds":2,"config":{"users":2,"duration":"2s","request_timeout":"1s","max_rps":20,"p95_limit_ms":250,"max_error_rate":0.01,"mode":"closed"},"metrics":{"total":2,"success":2,"failures":0,"p95_ms":35},"steps":[{"name":"checkout-` + secret + `","method":"GET","path":"/private/customer-731","metrics":{"total":2,"success":2,"failures":0}}],"warnings":["` + secret + `"]}`
 	if err := os.WriteFile(input, []byte(source), 0600); err != nil {
 		t.Fatal(err)
 	}
