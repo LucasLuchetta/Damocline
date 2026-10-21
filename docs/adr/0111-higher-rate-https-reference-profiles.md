@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted for the local Windows reference environment; Linux CI validation is pending.
+Accepted for the recorded local Windows and bounded Linux/Windows CI environments.
 
 ## Context
 
@@ -35,8 +35,12 @@ capacity.
 
 Deterministic tests cover exact 20/40 HTTPS tuples, reject unmeasured rates,
 reconcile handshake/TCP/request/body ledgers, and retain schema-v9 artifact
-compatibility. On 2026-10-21, the repeated Windows schema-v10 acceptance passed
-twice, including 41 exact profiles, both controlled negative cases and the ten
-transport cases. The bounded Linux CI job still needs to pass on this change;
-same-host Windows repeats do not establish cross-host or statistical
-independence.
+compatibility. On 2026-10-21, repeated schema-v10 acceptance passed twice on
+local Windows, bounded Linux CI, and (after rerunning one failed job) bounded
+Windows CI. Each passing manifest reconciled 41 exact profiles, both controlled
+negative cases and ten transport cases. The first Windows CI attempt correctly
+failed closed when one 40 starts/s TLS profile dropped five of 200 scheduled
+starts; the 195 delivered requests reconciled fully across client, TLS, TCP and
+body ledgers. The Windows CI rerun passed both repeats. This observed sensitivity
+to hosted-runner scheduling load remains a limitation; same-host repeats do not
+establish cross-host or statistical independence.
