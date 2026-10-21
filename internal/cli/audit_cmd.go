@@ -149,7 +149,7 @@ func auditCmd(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "Audit JSON: %s\n", *out)
 	}
 	if *reportOut != "" {
-		if err := writeCapacityMarkdown(*reportOut, renderCampaignCapacityReport(assessment, paths[0], *reportOut, evidence)); err != nil {
+		if err := writeCapacityMarkdown(*reportOut, renderCampaignCapacityReport(assessment, paths[0], evidence)); err != nil {
 			fmt.Fprintf(stderr, "cannot write capacity report: %v\n", err)
 			return 2
 		}
@@ -245,7 +245,7 @@ func auditCampaignCollection(paths, expectedEvidenceIDs, expectedCampaignFileSHA
 		fmt.Fprintf(stdout, "Audit JSON: %s\n", out)
 	}
 	if reportOut != "" {
-		if err := writeCapacityMarkdown(reportOut, renderCampaignCollectionCapacityReport(assessment, paths, reportOut, evidence)); err != nil {
+		if err := writeCapacityMarkdown(reportOut, renderCampaignCollectionCapacityReport(assessment, paths, evidence)); err != nil {
 			fmt.Fprintf(stderr, "cannot write capacity report: %v\n", err)
 			return 2
 		}

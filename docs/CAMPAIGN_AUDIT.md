@@ -76,6 +76,13 @@ immutable storage, or proof of who built or produced the evidence. If the exact
 auditor binary is unavailable later, reviewers can still inspect the recorded
 version and digest but cannot satisfy the generated exact-binary replay check.
 
+The Markdown report body does not include the report's local output path, so
+changing `--report-out` does not change its contents. Given the same source
+campaign path and bytes, auditor binary, and demand inputs, replay produces
+byte-identical Markdown. The source path remains in the offline replay command;
+reports may contain private paths, target origins, or scenario labels and should
+remain with the local evidence.
+
 Each assessment includes a SHA-256 digest of the normalized, schema-decoded
 campaign evidence, a separate SHA-256 digest of the exact source file bytes,
 and a digest of each reviewed phase report, the workload fingerprint

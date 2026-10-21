@@ -19,7 +19,7 @@ import (
 	"github.com/LucasLuchetta/Damocline/internal/statistics"
 )
 
-func renderCampaignCapacityReport(assessment capacityplan.Assessment, source, reportPath string, evidence campaign.Result) string {
+func renderCampaignCapacityReport(assessment capacityplan.Assessment, source string, evidence campaign.Result) string {
 	a := assessment.Audit
 	var b strings.Builder
 	fmt.Fprintln(&b, "# Capacity assessment")
@@ -138,11 +138,11 @@ func renderCampaignCapacityReport(assessment capacityplan.Assessment, source, re
 	fmt.Fprintln(&b)
 	fmt.Fprintf(&b, "Source campaign: %s (verify its interpreted fields against evidence ID %s and exact bytes against source SHA-256 %s).\n\n", markdownCode(source), markdownCode(a.EvidenceID), markdownCode(a.SourceFileSHA256))
 	fmt.Fprintf(&b, "%s\n", markdownCodeFence("powershell", markdownReplayCommand([]string{source}, []string{a.EvidenceID}, []string{a.SourceFileSHA256}, assessment.Auditor.ExecutableSHA256, assessment.DemandInputs)))
-	fmt.Fprintf(&b, "\nReport generated locally at %s. The saved campaign is the source of truth; keep it with this assessment.\n", markdownCode(reportPath))
+	fmt.Fprintln(&b, "\nReport generated locally. The saved campaign is the source of truth; keep it with this assessment.")
 	return b.String()
 }
 
-func renderArrivalCampaignCapacityReport(assessment capacitygoal.JourneyStartAssessment, source, reportPath string, evidence arrivalcampaign.Result, sourceDigest string) string {
+func renderArrivalCampaignCapacityReport(assessment capacitygoal.JourneyStartAssessment, source string, evidence arrivalcampaign.Result, sourceDigest string) string {
 	var b strings.Builder
 	fmt.Fprintln(&b, "# Open-arrival capacity assessment")
 	fmt.Fprintln(&b)
@@ -183,7 +183,7 @@ func renderArrivalCampaignCapacityReport(assessment capacitygoal.JourneyStartAss
 	fmt.Fprintln(&b)
 	fmt.Fprintf(&b, "Source campaign: %s; SHA-256 of the exact source bytes: %s. Verify this digest before replay so a renamed or copied artifact can still be identified. Replay the native campaign audit with the same exact demand inputs.\n\n", markdownCode(source), markdownCode(sourceDigest))
 	fmt.Fprintf(&b, "%s\n", markdownCodeFence("powershell", fmt.Sprintf("damocline goal --file %s --expect-source-sha256 %s --peak-journeys-per-second %d --growth-percent %s --reserve-percent %s", powershellQuote(source), powershellQuote(sourceDigest), assessment.PeakStartsPerSecond, markdownFloat(assessment.GrowthPercent), markdownFloat(assessment.ReservePercent))))
-	fmt.Fprintf(&b, "\nReport generated locally at %s. Keep the private source campaign and scenario together; the digest identifies the saved campaign bytes, not the scenario file or original target.\n", markdownCode(reportPath))
+	fmt.Fprintln(&b, "\nReport generated locally. Keep the private source campaign and scenario together; the digest identifies the saved campaign bytes, not the scenario file or original target.")
 	return b.String()
 }
 
@@ -191,7 +191,7 @@ func writeArrivalCampaignAssessmentJSON(path string, assessment capacitygoal.Jou
 	return report.WriteAnyJSON(path, assessment)
 }
 
-func renderCampaignCollectionCapacityReport(assessment capacityplan.CampaignCollectionAssessment, sources []string, reportPath string, evidence []campaign.Result) string {
+func renderCampaignCollectionCapacityReport(assessment capacityplan.CampaignCollectionAssessment, sources []string, evidence []campaign.Result) string {
 	var b strings.Builder
 	fmt.Fprintln(&b, "# Capacity level assessment")
 	fmt.Fprintln(&b)
@@ -266,7 +266,7 @@ func renderCampaignCollectionCapacityReport(assessment capacityplan.CampaignColl
 		expectedFileSHA256s[i] = fileSHA256ByLevel[item.BaseUsers]
 	}
 	fmt.Fprintf(&b, "%s\n", markdownCodeFence("powershell", markdownReplayCommand(sources, expectedEvidenceIDs, expectedFileSHA256s, assessment.Auditor.ExecutableSHA256, assessment.DemandInputs)))
-	fmt.Fprintf(&b, "\nReport generated locally at %s. Keep all source campaign files with this assessment.\n", markdownCode(reportPath))
+	fmt.Fprintln(&b, "\nReport generated locally. Keep all source campaign files with this assessment.")
 	return b.String()
 }
 

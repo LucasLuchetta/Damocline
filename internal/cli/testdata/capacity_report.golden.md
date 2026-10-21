@@ -96,4 +96,4 @@ Source campaign: `campaign.json` (verify its interpreted fields against evidence
 damocline audit --campaign 'campaign.json' --expect-evidence-id 'sha256:campaign-fixture' --expect-campaign-file-sha256 'sha256:source-bytes-fixture' --peak-users 2 --growth-percent 25 --reserve-percent 10 --out 'replayed-assessment.json' --report-out 'replayed-capacity-report.md'
 ```
 
-Report generated locally at `capacity.md`. The saved campaign is the source of truth; keep it with this assessment.
+Report generated locally. The saved campaign is the source of truth; keep it with this assessment.

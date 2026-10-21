@@ -164,6 +164,13 @@ func TestCampaignProfileRunDryRunAndLoopbackReport(t *testing.T) {
 	if string(replayedAssessmentData) != string(assessmentData) {
 		t.Fatalf("offline replay changed the machine assessment:\nfirst: %s\nreplay: %s", assessmentData, replayedAssessmentData)
 	}
+	replayedReportData, err := os.ReadFile(replayReportOut)
+	if err != nil {
+		t.Fatalf("replayed capacity report was not written: %v", err)
+	}
+	if string(replayedReportData) != string(capacityReportData) {
+		t.Fatalf("offline replay changed the Markdown capacity report:\nfirst: %s\nreplay: %s", capacityReportData, replayedReportData)
+	}
 	if got := requests.Load(); got != beforeAuditRequests {
 		t.Fatalf("offline assessment replay generated %d target request(s)", got-beforeAuditRequests)
 	}

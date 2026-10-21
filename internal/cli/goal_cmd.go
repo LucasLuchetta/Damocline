@@ -107,7 +107,7 @@ func goalCmd(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stdout, "Assessment JSON: %s\n", *out)
 		}
 		if *reportOut != "" && saved.SchemaVersion >= 8 {
-			if err := writeCapacityMarkdown(*reportOut, renderArrivalCampaignCapacityReport(assessment, *path, *reportOut, saved, sourceDigest)); err != nil {
+			if err := writeCapacityMarkdown(*reportOut, renderArrivalCampaignCapacityReport(assessment, *path, saved, sourceDigest)); err != nil {
 				fmt.Fprintf(stderr, "cannot write capacity report: %v\n", err)
 				return 2
 			}

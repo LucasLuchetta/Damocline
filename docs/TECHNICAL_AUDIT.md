@@ -39,13 +39,14 @@ The candidate groups related reliability and validation work in one PR:
 - Campaign auditing binds reports to exact source bytes and auditor identity, rejects duplicate JSON keys and unsupported embedded report schemas, and preserves campaign v2/v4 compatibility without filling absent fields with zero.
 - Historical phase labels are checked using their original schema rules. Conflicts with current recomputation remain inconclusive; partial terminal failures have v2/v4 fixtures.
 - The open-arrival objective contract is persisted and replayed. The local acceptance matrix grows to manifest v6 with 41 profiles, including exact 20 and 40 starts/s trusted HTTPS profiles.
+- Capacity Markdown no longer embeds its local output path; the loopback CLI integration test requires byte-identical JSON and Markdown when replayed to a second destination.
 
 Local full Go tests, vet, build, formatting, and diff checks passed on the candidate snapshot. CI results were attached to earlier commits and therefore do not establish validation for `ac7184b`.
 
 ## Reliability-first work order
 
 1. Close PR #149 validation on the exact head SHA. Resolve the branch/PR-head mismatch, wait for the platform acceptance jobs, and report only checks attached to the final commit as final-head CI evidence.
-2. Reproduce one bounded report end to end using existing campaign and audit commands: run a synthetic loopback scenario, retain its exact campaign artifact, generate JSON plus executive/technical Markdown, and replay the generated command against the same source and auditor. Compare the assessment verdict and report fields; verify that changed source bytes or a different auditor fail before output is written. Label this as reporting-pipeline validation, not application-capacity evidence.
+2. Reproduce one bounded report end to end using existing campaign and audit commands: run a synthetic loopback scenario, retain its exact campaign artifact, generate JSON plus executive/technical Markdown, and repeat the audit with the same source and auditor. The CLI integration test now compares both outputs byte for byte; changed source bytes or a different auditor must fail before output is written. Label this as reporting-pipeline validation, not application-capacity evidence.
 3. Pause unrelated capability work. Continue only when validation identifies a concrete gap that prevents an engineer from reproducing or defending the report. Any report presented as application capacity still needs a representative authorized target workload and environment; the repository's loopback fixtures cannot supply that evidence.
 
 The roadmap remains a useful inventory, but code and replayable evidence are the acceptance sources. No single report, passing test, or local calibration run certifies a universal maximum or sustainable capacity outside the tested conditions.

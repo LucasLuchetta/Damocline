@@ -53,7 +53,7 @@ func TestCampaignCapacityReportSnapshotAndVerdictSeparation(t *testing.T) {
 			{Number: 2, Outcome: "PASS", Phases: []campaign.Phase{{Name: "observation", Run: phase}}},
 		},
 	}
-	got := renderCampaignCapacityReport(assessment, "campaign.json", "capacity.md", evidence)
+	got := renderCampaignCapacityReport(assessment, "campaign.json", evidence)
 	if strings.Contains(got, "**Assessment:** OBSERVED_PASS_ONLY") || !strings.Contains(got, "**Assessment:** INSUFFICIENT_EVIDENCE") || !strings.Contains(got, "**Observed campaign:** OBSERVED_PASS_ONLY") {
 		t.Fatalf("executive and observed verdicts were conflated: %s", got)
 	}
@@ -123,7 +123,7 @@ func TestCampaignCollectionCapacityReportShowsTestedBoundary(t *testing.T) {
 		HighestPassingLevel: &highest, FirstFailingLevel: &firstFailing, UpperBound: "BRACKETED_BY_TESTED_LEVELS",
 		ObservationPattern: "PASS_BELOW_FAIL", Levels: []capacityplan.CampaignLevelAssessment{}, Findings: []string{}, InconclusiveLevels: []int{},
 	}
-	got := renderCampaignCollectionCapacityReport(assessment, nil, "capacity.md", nil)
+	got := renderCampaignCollectionCapacityReport(assessment, nil, nil)
 	for _, want := range []string{"Highest passing tested level:** 4 active users (tested)", "First failing tested level:** 8 active users (tested)", "Upper bound:** BRACKETED_BY_TESTED_LEVELS"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("collection report does not contain %q:\n%s", want, got)
