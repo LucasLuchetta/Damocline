@@ -920,6 +920,9 @@ func TestQualitySeparatesMissingGeneratorAndSLOFailure(t *testing.T) {
 func TestQualityRejectsInconsistentHTTPTraceCountsAndTotals(t *testing.T) {
 	base := Result{SchemaVersion: 7, Metrics: MetricSet{Total: 1, Success: 1}, Journeys: MetricSet{Total: 1, Success: 1}, Outcome: "PASS", ElapsedSeconds: 1, ObservationSeconds: 1, Config: RunConfig{Users: 1, MaxRPS: 10}, IterationsStarted: 1, IterationsCompleted: 1}
 	base.Steps = []StepResult{{Metrics: MetricSet{Total: 1, Success: 1}, HTTPTrace: HTTPTrace{RequestAttemptCount: 1, RateWaitCount: 1, CompleteCount: 1, WriteCount: 1, FirstByteCount: 1, BodyCount: 1}}}
+	if quality := AssessQuality(base); quality.State == QualityInvalid {
+		t.Fatalf("positive phase counts with zero duration sums can be valid below clock resolution: %+v", quality)
+	}
 	for name, mutate := range map[string]func(*HTTPTrace){
 		"negative phase count":           func(t *HTTPTrace) { t.DNSCount = -1 },
 		"non-finite duration":            func(t *HTTPTrace) { t.CompleteMS = math.NaN() },
