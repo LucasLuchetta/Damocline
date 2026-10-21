@@ -64,6 +64,36 @@ func TestValidateMetricCountersInArtifactJSONRequiresConservedOutcomes(t *testin
 	}
 }
 
+func TestValidateMetricCountersInArtifactJSONReconcilesNamedLedgers(t *testing.T) {
+	tests := []struct {
+		name, json string
+	}{
+		{
+			name: "steps_to_run",
+			json: `{"schema_version":13,"metrics":{"total":2,"success":2,"failures":0},"steps":[{"metrics":{"total":1,"success":1,"failures":0}}]}`,
+		},
+		{
+			name: "profiles_to_journeys",
+			json: `{"schema_version":9,"metrics":{"total":2,"success":2,"failures":0},"journeys":{"total":2,"success":2,"failures":0},"profiles":[{"journeys":{"total":1,"success":1,"failures":0}}]}`,
+		},
+		{
+			name: "window_steps_to_window",
+			json: `{"schema_version":13,"metrics":{"total":1,"success":1,"failures":0},"windows":[{"metrics":{"total":2,"success":2,"failures":0},"journeys":{"total":0,"success":0,"failures":0},"steps":[{"metrics":{"total":1,"success":1,"failures":0}}]}]}`,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := ValidateMetricCountersInArtifactJSON([]byte(tc.json)); err == nil {
+				t.Fatal("named metrics that do not reconcile with their aggregate were accepted")
+			}
+		})
+	}
+	valid := `{"schema_version":13,"metrics":{"total":2,"success":2,"failures":0},"steps":[{"metrics":{"total":1,"success":1,"failures":0}},{"metrics":{"total":1,"success":1,"failures":0}}]}`
+	if err := ValidateMetricCountersInArtifactJSON([]byte(valid)); err != nil {
+		t.Fatalf("reconciled named metrics should be accepted: %v", err)
+	}
+}
+
 func TestValidateMetricCountersInArtifactJSONTraversesPersistedReportFamilies(t *testing.T) {
 	tests := []struct {
 		name string

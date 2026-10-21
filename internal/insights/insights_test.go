@@ -539,7 +539,8 @@ func TestReadRunAcceptsCurrentSchemaFourteenConnectionPolicyAndWindowLedgers(t *
 	r.ObservationSeconds = 30
 	r.Config.WindowDuration = "1s"
 	r.Windows = []report.WindowResult{{StartSeconds: 0, EndSeconds: 1,
-		Steps: []report.WindowMetric{{Name: r.Steps[0].Name, Metrics: r.Steps[0].Metrics}},
+		Metrics: r.Steps[0].Metrics,
+		Steps:   []report.WindowMetric{{Name: r.Steps[0].Name, Metrics: r.Steps[0].Metrics}},
 	}}
 	markSchema20FailureClassification(&r)
 	path := filepath.Join(t.TempDir(), "schema-v14-windows.json")

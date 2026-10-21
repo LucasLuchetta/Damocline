@@ -70,8 +70,18 @@ func validateRunMetricCounters(raw json.RawMessage, path string) error {
 	if err := validateMetricList(run["steps"], path+".steps", "metrics"); err != nil {
 		return err
 	}
+	if schemaVersion >= 13 {
+		if err := validateMetricListTotals(run["steps"], path+".steps", "metrics", metrics, path+".metrics"); err != nil {
+			return err
+		}
+	}
 	if err := validateMetricList(run["profiles"], path+".profiles", "journeys"); err != nil {
 		return err
+	}
+	if journeys, present := run["journeys"]; present && schemaVersion >= 9 {
+		if err := validateMetricListTotals(run["profiles"], path+".profiles", "journeys", journeys, path+".journeys"); err != nil {
+			return err
+		}
 	}
 	if windows, ok := run["windows"]; ok && !bytes.Equal(bytes.TrimSpace(windows), []byte("null")) {
 		var values []json.RawMessage
@@ -109,6 +119,11 @@ func validateRunMetricCounters(raw json.RawMessage, path string) error {
 				if err := validateMetricList(window[key], windowPath+"."+key, childKey); err != nil {
 					return err
 				}
+				if schemaVersion >= 13 {
+					if err := validateMetricListTotals(window[key], windowPath+"."+key, childKey, window["metrics"], windowPath+".metrics"); err != nil {
+						return err
+					}
+				}
 			}
 		}
 	}
@@ -116,26 +131,8 @@ func validateRunMetricCounters(raw json.RawMessage, path string) error {
 }
 
 func validateMetricSetCounters(raw json.RawMessage, path string) error {
-	var metric map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &metric); err != nil || metric == nil {
-		return fmt.Errorf("%s must be an object", path)
-	}
-	counters := make(map[string]int64, 3)
-	for _, key := range []string{"total", "success", "failures"} {
-		value, ok := metric[key]
-		if !ok {
-			return fmt.Errorf("%s omits required %s counter; absence cannot be interpreted as zero", path, key)
-		}
-		parsed, valid := parseJSONCounter(value)
-		if !valid {
-			return fmt.Errorf("%s.%s must be a non-negative integer counter", path, key)
-		}
-		counters[key] = parsed
-	}
-	if counters["success"] > counters["total"] || counters["failures"] != counters["total"]-counters["success"] {
-		return fmt.Errorf("%s counters are inconsistent: success plus failures must equal total", path)
-	}
-	return nil
+	_, err := metricCounters(raw, path)
+	return err
 }
 
 func parseJSONCounter(raw json.RawMessage) (int64, bool) {
@@ -170,6 +167,72 @@ func validateMetricList(raw json.RawMessage, path, metricKey string) error {
 		}
 	}
 	return nil
+}
+
+func validateMetricListTotals(raw json.RawMessage, path, metricKey string, expectedRaw json.RawMessage, expectedPath string) error {
+	if len(raw) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return nil
+	}
+	var values []json.RawMessage
+	if err := json.Unmarshal(raw, &values); err != nil {
+		return fmt.Errorf("%s must be an array", path)
+	}
+	if len(values) == 0 {
+		return nil
+	}
+	expected, err := metricCounters(expectedRaw, expectedPath)
+	if err != nil {
+		return err
+	}
+	var totals [3]int64
+	keys := [...]string{"total", "success", "failures"}
+	for i, value := range values {
+		var item map[string]json.RawMessage
+		if err := json.Unmarshal(value, &item); err != nil || item == nil {
+			return fmt.Errorf("%s[%d] must be an object", path, i)
+		}
+		metric, ok := item[metricKey]
+		if !ok {
+			return fmt.Errorf("%s[%d] omits required %s metrics", path, i, metricKey)
+		}
+		counters, err := metricCounters(metric, fmt.Sprintf("%s[%d].%s", path, i, metricKey))
+		if err != nil {
+			return err
+		}
+		for counterIndex := range keys {
+			if counters[counterIndex] > expected[counterIndex]-totals[counterIndex] {
+				return fmt.Errorf("%s counters exceed %s", path, expectedPath)
+			}
+			totals[counterIndex] += counters[counterIndex]
+		}
+	}
+	if totals != expected {
+		return fmt.Errorf("%s counters do not reconcile with %s", path, expectedPath)
+	}
+	return nil
+}
+
+func metricCounters(raw json.RawMessage, path string) ([3]int64, error) {
+	var counters [3]int64
+	var metric map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &metric); err != nil || metric == nil {
+		return counters, fmt.Errorf("%s must be an object", path)
+	}
+	for i, key := range [...]string{"total", "success", "failures"} {
+		value, ok := metric[key]
+		if !ok {
+			return counters, fmt.Errorf("%s omits required %s counter; absence cannot be interpreted as zero", path, key)
+		}
+		parsed, valid := parseJSONCounter(value)
+		if !valid {
+			return counters, fmt.Errorf("%s.%s must be a non-negative integer counter", path, key)
+		}
+		counters[i] = parsed
+	}
+	if counters[1] > counters[0] || counters[2] != counters[0]-counters[1] {
+		return counters, fmt.Errorf("%s counters are inconsistent: success plus failures must equal total", path)
+	}
+	return counters, nil
 }
 
 func validateTrialsMetricCounters(raw json.RawMessage, path string) error {
