@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Correct the capability summary for the phase-aligned campaign integration: document optional Linux process CPU/RSS, typed label-distinct application metrics, exporter-reported process-start observations, and the WordPress fixture's explicitly scoped Docker Engine samples.
 - Add a bounded WordPress fixture CPU-quota diagnostic option that records nondefault resource conditions as distinct environment and application revisions.
 - Aggregate protocol assessment p95 ranges from complete journey latency, matching the declared SLO, while preserving HTTP request p95 as a separate per-phase diagnostic.
 - Allow the bounded WordPress lab verifier to vary closed-loop VUs and its request-rate safety ceiling within explicit limits, enabling prospective exploration and confirmation campaigns with a fixed workflow.
