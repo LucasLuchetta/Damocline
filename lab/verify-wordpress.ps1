@@ -283,7 +283,7 @@ try {
         campaign --config "/reports/$scenarioName" `
         --warmup "${WarmupSeconds}s" --observation 60s --recovery "${RecoverySeconds}s" --repeats 2 --budget 7m `
         --allow-insecure-http `
-        --metrics-endpoint http://wordpress/damocline-metrics.php --metrics-interval 5s `
+        --app-metrics-endpoint http://wordpress/damocline-metrics.php --app-metrics-interval 5s `
         --host-sensor-endpoint https://wordpress:9467/v1/host `
         --host-sensor-token-env DAMOCLINE_SENSOR_TOKEN --host-sensor-interval 2s `
         --calibration "/reports/$calibrationName" `
@@ -312,25 +312,29 @@ try {
     }
     $campaign = Get-Content -LiteralPath $campaignPath -Raw | ConvertFrom-Json
     $observations = @($campaign.trials | ForEach-Object { $_.phases } | Where-Object { $_.name -eq 'observation' })
+    $requiredMetricsPhases = @($campaign.trials | ForEach-Object { $_.phases } | Where-Object { $_.name -in @('observation', 'recovery') })
     if ($observations.Count -lt 1) {
         throw 'The WordPress campaign has no saved observation phase.'
     }
-    foreach ($phase in $observations) {
-        if ($phase.run.arrivals_dropped -ne 0 -or
-            ($null -ne $phase.run.arrivals_cancelled_before_admission -and $phase.run.arrivals_cancelled_before_admission -ne 0)) {
-            throw 'The generator dropped or cancelled planned work before admission.'
+    foreach ($phase in $requiredMetricsPhases) {
+        $appMetrics = $phase.run.application_metrics
+        if ($null -eq $appMetrics -or $appMetrics.failed_collections -ne 0 -or $appMetrics.samples.Count -lt 1) {
+            throw 'Application metrics are missing, incomplete, or have failed collections in a required phase.'
         }
-        if ($null -eq $phase.telemetry -or $phase.telemetry.coverage -ne 'COMPLETE' -or $phase.telemetry.failures.Count -ne 0) {
-            throw 'MariaDB status telemetry is missing, incomplete, or has failed samples in a required phase.'
-        }
-        foreach ($snapshot in $phase.telemetry.snapshots) {
+        foreach ($snapshot in $appMetrics.samples) {
             $dbUp = @($snapshot.samples | Where-Object { $_.name -eq 'damocline_mariadb_up' })
             if ($dbUp.Count -ne 1 -or $dbUp[0].value -ne 1) {
                 throw 'A required-phase status snapshot does not report exactly one healthy MariaDB query.'
             }
         }
         if ($phase.host_telemetry.coverage -ne 'COMPLETE') {
-            throw 'Linux host telemetry is incomplete for a required observation phase.'
+            throw 'Linux host telemetry is incomplete for a required phase.'
+        }
+    }
+    foreach ($phase in $observations) {
+        if ($phase.run.arrivals_dropped -ne 0 -or
+            ($null -ne $phase.run.arrivals_cancelled_before_admission -and $phase.run.arrivals_cancelled_before_admission -ne 0)) {
+            throw 'The generator dropped or cancelled planned work before admission.'
         }
         $generator = $phase.run.generator
         if (-not $generator.cpu_capacity_known -or -not $generator.process_cpu_valid -or
@@ -641,7 +645,7 @@ try {
     $dockerStatsEvidence | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $artifactPaths[4] -Encoding utf8
 
     Write-Output "WordPress routes: homepage HTTP $($homeResponse.StatusCode); posts API HTTP $($posts.StatusCode)"
-    Write-Output "MariaDB status telemetry: COMPLETE in $($observations[0].telemetry.snapshots.Count) observation snapshots"
+    Write-Output "Application metrics: COMPLETE in $($observations[0].run.application_metrics.samples.Count) observation snapshots"
     Write-Output "Configured workload: $Users closed-loop VUs; max_rps ceiling $MaxRps; warm-up ${WarmupSeconds}s; recovery ${RecoverySeconds}s"
     Write-Output "Generator preflight: $($calibration.preflight.status)"
     Write-Output "Campaign outcome: $($campaign.outcome); offline audit: $($audit.state)"
