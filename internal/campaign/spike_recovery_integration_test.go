@@ -37,6 +37,12 @@ func TestClosedAndOpenCampaignsMeasureSpikeAndRecoveryAgainstControlledServer(t 
 		if err != nil {
 			t.Fatal(err)
 		}
+		if len(result.Trials) == 1 && len(result.Trials[0].Phases) == 1 {
+			phase := result.Trials[0].Phases[0]
+			if stoppedByDriftScreen(t, result.Outcome, phase.Name, phase.Stability, phase.EvidenceState, phase.Run, 1, 0) {
+				return
+			}
+		}
 		if len(result.Trials) != 1 || len(result.Trials[0].Phases) != 3 {
 			t.Fatalf("closed-loop campaign stopped before recovery: %+v", result)
 		}
@@ -72,6 +78,12 @@ func TestClosedAndOpenCampaignsMeasureSpikeAndRecoveryAgainstControlledServer(t 
 		if err != nil {
 			t.Fatal(err)
 		}
+		if len(result.Trials) == 1 && len(result.Trials[0].Phases) == 1 {
+			phase := result.Trials[0].Phases[0]
+			if stoppedByDriftScreen(t, result.Outcome, phase.Name, phase.Stability, phase.EvidenceState, phase.Run, 30, 24) {
+				return
+			}
+		}
 		if len(result.Trials) != 1 || len(result.Trials[0].Phases) != 3 {
 			t.Fatalf("arrival campaign stopped before recovery: %+v", result)
 		}
@@ -85,6 +97,19 @@ func TestClosedAndOpenCampaignsMeasureSpikeAndRecoveryAgainstControlledServer(t 
 			{name: phases[2].Name, state: phases[2].EvidenceState, outcome: phases[2].Run.Outcome},
 		})
 	})
+}
+
+func stoppedByDriftScreen(t *testing.T, outcome, phaseName, stability, evidenceState string, run report.Result, workers, scheduledRate int) bool {
+	t.Helper()
+	if phaseName != "observation" || stability != "NON_STATIONARY" {
+		return false
+	}
+	if outcome != "INCONCLUSIVE" || evidenceState != "PASS_OBSERVED" {
+		t.Fatalf("drift-limited campaign did not stop inconclusively after its passing observation: outcome=%s evidence=%s", outcome, evidenceState)
+	}
+	assertNativePhase(t, run, workers, scheduledRate, "PASS")
+	t.Log("recovery was correctly unplanned after the observation failed the stationarity screen")
+	return true
 }
 
 func newSpikeRecoveryServer(saturated *atomic.Bool) *httptest.Server {

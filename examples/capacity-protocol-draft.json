@@ -1,0 +1,31 @@
+{
+  "scenario": "synthetic-checkout-mix",
+  "target": "https://app.example.com",
+  "environment": "staging",
+  "workload_revision": "workload-v1",
+  "application_revision": "app-v1",
+  "workload_fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "max_rps": 100,
+  "request_timeout": "3s",
+  "candidate_users": 10,
+  "first_failing_users": 12,
+  "required_confirmation_campaigns": 2,
+  "warmup": "30s",
+  "minimum_observation": "4m",
+  "spike_users": 15,
+  "spike_duration": "30s",
+  "recovery": "30s",
+  "require_application_metrics": true,
+  "require_host_sensor": true,
+  "max_p95_ms": 1500,
+  "max_error_rate": 0.01,
+  "reserve_percent": 20,
+  "peak_demand_users": 8,
+  "growth_percent": 25,
+  "preparation": "Restore a sanitized snapshot, clear transient queues, and use the declared test accounts.",
+  "stop_conditions": [
+    "Stop if generator health or scheduling integrity becomes invalid.",
+    "Stop if application error rate exceeds the declared objective for two consecutive windows.",
+    "Stop if the host reports an OOM event or the target becomes unhealthy."
+  ]
+}

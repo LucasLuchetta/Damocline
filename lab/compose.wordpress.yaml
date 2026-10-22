@@ -1,0 +1,108 @@
+services:
+  database:
+    image: mariadb:11.8.9
+    cpus: 0.75
+    mem_limit: 768m
+    environment:
+      MARIADB_DATABASE: damocline_wp
+      MARIADB_USER: wordpress
+      MARIADB_PASSWORD: ${WORDPRESS_DB_PASSWORD:?set a private WordPress lab password}
+      MARIADB_ROOT_PASSWORD: ${WORDPRESS_DB_ROOT_PASSWORD:?set a private WordPress lab root password}
+    volumes:
+      - wordpress-database:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 3s
+      timeout: 2s
+      retries: 30
+
+  wordpress:
+    image: wordpress:7.1.3-php8.3-apache
+    cpus: ${DAMOCLINE_WORDPRESS_CPU_LIMIT:-0.75}
+    mem_limit: 768m
+    ports:
+      - "127.0.0.1:${DAMOCLINE_WORDPRESS_PORT:-18081}:80"
+    environment:
+      WORDPRESS_DB_HOST: database:3306
+      WORDPRESS_DB_NAME: damocline_wp
+      WORDPRESS_DB_USER: wordpress
+      WORDPRESS_DB_PASSWORD: ${WORDPRESS_DB_PASSWORD:?set a private WordPress lab password}
+      WORDPRESS_CONFIG_EXTRA: |
+        $$damoclineHost = $$_SERVER['HTTP_HOST'] ?? '127.0.0.1';
+        if (!preg_match('/\A127\.0\.0\.1(:[0-9]{1,5})?\z/', $$damoclineHost)) { $$damoclineHost = '127.0.0.1'; }
+        define('WP_HOME', 'http://' . $$damoclineHost);
+        define('WP_SITEURL', 'http://' . $$damoclineHost);
+    volumes:
+      - wordpress-files:/var/www/html
+      - ./wordpress.htaccess:/var/www/html/.htaccess:ro
+      - ./mariadb-metrics.php:/var/www/html/damocline-metrics.php:ro
+      - ./apache-damocline.conf:/etc/apache2/conf-enabled/zz-damocline.conf:ro
+    depends_on:
+      database:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "php -r '$$body=@file_get_contents(\"http://127.0.0.1/wp-login.php\"); exit($$body === false ? 1 : 0);'"]
+      interval: 3s
+      timeout: 2s
+      retries: 30
+      start_period: 20s
+
+  sensor:
+    build:
+      context: ..
+      dockerfile: lab/Dockerfile
+      target: sensor
+    network_mode: "service:wordpress"
+    pid: "service:wordpress"
+    read_only: true
+    environment:
+      DAMOCLINE_SENSOR_TOKEN: ${DAMOCLINE_SENSOR_TOKEN:?set a private local test token}
+    command: ["--listen", "0.0.0.0:9467", "--tls-cert", "/run/damocline/tls/sensor-cert.pem", "--tls-key", "/run/damocline/tls/sensor-key.pem", "--workload-pid", "1"]
+    volumes:
+      - ${DAMOCLINE_WORDPRESS_SENSOR_TLS_DIR:?run the bounded WordPress verifier}:/run/damocline/tls:ro
+    depends_on:
+      wordpress:
+        condition: service_healthy
+
+  generator:
+    profiles: ["run"]
+    build:
+      context: ..
+      dockerfile: lab/Dockerfile
+      target: generator
+    read_only: true
+    cpus: 1.0
+    mem_limit: 512m
+    environment:
+      DAMOCLINE_SENSOR_TOKEN: ${DAMOCLINE_SENSOR_TOKEN:?set a private local test token}
+      SSL_CERT_FILE: /run/damocline/sensor-ca.pem
+    volumes:
+      - ./artifacts:/reports
+      - ${DAMOCLINE_WORDPRESS_SENSOR_TLS_DIR:?run the bounded WordPress verifier}/sensor-cert.pem:/run/damocline/sensor-ca.pem:ro
+    depends_on:
+      wordpress:
+        condition: service_healthy
+      sensor:
+        condition: service_started
+
+  wordpress-cli:
+    profiles: ["tools"]
+    image: wordpress:cli-2.12.0-php8.3
+    user: "33:33"
+    environment:
+      HOME: /tmp
+      WORDPRESS_DB_HOST: database:3306
+      WORDPRESS_DB_NAME: damocline_wp
+      WORDPRESS_DB_USER: wordpress
+      WORDPRESS_DB_PASSWORD: ${WORDPRESS_DB_PASSWORD:?set a private WordPress lab password}
+    volumes:
+      - wordpress-files:/var/www/html
+    depends_on:
+      database:
+        condition: service_healthy
+      wordpress:
+        condition: service_healthy
+
+volumes:
+  wordpress-database:
+  wordpress-files:

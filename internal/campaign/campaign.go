@@ -10,14 +10,16 @@ import (
 	"sort"
 	"time"
 
+	"github.com/LucasLuchetta/Damocline/internal/appmetrics"
 	"github.com/LucasLuchetta/Damocline/internal/calibration"
 	"github.com/LucasLuchetta/Damocline/internal/config"
 	"github.com/LucasLuchetta/Damocline/internal/engine"
 	"github.com/LucasLuchetta/Damocline/internal/generatorhealth"
+	"github.com/LucasLuchetta/Damocline/internal/hostsensor"
 	"github.com/LucasLuchetta/Damocline/internal/report"
 )
 
-const CurrentSchemaVersion = 15
+const CurrentSchemaVersion = 16
 
 // WorkloadSource identifies the exact bounded configuration bytes used to
 // construct a campaign. Digests identify bytes but do not authenticate origin.
@@ -99,6 +101,9 @@ type Options struct {
 	RequireCalibration bool
 	Calibration        *calibration.ClosedLoopEnvelope
 	CalibrationSource  string
+	HostSensorEndpoint string
+	HostSensorToken    string
+	HostSensorInterval time.Duration
 }
 
 // PlannedPhase is one bounded stage in each campaign trial.
@@ -139,11 +144,13 @@ func PlannedTrialPhases(options Options, baseUsers, trial int) []PlannedPhase {
 }
 
 type Phase struct {
-	Name          string        `json:"name"`
-	EvidenceState string        `json:"evidence_state,omitempty"`
-	Reason        string        `json:"reason,omitempty"`
-	Stability     string        `json:"stability,omitempty"`
-	Run           report.Result `json:"run"`
+	Name          string                  `json:"name"`
+	EvidenceState string                  `json:"evidence_state,omitempty"`
+	Reason        string                  `json:"reason,omitempty"`
+	Stability     string                  `json:"stability,omitempty"`
+	Run           report.Result           `json:"run"`
+	Telemetry     *appmetrics.Observation `json:"telemetry,omitempty"`
+	HostTelemetry *hostsensor.Observation `json:"host_telemetry,omitempty"`
 }
 
 type Trial struct {
@@ -182,6 +189,7 @@ type Result struct {
 	CalibrationRequired    bool                            `json:"calibration_required,omitempty"`
 	Calibration            *calibration.ClosedLoopEnvelope `json:"calibration,omitempty"`
 	CalibrationSource      string                          `json:"calibration_source,omitempty"`
+	HostSensorConfigured   bool                            `json:"host_sensor_configured,omitempty"`
 	Budget                 string                          `json:"budget,omitempty"`
 	Repeats                int                             `json:"repeats"`
 	Trials                 []Trial                         `json:"trials"`
@@ -226,6 +234,16 @@ type Variability struct {
 type Runner func(context.Context, config.Validated) report.Result
 
 func Validate(options Options) error {
+	if options.HostSensorEndpoint != "" {
+		if err := hostsensor.ValidateEndpoint(options.HostSensorEndpoint, options.HostSensorToken); err != nil {
+			return fmt.Errorf("invalid host sensor endpoint: %w", err)
+		}
+		if options.HostSensorInterval < time.Second || options.HostSensorInterval > 30*time.Second {
+			return fmt.Errorf("host sensor interval must be between 1s and 30s")
+		}
+	} else if options.HostSensorToken != "" || options.HostSensorInterval != 0 {
+		return fmt.Errorf("host sensor token or interval requires an endpoint")
+	}
 	if err := validateGeneratorGuardrails(effectiveGeneratorGuardrails(options.Guardrails)); err != nil {
 		return err
 	}
@@ -417,33 +435,34 @@ func WithRunnerProgress(ctx context.Context, base config.Validated, options Opti
 	}
 	cooldownDuration := options.Cooldown.String()
 	result := Result{
-		SchemaVersion:       CurrentSchemaVersion,
-		ExecutionState:      "RUNNING",
-		Scenario:            base.Scenario.Name,
-		WorkloadSource:      options.WorkloadSource,
-		BaseUsers:           base.Scenario.Users,
-		Target:              base.Base.Scheme + "://" + base.Base.Host,
-		StartedAt:           time.Now().UTC().Format(time.RFC3339),
-		Warmup:              options.Warmup.String(),
-		Stabilization:       options.Stabilization.String(),
-		Observation:         options.Observation.String(),
-		SpikeUsers:          options.SpikeUsers,
-		SpikeDuration:       options.SpikeDuration.String(),
-		Recovery:            options.Recovery.String(),
-		Soak:                soakDuration,
-		Cooldown:            cooldownDuration,
-		LongRun:             options.LongRun,
-		DeclaredEnvironment: base.Scenario.Environment,
-		StabilityPolicy:     &stabilityPolicy,
-		Objectives:          &objectiveContract,
-		GeneratorGuardrails: generatorGuardrails,
-		CalibrationRequired: options.RequireCalibration,
-		Calibration:         options.Calibration,
-		CalibrationSource:   options.CalibrationSource,
-		Budget:              options.Budget.String(),
-		Repeats:             options.Repeats,
-		Trials:              []Trial{},
-		Outcome:             "INCONCLUSIVE",
+		SchemaVersion:        CurrentSchemaVersion,
+		ExecutionState:       "RUNNING",
+		Scenario:             base.Scenario.Name,
+		WorkloadSource:       options.WorkloadSource,
+		BaseUsers:            base.Scenario.Users,
+		Target:               base.Base.Scheme + "://" + base.Base.Host,
+		StartedAt:            time.Now().UTC().Format(time.RFC3339),
+		Warmup:               options.Warmup.String(),
+		Stabilization:        options.Stabilization.String(),
+		Observation:          options.Observation.String(),
+		SpikeUsers:           options.SpikeUsers,
+		SpikeDuration:        options.SpikeDuration.String(),
+		Recovery:             options.Recovery.String(),
+		Soak:                 soakDuration,
+		Cooldown:             cooldownDuration,
+		LongRun:              options.LongRun,
+		DeclaredEnvironment:  base.Scenario.Environment,
+		StabilityPolicy:      &stabilityPolicy,
+		Objectives:           &objectiveContract,
+		GeneratorGuardrails:  generatorGuardrails,
+		CalibrationRequired:  options.RequireCalibration,
+		Calibration:          options.Calibration,
+		CalibrationSource:    options.CalibrationSource,
+		HostSensorConfigured: options.HostSensorEndpoint != "",
+		Budget:               options.Budget.String(),
+		Repeats:              options.Repeats,
+		Trials:               []Trial{},
+		Outcome:              "INCONCLUSIVE",
 		Notes: []string{
 			"Warm-up runs establish workload state but are excluded from capacity conclusions.",
 			"Active stabilization, observation, configured spike, recovery, and the optional final soak require complete bounded evidence; passing phases do not establish universal capacity certification.",
@@ -512,13 +531,23 @@ func WithRunnerProgress(ctx context.Context, base config.Validated, options Opti
 			if len(spikeCookies) > 0 && phase.Users == options.SpikeUsers {
 				v.Cookies = spikeCookies
 			}
-			run := runner(ctx, v)
+			var run report.Result
+			var hostTelemetry *hostsensor.Observation
+			work := func() {
+				run = runner(ctx, v)
+			}
+			if options.HostSensorEndpoint != "" {
+				observation := hostsensor.ObserveWhile(ctx, options.HostSensorEndpoint, options.HostSensorToken, trial.RunID, options.HostSensorInterval, work)
+				hostTelemetry = &observation
+			} else {
+				work()
+			}
 			state, reason := ClassifyPhase(result, run, phase.Name)
 			stability := ""
 			if phase.Name == "stabilization" || phase.Name == "observation" || phase.Name == "soak" {
 				stability = AssessStabilityWithPolicy(run, options.Stability)
 			}
-			trial.Phases = append(trial.Phases, Phase{Name: phase.Name, EvidenceState: state, Reason: reason, Stability: stability, Run: run})
+			trial.Phases = append(trial.Phases, Phase{Name: phase.Name, EvidenceState: state, Reason: reason, Stability: stability, Run: run, HostTelemetry: hostTelemetry})
 			if err := checkpoint(trial); err != nil {
 				return result, err
 			}

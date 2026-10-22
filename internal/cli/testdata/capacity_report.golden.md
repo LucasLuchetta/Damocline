@@ -15,7 +15,7 @@ This assessment describes the saved evidence under its declared conditions. It d
 ## Technical evidence
 
 - **Campaign evidence ID:** `sha256:campaign-fixture`
-- **Campaign schema:** 15
+- **Campaign schema:** 16
 - **Campaign execution state:** COMPLETED
 - **Scenario:** synthetic local fixture
 - **Declared environment:** development

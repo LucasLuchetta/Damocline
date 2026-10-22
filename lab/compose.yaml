@@ -1,0 +1,76 @@
+services:
+  target:
+    build:
+      context: ..
+      dockerfile: lab/Dockerfile
+      target: target
+    read_only: true
+    cpus: 0.50
+    mem_limit: 256m
+    ports:
+      - "127.0.0.1:${DAMOCLINE_LAB_PORT:-18080}:8080"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"]
+      interval: 2s
+      timeout: 1s
+      retries: 10
+
+  sensor:
+    build:
+      context: ..
+      dockerfile: lab/Dockerfile
+      target: sensor
+    network_mode: "service:target"
+    pid: "service:target"
+    read_only: true
+    environment:
+      DAMOCLINE_SENSOR_TOKEN: ${DAMOCLINE_SENSOR_TOKEN:?set a private local test token}
+    command: ["--listen", "127.0.0.1:9467", "--workload-pid", "1"]
+    depends_on:
+      target:
+        condition: service_healthy
+
+  generator:
+    profiles: ["run"]
+    build:
+      context: ..
+      dockerfile: lab/Dockerfile
+      target: generator
+    network_mode: "service:target"
+    read_only: true
+    cpus: 1.0
+    mem_limit: 512m
+    environment:
+      DAMOCLINE_SENSOR_TOKEN: ${DAMOCLINE_SENSOR_TOKEN:?set a private local test token}
+    volumes:
+      - ./artifacts:/reports
+    depends_on:
+      target:
+        condition: service_healthy
+      sensor:
+        condition: service_started
+    command:
+      - campaign
+      - --config
+      - ${DAMOCLINE_LAB_SCENARIO:-/lab/scenario.json}
+      - --warmup
+      - 0s
+      - --observation
+      - 20s
+      - --recovery
+      - 10s
+      - --repeats
+      - "2"
+      - --app-metrics-endpoint
+      - http://127.0.0.1:8080/metrics
+      - --app-metrics-interval
+      - 5s
+      - --host-sensor-endpoint
+      - http://127.0.0.1:9467/v1/host
+      - --host-sensor-token-env
+      - DAMOCLINE_SENSOR_TOKEN
+      - --host-sensor-interval
+      - 5s
+      - --authorized
+      - --out
+      - ${DAMOCLINE_LAB_REPORT:-/reports/lab-campaign.json}

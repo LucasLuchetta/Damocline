@@ -10,6 +10,7 @@ coverage.out
 # Local reports and credentials
 /results/
 /reports/
+/lab/artifacts/
 .env
 .env.*
 *.local.yml

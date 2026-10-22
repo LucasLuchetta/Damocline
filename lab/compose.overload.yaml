@@ -1,0 +1,27 @@
+services:
+  generator:
+    command:
+      - campaign
+      - --config
+      - /lab/scenario-overload.json
+      - --warmup
+      - 0s
+      - --observation
+      - 10s
+      - --recovery
+      - 0s
+      - --repeats
+      - "2"
+      - --metrics-endpoint
+      - http://127.0.0.1:8080/metrics
+      - --metrics-interval
+      - 3s
+      - --host-sensor-endpoint
+      - http://127.0.0.1:9467/v1/host
+      - --host-sensor-token-env
+      - DAMOCLINE_SENSOR_TOKEN
+      - --host-sensor-interval
+      - 3s
+      - --authorized
+      - --out
+      - /reports/lab-overload.json

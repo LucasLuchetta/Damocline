@@ -16,6 +16,8 @@ import (
 	"github.com/LucasLuchetta/Damocline/internal/calibration"
 	"github.com/LucasLuchetta/Damocline/internal/config"
 	"github.com/LucasLuchetta/Damocline/internal/generatorhealth"
+	"github.com/LucasLuchetta/Damocline/internal/hostmon"
+	"github.com/LucasLuchetta/Damocline/internal/hostsensor"
 	"github.com/LucasLuchetta/Damocline/internal/report"
 )
 
@@ -36,6 +38,39 @@ func TestCampaignSeparatesWarmupObservationAndRecovery(t *testing.T) {
 	})
 	if err != nil || result.Outcome != "PASS" || len(result.Trials) != 2 || len(durations) != 6 || result.ObservationVariability == nil || result.ObservationVariability.Runs != 2 || result.ObservationVariability.SuccessfulJourneysMinPerSec != 8 || result.ObservationVariability.SuccessfulJourneysMaxPerSec != 8 {
 		t.Fatalf("unexpected campaign: %+v err=%v durations=%v", result, err, durations)
+	}
+}
+
+func TestCampaignAttachesBoundedHostSensorEvidenceToEveryPhase(t *testing.T) {
+	token := "synthetic-sensor-token"
+	handler, err := hostsensor.NewHandler(token, func(context.Context) (hostmon.Result, error) {
+		return hostmon.Result{SchemaVersion: 1, Source: "linux:/proc", StartedAt: time.Now().UTC().Format(time.RFC3339Nano), Interval: "1s", Samples: []hostmon.Sample{{At: time.Now().UTC().Format(time.RFC3339Nano), CPUPercent: 10, MemoryUsedBytes: 10, MemoryTotalBytes: 100}}, Note: "synthetic test reading"}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sensor := httptest.NewServer(handler)
+	defer sensor.Close()
+	options := Options{Observation: 10 * time.Second, Recovery: 10 * time.Second, Repeats: 2, HostSensorEndpoint: sensor.URL + hostsensor.Path, HostSensorToken: token, HostSensorInterval: time.Second}
+	result, err := WithRunner(context.Background(), scenario(t), options, func(ctx context.Context, v config.Validated) report.Result {
+		time.Sleep(30 * time.Millisecond)
+		return stableResult(v)
+	})
+	if err != nil {
+		t.Fatalf("sensor-enabled campaign failed: %v", err)
+	}
+	if !result.HostSensorConfigured || len(result.Trials) != options.Repeats {
+		t.Fatalf("sensor configuration was not recorded: %+v", result)
+	}
+	for _, trial := range result.Trials {
+		if len(trial.Phases) != 2 {
+			t.Fatalf("unexpected phase count: %+v", trial.Phases)
+		}
+		for _, phase := range trial.Phases {
+			if phase.HostTelemetry == nil || phase.HostTelemetry.ExperimentID != trial.RunID || phase.HostTelemetry.Attempts < 1 {
+				t.Fatalf("phase lacks linked bounded sensor evidence: %+v", phase)
+			}
+		}
 	}
 }
 

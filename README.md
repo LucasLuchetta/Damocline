@@ -19,6 +19,10 @@ The name evokes the **Sword of Damocles**: apparently stable systems can have li
 
 The CLI also provides a bounded repeated `arrival-campaign` for open-loop journey-start rates. It preserves scheduled starts/s as a separate unit from worker limits, completed journeys/s, and HTTP requests/s; current external run quality still does not certify sustainable capacity.
 
+An experimental Linux host sensor can attach authenticated, phase-aligned host CPU and memory readings to a closed-loop campaign. Optional PID collection adds per-sample cgroup-v2 quota, memory limit/current and OOM counters only when the selected process's cgroup is visible; inaccessible values remain unknown. Process CPU/RSS and container restart attribution remain unavailable, and this does not certify capacity. See [advanced testing](docs/ADVANCED_TESTING.md).
+
+A [controlled Docker Compose lab](lab/README.md) defines a synthetic queue-limited target, sensor, and separate generator for local validation. Runtime validation is recorded in its local ignored artifacts and remains host-specific.
+
 ## The problem
 
 Developers rarely want only a requests-per-second chart. They want to answer:
@@ -218,10 +222,21 @@ To retain external application metrics beside each phase, campaigns and single
 runs accept `--app-metrics-endpoint URL --app-metrics-interval 10s`. The
 timestamped samples are available in the phase's run report for manual
 alignment. Scrapes add traffic outside Damocline's load counters and rate
-governor; labels are discarded, credentials in URL query strings are rejected,
-and the observations do not identify a bottleneck. See
+governor; label values are discarded while each series receives a stable
+artifact-local hash, and Prometheus TYPE/UNIT metadata is retained so counters
+and histogram series are not summed by name. Credentials in URL query strings
+are rejected, and the observations do not identify a bottleneck. See
 [advanced testing](docs/ADVANCED_TESTING.md#9-collect-application-metrics-explicitly)
 for bounds and limitations.
+
+Closed-loop campaigns can also sample an explicitly configured authenticated
+Linux host sensor with `--host-sensor-endpoint http://127.0.0.1:9467/v1/host`
+and `--host-sensor-token-env DAMOCLINE_SENSOR_TOKEN`. The bearer token is read
+from the named environment variable, never written to campaign evidence, and
+remote endpoints require HTTPS. Each phase stores bounded coverage and clock
+uncertainty; missing or inconsistent samples remain incomplete. The standalone
+`damocline-sensor` binary serves this endpoint on Linux. See the [capacity lab](lab/README.md)
+for a disposable Docker setup.
 
 Closed-loop campaigns accept `--calibration FILE` to retain local generator
 preflight evidence. `--require-calibration` fails before any phase unless every
@@ -301,6 +316,18 @@ returns `INSUFFICIENT_EVIDENCE`; 50 error-free requests cannot substantiate a
 observations; that assumption is not established, so the result is not a
 confidence-certified capacity claim. The command never makes a hardware
 prediction, identifies a bottleneck, or recommends an infrastructure purchase.
+
+For predeclared confirmatory runs, the experimental `protocol seal` and
+`protocol assess` commands bind a saved workload/SLO schedule to separate
+exploration and confirmation campaigns, preserving observed variability and a
+reserve-based planning level without claiming statistical certainty. See
+[capacity confirmation protocol](docs/CAPACITY_PROTOCOL.md).
+
+`campaign --calibration <file>` can attach a validated local generator
+preflight to every saved phase. Run the preflight on the same generator host
+and runtime first. The fixed loopback fixture measures only its declared
+envelope; attached evidence does not prove target identity, workload
+equivalence, or remove a binding `max_rps` ceiling.
 
 ## Terminal home screen
 

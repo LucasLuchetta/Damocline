@@ -75,6 +75,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return planCmd(args[1:], stdout, stderr)
 	case "audit":
 		return auditCmd(args[1:], stdout, stderr)
+	case "protocol":
+		return protocolCmd(args[1:], stdout, stderr)
 	case "run":
 		return run(args[1:], stdout, stderr)
 	case "explore":
@@ -118,6 +120,8 @@ Usage:
   damocline goal --file capacity.json (--peak-users 20 | --peak-journeys-per-second 5) [--expect-source-sha256 sha256:<64-hex>] [--growth-percent 25] [--reserve-percent 20] [--out assessment.json] [--report-out capacity.md]
 	  damocline plan --campaign campaign.json --peak-users 20 [--growth-percent 25] [--reserve-percent 20]
 	damocline audit --campaign campaign.json [--campaign higher-level.json] [--peak-users 20] [--growth-percent 25] [--reserve-percent 20] [--out assessment.json]
+	  damocline protocol seal --file protocol-draft.json --out reports/protocol.json
+	  damocline protocol assess --file reports/protocol.json --confirmation-campaign reports/confirm-1.json --confirmation-campaign reports/confirm-2.json [--markdown reports/capacity.md --bundle reports/reproduction.json]
   damocline run --config scenario.json --authorized [--calibration reports/reference.json --require-calibration] [--app-metrics-endpoint https://app.example.com/metrics --app-metrics-interval 10s] [--out reports/run.json]
   damocline run --config scenario.json --dry-run
   damocline explore --config scenario.json --min-users 2 --max-users 20 --stage-duration 20s --repeats 2 --authorized
@@ -631,6 +635,9 @@ func campaignCmdWithWorkloadSource(args []string, source *campaign.WorkloadSourc
 	out := fs.String("out", "", "JSON campaign report output path")
 	applicationMetricsEndpoint := fs.String("app-metrics-endpoint", "", "optionally sample an authorized Prometheus-text endpoint during every phase")
 	applicationMetricsInterval := fs.Duration("app-metrics-interval", 10*time.Second, "application-metrics sampling interval (1s-1m)")
+	hostSensorEndpoint := fs.String("host-sensor-endpoint", "", "optionally sample an authorized Damocline Linux host sensor during every phase")
+	hostSensorTokenEnv := fs.String("host-sensor-token-env", "DAMOCLINE_SENSOR_TOKEN", "environment variable containing the host sensor bearer token")
+	hostSensorInterval := fs.Duration("host-sensor-interval", 5*time.Second, "host sensor sampling interval (1s-30s)")
 	calibrationFile := fs.String("calibration", "", "optional local generator calibration record for closed-loop preflight evidence")
 	requireCalibration := fs.Bool("require-calibration", false, "require exact closed-loop VU calibration coverage before execution")
 	if err := fs.Parse(args); err != nil {
@@ -643,6 +650,16 @@ func campaignCmdWithWorkloadSource(args []string, source *campaign.WorkloadSourc
 	if err := validateApplicationMetrics(*applicationMetricsEndpoint, *applicationMetricsInterval); err != nil {
 		fmt.Fprintf(stderr, "application metrics configuration error: %v\n", err)
 		return 2
+	}
+	hostSensorToken := ""
+	configuredHostSensorInterval := time.Duration(0)
+	if *hostSensorEndpoint != "" {
+		if *hostSensorTokenEnv == "" {
+			fmt.Fprintln(stderr, "--host-sensor-token-env cannot be empty")
+			return 2
+		}
+		hostSensorToken = os.Getenv(*hostSensorTokenEnv)
+		configuredHostSensorInterval = *hostSensorInterval
 	}
 	if !*dry && *out == "" {
 		fmt.Fprintln(stderr, "campaigns require --out to preserve every attempted phase and trial")
@@ -659,7 +676,8 @@ func campaignCmdWithWorkloadSource(args []string, source *campaign.WorkloadSourc
 	options := campaign.Options{WorkloadSource: source, Warmup: *warmup, Stabilization: *stabilization, Observation: *observation, SpikeUsers: *spikeUsers, SpikeDuration: *spikeDuration, Recovery: *recovery, Soak: *soak, Cooldown: *cooldown, Repeats: *repeats, Budget: *budget,
 		Guardrails: guardrails,
 		LongRun:    *longRun, StagingConfirmed: *stagingConfirmed,
-		Stability: campaign.StabilityPolicy{MinimumWindows: *minWindows, MinimumSamplesPerWindow: *minSamples, MaxP95IncreasePercent: *maxP95IncreasePercent, MaxP95IncreaseMS: *maxP95IncreaseMS, MaxThroughputDropPercent: *maxThroughputDropPercent}}
+		Stability:          campaign.StabilityPolicy{MinimumWindows: *minWindows, MinimumSamplesPerWindow: *minSamples, MaxP95IncreasePercent: *maxP95IncreasePercent, MaxP95IncreaseMS: *maxP95IncreaseMS, MaxThroughputDropPercent: *maxThroughputDropPercent},
+		HostSensorEndpoint: *hostSensorEndpoint, HostSensorToken: hostSensorToken, HostSensorInterval: configuredHostSensorInterval}
 	if err := campaign.Validate(options); err != nil {
 		fmt.Fprintf(stderr, "invalid campaign: %v\n", err)
 		return 2
@@ -721,6 +739,9 @@ func campaignCmdWithWorkloadSource(args []string, source *campaign.WorkloadSourc
 	if options.Guardrails.Enabled() {
 		fmt.Fprintf(stdout, "Generator abort guardrails: CPU %.1f%% | RSS %.1f MiB | %d consecutive samples. These limits apply to the local generator, not the target application.\n", guardrails.MaxProcessCPUPercent, float64(guardrails.MaxProcessRSSBytes)/(1024*1024), guardrails.ConsecutiveSamples)
 	}
+	if options.HostSensorEndpoint != "" {
+		fmt.Fprintf(stdout, "Sampling authorized Linux host sensor every %s; incomplete coverage is preserved as limited evidence.\n", options.HostSensorInterval)
+	}
 	if *dry {
 		if *applicationMetricsEndpoint != "" {
 			fmt.Fprintf(stdout, "Application metrics endpoint validated; dry run will not scrape it (interval %s).\n", *applicationMetricsInterval)
@@ -761,6 +782,9 @@ func campaignCmdWithWorkloadSource(args []string, source *campaign.WorkloadSourc
 				fmt.Fprintf(stdout, "    %s drift screen: %s\n", phase.Name, phase.Stability)
 			}
 			printApplicationMetricsSummary(stdout, phase.Run.ApplicationMetrics)
+			if phase.HostTelemetry != nil {
+				fmt.Fprintf(stdout, "    Linux host sensor: %s (%d samples, %d failures)\n", phase.HostTelemetry.Coverage, len(phase.HostTelemetry.Samples), len(phase.HostTelemetry.Failures))
+			}
 			if phase.EvidenceState == "INVALID_DELIVERY" || phase.EvidenceState == "INSUFFICIENT_EVIDENCE" {
 				fmt.Fprintf(stdout, "    %s\n", phase.Reason)
 			}
