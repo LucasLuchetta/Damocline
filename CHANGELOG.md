@@ -80,6 +80,7 @@ This project follows a human-maintained changelog. No release exists yet.
 
 ## [Unreleased]
 
+- Add the opt-in `damocline-sensor` Linux service with bearer-authenticated, bounded host and optional process/cgroup observations; remote listeners require TLS and the default bind is loopback.
 - Preserve detected workload/application/environment identity changes when other required campaign phases also lack identity fields, and report both facts; apply the same logic in closed-loop audit and open-arrival goal assessment.
 - Reject current campaign profiles and calibration artifacts that omit required persisted controls or generator/fixture evidence, while preserving schema-versioned historical calibration fields and explicit zero values.
 - Reject campaign artifacts missing required top-level evidence fields; require schema-v5+ campaign timestamps to be valid RFC3339 values while preserving earlier historical timestamp semantics. Apply the same raw-byte checks in audit, collection, dashboard, and redacted export paths.
