@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "protocol_id": "sha256:b6e68e8a7192450c73bfa0b953bf4cf0ec0040bf7e807c3d1ba7e4e768cf8e84",
+  "sealed_at": "2026-10-22T21:05:39.5268098Z",
+  "scenario": "Controlled read-only queue lab",
+  "target": "http://127.0.0.1:8080",
+  "environment": "docker-compose-local",
+  "workload_revision": "lab-workload-v1",
+  "application_revision": "lab-target-v1",
+  "workload_fingerprint": "sha256:54e4c76ebf3bedcf68d6fffe0aacacb80096e3f64ad382e399abc9d6566193ab",
+  "candidate_users": 2,
+  "first_failing_users": 20,
+  "required_confirmation_campaigns": 2,
+  "warmup": "0s",
+  "minimum_observation": "10s",
+  "spike_duration": "0s",
+  "recovery": "10s",
+  "require_application_metrics": true,
+  "require_host_sensor": true,
+  "max_p95_ms": 1000,
+  "max_error_rate": 0.01,
+  "reserve_percent": 20,
+  "peak_demand_users": 1,
+  "growth_percent": 0,
+  "preparation": "Start the isolated local synthetic target and sensor; verify health before each campaign.",
+  "stop_conditions": [
+    "Stop if campaign integrity or generator scheduling is invalid.",
+    "Stop if the local target becomes unhealthy or host reports OOM."
+  ]
+}

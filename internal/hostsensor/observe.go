@@ -83,8 +83,9 @@ func coverageReason(result Observation, start, end time.Time, interval time.Dura
 	}
 	previous := start
 	for _, sample := range result.Samples {
-		at, err := time.Parse(time.RFC3339Nano, sample.ReceivedAt)
-		if err != nil || at.Before(previous) || at.After(end) {
+		sent, sentErr := time.Parse(time.RFC3339Nano, sample.SentAt)
+		at, receivedErr := time.Parse(time.RFC3339Nano, sample.ReceivedAt)
+		if sentErr != nil || receivedErr != nil || sent.Before(start) || at.Before(sent) || at.Before(previous) || at.After(end) {
 			return "host sensor sample timestamps are outside the phase"
 		}
 		if at.Sub(previous) > 2*interval+2*time.Second {
@@ -122,11 +123,22 @@ func ReassessCoverage(result Observation) (string, error) {
 		if sample.Reading.ExperimentID != result.ExperimentID || sample.Reading.SchemaVersion != 1 || sample.Reading.Host.SchemaVersion != 1 || len(sample.Reading.Host.Samples) != 1 || sample.Reading.Host.Source != "linux:/proc" {
 			return "", fmt.Errorf("host sensor sample identity or schema changed")
 		}
-		if sample.RoundTripMS < 0 || math.IsNaN(sample.RoundTripMS) || math.IsInf(sample.RoundTripMS, 0) || math.IsNaN(sample.OffsetMinMS) || math.IsInf(sample.OffsetMinMS, 0) || math.IsNaN(sample.OffsetMaxMS) || math.IsInf(sample.OffsetMaxMS, 0) || sample.OffsetMaxMS < sample.OffsetMinMS || math.Abs(sample.OffsetMaxMS-sample.OffsetMinMS-sample.RoundTripMS) > 1 {
+		sentAt, sentErr := time.Parse(time.RFC3339Nano, sample.SentAt)
+		receivedAt, receivedErr := time.Parse(time.RFC3339Nano, sample.ReceivedAt)
+		observedAt, observedErr := time.Parse(time.RFC3339Nano, sample.Reading.ObservedAt)
+		if sentErr != nil || receivedErr != nil || observedErr != nil || receivedAt.Before(sentAt) {
+			return "", fmt.Errorf("invalid host sensor sample timestamps")
+		}
+		roundTrip := float64(receivedAt.Sub(sentAt)) / float64(time.Millisecond)
+		offsetMin := float64(observedAt.Sub(receivedAt)) / float64(time.Millisecond)
+		offsetMax := float64(observedAt.Sub(sentAt)) / float64(time.Millisecond)
+		if sample.RoundTripMS < 0 || math.IsNaN(sample.RoundTripMS) || math.IsInf(sample.RoundTripMS, 0) || math.IsNaN(sample.OffsetMinMS) || math.IsInf(sample.OffsetMinMS, 0) || math.IsNaN(sample.OffsetMaxMS) || math.IsInf(sample.OffsetMaxMS, 0) || sample.OffsetMaxMS < sample.OffsetMinMS || math.Abs(sample.RoundTripMS-roundTrip) > 0.001 || math.Abs(sample.OffsetMinMS-offsetMin) > 0.001 || math.Abs(sample.OffsetMaxMS-offsetMax) > 0.001 {
 			return "", fmt.Errorf("invalid host sensor clock uncertainty")
 		}
 		host := sample.Reading.Host.Samples[0]
-		if host.CPUPercent < 0 || host.CPUPercent > 100 || host.MemoryTotalBytes == 0 || host.MemoryUsedBytes > host.MemoryTotalBytes {
+		hostStarted, hostStartedErr := time.Parse(time.RFC3339Nano, sample.Reading.Host.StartedAt)
+		hostAt, hostAtErr := time.Parse(time.RFC3339Nano, host.At)
+		if hostStartedErr != nil || hostAtErr != nil || hostAt.Before(hostStarted) || hostAt.After(observedAt) || host.CPUPercent < 0 || host.CPUPercent > 100 || math.IsNaN(host.CPUPercent) || math.IsInf(host.CPUPercent, 0) || host.MemoryTotalBytes == 0 || host.MemoryUsedBytes > host.MemoryTotalBytes {
 			return "", fmt.Errorf("invalid host sensor resource values")
 		}
 		if !validSwap(host) {

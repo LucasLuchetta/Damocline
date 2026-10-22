@@ -5,10 +5,13 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"math"
+	"net"
 	"net/http"
 	"net/url"
 	"sort"
@@ -21,6 +24,7 @@ import (
 const maxBodyBytes = 1 << 20
 const maxMetricNames = 64
 const maxMetricNameBytes = 128
+const maxMetricSeries = 4096
 const MaxTimelineSamples = 1000
 const MaxTimelineBytes = 4 << 20
 const MinTimelineInterval = time.Second
@@ -29,8 +33,11 @@ const MaxTimelineInterval = time.Minute
 const TimelineSchemaVersion = 1
 
 type Sample struct {
-	Name  string  `json:"name"`
-	Value float64 `json:"value"`
+	Name     string  `json:"name"`
+	Value    float64 `json:"value"`
+	Type     string  `json:"type,omitempty"`
+	Unit     string  `json:"unit,omitempty"`
+	SeriesID string  `json:"series_id,omitempty"`
 }
 
 type Snapshot struct {
@@ -64,6 +71,7 @@ type Timeline struct {
 	InterruptedScrapes int           `json:"interrupted_scrapes,omitempty"`
 	CollectionLimitHit bool          `json:"collection_limit_hit,omitempty"`
 	Note               string        `json:"note"`
+	LegacyIncomplete   bool          `json:"-"`
 }
 
 // Budget caps scrape attempts across all phases in one campaign artifact.
@@ -114,7 +122,7 @@ func (b *Budget) storeSample(sample TimedSample) bool {
 }
 
 func (t Timeline) State() string {
-	if t.FailedCollections > 0 || t.InterruptedScrapes > 0 || t.CollectionLimitHit {
+	if t.LegacyIncomplete || t.FailedCollections > 0 || t.InterruptedScrapes > 0 || t.CollectionLimitHit {
 		if len(t.Samples) == 0 {
 			return "UNAVAILABLE"
 		}
@@ -163,16 +171,24 @@ func ValidateTimeline(t Timeline) error {
 		collectionStart, collectionStartErr := time.Parse(time.RFC3339Nano, sample.StartedAt)
 		collectionEnd, collectionEndErr := time.Parse(time.RFC3339Nano, sample.FinishedAt)
 		if collectionStartErr != nil || collectionEndErr != nil || collectionStart.Before(start) || collectionEnd.After(end) || collectionEnd.Before(collectionStart) || (!previousEnd.IsZero() && collectionStart.Before(previousEnd)) ||
-			math.IsNaN(sample.DurationMS) || math.IsInf(sample.DurationMS, 0) || sample.DurationMS < 0 || len(sample.Samples) > maxMetricNames {
+			math.IsNaN(sample.DurationMS) || math.IsInf(sample.DurationMS, 0) || sample.DurationMS < 0 || len(sample.Samples) > maxMetricSeries {
 			return fmt.Errorf("invalid application-metrics sample bounds")
 		}
 		previousEnd = collectionEnd
 		previous := ""
+		previousSeries := ""
 		for _, metric := range sample.Samples {
-			if len(metric.Name) > maxMetricNameBytes || !validName(metric.Name) || metric.Name <= previous || math.IsNaN(metric.Value) || math.IsInf(metric.Value, 0) {
+			if len(metric.Name) > maxMetricNameBytes || !validName(metric.Name) || metric.Name < previous || (metric.Name == previous && metric.SeriesID <= previousSeries) || math.IsNaN(metric.Value) || math.IsInf(metric.Value, 0) {
 				return fmt.Errorf("invalid application-metrics value")
 			}
+			if metric.SeriesID != "" && (len(metric.SeriesID) != 64 || strings.Trim(metric.SeriesID, "0123456789abcdef") != "") {
+				return fmt.Errorf("invalid application-metrics series identity")
+			}
+			if metric.Type != "" && metric.Type != "counter" && metric.Type != "gauge" && metric.Type != "histogram" && metric.Type != "gaugehistogram" && metric.Type != "summary" && metric.Type != "info" && metric.Type != "stateset" && metric.Type != "unknown" {
+				return fmt.Errorf("invalid application-metrics type")
+			}
 			previous = metric.Name
+			previousSeries = metric.SeriesID
 		}
 	}
 	return nil
@@ -199,13 +215,44 @@ func ValidateInterval(interval time.Duration) error {
 }
 
 func Collect(ctx context.Context, endpoint string) (Snapshot, error) {
+	return CollectWithBearer(ctx, endpoint, "")
+}
+
+// ValidateEndpointWithBearer checks endpoint syntax and ensures authentication
+// credentials cannot leave the machine over plaintext HTTP.
+func ValidateEndpointWithBearer(endpoint, token string) error {
+	if _, err := ValidateEndpoint(endpoint); err != nil {
+		return err
+	}
+	if token == "" {
+		return nil
+	}
+	u, err := url.Parse(endpoint)
+	if err != nil {
+		return err
+	}
+	if u.Scheme != "https" && !isLoopback(u.Hostname()) {
+		return fmt.Errorf("bearer authentication requires HTTPS or a loopback endpoint")
+	}
+	return nil
+}
+
+// CollectWithBearer performs one bounded scrape. The bearer token is never
+// included in errors or persisted in the returned snapshot.
+func CollectWithBearer(ctx context.Context, endpoint, token string) (Snapshot, error) {
 	source, err := ValidateEndpoint(endpoint)
 	if err != nil {
+		return Snapshot{}, err
+	}
+	if err := ValidateEndpointWithBearer(endpoint, token); err != nil {
 		return Snapshot{}, err
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return Snapshot{}, fmt.Errorf("build metrics request: %w", err)
+	}
+	if token != "" {
+		request.Header.Set("Authorization", "Bearer "+token)
 	}
 	client := &http.Client{Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	response, err := client.Do(request)
@@ -220,7 +267,15 @@ func Collect(ctx context.Context, endpoint string) (Snapshot, error) {
 	if err != nil {
 		return Snapshot{}, err
 	}
-	return Snapshot{SchemaVersion: 1, Source: source, CollectedAt: time.Now().UTC().Format(time.RFC3339Nano), Samples: samples, Note: "Direct application metric observations only; values are not proof of a bottleneck or capacity cause."}, nil
+	return Snapshot{SchemaVersion: 2, Source: source, CollectedAt: time.Now().UTC().Format(time.RFC3339Nano), Samples: samples, Note: "Direct application metric observations only; values are not proof of a bottleneck or capacity cause."}, nil
+}
+
+func isLoopback(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // CaptureDuring samples a configured endpoint while run executes. Scrapes
@@ -302,44 +357,163 @@ func parse(reader io.Reader) ([]Sample, error) {
 	}
 	scanner := bufio.NewScanner(bytes.NewReader(body))
 	scanner.Buffer(make([]byte, 4096), 64*1024)
-	values := map[string]float64{}
+	samples := make([]Sample, 0)
+	metricNames := map[string]struct{}{}
+	types := map[string]string{}
+	units := map[string]string{}
+	seenSeries := map[string]struct{}{}
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
+		if line == "" {
 			continue
 		}
-		fields := strings.Fields(line)
-		if len(fields) < 2 {
+		if strings.HasPrefix(line, "# TYPE ") || strings.HasPrefix(line, "# UNIT ") {
+			fields := strings.Fields(line)
+			if len(fields) != 4 || !validName(fields[2]) {
+				return nil, fmt.Errorf("invalid metric metadata")
+			}
+			if fields[1] == "TYPE" {
+				types[fields[2]] = fields[3]
+			} else {
+				units[fields[2]] = fields[3]
+			}
+			continue
+		}
+		if strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, rest, ok := splitSample(line)
+		if !ok {
 			return nil, fmt.Errorf("invalid metric line")
 		}
-		name := fields[0]
-		if index := strings.IndexByte(name, '{'); index >= 0 {
-			name = name[:index]
+		name := key
+		var labels map[string]string
+		if index := strings.IndexByte(key, '{'); index >= 0 {
+			name = key[:index]
+			if !strings.HasSuffix(key, "}") {
+				return nil, fmt.Errorf("invalid labels for %q", name)
+			}
+			var err error
+			labels, err = parseLabels(key[index+1 : len(key)-1])
+			if err != nil {
+				return nil, fmt.Errorf("invalid labels for %q: %w", name, err)
+			}
 		}
 		if len(name) > maxMetricNameBytes || !validName(name) {
 			return nil, fmt.Errorf("invalid metric name %q", name)
 		}
-		value, err := strconv.ParseFloat(fields[1], 64)
+		fields := strings.Fields(rest)
+		if len(fields) != 1 {
+			return nil, fmt.Errorf("unsupported metric sample for %q", name)
+		}
+		value, err := strconv.ParseFloat(fields[0], 64)
 		if err != nil || math.IsNaN(value) || math.IsInf(value, 0) {
 			return nil, fmt.Errorf("invalid metric value for %q", name)
 		}
-		values[name] += value
-		if math.IsNaN(values[name]) || math.IsInf(values[name], 0) {
-			return nil, fmt.Errorf("aggregated metric value for %q is not finite", name)
-		}
-		if len(values) > maxMetricNames {
+		metricNames[name] = struct{}{}
+		if len(metricNames) > maxMetricNames {
 			return nil, fmt.Errorf("metrics response exceeds %d distinct metric names", maxMetricNames)
+		}
+		identity := seriesIdentity(name, labels)
+		seriesKey := name + "\x00" + identity
+		if _, duplicate := seenSeries[seriesKey]; duplicate {
+			return nil, fmt.Errorf("duplicate metric series %q", name)
+		}
+		seenSeries[seriesKey] = struct{}{}
+		samples = append(samples, Sample{Name: name, Value: value, Type: types[name], Unit: units[name], SeriesID: identity})
+		if len(samples) > maxMetricSeries {
+			return nil, fmt.Errorf("metrics response exceeds %d metric series", maxMetricSeries)
 		}
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, fmt.Errorf("read metrics: %w", err)
 	}
-	samples := make([]Sample, 0, len(values))
-	for name, value := range values {
-		samples = append(samples, Sample{Name: name, Value: value})
-	}
-	sort.Slice(samples, func(i, j int) bool { return samples[i].Name < samples[j].Name })
+	sort.Slice(samples, func(i, j int) bool {
+		if samples[i].Name != samples[j].Name {
+			return samples[i].Name < samples[j].Name
+		}
+		return samples[i].SeriesID < samples[j].SeriesID
+	})
 	return samples, nil
+}
+
+func seriesIdentity(name string, labels map[string]string) string {
+	if len(labels) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(labels))
+	for key := range labels {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	b.WriteString(name)
+	for _, key := range keys {
+		b.WriteByte(0)
+		b.WriteString(key)
+		b.WriteByte(0)
+		b.WriteString(strconv.Quote(labels[key]))
+	}
+	digest := sha256.Sum256([]byte(b.String()))
+	return hex.EncodeToString(digest[:])
+}
+
+func splitSample(line string) (string, string, bool) {
+	inQuote, escaped := false, false
+	for i := 0; i < len(line); i++ {
+		switch {
+		case escaped:
+			escaped = false
+		case inQuote && line[i] == '\\':
+			escaped = true
+		case line[i] == '"':
+			inQuote = !inQuote
+		case !inQuote && (line[i] == ' ' || line[i] == '\t'):
+			return line[:i], line[i+1:], true
+		}
+	}
+	return "", "", false
+}
+
+func parseLabels(raw string) (map[string]string, error) {
+	labels := map[string]string{}
+	for raw != "" {
+		eq := strings.IndexByte(raw, '=')
+		if eq <= 0 || !validName(raw[:eq]) || len(raw) <= eq+1 || raw[eq+1] != '"' {
+			return nil, fmt.Errorf("malformed label")
+		}
+		name := raw[:eq]
+		if _, exists := labels[name]; exists {
+			return nil, fmt.Errorf("duplicate label")
+		}
+		end := eq + 2
+		for end < len(raw) {
+			if raw[end] == '\\' {
+				end += 2
+				continue
+			}
+			if raw[end] == '"' {
+				break
+			}
+			end++
+		}
+		if end >= len(raw) {
+			return nil, fmt.Errorf("unterminated label")
+		}
+		value, err := strconv.Unquote(raw[eq+1 : end+1])
+		if err != nil {
+			return nil, err
+		}
+		labels[name] = value
+		raw = raw[end+1:]
+		if raw != "" {
+			if raw[0] != ',' {
+				return nil, fmt.Errorf("malformed label separator")
+			}
+			raw = raw[1:]
+		}
+	}
+	return labels, nil
 }
 
 func validName(name string) bool {

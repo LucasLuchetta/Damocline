@@ -1,0 +1,19 @@
+{
+  "name": "Controlled read-only queue lab",
+  "workload_revision": "lab-workload-v1",
+  "application_revision": "lab-target-v1",
+  "environment": "docker-compose-local",
+  "base_url": "http://127.0.0.1:8080",
+  "mode": "closed",
+  "users": 1,
+  "duration": "20s",
+  "ramp_up": "0s",
+  "request_timeout": "3s",
+  "max_rps": 100,
+  "p95_limit_ms": 1000,
+  "max_error_rate": 0.01,
+  "min_samples_per_step": 10,
+  "steps": [
+    {"name": "synthetic_work", "method": "GET", "path": "/work", "expected_status": [200]}
+  ]
+}

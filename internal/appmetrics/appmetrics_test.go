@@ -12,13 +12,13 @@ import (
 	"time"
 )
 
-func TestCollectAggregatesLabelledSamples(t *testing.T) {
+func TestCollectPreservesLabelledSeriesAndMetricMetadata(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte("# HELP requests Requests\nrequests_total{route=\"a\"} 2\nrequests_total{route=\"b\"} 3\nqueue_depth 4\n"))
+		_, _ = w.Write([]byte("# HELP requests Requests\n# TYPE requests_total counter\n# UNIT requests_total requests\nrequests_total{route=\"a\"} 2\nrequests_total{route=\"b\"} 3\nqueue_depth 4\n"))
 	}))
 	defer server.Close()
 	snapshot, err := Collect(context.Background(), server.URL+"/metrics")
-	if err != nil || len(snapshot.Samples) != 2 || snapshot.Samples[1].Name != "requests_total" || snapshot.Samples[1].Value != 5 || snapshot.Source != server.URL {
+	if err != nil || len(snapshot.Samples) != 3 || snapshot.Samples[0].Name != "queue_depth" || snapshot.Samples[0].Value != 4 || snapshot.Samples[1].Name != "requests_total" || snapshot.Samples[2].Name != "requests_total" || snapshot.Samples[1].Value+snapshot.Samples[2].Value != 5 || snapshot.Samples[1].Type != "counter" || snapshot.Samples[2].Type != "counter" || snapshot.Samples[1].Unit != "requests" || snapshot.Samples[2].Unit != "requests" || snapshot.Samples[1].SeriesID == "" || snapshot.Samples[2].SeriesID == "" || snapshot.Samples[1].SeriesID == snapshot.Samples[2].SeriesID || snapshot.Source != server.URL {
 		t.Fatalf("unexpected snapshot: %+v err=%v", snapshot, err)
 	}
 }
@@ -53,7 +53,7 @@ func TestParseRejectsUnboundedOrInvalidMetricSets(t *testing.T) {
 		}
 	}
 	if _, err := parse(strings.NewReader("metric 1e308\nmetric 1e308")); err == nil {
-		t.Fatal("non-finite aggregate was accepted")
+		t.Fatal("duplicate series was accepted")
 	}
 }
 
@@ -77,7 +77,7 @@ func TestCaptureDuringCollectsBoundedTimestampedTimeline(t *testing.T) {
 	}
 	for _, sample := range timeline.Samples {
 		if len(sample.Samples) != 2 || sample.Samples[0].Name != "queue_depth" || sample.Samples[1].Value != 4 {
-			t.Fatalf("unexpected sanitized aggregate sample: %+v", sample)
+			t.Fatalf("unexpected sanitized sample: %+v", sample)
 		}
 	}
 }

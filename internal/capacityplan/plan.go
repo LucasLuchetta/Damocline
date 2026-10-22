@@ -21,6 +21,7 @@ import (
 	"github.com/LucasLuchetta/Damocline/internal/capacitygoal"
 	"github.com/LucasLuchetta/Damocline/internal/config"
 	"github.com/LucasLuchetta/Damocline/internal/generatorhealth"
+	"github.com/LucasLuchetta/Damocline/internal/hostsensor"
 	"github.com/LucasLuchetta/Damocline/internal/jsonartifact"
 	"github.com/LucasLuchetta/Damocline/internal/report"
 	"github.com/LucasLuchetta/Damocline/internal/statistics"
@@ -486,8 +487,36 @@ func validateEvidence(evidence campaign.Result) error {
 	if evidence.SchemaVersion < 1 || evidence.SchemaVersion > campaign.CurrentSchemaVersion || evidence.Scenario == "" || evidence.BaseUsers < 1 || evidence.Repeats < 2 || evidence.Repeats > 5 || len(evidence.Trials) == 0 || len(evidence.Trials) > evidence.Repeats {
 		return errors.New("expected a complete supported repeated campaign")
 	}
+	if evidence.HostSensorConfigured && evidence.SchemaVersion < 5 {
+		return errors.New("host sensor configuration is not supported by this campaign schema")
+	}
 	for _, trial := range evidence.Trials {
+		trialExperimentID := ""
 		for _, phase := range trial.Phases {
+			if phase.Telemetry != nil {
+				if evidence.SchemaVersion < 4 || phase.Run.ApplicationMetrics != nil {
+					return fmt.Errorf("trial %d %s phase has ambiguous or unsupported legacy application metrics", trial.Number, phase.Name)
+				}
+				if _, err := appmetrics.ReassessCoverage(*phase.Telemetry); err != nil {
+					return fmt.Errorf("trial %d %s phase application metrics are invalid: %w", trial.Number, phase.Name, err)
+				}
+			}
+			if evidence.HostSensorConfigured && phase.HostTelemetry == nil {
+				return fmt.Errorf("trial %d %s phase is missing configured host sensor evidence", trial.Number, phase.Name)
+			}
+			if phase.HostTelemetry != nil {
+				if evidence.SchemaVersion < 5 || !evidence.HostSensorConfigured || trial.RunID != "" && phase.HostTelemetry.ExperimentID != trial.RunID {
+					return fmt.Errorf("trial %d %s phase has unlinked host sensor evidence", trial.Number, phase.Name)
+				}
+				if trialExperimentID != "" && phase.HostTelemetry.ExperimentID != trialExperimentID {
+					return fmt.Errorf("trial %d has inconsistent host sensor experiment IDs", trial.Number)
+				}
+				trialExperimentID = phase.HostTelemetry.ExperimentID
+				coverage, err := hostsensor.ReassessCoverage(*phase.HostTelemetry)
+				if err != nil || coverage != phase.HostTelemetry.Coverage {
+					return fmt.Errorf("trial %d %s phase host sensor evidence is invalid", trial.Number, phase.Name)
+				}
+			}
 			if phase.Name == "warmup" {
 				continue
 			}

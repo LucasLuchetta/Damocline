@@ -1,0 +1,27 @@
+{
+  "scenario": "Controlled read-only queue lab",
+  "target": "http://127.0.0.1:8080",
+  "environment": "docker-compose-local",
+  "workload_revision": "lab-workload-v1",
+  "application_revision": "lab-target-v1",
+  "workload_fingerprint": "sha256:54e4c76ebf3bedcf68d6fffe0aacacb80096e3f64ad382e399abc9d6566193ab",
+  "candidate_users": 2,
+  "required_confirmation_campaigns": 2,
+  "warmup": "0s",
+  "minimum_observation": "10s",
+  "spike_users": 4,
+  "spike_duration": "10s",
+  "recovery": "10s",
+  "require_application_metrics": true,
+  "require_host_sensor": true,
+  "max_p95_ms": 1000,
+  "max_error_rate": 0.01,
+  "reserve_percent": 20,
+  "peak_demand_users": 1,
+  "growth_percent": 0,
+  "preparation": "Start isolated local target and sensor, verify target health, then execute bounded candidate and spike phases.",
+  "stop_conditions": [
+    "Stop if generator health or scheduling integrity becomes invalid.",
+    "Stop if target health or sensor coverage fails."
+  ]
+}

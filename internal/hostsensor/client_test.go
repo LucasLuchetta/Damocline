@@ -82,10 +82,12 @@ func TestReassessValidatesProcessCPUFormula(t *testing.T) {
 	percent, intervalMS := 100.0, 1000.0
 	delta, total, clock, rss, memory, swap := uint64(100), uint64(200), uint64(100), uint64(4096), uint64(100), uint64(0)
 	workload := &hostmon.Workload{PID: 7, StartTimeTicks: 10, ProcessRSSBytes: &rss, ProcessCPUTimeTicks: &total, ProcessCPUDeltaTicks: &delta, ProcessCPUPercent: &percent, ProcessCPUIntervalMS: &intervalMS, ProcessCPUClockTicksPerSecond: clock, ProcessCPUCoverage: "COMPLETE"}
-	host := hostmon.Sample{At: start.Add(time.Second).Format(time.RFC3339Nano), CPUPercent: 1, MemoryTotalBytes: 1000, MemoryUsedBytes: memory, SwapUsedBytes: &swap, SwapTotalBytes: &swap, Workload: workload}
-	remote := RemoteSample{ReceivedAt: start.Add(time.Second).Format(time.RFC3339Nano), OffsetMinMS: -1, OffsetMaxMS: 1, RoundTripMS: 2, Reading: Reading{ExperimentID: testExperiment, SchemaVersion: 1, ObservedAt: start.Add(time.Second).Format(time.RFC3339Nano), Host: hostmon.Result{SchemaVersion: 1, Source: "linux:/proc", Samples: []hostmon.Sample{host}}}}
+	host := hostmon.Sample{At: start.Add(time.Second - 2*time.Millisecond).Format(time.RFC3339Nano), CPUPercent: 1, MemoryTotalBytes: 1000, MemoryUsedBytes: memory, SwapUsedBytes: &swap, SwapTotalBytes: &swap, Workload: workload}
+	remote := RemoteSample{SentAt: start.Add(time.Second - 2*time.Millisecond).Format(time.RFC3339Nano), ReceivedAt: start.Add(time.Second).Format(time.RFC3339Nano), OffsetMinMS: -1, OffsetMaxMS: 1, RoundTripMS: 2, Reading: Reading{ExperimentID: testExperiment, SchemaVersion: 1, ObservedAt: start.Add(time.Second - time.Millisecond).Format(time.RFC3339Nano), Host: hostmon.Result{SchemaVersion: 1, Source: "linux:/proc", StartedAt: start.Format(time.RFC3339Nano), Interval: "1s", Samples: []hostmon.Sample{host}}}}
 	second := remote
+	second.SentAt = start.Add(2*time.Second - 2*time.Millisecond).Format(time.RFC3339Nano)
 	second.ReceivedAt = start.Add(2 * time.Second).Format(time.RFC3339Nano)
+	second.Reading.ObservedAt = start.Add(2*time.Second - time.Millisecond).Format(time.RFC3339Nano)
 	second.Reading.Host.Samples = append([]hostmon.Sample(nil), remote.Reading.Host.Samples...)
 	observation := Observation{ExperimentID: testExperiment, StartedAt: start.Format(time.RFC3339Nano), EndedAt: end.Format(time.RFC3339Nano), Interval: "1s", Attempts: 2, Samples: []RemoteSample{remote, second}, Coverage: "COMPLETE"}
 	if state, err := ReassessCoverage(observation); err != nil || state != "COMPLETE" {

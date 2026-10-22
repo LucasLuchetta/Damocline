@@ -1,5 +1,81 @@
 # Changelog
 
+## Unreleased
+
+- Correct the capability summary for the phase-aligned campaign integration: document optional Linux process CPU/RSS, typed label-distinct application metrics, exporter-reported process-start observations, and the WordPress fixture's explicitly scoped Docker Engine samples.
+- Add a bounded WordPress fixture CPU-quota diagnostic option that records nondefault resource conditions as distinct environment and application revisions.
+- Aggregate protocol assessment p95 ranges from complete journey latency, matching the declared SLO, while preserving HTTP request p95 as a separate per-phase diagnostic.
+- Allow the bounded WordPress lab verifier to vary closed-loop VUs and its request-rate safety ceiling within explicit limits, enabling prospective exploration and confirmation campaigns with a fixed workflow.
+- Make WordPress lab recovery duration configurable within bounded limits so short recovery windows cannot silently under-sample slower workflows.
+- Omit reserve-adjusted planning levels and demand margins when candidate confirmations are incomplete, and label predeclared failure levels without implying untested intermediate levels were ruled out.
+- Capture allowlisted Apache route timing in the disposable WordPress lab and
+  retain per-window server-duration evidence alongside client observations.
+  This is diagnostic fixture evidence, not isolated PHP timing or a capacity
+  claim.
+- Preserve fractional-second campaign start timestamps to improve phase
+  alignment while retaining an RFC3339-compatible representation.
+- Bucket Apache lab requests by estimated server completion to match client
+  response-completion windows; retain any remaining per-window count deltas.
+- Capture whole-container CPU and memory from Docker Engine for only the
+  isolated WordPress lab project when target cgroups are unavailable to the
+  Linux sensor.
+- Run the WordPress campaign generator in its own container network namespace
+  and reach the target and authenticated sensor over the Compose bridge, while
+  documenting that this remains a same-host fixture rather than remote-path
+  qualification.
+- Protect the bridge-reachable host sensor with a short-lived, locally trusted
+  TLS certificate and delete its private key during lab cleanup.
+- Record bounded WordPress and database container restart/OOM state and
+  lifecycle events from only the isolated Compose project's Docker metadata.
+- Capture cgroup-v2 CPU throttling and memory/OOM counter deltas around bounded
+  WordPress campaigns when the target container exposes those counters.
+- Raise the synthetic WordPress scenario's client request ceiling above its
+  observed two-VU demand after the prior campaign flagged `CLIENT_RATE_CEILING_NEAR`.
+
+- Allow the isolated WordPress verifier to use a bounded 0–120 second warm-up when investigating early-window drift.
+- Collect a bounded, read-only set of MariaDB status counters and gauges per WordPress campaign phase, requiring complete telemetry and successful status queries.
+- Screen campaign drift on complete named endpoint/profile series when available, avoiding aggregate percentiles that mix unlike workflows while retaining aggregate throughput checks.
+- Version the named-series stability screen in campaign schema 6 and replay prior campaign schemas with their original aggregate-percentile rule.
+- Start the isolated WordPress host sensor after fixture setup so it shares the finalized application network namespace.
+- Extend the WordPress fixture warm-up to 30 seconds after named endpoint series showed real early-window latency drift.
+- Remove a duplicated invalid overload run from the bounded spike-recovery verifier; keep overload validation in its dedicated script.
+- Clarify that offline audit replay generates no traffic, while its saved campaign evidence may contain prior traffic.
+- Invoke the explicit `wp` command when initializing and populating the isolated WordPress CLI fixture.
+- Avoid PowerShell's reserved `$HOME` variable when checking the WordPress fixture routes.
+- Retry bounded WordPress route probes and capture service diagnostics before cleaning an isolated failed run.
+- Preserve the random loopback port in WordPress canonical URLs while keeping the in-container generator on port 80.
+- Include the WordPress scenario in the isolated Linux generator image used by the application verifier.
+- Enable WordPress rewrite rules before probing the REST API in the isolated application fixture.
+- Mount explicit read-only Apache rewrite rules in the isolated WordPress fixture so the REST API route resolves inside the generator namespace.
+- Extend the bounded WordPress validation observation to 60 seconds after the initial pilot failed the stationarity screen.
+- Add an isolated, bounded WordPress and MariaDB Docker lab for repeatable read-only application-workflow validation with an authenticated Linux host sensor and offline audit.
+- Require a passing Linux generator preflight before either Docker application campaign begins, and reject invalid or near-saturated generator observations in the WordPress verifier.
+- Deduplicate campaign-wide protocol findings so repeated confirmations do not inflate the executive report with the same measurement-quality limitation.
+- After a valid observed SLO failure in a bounded spike, retain the failure and run the predeclared base-load recovery phase; do not start another trial.
+- Let the offline campaign audit validate exactly that observed spike-failure/recovery sequence while preserving a FAIL verdict.
+- Count distinct, safely stopped first-breach campaigns as independent observed failure replications without adding load after the breach; keep repeated passing-candidate confirmations separate.
+- Show per-phase host and selected-process CPU plus disk/network evidence in the technical capacity report, keeping those correlations separate from causal claims.
+- Include recorded and recomputed run-quality findings by campaign phase in the technical capacity appendix.
+- Add `campaign --calibration` to attach one validated generator preflight per phase, recomputing phase workload coverage while retaining target-identity and workload-equivalence limits.
+- Align campaign evidence table columns in the protocol Markdown report and label reserve-adjusted arithmetic as conditional rather than an operational capacity recommendation.
+- Add reproducible PowerShell lab checks for exporter process restarts, required host-sensor outages, and bounded target overload, with isolated Compose projects and non-overwriting local evidence.
+
+- Summarize exporter-reported process restarts from stable `process_start_time_seconds` series, with explicit unavailable/incomplete coverage and no claim of Docker Engine restart counts.
+- Capture selected-process Linux CPU time from `/proc`, use `AT_CLKTCK` to derive per-CPU utilization, and let offline readers recompute each complete sample; preserve incomplete status across PID reuse or counter resets.
+- Record bounded Linux host disk and network byte deltas per sensor sample, preserving incomplete coverage when counters reset or visible devices change; report disk, network, RSS, swap, and cgroup evidence independently.
+- Extend selected-PID sensor evidence with process CPU time and interval percent, derived from kernel clock ticks and recomputed by offline coverage assessment.
+- Preserve distinct labeled application metric series and exporter TYPE/UNIT metadata in schema-v2 metrics snapshots instead of summing by name.
+- Allow authenticated application metric collection through a bearer token environment variable; reject plaintext remote token transport.
+- Attach bounded application metric snapshots to each closed-loop campaign phase in schema v4 and make incomplete configured collection inconclusive.
+- Add an authenticated bounded Linux host sensor and schema-v5 closed-loop campaign phase evidence with shared experiment IDs, clock-offset bounds, and explicit missing-coverage handling.
+- Add a controlled Compose lab with a synthetic queue-limited target, application metrics, host sensor, and separate generator configuration.
+- Add optional selected-PID cgroup-v2 quota, memory limit/current, and memory-event evidence to the Linux host sensor.
+- Add a sealed predeclared confirmation protocol and offline assessment for separate exploratory, passing, and optional failing campaign executions.
+- Generate an executive Markdown assessment and local reproduction bundle from the same protocol replay.
+- Include per-campaign offline audit, measurement quality, observed SLO spread, telemetry coverage, and cgroup availability in structured protocol assessments; keep safely interrupted outcomes visible without counting them as confirmations.
+- Include selected-process RSS and kernel start-time ticks in optional Linux host-sensor samples, independently of whether the target cgroup hierarchy is visible.
+- Record host swap total and used bytes in authenticated Linux sensor samples, retaining measured zero swap separately from absent older evidence.
+
 This project follows a human-maintained changelog. No release exists yet.
 
 ## [Unreleased]
@@ -204,7 +280,7 @@ This project follows a human-maintained changelog. No release exists yet.
 - Add an offline `plan` command that compares a calculated business demand target with a complete repeated campaign report, preserving scenario-specific evidence limits and never recommending infrastructure.
 - Add mean request latency, sampled in-flight request averages, and a bounded throughput-times-mean-latency consistency signal for Little's Law review.
 - Add CI source-build checks for Linux amd64, Windows amd64, macOS amd64, and macOS arm64 without publishing prebuilt binaries.
-- Add an explicitly authorized local Docker CPU and memory snapshot command using one bounded `docker stats --no-stream` call.
+- Require explicitly selected Docker container IDs or names for the authorized CPU/memory snapshot, bound selections to 64, and redact runtime names from saved telemetry.
 - Add a loopback-only `dashboard` command for locally exploring an existing HTTP run report without generating traffic or exposing it to the network.
 - Add an explicitly authorized, bounded `metrics` command for snapshotting Prometheus-text application metric endpoints without preserving labels, credentials, or making causal bottleneck claims.
 - Add optional bounded spike phases and observations up to ten minutes to repeated campaigns, while preserving the global 15-minute budget and existing VU/session safeguards.
@@ -265,3 +341,9 @@ This project follows a human-maintained changelog. No release exists yet.
 
 - Native independent journey-arrival scheduling with dropped-start accounting and per-user isolated cookie sessions.\n- Repeated and bracket-refined capacity exploration with finite time budget, per-step thresholds, and conservative inconclusive outcomes.\n- Linux host CPU/RAM sampling and time-window correlation with load trials.\n- Advanced CLI examples and documentation for Windows and Linux.\n\n### Not yet available
 - Calibrated server-capacity certification, browser-based journeys, native login/CSRF recorder, per-container and DB telemetry, dashboards, and distributed load generation.
+- Include bounded per-phase application metric value ranges in protocol technical reports while omitting exporter sources and label values.
+- Add relative-path restoration and portable offline replay instructions to protocol reproduction bundles.
+- Compare synthetic-target completion/rejection counter deltas with independently observed HTTP 200/503 counts, checking resets and preserving unsampled boundary differences.
+- Separate candidate-level and predeclared-failure p95/error ranges in capacity assessments instead of presenting different load levels as one repeatability range; retain zero-error minima.
+- Link each campaign, phase, and measurement-quality row in protocol Markdown directly to its campaign evidence digest.
+- Report declared peak demand, growth, reserve, and signed conditional arithmetic margin separately from any operational demand margin.
