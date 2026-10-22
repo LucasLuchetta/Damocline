@@ -17,7 +17,7 @@ import (
 
 // The preflight record is embedded in the existing calibration JSON. It
 // identifies the tested loopback fixture, never a customer target or session.
-const SchemaVersion = 9
+const SchemaVersion = 11
 const minimumSupportedSchemaVersion = 1
 
 // Healthy response latency bounds are the fixed coarse guardrail used by the
@@ -101,6 +101,7 @@ type WorkloadObservation struct {
 	ServerReceived                 int64  `json:"server_received"`
 	ServerCompleted                int64  `json:"server_completed"`
 	ServerTCPConnections           int64  `json:"server_tcp_connections,omitempty"`
+	ServerAcceptedTLSConnections   int64  `json:"server_accepted_tls_connections,omitempty"`
 	ServerRequestBodyBytes         int64  `json:"server_request_body_bytes"`
 	ServerResponseBodyBytes        int64  `json:"server_response_body_bytes"`
 }
@@ -137,7 +138,28 @@ func WorkloadMatrixArrivalRates() []int { return []int{2, 5, 10} }
 
 func ReferenceWorkloadProfiles() []WorkloadProfile {
 	profiles := referenceWorkloadProfilesV8()
+	profiles = append(profiles, tlsLoadWorkloadProfiles()...)
 	profiles = append(profiles, closedLoopWorkloadProfiles()...)
+	return profiles
+}
+
+func referenceWorkloadProfilesV9() []WorkloadProfile {
+	profiles := referenceWorkloadProfilesV8()
+	profiles = append(profiles, closedLoopWorkloadProfiles()...)
+	return profiles
+}
+
+func tlsLoadWorkloadProfiles() []WorkloadProfile {
+	shape := WorkloadProfile{ID: "https-get-4k-response-shape", Mode: "arrival", TransportScheme: "https", Method: "GET", Path: "/matrix/https-4k", ResponseBodyBytes: ReferenceHealthyResponseBytes,
+		MaxRPS: 50, Users: 10, Duration: "5s", Timeout: "1s", ConnectionPolicy: "reuse"}
+	profiles := make([]WorkloadProfile, 0, 2)
+	for _, rate := range []int{20, 40} {
+		profile := shape
+		profile.ID = fmt.Sprintf("%s-r%d", shape.ID, rate)
+		profile.ArrivalRate = rate
+		profile.Fingerprint = WorkloadProfileFingerprint(profile)
+		profiles = append(profiles, profile)
+	}
 	return profiles
 }
 
@@ -513,6 +535,8 @@ func validateWorkloadMatrix(rec Record) error {
 		expectedProfiles = referenceWorkloadProfilesV5()
 	} else if rec.SchemaVersion == 8 {
 		expectedProfiles = referenceWorkloadProfilesV8()
+	} else if rec.SchemaVersion == 9 {
+		expectedProfiles = referenceWorkloadProfilesV9()
 	}
 	profilesMatch := len(rec.Fixture.WorkloadProfiles) == len(expectedProfiles)
 	if profilesMatch {
@@ -546,7 +570,7 @@ func validateWorkloadMatrix(rec Record) error {
 			observation.ClientTLSHandshakes >= 0 && observation.ClientTLSHandshakes <= observation.Started &&
 			observation.ClientResponseMaxBytes >= observation.ClientResponseMinBytes &&
 			observation.ClientResponseTotalBytes >= 0 && observation.ServerReceived >= 0 &&
-			observation.ServerCompleted >= 0 && observation.ServerTCPConnections >= 0 &&
+			observation.ServerCompleted >= 0 && observation.ServerTCPConnections >= 0 && observation.ServerAcceptedTLSConnections >= 0 && observation.ServerAcceptedTLSConnections <= observation.Started &&
 			observation.ServerTCPConnections <= observation.ServerReceived && observation.ServerRequestBodyBytes >= 0 &&
 			observation.ServerResponseBodyBytes >= 0
 		if observation.ProfileID != profile.ID || !workloadFingerprintPattern.MatchString(profile.Fingerprint) ||
@@ -574,6 +598,10 @@ func validateWorkloadMatrix(rec Record) error {
 		}
 		if rec.SchemaVersion >= 6 && rec.Status == "REFERENCE_SMOKE_PASSED" {
 			expectedConnections, supported := ExpectedReferenceTCPConnections(profile, planned)
+			if rec.SchemaVersion >= 10 && profile.TransportScheme == "https" && profile.ArrivalRate >= 20 {
+				expectedConnections = observation.ServerTCPConnections
+				supported = expectedConnections >= 1 && expectedConnections <= observation.Started
+			}
 			if closedLoop {
 				supported = observation.ServerTCPConnections > 0 && observation.ServerTCPConnections <= observation.ServerReceived
 				expectedConnections = observation.ServerTCPConnections
@@ -584,6 +612,19 @@ func validateWorkloadMatrix(rec Record) error {
 		}
 		if rec.SchemaVersion >= 8 && rec.Status == "REFERENCE_SMOKE_PASSED" && !closedLoop {
 			expectedHandshakes, supported := ExpectedReferenceTLSHandshakes(profile, planned)
+			if rec.SchemaVersion >= 10 && profile.TransportScheme == "https" && profile.ArrivalRate >= 20 {
+				expectedHandshakes = observation.ServerTCPConnections
+				supported = expectedHandshakes >= 1 && expectedHandshakes <= observation.Started
+			}
+			if rec.SchemaVersion >= 11 {
+				if profile.TransportScheme == "https" {
+					expectedHandshakes = observation.ServerAcceptedTLSConnections
+					supported = expectedHandshakes >= 1 && expectedHandshakes <= observation.Started && observation.ServerTCPConnections <= expectedHandshakes
+				} else {
+					expectedHandshakes = 0
+					supported = observation.ServerAcceptedTLSConnections == 0
+				}
+			}
 			if !supported || observation.ClientTLSHandshakes != expectedHandshakes {
 				return errors.New("passing calibration has inconsistent profile TLS handshake counts")
 			}

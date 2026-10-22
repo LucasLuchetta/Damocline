@@ -23,11 +23,15 @@ func TestCampaignProfileRunDryRunAndLoopbackReport(t *testing.T) {
 	var requests atomic.Int64
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
-		time.Sleep(25 * time.Millisecond)
+		time.Sleep(40 * time.Millisecond)
 		fmt.Fprint(w, "ok")
 	}))
 	defer server.Close()
-	profile, err := campaignprofile.New("loopback", "", config.Scenario{Name: "loopback", Environment: "development", BaseURL: server.URL, Users: 2, Duration: "10s", Timeout: "1s", MaxRPS: 100, P95LimitMS: 1000, MaxErrorRate: 0.1, Steps: []config.Step{{Name: "health", Method: "GET", Path: "/"}}}, campaign.Options{Observation: 10 * time.Second, Recovery: 10 * time.Second, Repeats: 2})
+	stability := campaign.DefaultStabilityPolicy()
+	stability.MaxP95IncreasePercent = 100
+	stability.MaxP95IncreaseMS = 100
+	stability.MaxThroughputDropPercent = 100
+	profile, err := campaignprofile.New("loopback", "", config.Scenario{Name: "loopback", WorkloadRevision: "workload-v1", ApplicationRevision: "app-v1", Environment: "development", BaseURL: server.URL, Users: 2, Duration: "10s", Timeout: "1s", MaxRPS: 100, P95LimitMS: 1000, MaxErrorRate: 0.1, Steps: []config.Step{{Name: "health", Method: http.MethodGet, Path: "/"}}}, campaign.Options{Observation: 10 * time.Second, Recovery: 10 * time.Second, Repeats: 2, Stability: stability})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,12 +70,19 @@ func TestCampaignProfileRunDryRunAndLoopbackReport(t *testing.T) {
 	if err := json.Unmarshal(firstData, &first); err != nil {
 		t.Fatalf("decode first campaign report: %v", err)
 	}
-	if first.SchemaVersion != campaign.CurrentSchemaVersion || len(first.Trials) != 2 || len(first.Trials[0].Phases) == 0 || first.Trials[0].Phases[0].Run.Config.WorkloadFingerprint == "" {
-		t.Fatalf("first report lacks reproducible campaign evidence: schema=%d trials=%d", first.SchemaVersion, len(first.Trials))
+	if first.SchemaVersion != campaign.CurrentSchemaVersion || len(first.Trials) != 2 || len(first.Trials[0].Phases) == 0 || first.Trials[0].Phases[0].Run.Config.WorkloadFingerprint == "" || first.WorkloadSource == nil || first.WorkloadSource.Type != "campaign_profile" || first.WorkloadSource.FileSHA256 == "" {
+		t.Fatalf("first report lacks reproducible campaign evidence: schema=%d trials=%+v stability=%+v", first.SchemaVersion, first.Trials, first.StabilityPolicy)
+	}
+	if first.Trials[0].Phases[0].Run.Config.WorkloadRevision != "workload-v1" || first.Trials[0].Phases[0].Run.Config.ApplicationRevision != "app-v1" || first.Trials[0].Phases[0].Run.Config.Environment != "development" {
+		t.Fatalf("campaign profile revision and environment identity did not reach saved run evidence: %+v", first.Trials[0].Phases[0].Run.Config)
 	}
 	verification, err := verifyCampaignProfile(profile, first)
-	if err != nil || verification.State != "MATCHED" || verification.ComparedPhases != 4 {
+	if err != nil || verification.State != "MATCHED" || verification.SourceIdentityStatus != "UNVERIFIABLE" || verification.ComparedPhases != 4 {
 		t.Fatalf("saved profile did not match its campaign report: state=%s phases=%d mismatches=%v err=%v", verification.State, verification.ComparedPhases, verification.Mismatches, err)
+	}
+	identityAssessment := capacityplan.AuditCampaign(first)
+	if identityAssessment.IdentityStatus != "CONSISTENT" || identityAssessment.WorkloadRevision != "workload-v1" || identityAssessment.ApplicationRevision != "app-v1" || identityAssessment.DeclaredEnvironment != "development" {
+		t.Fatalf("audit did not preserve campaign identity: %+v", identityAssessment)
 	}
 	changedProfile := profile
 	changedProfile.Scenario.P95LimitMS++
@@ -89,6 +100,9 @@ func TestCampaignProfileRunDryRunAndLoopbackReport(t *testing.T) {
 	if _, err := os.Stat(verificationOut); err != nil {
 		t.Fatalf("verification command did not create output: stdout=%s stderr=%s err=%v", stdout.String(), stderr.String(), err)
 	}
+	if got, _, _, digestErr := store.LoadWithSHA256("loopback"); digestErr != nil || got.Name != profile.Name {
+		t.Fatalf("could not load hash-identified profile: %+v err=%v", got, digestErr)
+	}
 	if got := requests.Load(); got != beforeVerificationRequests {
 		t.Fatalf("offline profile verification sent %d request(s)", got-beforeVerificationRequests)
 	}
@@ -97,14 +111,35 @@ func TestCampaignProfileRunDryRunAndLoopbackReport(t *testing.T) {
 		t.Fatalf("verification artifact not written: %v", err)
 	}
 	var savedVerification campaignProfileVerification
-	if err := json.Unmarshal(verificationData, &savedVerification); err != nil || savedVerification.State != "MATCHED" || savedVerification.CampaignEvidenceID != verification.CampaignEvidenceID {
+	if err := json.Unmarshal(verificationData, &savedVerification); err != nil || savedVerification.State != "MATCHED" || savedVerification.SourceIdentityStatus != "MATCHED" || savedVerification.CampaignEvidenceID != verification.CampaignEvidenceID {
 		t.Fatalf("invalid saved verification: %+v err=%v", savedVerification, err)
+	}
+	changedBytes, err := os.ReadFile(store.Path("loopback"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	changedBytes = append(changedBytes, ' ')
+	if err := os.WriteFile(store.Path("loopback"), changedBytes, 0600); err != nil {
+		t.Fatal(err)
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := campaignProfileVerifyCmd([]string{"--name", "loopback", "--campaign", firstOut}, store, &stdout, &stderr); code != 1 || !strings.Contains(stdout.String(), "MISMATCHED") {
+		t.Fatalf("changed exact profile bytes were not rejected: code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if err := os.WriteFile(store.Path("loopback"), changedBytes[:len(changedBytes)-1], 0600); err != nil {
+		t.Fatal(err)
 	}
 
 	campaignEvidenceID := capacityplan.AuditCampaign(first).EvidenceID
+	campaignFileSHA256 := campaignFileSHA256(t, firstOut)
+	auditor, err := currentAuditorIdentity()
+	if err != nil {
+		t.Fatalf("identify auditor executable: %v", err)
+	}
 	assessmentOut := filepath.Join(outDir, "assessment.json")
 	capacityReportOut := filepath.Join(outDir, "capacity.md")
-	auditArgs := []string{"audit", "--campaign", firstOut, "--expect-evidence-id", campaignEvidenceID, "--peak-users", "2", "--out", assessmentOut, "--report-out", capacityReportOut}
+	auditArgs := []string{"audit", "--campaign", firstOut, "--expect-evidence-id", campaignEvidenceID, "--expect-campaign-file-sha256", campaignFileSHA256, "--expect-auditor-sha256", auditor.ExecutableSHA256, "--peak-users", "2", "--out", assessmentOut, "--report-out", capacityReportOut}
 	beforeAuditRequests := requests.Load()
 	stdout.Reset()
 	stderr.Reset()
@@ -119,8 +154,13 @@ func TestCampaignProfileRunDryRunAndLoopbackReport(t *testing.T) {
 	if err != nil {
 		t.Fatalf("capacity report was not written: %v", err)
 	}
-	if !strings.Contains(string(capacityReportData), "--expect-evidence-id '"+campaignEvidenceID+"'") {
-		t.Fatalf("capacity report replay does not pin its campaign evidence: %s", capacityReportData)
+	if !strings.Contains(string(capacityReportData), "Workload revision:** workload-v1") || !strings.Contains(string(capacityReportData), "Application revision:** app-v1") || !strings.Contains(string(capacityReportData), "Scenario identity consistency:** CONSISTENT") {
+		t.Fatalf("offline capacity report omitted saved scenario identity: %s", capacityReportData)
+	}
+	for _, expected := range []string{"--expect-evidence-id '" + campaignEvidenceID + "'", "--expect-campaign-file-sha256 '" + campaignFileSHA256 + "'", "--expect-auditor-sha256 '" + auditor.ExecutableSHA256 + "'"} {
+		if !strings.Contains(string(capacityReportData), expected) {
+			t.Fatalf("capacity report replay does not pin %q: %s", expected, capacityReportData)
+		}
 	}
 	if got := requests.Load(); got != beforeAuditRequests {
 		t.Fatalf("offline audit generated %d target request(s)", got-beforeAuditRequests)
@@ -128,7 +168,7 @@ func TestCampaignProfileRunDryRunAndLoopbackReport(t *testing.T) {
 
 	replayAssessmentOut := filepath.Join(outDir, "replay-assessment.json")
 	replayReportOut := filepath.Join(outDir, "replay-capacity.md")
-	replayArgs := []string{"audit", "--campaign", firstOut, "--expect-evidence-id", campaignEvidenceID, "--peak-users", "2", "--out", replayAssessmentOut, "--report-out", replayReportOut}
+	replayArgs := []string{"audit", "--campaign", firstOut, "--expect-evidence-id", campaignEvidenceID, "--expect-campaign-file-sha256", campaignFileSHA256, "--expect-auditor-sha256", auditor.ExecutableSHA256, "--peak-users", "2", "--out", replayAssessmentOut, "--report-out", replayReportOut}
 	stdout.Reset()
 	stderr.Reset()
 	if code := Run(replayArgs, &stdout, &stderr); code != 0 {
@@ -140,6 +180,13 @@ func TestCampaignProfileRunDryRunAndLoopbackReport(t *testing.T) {
 	}
 	if string(replayedAssessmentData) != string(assessmentData) {
 		t.Fatalf("offline replay changed the machine assessment:\nfirst: %s\nreplay: %s", assessmentData, replayedAssessmentData)
+	}
+	replayedReportData, err := os.ReadFile(replayReportOut)
+	if err != nil {
+		t.Fatalf("replayed capacity report was not written: %v", err)
+	}
+	if string(replayedReportData) != string(capacityReportData) {
+		t.Fatalf("offline replay changed the Markdown capacity report:\nfirst: %s\nreplay: %s", capacityReportData, replayedReportData)
 	}
 	if got := requests.Load(); got != beforeAuditRequests {
 		t.Fatalf("offline assessment replay generated %d target request(s)", got-beforeAuditRequests)
@@ -184,7 +231,7 @@ func TestLongRunProfileDryRunNeedsNoExecutionConfirmation(t *testing.T) {
 		Name: "staging-preview", Environment: "staging", BaseURL: "https://app.example.com",
 		Users: 2, Duration: "10s", Timeout: "1s", MaxRPS: 10, P95LimitMS: 1000,
 		MaxErrorRate: 0.01, Steps: []config.Step{{Name: "health", Method: "GET", Path: "/health"}},
-	}, campaign.Options{Observation: 10 * time.Second, Repeats: 2, LongRun: true})
+	}, campaign.Options{Observation: 10 * time.Second, Recovery: 10 * time.Second, Repeats: 2, LongRun: true})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -12,6 +12,7 @@ import (
 	"github.com/LucasLuchetta/Damocline/internal/appmetrics"
 	"github.com/LucasLuchetta/Damocline/internal/arrivalcampaign"
 	"github.com/LucasLuchetta/Damocline/internal/arrivalexplorer"
+	"github.com/LucasLuchetta/Damocline/internal/campaign"
 	"github.com/LucasLuchetta/Damocline/internal/config"
 	"github.com/LucasLuchetta/Damocline/internal/explorer"
 	"github.com/LucasLuchetta/Damocline/internal/generatorhealth"
@@ -159,6 +160,42 @@ func TestArrivalCampaignDemandRequiresExactBaseAndConsistentArtifact(t *testing.
 	}
 }
 
+func TestArrivalCampaignIdentityIsExplicitAndMissingIdentityCannotUpgradeEvidence(t *testing.T) {
+	base := arrivalcampaign.Result{Trials: []arrivalcampaign.Trial{{Phases: []arrivalcampaign.Phase{
+		{Name: "warmup", Run: report.Result{Config: report.RunConfig{WorkloadRevision: "ignored"}}},
+		{Name: "observation", Run: report.Result{Config: report.RunConfig{WorkloadRevision: "workload-v1", ApplicationRevision: "app-v1", Environment: "staging"}}},
+		{Name: "recovery", Run: report.Result{Config: report.RunConfig{WorkloadRevision: "workload-v1", ApplicationRevision: "app-v1", Environment: "staging"}}},
+		{Name: "soak", Run: report.Result{Config: report.RunConfig{WorkloadRevision: "workload-v1", ApplicationRevision: "app-v1", Environment: "staging"}}},
+	}}}}
+	status, workload, application, environment, _ := arrivalCampaignIdentity(base)
+	if status != "CONSISTENT" || workload != "workload-v1" || application != "app-v1" || environment != "staging" {
+		t.Fatalf("arrival campaign identity summary = %q %q %q %q", status, workload, application, environment)
+	}
+	base.Trials[0].Phases[1].Run.Config.ApplicationRevision = "app-v2"
+	if status, _, _, _, _ := arrivalCampaignIdentity(base); status != "CHANGED" {
+		t.Fatalf("changed phase identity status = %q, want CHANGED", status)
+	}
+	base.Trials[0].Phases[1].Run.Config.ApplicationRevision = "app-v1"
+	base.Trials[0].Phases[1].Run.Config.Environment = ""
+	if status, _, _, _, _ := arrivalCampaignIdentity(base); status != "UNKNOWN" {
+		t.Fatalf("missing phase identity status = %q, want UNKNOWN", status)
+	}
+	base.Trials[0].Phases[1].Run.Config.Environment = ""
+	base.Trials[0].Phases[2].Run.Config.ApplicationRevision = "app-v2"
+	if status, _, _, _, missing := arrivalCampaignIdentity(base); status != "CHANGED" || !missing {
+		t.Fatalf("identity change was hidden by missing phase metadata: status = %q, want CHANGED", status)
+	}
+
+	saved := arrivalcampaign.Result{SchemaVersion: 1, Scenario: "synthetic", Target: "https://app.example.com", StartedAt: time.Now().UTC().Format(time.RFC3339), WorkloadFingerprint: "fingerprint", WorkerLimit: 2,
+		RequestTimeout: "2s", RequestRateCeiling: 10, P95LimitMS: 500, MaxErrorRate: .1, MinSamplesPerStep: 1,
+		BaseStartsPerSecond: 3, Warmup: "0s", Observation: "30s", Recovery: "10s", Budget: "4m", Repeats: 2,
+		Trials: []arrivalcampaign.Trial{{Number: 1, Outcome: "ABORTED", AbortReason: "interrupted"}}, Outcome: "ABORTED"}
+	assessment, err := EvaluateJourneyCampaign(saved, JourneyStartGoal{PeakStartsPerSecond: 2})
+	if err != nil || assessment.State != "TARGET_NOT_DIRECTLY_TESTED" || assessment.ScenarioIdentityStatus != "UNKNOWN" {
+		t.Fatalf("missing arrival identity was not retained as unknown evidence: assessment=%+v err=%v", assessment, err)
+	}
+}
+
 func TestCurrentArrivalCampaignRejectsDuplicateTrialRunIDs(t *testing.T) {
 	saved := arrivalcampaign.Result{
 		SchemaVersion: arrivalcampaign.CurrentSchemaVersion, ExecutionState: "COMPLETED", Scenario: "synthetic", Target: "https://app.example.com",
@@ -168,6 +205,11 @@ func TestCurrentArrivalCampaignRejectsDuplicateTrialRunIDs(t *testing.T) {
 		Cooldown: "0s", Budget: "4m", Repeats: 2, Outcome: "PASS",
 		Trials: []arrivalcampaign.Trial{{Number: 1, RunID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}, {Number: 2, RunID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}},
 	}
+	policy := campaign.DefaultStabilityPolicy()
+	contract := campaign.ObjectiveContract{Version: 1, JourneyScope: "AGGREGATE_AND_EACH_WORKFLOW", JourneyP95LimitMS: 500, MaxJourneyErrorRate: .1,
+		MinSamplesPerStep: 1, MinCompletedWorkRatio: 1, MaxDroppedArrivals: 0, MinimumObservationWindows: policy.MinimumWindows,
+		MinimumSamplesPerWindow: policy.MinimumSamplesPerWindow, WindowDuration: "10s"}
+	saved.Objectives, saved.StabilityPolicy = &contract, &policy
 	if _, err := EvaluateJourneyCampaign(saved, JourneyStartGoal{PeakStartsPerSecond: 2}); err == nil || !strings.Contains(err.Error(), "distinct run IDs") {
 		t.Fatalf("duplicate trial run IDs accepted: %v", err)
 	}
@@ -193,7 +235,7 @@ func TestArrivalCampaignCheckpointIsAuditedAsIncomplete(t *testing.T) {
 			Config: report.RunConfig{Mode: "arrival", ArrivalRate: phaseBase.Scenario.ArrivalRate, Users: phaseBase.Scenario.Users,
 				Duration: phaseBase.Scenario.Duration, WorkloadFingerprint: phaseBase.WorkloadFingerprint, MaxRPS: phaseBase.Scenario.MaxRPS,
 				P95LimitMS: phaseBase.Scenario.P95LimitMS, MaxErrorRate: phaseBase.Scenario.MaxErrorRate,
-				MinSamplesPerStep: phaseBase.Scenario.MinSamplesPerStep, RequestTimeout: phaseBase.Timeout.String(), WindowDuration: phaseBase.Window.String()},
+				MinSamplesPerStep: phaseBase.Scenario.MinSamplesPerStep, RequestTimeout: phaseBase.Timeout.String(), WindowDuration: phaseBase.Window.String(), ConnectionPolicy: "reuse"},
 		}
 		return run
 	}, func(snapshot arrivalcampaign.Result) error {
@@ -208,6 +250,27 @@ func TestArrivalCampaignCheckpointIsAuditedAsIncomplete(t *testing.T) {
 	assessment, err := EvaluateJourneyCampaign(checkpoint, JourneyStartGoal{PeakStartsPerSecond: 1})
 	if err != nil || assessment.State != "INSUFFICIENT_EVIDENCE" {
 		t.Fatalf("in-progress artifact was not retained as incomplete evidence: assessment=%+v err=%v", assessment, err)
+	}
+	objectiveMismatch := checkpoint
+	contractMismatch := *checkpoint.Objectives
+	contractMismatch.MaxJourneyErrorRate = .05
+	objectiveMismatch.Objectives = &contractMismatch
+	if _, err := EvaluateJourneyCampaign(objectiveMismatch, JourneyStartGoal{PeakStartsPerSecond: 1}); err == nil || !strings.Contains(err.Error(), "predeclared objective contract") {
+		t.Fatalf("campaign contract with a modified SLO was accepted: %v", err)
+	}
+	stabilityMismatch := checkpoint
+	policyMismatch := *checkpoint.StabilityPolicy
+	policyMismatch.MaxP95IncreaseMS++
+	stabilityMismatch.StabilityPolicy = &policyMismatch
+	_, err = EvaluateJourneyCampaign(stabilityMismatch, JourneyStartGoal{PeakStartsPerSecond: 1})
+	if err != nil && !strings.Contains(err.Error(), "saved phase evidence labels") {
+		t.Fatalf("campaign with changed drift policy failed for an unrelated reason: %v", err)
+	}
+	if err == nil {
+		assessment, err := EvaluateJourneyCampaign(stabilityMismatch, JourneyStartGoal{PeakStartsPerSecond: 1})
+		if err != nil || assessment.State != "INSUFFICIENT_EVIDENCE" {
+			t.Fatalf("changed drift policy produced a stronger assessment: %+v err=%v", assessment, err)
+		}
 	}
 	malformedMetrics := checkpoint
 	pendingWithMetrics := *checkpoint.PendingTrial

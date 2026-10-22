@@ -2,6 +2,8 @@
 package capacityplan
 
 import (
+	"bytes"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -15,8 +17,11 @@ import (
 	"github.com/LucasLuchetta/Damocline/internal/appmetrics"
 	"github.com/LucasLuchetta/Damocline/internal/calibration"
 	"github.com/LucasLuchetta/Damocline/internal/campaign"
+	"github.com/LucasLuchetta/Damocline/internal/campaignprofile"
 	"github.com/LucasLuchetta/Damocline/internal/capacitygoal"
+	"github.com/LucasLuchetta/Damocline/internal/config"
 	"github.com/LucasLuchetta/Damocline/internal/generatorhealth"
+	"github.com/LucasLuchetta/Damocline/internal/jsonartifact"
 	"github.com/LucasLuchetta/Damocline/internal/report"
 	"github.com/LucasLuchetta/Damocline/internal/statistics"
 )
@@ -271,28 +276,61 @@ func validObservationVariability(v *campaign.Variability, repeats int) bool {
 // ReadCampaign reads a bounded saved campaign report. It never makes a network
 // request and accepts only supported historical or current campaign schemas.
 func ReadCampaign(path string) (campaign.Result, error) {
+	result, _, err := ReadCampaignWithFileSHA256(path)
+	return result, err
+}
+
+// ValidateCampaignArtifact validates the bounded raw JSON structure used by
+// campaign readers before callers decode it into a struct. Keep this public
+// for readers that already own bounded bytes, such as dashboard and export.
+func ValidateCampaignArtifact(data []byte) error {
+	if err := jsonartifact.RejectDuplicateKeys(data); err != nil {
+		return fmt.Errorf("campaign report contains ambiguous JSON: %w", err)
+	}
+	if err := report.ValidateMetricCountersInArtifactJSON(data); err != nil {
+		return fmt.Errorf("invalid campaign metric evidence: %w", err)
+	}
+	return validateCampaignArtifactPresence(data)
+}
+
+// ReadCampaignWithFileSHA256 reads and decodes one bounded campaign report and
+// hashes the exact bytes that were decoded. The hash identifies source bytes;
+// it does not authenticate their producer or origin.
+func ReadCampaignWithFileSHA256(path string) (campaign.Result, string, error) {
 	data, err := readCampaignBytes(path, maxCampaignReportBytes)
 	if err != nil {
-		return campaign.Result{}, err
+		return campaign.Result{}, "", err
+	}
+	if err := ValidateCampaignArtifact(data); err != nil {
+		return campaign.Result{}, "", err
 	}
 	var result campaign.Result
 	if err := json.Unmarshal(data, &result); err != nil {
-		return campaign.Result{}, err
+		return campaign.Result{}, "", err
 	}
-	return result, nil
+	digest := sha256.Sum256(data)
+	return result, "sha256:" + hex.EncodeToString(digest[:]), nil
 }
 
 // ReadCampaignCollection reads a bounded list of local campaign reports.
 func ReadCampaignCollection(paths []string) ([]campaign.Result, error) {
+	results, _, err := ReadCampaignCollectionWithFileSHA256(paths)
+	return results, err
+}
+
+// ReadCampaignCollectionWithFileSHA256 reads a bounded list of campaign
+// reports and returns one exact-source digest per report, in input order.
+func ReadCampaignCollectionWithFileSHA256(paths []string) ([]campaign.Result, []string, error) {
 	if len(paths) < 2 || len(paths) > MaxCampaignCollectionSize {
-		return nil, fmt.Errorf("campaign collection must contain 2-%d reports", MaxCampaignCollectionSize)
+		return nil, nil, fmt.Errorf("campaign collection must contain 2-%d reports", MaxCampaignCollectionSize)
 	}
 	results := make([]campaign.Result, 0, len(paths))
+	digests := make([]string, 0, len(paths))
 	totalBytes := int64(0)
 	for _, path := range paths {
 		remaining := maxCampaignCollectionBytes - totalBytes
 		if remaining <= 0 {
-			return nil, errors.New("campaign collection exceeds the 64 MiB safety limit")
+			return nil, nil, errors.New("campaign collection exceeds the 64 MiB safety limit")
 		}
 		limit := int64(maxCampaignReportBytes)
 		if remaining < limit {
@@ -300,16 +338,104 @@ func ReadCampaignCollection(paths []string) ([]campaign.Result, error) {
 		}
 		data, err := readCampaignBytes(path, limit)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		totalBytes += int64(len(data))
+		if err := ValidateCampaignArtifact(data); err != nil {
+			return nil, nil, fmt.Errorf("campaign %q: %w", path, err)
+		}
 		var result campaign.Result
 		if err := json.Unmarshal(data, &result); err != nil {
-			return nil, fmt.Errorf("cannot decode campaign %q: %w", path, err)
+			return nil, nil, fmt.Errorf("cannot decode campaign %q: %w", path, err)
 		}
+		digest := sha256.Sum256(data)
+		digests = append(digests, "sha256:"+hex.EncodeToString(digest[:]))
 		results = append(results, result)
 	}
-	return results, nil
+	return results, digests, nil
+}
+
+func validateCampaignArtifactPresence(data []byte) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	for _, name := range []string{"schema_version", "scenario", "base_users", "target", "started_at", "warmup", "observation", "recovery", "repeats", "trials", "outcome"} {
+		value, ok := fields[name]
+		if !ok || string(value) == "null" {
+			return fmt.Errorf("campaign is missing required field %q; absence cannot be interpreted as zero", name)
+		}
+	}
+	var schemaVersion int
+	if err := json.Unmarshal(fields["schema_version"], &schemaVersion); err != nil {
+		return fmt.Errorf("campaign schema_version is invalid: %w", err)
+	}
+	// Campaign start timestamps first became authoritative in schema v5. Older
+	// v2/v4 artifacts can legitimately contain an empty value; schemas v5-v14
+	// already persisted a populated RFC3339 timestamp even before schema v15
+	// made it useful in reports. Validate the historical field according to
+	// when it entered the contract, rather than only for today's schema number.
+	if schemaVersion >= 5 {
+		var startedAt string
+		if err := json.Unmarshal(fields["started_at"], &startedAt); err != nil || startedAt == "" {
+			return errors.New("current campaign started_at must be a non-empty RFC3339 timestamp")
+		}
+		if _, err := time.Parse(time.RFC3339Nano, startedAt); err != nil {
+			return errors.New("current campaign started_at must be a non-empty RFC3339 timestamp")
+		}
+	}
+	var trials []json.RawMessage
+	if err := json.Unmarshal(fields["trials"], &trials); err != nil || trials == nil || !bytes.HasPrefix(bytes.TrimSpace(fields["trials"]), []byte("[")) {
+		return errors.New("campaign trials must be a JSON array")
+	}
+	for index, rawTrial := range trials {
+		if err := validateCampaignTrialPresence(rawTrial); err != nil {
+			return fmt.Errorf("campaign trial %d: %w", index+1, err)
+		}
+	}
+	if pending, ok := fields["pending_trial"]; ok && string(pending) != "null" {
+		if err := validateCampaignTrialPresence(pending); err != nil {
+			return fmt.Errorf("campaign pending_trial: %w", err)
+		}
+	}
+	return nil
+}
+
+func validateCampaignTrialPresence(data []byte) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil || fields == nil {
+		return errors.New("trial must be a JSON object")
+	}
+	for _, name := range []string{"number", "phases", "outcome"} {
+		value, ok := fields[name]
+		if !ok || string(value) == "null" {
+			return fmt.Errorf("trial is missing required field %q; absence cannot be interpreted as zero", name)
+		}
+	}
+	var phases []json.RawMessage
+	if err := json.Unmarshal(fields["phases"], &phases); err != nil || phases == nil || !bytes.HasPrefix(bytes.TrimSpace(fields["phases"]), []byte("[")) {
+		return errors.New("trial phases must be a JSON array")
+	}
+	for index, rawPhase := range phases {
+		var phase map[string]json.RawMessage
+		if err := json.Unmarshal(rawPhase, &phase); err != nil || phase == nil {
+			return fmt.Errorf("phase %d must be a JSON object", index+1)
+		}
+		for _, name := range []string{"name", "run"} {
+			value, ok := phase[name]
+			if !ok || string(value) == "null" {
+				return fmt.Errorf("phase %d is missing required field %q; absence cannot be interpreted as zero", index+1, name)
+			}
+		}
+		var run map[string]json.RawMessage
+		if err := json.Unmarshal(phase["run"], &run); err != nil || run == nil {
+			return fmt.Errorf("phase %d run must be a JSON object", index+1)
+		}
+		if schema, ok := run["schema_version"]; !ok || string(schema) == "null" {
+			return fmt.Errorf("phase %d run is missing required field %q; absence cannot be interpreted as zero", index+1, "schema_version")
+		}
+	}
+	return nil
 }
 
 func readCampaignBytes(path string, maxBytes int64) ([]byte, error) {
@@ -327,6 +453,9 @@ func readCampaignBytes(path string, maxBytes int64) ([]byte, error) {
 			return nil, errors.New("campaign report exceeds the 16 MiB safety limit")
 		}
 		return nil, errors.New("campaign collection exceeds the 64 MiB safety limit")
+	}
+	if err := jsonartifact.RejectDuplicateKeys(data); err != nil {
+		return nil, fmt.Errorf("campaign report contains ambiguous JSON: %w", err)
 	}
 	return data, nil
 }
@@ -356,6 +485,26 @@ func validateEvidence(evidence campaign.Result) error {
 	}
 	if evidence.SchemaVersion < 1 || evidence.SchemaVersion > campaign.CurrentSchemaVersion || evidence.Scenario == "" || evidence.BaseUsers < 1 || evidence.Repeats < 2 || evidence.Repeats > 5 || len(evidence.Trials) == 0 || len(evidence.Trials) > evidence.Repeats {
 		return errors.New("expected a complete supported repeated campaign")
+	}
+	for _, trial := range evidence.Trials {
+		for _, phase := range trial.Phases {
+			if phase.Name == "warmup" {
+				continue
+			}
+			if phase.Run.SchemaVersion < 1 || phase.Run.SchemaVersion > report.CurrentSchemaVersion {
+				return fmt.Errorf("trial %d %s phase has an unsupported run-report schema", trial.Number, phase.Name)
+			}
+		}
+	}
+	if evidence.PendingTrial != nil {
+		for _, phase := range evidence.PendingTrial.Phases {
+			if phase.Run.SchemaVersion < 1 || phase.Run.SchemaVersion > report.CurrentSchemaVersion {
+				return fmt.Errorf("pending trial %d %s phase has an unsupported run-report schema", evidence.PendingTrial.Number, phase.Name)
+			}
+		}
+	}
+	if err := validateWorkloadSource(evidence); err != nil {
+		return err
 	}
 	if err := validateApplicationMetrics(evidence); err != nil {
 		return err
@@ -476,6 +625,61 @@ func validateEvidence(evidence campaign.Result) error {
 	return nil
 }
 
+func validateWorkloadSource(evidence campaign.Result) error {
+	source := evidence.WorkloadSource
+	if source == nil {
+		return nil
+	}
+	if evidence.SchemaVersion < 15 {
+		return errors.New("workload source metadata is unsupported by this campaign schema")
+	}
+	if !validSHA256Digest(source.FileSHA256) || !validSHA256Digest(source.SemanticFingerprint) {
+		return errors.New("workload source digests must be full SHA-256 values")
+	}
+	switch source.Type {
+	case "scenario_file":
+		if source.Name != "" || source.SchemaVersion < 0 || source.SchemaVersion > config.CurrentScenarioVersion {
+			return errors.New("scenario-file source metadata is malformed")
+		}
+	case "campaign_profile":
+		if !campaignprofile.ValidName(source.Name) || source.SchemaVersion != campaignprofile.CurrentSchemaVersion {
+			return errors.New("campaign-profile source metadata is malformed")
+		}
+	default:
+		return errors.New("workload source type is unsupported")
+	}
+	foundFingerprint := false
+	for _, trial := range evidence.Trials {
+		for _, phase := range trial.Phases {
+			fingerprint := phase.Run.Config.WorkloadFingerprint
+			if fingerprint != source.SemanticFingerprint {
+				return fmt.Errorf("workload source semantic fingerprint does not match trial %d %s phase", trial.Number, phase.Name)
+			}
+			foundFingerprint = true
+		}
+	}
+	if evidence.PendingTrial != nil {
+		for _, phase := range evidence.PendingTrial.Phases {
+			if phase.Run.Config.WorkloadFingerprint != source.SemanticFingerprint {
+				return fmt.Errorf("workload source semantic fingerprint does not match pending trial %d %s phase", evidence.PendingTrial.Number, phase.Name)
+			}
+			foundFingerprint = true
+		}
+	}
+	if !foundFingerprint {
+		return errors.New("workload source metadata has no phase fingerprint to verify")
+	}
+	return nil
+}
+
+func validSHA256Digest(value string) bool {
+	if len(value) != len("sha256:")+64 || !strings.HasPrefix(value, "sha256:") {
+		return false
+	}
+	decoded, err := hex.DecodeString(strings.TrimPrefix(value, "sha256:"))
+	return err == nil && len(decoded) == 32
+}
+
 func validateApplicationMetrics(evidence campaign.Result) error {
 	totalBytes := 0
 	for _, trial := range evidence.Trials {
@@ -563,7 +767,14 @@ func validatePartialStageEvidence(evidence campaign.Result) error {
 			}
 			state, _ := campaign.ClassifyPhase(evidence, phase.Run, phase.Name)
 			stability := ""
-			if phase.Name == "stabilization" || phase.Name == "observation" || phase.Name == "soak" {
+			legacySchema := evidence.SchemaVersion == 2 || evidence.SchemaVersion == 4
+			if legacySchema {
+				state = historicalCampaignPhaseState(phase.Run)
+				stability = phase.Stability
+				if (phase.Name == "observation" || phase.Name == "soak") && !validHistoricalStability(stability) {
+					return fmt.Errorf("trial %d has unsupported historical %s stability classification", trial.Number, phase.Name)
+				}
+			} else if phase.Name == "stabilization" || phase.Name == "observation" || phase.Name == "soak" {
 				stability = campaign.AssessStabilityWithPolicy(phase.Run, evidence.EffectiveStabilityPolicy())
 			}
 			if phase.EvidenceState != state || (phase.Name == "stabilization" || phase.Name == "observation" || phase.Name == "soak") && phase.Stability != stability {
@@ -607,6 +818,30 @@ func validatePartialStageEvidence(evidence campaign.Result) error {
 		}
 	}
 	return nil
+}
+
+func historicalCampaignPhaseState(run report.Result) string {
+	if run.Quality != nil && run.Quality.State == report.QualityInvalid || run.ArrivalsDropped > 0 ||
+		run.ArrivalsCancelledBeforeAdmission != nil && *run.ArrivalsCancelledBeforeAdmission > 0 {
+		return "INVALID_DELIVERY"
+	}
+	switch run.Outcome {
+	case "PASS":
+		return "PASS_OBSERVED"
+	case "FAIL":
+		return "FAIL_OBSERVED"
+	default:
+		return "INSUFFICIENT_EVIDENCE"
+	}
+}
+
+func validHistoricalStability(value string) bool {
+	switch value {
+	case "NO_LARGE_DRIFT_DETECTED", "NON_STATIONARY", "INSUFFICIENT_WINDOWS":
+		return true
+	default:
+		return false
+	}
 }
 
 func validatePartialLegacyTrials(evidence campaign.Result) error {
@@ -747,6 +982,19 @@ func validateStageEvidence(evidence campaign.Result) error {
 			}
 			if !campaignRunGuardrailsMatch(evidence, phase.Run) {
 				return fmt.Errorf("trial %d has mismatched %s generator guardrails", i+1, want.Name)
+			}
+			if evidence.SchemaVersion == 2 || evidence.SchemaVersion == 4 {
+				// Historical campaign schemas recorded phase classifications but
+				// their embedded run reports predate several fields used by today's
+				// classifier. Preserve readability without promoting those reports:
+				// AuditCampaign independently recomputes current quality and stability.
+				if phase.Name != "warmup" && phase.EvidenceState != "PASS_OBSERVED" {
+					return fmt.Errorf("trial %d has inconsistent %s phase classification", i+1, want.Name)
+				}
+				if (phase.Name == "observation" || phase.Name == "soak") && phase.Stability != "NO_LARGE_DRIFT_DETECTED" {
+					return fmt.Errorf("trial %d has inconsistent %s stability classification", i+1, want.Name)
+				}
+				continue
 			}
 			state, _ := campaign.ClassifyPhase(evidence, phase.Run, phase.Name)
 			if phase.EvidenceState != state || phase.EvidenceState == "INVALID_DELIVERY" || (phase.Name != "warmup" && phase.EvidenceState != "PASS_OBSERVED") {

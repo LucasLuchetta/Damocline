@@ -2,6 +2,7 @@ package capacityplan
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -33,7 +34,7 @@ func auditFixtureAtUsers(users int) campaign.Result {
 		metrics.P95IID95Exact, metrics.P95IID95LowerMS, metrics.P95IID95UpperMS = true, 80, 120
 		trace := report.HTTPTrace{RateWaitCount: 80, RequestAttemptCount: 80, CompleteCount: 80, FirstByteCount: 80, BodyCount: 80, WriteCount: 80}
 		generator := generatorhealth.Summary{Samples: 2, ObservedSeconds: 10, SamplingIntervalMS: 500, MaxSampleGapMS: 500, LogicalCPUs: 1, GOMAXPROCS: 1,
-			CPUCapacityCores: 1, CPUCapacitySource: "runtime.NumCPU", GoCPUCapacitySeconds: 10, GoCPUValid: true, GoCPUUtilizationRatio: 0.1,
+			CPUCapacityCores: 1, CPUCapacitySource: "runtime.NumCPU", CPUCapacityKnown: true, GoCPUCapacitySeconds: 10, GoCPUValid: true, GoCPUUtilizationRatio: 0.1,
 			ProcessSamples: 2, ProcessCPUSamples: 2, ProcessCPUValid: true, PeakProcessRSSBytes: 1, PeakHeapAllocBytes: 1, PeakGoroutines: 1, MeanProcessCPUUtilizationRatio: 0.1}
 		r := report.Result{
 			SchemaVersion: report.CurrentSchemaVersion, Outcome: "PASS", Target: "http://127.0.0.1:18080", IterationsStarted: 80, IterationsCompleted: 80,
@@ -60,7 +61,7 @@ func auditFixtureAtUsers(users int) campaign.Result {
 	}
 	a, b := phaseRun(), phaseRun()
 	e := campaign.Result{
-		SchemaVersion: campaign.CurrentSchemaVersion, ExecutionState: "COMPLETED", Scenario: "synthetic", Target: a.Target,
+		SchemaVersion: campaign.CurrentSchemaVersion, ExecutionState: "COMPLETED", Scenario: "synthetic", Target: a.Target, StartedAt: time.Date(2026, time.January, 2, 3, 4, 5, 0, time.UTC).Format(time.RFC3339Nano),
 		BaseUsers: users, Warmup: "0s", Stabilization: "0s", Observation: "10s", SpikeDuration: "0s", Recovery: "10s", Cooldown: "0s",
 		Budget: "3m20s", Repeats: 2, Outcome: "PASS", Soak: "10s", StabilityPolicy: &stabilityPolicy,
 		Objectives: &campaign.ObjectiveContract{Version: 1, JourneyScope: "AGGREGATE_AND_EACH_WORKFLOW", JourneyP95LimitMS: 1000, MaxJourneyErrorRate: 0.1,
@@ -85,6 +86,8 @@ func auditFixtureAtUsers(users int) campaign.Result {
 		Runs: 2, P95MinMS: 100, P95MaxMS: 100, ErrorRateMin: 0, ErrorRateMax: 0,
 		ThroughputMinRPS: 8, ThroughputMaxRPS: 8,
 		SuccessfulJourneysMinPerSec: 8, SuccessfulJourneysMaxPerSec: 8,
+		RequestP95MedianMS: 100, RequestP95RobustLowerMS: 100, RequestP95RobustUpperMS: 100,
+		RequestP95RobustMethod: "MEDIAN_PLUS_MINUS_3_MAD", RequestP95RobustAssumption: "INDEPENDENT_OBSERVATION_PHASES_DESCRIPTIVE_ONLY",
 	}
 	return e
 }
@@ -112,6 +115,134 @@ func TestAuditRecomputesIndependentObservationSummaries(t *testing.T) {
 	a = AuditCampaign(e)
 	if a.State == "INVALID_EVIDENCE" || a.SpreadConsistency != "NOT_RECORDED" || len(a.ObservationTrials) != 2 {
 		t.Fatalf("missing legacy summary should retain recomputable observations: state=%s findings=%v", a.State, a.Findings)
+	}
+}
+
+func TestAuditPreservesScenarioIdentityAndRequiresConsistency(t *testing.T) {
+	e := auditFixture()
+	a := AuditCampaign(e)
+	if a.IdentityStatus != "CONSISTENT" || a.WorkloadRevision != "workload-v1" || a.ApplicationRevision != "app-v1" || a.DeclaredEnvironment != "synthetic" {
+		t.Fatalf("scenario identity was not summarized from required phase evidence: %+v", a)
+	}
+	e.Trials[1].Phases[0].Run.Config.ApplicationRevision = "app-v2"
+	a = AuditCampaign(e)
+	if a.State != "INCONCLUSIVE" || a.IdentityStatus != "CHANGED" || a.ApplicationRevision != "" {
+		t.Fatalf("campaign with changed application identity was not kept inconclusive: state=%s identity=%s revision=%q", a.State, a.IdentityStatus, a.ApplicationRevision)
+	}
+	e = auditFixture()
+	e.Trials[0].Phases[0].Run.Config.Environment = ""
+	a = AuditCampaign(e)
+	if a.State != "INCONCLUSIVE" || a.IdentityStatus != "UNKNOWN" {
+		t.Fatalf("missing phase identity was not kept unknown: state=%s identity=%s", a.State, a.IdentityStatus)
+	}
+	e = auditFixture()
+	e.Trials[0].Phases[0].Run.Config.Environment = ""
+	e.Trials[1].Phases[0].Run.Config.ApplicationRevision = "app-v2"
+	a = AuditCampaign(e)
+	if a.IdentityStatus != "CHANGED" || a.ApplicationRevision != "" || a.DeclaredEnvironment != "" || !strings.Contains(strings.Join(a.Findings, " "), "also lack") {
+		t.Fatalf("identity change was hidden by missing metadata: status=%s application=%q environment=%q", a.IdentityStatus, a.ApplicationRevision, a.DeclaredEnvironment)
+	}
+}
+
+func TestAuditRejectsUnsupportedEmbeddedRunReportSchemas(t *testing.T) {
+	for _, schema := range []int{0, report.CurrentSchemaVersion + 1} {
+		t.Run(fmt.Sprintf("schema_%d", schema), func(t *testing.T) {
+			e := auditFixture()
+			e.Trials[0].Phases[0].Run.SchemaVersion = schema
+			a := AuditCampaign(e)
+			if a.State != "INVALID_EVIDENCE" {
+				t.Fatalf("unsupported embedded run schema %d was accepted: state=%s findings=%v", schema, a.State, a.Findings)
+			}
+		})
+	}
+}
+
+func TestHistoricalPassCannotOverrideRecomputedJourneySLOFailure(t *testing.T) {
+	evidence := auditFixture()
+	evidence.SchemaVersion = 2
+	evidence.ExecutionState = ""
+	evidence.Stabilization = ""
+	evidence.Soak = ""
+	evidence.Cooldown = ""
+	evidence.StabilityPolicy = nil
+	evidence.Objectives = nil
+	evidence.CalibrationRequired = false
+	evidence.Calibration = nil
+	evidence.CalibrationSource = ""
+	for trialIndex := range evidence.Trials {
+		trial := &evidence.Trials[trialIndex]
+		trial.RunID = ""
+		trial.Phases = append([]campaign.Phase(nil), trial.Phases...)
+		if trialIndex == 1 {
+			trial.Phases = trial.Phases[:2]
+		}
+		for phaseIndex := range trial.Phases {
+			phase := &trial.Phases[phaseIndex]
+			for _, metrics := range []*report.MetricSet{&phase.Run.Journeys} {
+				metrics.Failures = metrics.Total / 5
+				metrics.Success = metrics.Total - metrics.Failures
+			}
+			for windowIndex := range phase.Run.Windows {
+				metrics := &phase.Run.Windows[windowIndex].Journeys
+				metrics.Failures = metrics.Total / 5
+				metrics.Success = metrics.Total - metrics.Failures
+			}
+			phase.Run.Quality = report.AssessQuality(phase.Run)
+		}
+	}
+
+	if err := ValidateSavedCampaign(evidence); err != nil {
+		t.Fatalf("historical campaign structure rejected before recomputed audit: %v", err)
+	}
+	audit := AuditCampaign(evidence)
+	if audit.State != "INCONCLUSIVE" || !containsFinding(audit.Findings, "historical PASS_OBSERVED classification conflicts with the current recomputed FAIL_OBSERVED result") {
+		t.Fatalf("historical PASS overrode current journey SLO evidence: state=%s findings=%v", audit.State, audit.Findings)
+	}
+}
+
+func TestAuditRecomputesRobustSpreadFromTrialP95WithoutUpgradingVerdict(t *testing.T) {
+	e := auditFixture()
+	template := e.Trials[0]
+	e.Trials = make([]campaign.Trial, 5)
+	for i := range e.Trials {
+		e.Trials[i] = template
+		e.Trials[i].Phases = append([]campaign.Phase(nil), template.Phases...)
+	}
+	for trial, p95 := range []float64{100, 110, 120, 130, 200} {
+		e.Trials[trial].Number = trial + 1
+		e.Trials[trial].RunID = strings.Repeat(string(rune('a'+trial)), 32)
+		for phaseIndex := range e.Trials[trial].Phases {
+			run := &e.Trials[trial].Phases[phaseIndex].Run
+			if e.Trials[trial].Phases[phaseIndex].Name != "observation" {
+				continue
+			}
+			run.Metrics.P95MS = p95
+			run.Metrics.P95IID95Exact = false
+			run.Metrics.P95IID95LowerMS = 0
+			run.Metrics.P95IID95UpperMS = 0
+			run.Quality = report.AssessQuality(*run)
+		}
+	}
+	e.ObservationVariability = nil
+	a := AuditCampaign(e)
+	if a.ObservationSpread == nil || a.ObservationSpread.RequestP95MedianMS != 120 || a.ObservationSpread.RequestP95MADMS != 10 || a.ObservationSpread.RequestP95RobustLowerMS != 90 || a.ObservationSpread.RequestP95RobustUpperMS != 150 {
+		t.Fatalf("robust repeat spread was not recomputed from independent trial summaries: %+v", a.ObservationSpread)
+	}
+	if a.Repeatability.EvaluatedTrials != 5 || a.Repeatability.Method != "EXACT_CLOPPER_PEARSON_BINOMIAL" || a.Repeatability.Assumption != "INDEPENDENT_STATIONARY_REPEAT_TRIALS" {
+		t.Fatalf("descriptive spread changed the conditional pass interval: repeat=%+v", a.Repeatability)
+	}
+}
+
+func TestAuditMatchesPersistedRobustSpreadForCurrentCampaignSchema(t *testing.T) {
+	e := auditFixture()
+	recomputed := AuditCampaign(e)
+	if recomputed.ObservationSpread == nil || recomputed.ObservationSpread.RequestP95RobustMethod == "" {
+		t.Fatalf("fixture did not produce a current-schema robust summary: %+v", recomputed.ObservationSpread)
+	}
+	e.ObservationVariability = recomputed.ObservationSpread
+	a := AuditCampaign(e)
+	if a.SpreadConsistency != "MATCHED" || a.State == "INVALID_EVIDENCE" {
+		t.Fatalf("valid persisted schema-v14 robust spread was rejected: consistency=%s state=%s spread=%+v", a.SpreadConsistency, a.State, a.ObservationSpread)
 	}
 }
 
@@ -291,6 +422,49 @@ func TestWorkflowBreachDiagnosisUsesOnlyExceededObjectives(t *testing.T) {
 	got := workflowBreaches(1, "spike", 8, profiles, report.MetricSet{}, 1000, 0.1)
 	if len(got) != 1 || len(got[0].Reasons) != 1 || got[0].Reasons[0] != "P95_ABOVE_LIMIT" {
 		t.Fatalf("latency-only breach was not identified by phase: %+v", got)
+	}
+}
+
+func TestAuditCampaignValidatesWorkloadSourceIdentity(t *testing.T) {
+	e := auditFixture()
+	fingerprint := e.Trials[0].Phases[0].Run.Config.WorkloadFingerprint
+	e.WorkloadSource = &campaign.WorkloadSource{Type: "campaign_profile", Name: "checkout", SchemaVersion: 1,
+		FileSHA256: "sha256:" + strings.Repeat("b", 64), SemanticFingerprint: fingerprint}
+	if err := validateEvidence(e); err != nil {
+		t.Fatalf("valid source identity rejected: %v", err)
+	}
+	if got := AuditCampaign(e); got.State == "INVALID_EVIDENCE" || got.WorkloadSource == nil || got.WorkloadSource.SemanticFingerprint != fingerprint {
+		t.Fatalf("valid source identity was not retained by audit: %+v", got)
+	}
+	cases := []struct {
+		name   string
+		mutate func(*campaign.WorkloadSource)
+	}{
+		{"unsupported type", func(s *campaign.WorkloadSource) { s.Type = "other" }},
+		{"invalid file digest", func(s *campaign.WorkloadSource) { s.FileSHA256 = "sha256:short" }},
+		{"invalid semantic digest", func(s *campaign.WorkloadSource) { s.SemanticFingerprint = "sha256:" + strings.Repeat("c", 64) }},
+		{"invalid profile name", func(s *campaign.WorkloadSource) { s.Name = "../profile" }},
+		{"invalid profile schema", func(s *campaign.WorkloadSource) { s.SchemaVersion = 2 }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			candidate := auditFixture()
+			source := *e.WorkloadSource
+			tc.mutate(&source)
+			candidate.WorkloadSource = &source
+			if err := validateEvidence(candidate); err == nil {
+				t.Fatal("malformed source identity accepted")
+			}
+			if got := AuditCampaign(candidate); got.State != "INVALID_EVIDENCE" {
+				t.Fatalf("malformed source identity was not invalidated: %+v", got)
+			}
+		})
+	}
+	legacy := auditFixture()
+	legacy.SchemaVersion = 14
+	legacy.WorkloadSource = e.WorkloadSource
+	if err := validateEvidence(legacy); err == nil {
+		t.Fatal("accepted v15 source metadata under a historical schema")
 	}
 }
 

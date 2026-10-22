@@ -115,7 +115,7 @@ Usage:
 	  damocline report prune --keep 50 [--dir .damocline/reports]
 	  damocline report delete --id <exact-history-id> [--dir .damocline/reports]
 	  damocline dashboard --file run-or-campaign.json [--addr 127.0.0.1:8787]
-  damocline goal --file capacity.json (--peak-users 20 | --peak-journeys-per-second 5) [--growth-percent 25] [--reserve-percent 20]
+  damocline goal --file capacity.json (--peak-users 20 | --peak-journeys-per-second 5) [--expect-source-sha256 sha256:<64-hex>] [--growth-percent 25] [--reserve-percent 20] [--out assessment.json] [--report-out capacity.md]
 	  damocline plan --campaign campaign.json --peak-users 20 [--growth-percent 25] [--reserve-percent 20]
 	damocline audit --campaign campaign.json [--campaign higher-level.json] [--peak-users 20] [--growth-percent 25] [--reserve-percent 20] [--out assessment.json]
   damocline run --config scenario.json --authorized [--calibration reports/reference.json --require-calibration] [--app-metrics-endpoint https://app.example.com/metrics --app-metrics-interval 10s] [--out reports/run.json]
@@ -594,6 +594,10 @@ func journeyP95Description(metrics report.MetricSet) string {
 }
 
 func campaignCmd(args []string, stdout, stderr io.Writer) int {
+	return campaignCmdWithWorkloadSource(args, nil, stdout, stderr)
+}
+
+func campaignCmdWithWorkloadSource(args []string, source *campaign.WorkloadSource, stdout, stderr io.Writer) int {
 	if len(args) > 0 && args[0] == "profile" {
 		return campaignProfileCmd(args[1:], stdout, stderr)
 	}
@@ -605,7 +609,7 @@ func campaignCmd(args []string, stdout, stderr io.Writer) int {
 	observation := fs.Duration("observation", 2*time.Minute, "steady observation duration (10s-10m)")
 	spikeUsers := fs.Int("spike-users", 0, "optional peak virtual users above the base scenario")
 	spikeDuration := fs.Duration("spike-duration", 0, "optional spike duration (10s-3m)")
-	recovery := fs.Duration("recovery", 30*time.Second, "recovery duration after observation (0s-3m)")
+	recovery := fs.Duration("recovery", 30*time.Second, "required recovery duration after observation (greater than 0, up to 3m)")
 	soak := fs.Duration("soak", 0, "optional final sustained observation after all repeated trials (10s-3m; long-run up to 30m)")
 	cooldown := fs.Duration("cooldown", 0, "optional bounded wait between independent trials (0-5m)")
 	longRun := fs.Bool("allow-long-run", false, "opt in to campaign phases up to 30m and a wall budget up to 2h")
@@ -652,7 +656,7 @@ func campaignCmd(args []string, stdout, stderr io.Writer) int {
 	if guardrails.Enabled() {
 		guardrails.ConsecutiveSamples = *guardrailSamples
 	}
-	options := campaign.Options{Warmup: *warmup, Stabilization: *stabilization, Observation: *observation, SpikeUsers: *spikeUsers, SpikeDuration: *spikeDuration, Recovery: *recovery, Soak: *soak, Cooldown: *cooldown, Repeats: *repeats, Budget: *budget,
+	options := campaign.Options{WorkloadSource: source, Warmup: *warmup, Stabilization: *stabilization, Observation: *observation, SpikeUsers: *spikeUsers, SpikeDuration: *spikeDuration, Recovery: *recovery, Soak: *soak, Cooldown: *cooldown, Repeats: *repeats, Budget: *budget,
 		Guardrails: guardrails,
 		LongRun:    *longRun, StagingConfirmed: *stagingConfirmed,
 		Stability: campaign.StabilityPolicy{MinimumWindows: *minWindows, MinimumSamplesPerWindow: *minSamples, MaxP95IncreasePercent: *maxP95IncreasePercent, MaxP95IncreaseMS: *maxP95IncreaseMS, MaxThroughputDropPercent: *maxThroughputDropPercent}}
@@ -660,10 +664,13 @@ func campaignCmd(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "invalid campaign: %v\n", err)
 		return 2
 	}
-	scenario, err := config.Load(*filename)
+	scenario, sourceSHA256, err := config.LoadWithSHA256(*filename)
 	if err != nil {
 		fmt.Fprintf(stderr, "configuration error: %v\n", err)
 		return 2
+	}
+	if source == nil {
+		source = &campaign.WorkloadSource{Type: "scenario_file", SchemaVersion: scenario.ScenarioVersion, FileSHA256: sourceSHA256}
 	}
 	if !*dry {
 		if err := rejectCampaignOutputAlias(*filename, *out); err != nil {
@@ -676,6 +683,8 @@ func campaignCmd(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "configuration error: %v\n", err)
 		return 2
 	}
+	source.SemanticFingerprint = validated.WorkloadFingerprint
+	options.WorkloadSource = source
 	if err := campaign.ValidateForScenario(validated, options); err != nil {
 		fmt.Fprintf(stderr, "invalid campaign: %v\n", err)
 		return 2
@@ -758,8 +767,7 @@ func campaignCmd(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	if variability := result.ObservationVariability; variability != nil {
-		fmt.Fprintf(stdout, "Observation spread across %d trials: p95 %.0f-%.0fms | errors %.2f%%-%.2f%% | requests %.2f-%.2f/s | successful journeys %.2f-%.2f/s\n", variability.Runs, variability.P95MinMS, variability.P95MaxMS, variability.ErrorRateMin*100, variability.ErrorRateMax*100, variability.ThroughputMinRPS, variability.ThroughputMaxRPS, variability.SuccessfulJourneysMinPerSec, variability.SuccessfulJourneysMaxPerSec)
-		fmt.Fprintln(stdout, "This is observed run-to-run spread, not a statistical confidence interval.")
+		writeCampaignObservationSummary(stdout, variability)
 	}
 	fmt.Fprintf(stdout, "Campaign outcome: %s\n", result.Outcome)
 	fmt.Fprintln(stdout, "This is repeated observed evidence under the configured workload. It is not a universal capacity certification or infrastructure recommendation.")
@@ -770,6 +778,12 @@ func campaignCmd(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+func writeCampaignObservationSummary(stdout io.Writer, variability *campaign.Variability) {
+	fmt.Fprintf(stdout, "Observation spread across %d trials: p95 %.0f-%.0fms | errors %.2f%%-%.2f%% | requests %.2f-%.2f/s | successful journeys %.2f-%.2f/s\n", variability.Runs, variability.P95MinMS, variability.P95MaxMS, variability.ErrorRateMin*100, variability.ErrorRateMax*100, variability.ThroughputMinRPS, variability.ThroughputMaxRPS, variability.SuccessfulJourneysMinPerSec, variability.SuccessfulJourneysMaxPerSec)
+	fmt.Fprintf(stdout, "Request p95 repeat summary: median %.0fms | MAD %.0fms | descriptive median +/- 3 MAD band %.0f-%.0fms.\n", variability.RequestP95MedianMS, variability.RequestP95MADMS, variability.RequestP95RobustLowerMS, variability.RequestP95RobustUpperMS)
+	fmt.Fprintln(stdout, "Repeat summaries use one request p95 per independent observation phase. The median +/- 3 MAD band is descriptive, not a confidence interval; repeated trials can remain dependent or non-stationary.")
 }
 
 func dashboardCmd(args []string, stdout, stderr io.Writer) int {

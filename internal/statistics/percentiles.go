@@ -6,7 +6,25 @@ import (
 )
 
 const maxExactRankIntervalSamples = 1_000_000
+const MaxExactPercentileRankIntervalSamples = maxExactRankIntervalSamples
 const maxExactBinomialTrials = 10_000
+const minimumExpectedTailObservations = 10
+
+// MinimumSamplesForPercentileRankInterval95 returns the smallest sample size
+// allowed by the exact rank-interval screen. Both expected binomial groups
+// (below and above the requested percentile) must contain at least ten samples.
+func MinimumSamplesForPercentileRankInterval95(percentile float64) (int, error) {
+	if math.IsNaN(percentile) || math.IsInf(percentile, 0) || percentile <= 0 || percentile >= 1 {
+		return 0, errors.New("percentile must be between 0 and 1")
+	}
+	below := int(math.Ceil(minimumExpectedTailObservations / percentile))
+	above := int(math.Ceil(minimumExpectedTailObservations / (1 - percentile)))
+	minimum := max(below, above)
+	if minimum > maxExactRankIntervalSamples {
+		return 0, errors.New("percentile rank interval sample requirement exceeds the exact-analysis resource limit")
+	}
+	return minimum, nil
+}
 
 // BinomialProportionInterval95 returns a two-sided exact Clopper-Pearson
 // interval for a binomial success probability. Trials must be independent
@@ -101,8 +119,8 @@ func PercentileRankInterval95(samples int, percentile float64) (low, high int, e
 	if samples > maxExactRankIntervalSamples {
 		return 0, 0, errors.New("sample count exceeds the exact percentile interval resource limit")
 	}
-	left, right := float64(samples)*percentile, float64(samples)*(1-percentile)
-	if left < 10 || right < 10 {
+	minimum, err := MinimumSamplesForPercentileRankInterval95(percentile)
+	if err != nil || samples < minimum {
 		return 0, 0, errors.New("too few samples for the percentile rank interval screen")
 	}
 

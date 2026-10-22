@@ -27,6 +27,13 @@ type JourneyStartGoal struct {
 // JourneyStartAssessment reports only direct evidence at an exact scheduled
 // journey-start rate. It does not estimate a continuous capacity curve.
 type JourneyStartAssessment struct {
+	SourceEvidenceID              string `json:"source_evidence_id,omitempty"`
+	ScenarioIdentityStatus        string `json:"scenario_identity_status,omitempty"`
+	WorkloadRevision              string `json:"workload_revision,omitempty"`
+	ApplicationRevision           string `json:"application_revision,omitempty"`
+	DeclaredEnvironment           string `json:"declared_environment,omitempty"`
+	AuditorVersion                string `json:"auditor_version,omitempty"`
+	AuditorExecutableSHA256       string `json:"auditor_executable_sha256,omitempty"`
 	PeakStartsPerSecond           int
 	TargetStartsPerSecond         int
 	GrowthPercent                 float64
@@ -38,6 +45,8 @@ type JourneyStartAssessment struct {
 	MatchedTrials                 int
 	Findings                      []string
 	Next                          []string
+	Objectives                    *campaign.ObjectiveContract `json:"predeclared_objectives,omitempty"`
+	StabilityPolicy               *campaign.StabilityPolicy   `json:"stability_policy,omitempty"`
 }
 
 func (g JourneyStartGoal) required() (int, error) {

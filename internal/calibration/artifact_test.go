@@ -1,10 +1,12 @@
 package calibration
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -51,7 +53,7 @@ func passingArtifact(t *testing.T) artifact {
 	for i, s := range stages {
 		runs[i] = stageRun{ArrivalsScheduled: s.Scheduled, IterationsStarted: s.Started, IterationsCompleted: s.Completed, Outcome: s.Outcome}
 	}
-	a := artifact{SchemaVersion: 1, Status: rec.Status, Preflight: rec, Runs: runs}
+	a := artifact{SchemaVersion: 1, Status: rec.Status, Preflight: rec, Checks: []string{}, Runs: runs}
 	a.SchedulerLag = passedLagFixture()
 	return a
 }
@@ -96,7 +98,7 @@ func passingWorkloadObservations() []WorkloadObservation {
 			ClientResponseMinBytes: int64(profile.ResponseBodyBytes),
 			ClientResponseMaxBytes: int64(profile.ResponseBodyBytes), ClientResponseTotalBytes: responseBytes,
 			ServerReceived: planned, ServerCompleted: planned,
-			ServerTCPConnections:   tcpConnections,
+			ServerTCPConnections: tcpConnections, ServerAcceptedTLSConnections: tlsHandshakes,
 			ServerRequestBodyBytes: requestBytes, ServerResponseBodyBytes: responseBytes,
 		})
 		if closedLoop {
@@ -147,8 +149,8 @@ func TestSchemaSixRejectsAlteredOrMissingWorkloadEvidence(t *testing.T) {
 
 func TestReferenceMatrixCoversOnlyExactShapeAndRatePairs(t *testing.T) {
 	profiles := ReferenceWorkloadProfiles()
-	if len(profiles) != 39 {
-		t.Fatalf("got %d workload profiles, want 30 HTTP/3 HTTPS arrival pairs plus 6 closed-loop VU levels", len(profiles))
+	if len(profiles) != 41 {
+		t.Fatalf("got %d workload profiles, want 30 HTTP/5 HTTPS arrival pairs plus 6 closed-loop VU levels", len(profiles))
 	}
 	seen := make(map[string]bool, len(profiles))
 	for _, profile := range profiles {
@@ -160,7 +162,11 @@ func TestReferenceMatrixCoversOnlyExactShapeAndRatePairs(t *testing.T) {
 			t.Fatalf("duplicate exact workload pair %s", key)
 		}
 		seen[key] = true
-		if profile.ArrivalRate != 2 && profile.ArrivalRate != 5 && profile.ArrivalRate != 10 {
+		validRate := profile.ArrivalRate == 2 || profile.ArrivalRate == 5 || profile.ArrivalRate == 10
+		if profile.TransportScheme == "https" {
+			validRate = validRate || profile.ArrivalRate == 20 || profile.ArrivalRate == 40
+		}
+		if !validRate {
 			t.Fatalf("unexpected interpolated or untested rate: %+v", profile)
 		}
 	}
@@ -174,7 +180,7 @@ func TestReferenceMatrixCoversOnlyExactShapeAndRatePairs(t *testing.T) {
 			}
 		}
 	}
-	for _, rate := range WorkloadMatrixArrivalRates() {
+	for _, rate := range []int{2, 5, 10, 20, 40} {
 		if !seen[fmt.Sprintf("/matrix/https-4k|reuse|%d", rate)] {
 			t.Fatalf("missing exact trusted HTTPS profile at %d arrivals/s", rate)
 		}
@@ -276,6 +282,48 @@ func TestSchemaFiveArtifactsRemainReadableWithoutTCPConnectionEvidence(t *testin
 	}
 }
 
+func TestCalibrationArtifactRejectsDuplicateJSONKeys(t *testing.T) {
+	data, err := json.Marshal(passingArtifact(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	duplicate := bytes.Replace(data, []byte(`"schema_version":1`), []byte(`"schema_version":1,"schema_version":1`), 1)
+	if bytes.Equal(data, duplicate) {
+		t.Fatal("test fixture has no schema_version field")
+	}
+	if _, err := ValidateArtifactBytes(duplicate, true); err == nil || !strings.Contains(err.Error(), "ambiguous JSON") {
+		t.Fatalf("duplicate calibration schema key was not rejected clearly: %v", err)
+	}
+}
+
+func TestCalibrationArtifactRejectsOmittedRequiredEvidence(t *testing.T) {
+	data, err := json.Marshal(passingArtifact(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{`"scheduler_lag_calibration":`, `"generator":`, `"healthy_stages":`, `"workload_observations":`} {
+		mutated := bytes.Replace(data, []byte(field), []byte(`"omitted_fixture_field":`), 1)
+		if bytes.Equal(mutated, data) {
+			t.Fatalf("fixture lacks required field %s", field)
+		}
+		if _, err := ValidateArtifactBytes(mutated, true); err == nil {
+			t.Fatalf("accepted calibration artifact without %s", field)
+		}
+	}
+}
+
+func TestCalibrationArtifactAllowsNullChecksWhenNoDiscrepanciesExist(t *testing.T) {
+	a := passingArtifact(t)
+	a.Checks = nil
+	data, err := json.Marshal(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ValidateArtifactBytes(data, true); err != nil {
+		t.Fatalf("valid passing calibration with an empty nil checks list was rejected: %v", err)
+	}
+}
+
 func TestSchemaSixRequiresExactTCPConnectionEvidence(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -332,6 +380,59 @@ func TestSchemaEightRequiresExactTrustedTLSHandshakeEvidence(t *testing.T) {
 	}
 }
 
+func TestSchemaNineArtifactsRetainOriginalWorkloadMatrix(t *testing.T) {
+	a := passingArtifact(t)
+	a.Preflight.SchemaVersion = 9
+	a.Preflight.Fixture.WorkloadProfiles = referenceWorkloadProfilesV9()
+	a.Preflight.WorkloadObservations = passingObservationsForProfiles(referenceWorkloadProfilesV9())
+	refreshArtifactFingerprint(t, &a.Preflight)
+	if len(a.Preflight.Fixture.WorkloadProfiles) != 39 {
+		t.Fatalf("historical schema-v9 profile count = %d, want 39", len(a.Preflight.Fixture.WorkloadProfiles))
+	}
+	if err := ValidateRecord(a.Preflight); err != nil {
+		t.Fatalf("schema-v9 artifact no longer validates against its original matrix: %v", err)
+	}
+}
+
+func TestSchemaTenRequiresExactHigherRateTLSHandshakes(t *testing.T) {
+	for _, index := range []int{33, 34} {
+		t.Run(ReferenceWorkloadProfiles()[index].ID, func(t *testing.T) {
+			a := passingArtifact(t)
+			a.Preflight.WorkloadObservations[index].ClientTLSHandshakes = 0
+			if err := ValidateRecord(a.Preflight); err == nil {
+				t.Fatal("schema-v10 calibration accepted missing TLS handshake evidence at higher load")
+			}
+		})
+	}
+}
+
+func TestSchemaElevenUsesAcceptedTLSSocketsForHandshakeReconciliation(t *testing.T) {
+	a := passingArtifact(t)
+	index := -1
+	for i, profile := range a.Preflight.Fixture.WorkloadProfiles {
+		if profile.ID == "https-get-4k-response-shape-r40" {
+			index = i
+			break
+		}
+	}
+	if index < 0 {
+		t.Fatal("higher-rate TLS profile is missing")
+	}
+	observation := &a.Preflight.WorkloadObservations[index]
+	// A TLS connection can complete its handshake and be accepted without
+	// carrying a request when concurrent dials race to establish reuse.
+	observation.ClientTLSHandshakes = 2
+	observation.ServerAcceptedTLSConnections = 2
+	observation.ServerTCPConnections = 1
+	if err := ValidateRecord(a.Preflight); err != nil {
+		t.Fatalf("schema-v11 artifact rejected a reconciled idle TLS connection: %v", err)
+	}
+	observation.ServerAcceptedTLSConnections = 1
+	if err := ValidateRecord(a.Preflight); err == nil {
+		t.Fatal("schema-v11 artifact accepted client handshake count that differs from accepted TLS sockets")
+	}
+}
+
 func TestSchemaSixRejectsAlteredConnectionPolicyTuple(t *testing.T) {
 	a := passingArtifact(t)
 	a.Preflight.Fixture.WorkloadProfiles[15].Duration = "5s"
@@ -362,23 +463,43 @@ func TestSchemaThreeArtifactsRemainReadableWithOriginalMatrix(t *testing.T) {
 
 func passingObservationsForProfiles(profiles []WorkloadProfile) []WorkloadObservation {
 	observations := make([]WorkloadObservation, 0, len(profiles))
+	hasClosedLoop := false
+	for _, profile := range profiles {
+		hasClosedLoop = hasClosedLoop || profile.Mode == "closed"
+	}
 	for _, profile := range profiles {
 		duration, _ := time.ParseDuration(profile.Duration)
 		planned := int64(profile.ArrivalRate) * int64(duration/time.Second)
+		if profile.Mode == "closed" {
+			planned = int64(profile.Users)
+		}
 		requestBytes := int64(profile.RequestBodyBytes) * planned
 		responseBytes := int64(profile.ResponseBodyBytes) * planned
-		tcpConnections, _ := ExpectedReferenceTCPConnections(profile, planned)
+		connectionObservations := planned
+		if profile.Mode == "closed" {
+			connectionObservations = 1
+		}
+		tcpConnections, _ := ExpectedReferenceTCPConnections(profile, connectionObservations)
 		tlsHandshakes, _ := ExpectedReferenceTLSHandshakes(profile, planned)
+		mode, arrivalAccounting := "", false
+		if hasClosedLoop {
+			mode, arrivalAccounting = profile.Mode, profile.Mode == "arrival"
+		}
 		observations = append(observations, WorkloadObservation{
-			ProfileID: profile.ID, Scheduled: planned, Admitted: planned, Started: planned,
+			ProfileID: profile.ID, Mode: mode, ArrivalAccountingApplicable: arrivalAccounting, Scheduled: planned, Admitted: planned, Started: planned,
 			Completed: planned, Outcome: "PASS", ClientCompleteBodyObservations: planned,
 			ClientTLSHandshakes:    tlsHandshakes,
 			ClientResponseMinBytes: int64(profile.ResponseBodyBytes),
 			ClientResponseMaxBytes: int64(profile.ResponseBodyBytes), ClientResponseTotalBytes: responseBytes,
 			ServerReceived: planned, ServerCompleted: planned,
-			ServerTCPConnections:   tcpConnections,
+			ServerTCPConnections: tcpConnections, ServerAcceptedTLSConnections: tlsHandshakes,
 			ServerRequestBodyBytes: requestBytes, ServerResponseBodyBytes: responseBytes,
 		})
+		if profile.Mode == "closed" {
+			last := &observations[len(observations)-1]
+			last.Scheduled, last.Admitted, last.Dropped, last.ArrivalAccountingApplicable = 0, 0, 0, false
+			last.ServerTCPConnections = 1
+		}
 	}
 	return observations
 }

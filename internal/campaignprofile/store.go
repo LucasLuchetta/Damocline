@@ -1,6 +1,8 @@
 package campaignprofile
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -72,40 +74,47 @@ func (s Store) Save(profile Profile, replace bool) error {
 }
 
 func (s Store) Load(name string) (Profile, bool, error) {
+	profile, migrated, _, err := s.LoadWithSHA256(name)
+	return profile, migrated, err
+}
+
+// LoadWithSHA256 hashes the exact bounded bytes decoded from the private file.
+func (s Store) LoadWithSHA256(name string) (Profile, bool, string, error) {
 	if !ValidName(name) {
-		return Profile{}, false, errors.New("invalid campaign profile name")
+		return Profile{}, false, "", errors.New("invalid campaign profile name")
 	}
 	path := s.path(name)
 	file, err := os.Open(path)
 	if err != nil {
-		return Profile{}, false, fmt.Errorf("open campaign profile: %w", err)
+		return Profile{}, false, "", fmt.Errorf("open campaign profile: %w", err)
 	}
 	defer file.Close()
 	info, err := file.Stat()
 	if err != nil {
-		return Profile{}, false, err
+		return Profile{}, false, "", err
 	}
 	if !info.Mode().IsRegular() {
-		return Profile{}, false, errors.New("campaign profile must be a regular file")
+		return Profile{}, false, "", errors.New("campaign profile must be a regular file")
 	}
 	if info.Size() > MaxProfileBytes {
-		return Profile{}, false, errors.New("campaign profile exceeds the 1 MiB safety limit")
+		return Profile{}, false, "", errors.New("campaign profile exceeds the 1 MiB safety limit")
 	}
 	data, err := io.ReadAll(io.LimitReader(file, MaxProfileBytes+1))
 	if err != nil {
-		return Profile{}, false, err
+		return Profile{}, false, "", err
 	}
 	if len(data) > MaxProfileBytes {
-		return Profile{}, false, errors.New("campaign profile exceeds the 1 MiB safety limit")
+		return Profile{}, false, "", errors.New("campaign profile exceeds the 1 MiB safety limit")
 	}
 	profile, migrated, err := Decode(data)
 	if err != nil {
-		return Profile{}, false, err
+		return Profile{}, false, "", err
 	}
 	if profile.Name != name {
-		return Profile{}, false, errors.New("campaign profile name does not match its file name")
+		return Profile{}, false, "", errors.New("campaign profile name does not match its file name")
 	}
-	return profile, migrated, nil
+	digest := sha256.Sum256(data)
+	return profile, migrated, "sha256:" + hex.EncodeToString(digest[:]), nil
 }
 
 func (s Store) Import(path string) (Profile, bool, error) {

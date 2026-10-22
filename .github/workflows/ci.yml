@@ -30,6 +30,7 @@ jobs:
           go test ./internal/engine -run '^$' -fuzz '^FuzzInterpolateBoundedNeverExceedsLimit$' -fuzztime=5s -parallel=2
           go test ./internal/engine -run '^$' -fuzz '^FuzzQueryEscapeByteLengthMatchesStandardLibrary$' -fuzztime=5s -parallel=2
           go test ./internal/engine -run '^$' -fuzz '^FuzzInterpolateURLNeverReturnsOversizedURL$' -fuzztime=5s -parallel=2
+          go test ./internal/jsonartifact -run '^$' -fuzz '^FuzzRejectDuplicateKeysNeverAcceptsInvalidJSON$' -fuzztime=5s -parallel=2
       - name: Compile from source (CI only)
         run: go build -o /tmp/damocline-check ./cmd/damocline
       - name: Smoke test source CLI

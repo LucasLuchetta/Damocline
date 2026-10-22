@@ -283,7 +283,7 @@ func passingWorkloadProfileFixture(profile calibration.WorkloadProfile) (report.
 		ClientResponseMinBytes: responseBytes, ClientResponseMaxBytes: responseBytes,
 		ClientResponseTotalBytes: planned * responseBytes,
 		ServerReceived:           planned, ServerCompleted: planned,
-		ServerTCPConnections:    tcpConnections,
+		ServerTCPConnections: tcpConnections, ServerAcceptedTLSConnections: tlsHandshakes,
 		ServerRequestBodyBytes:  planned * int64(profile.RequestBodyBytes),
 		ServerResponseBodyBytes: planned * responseBytes,
 	}

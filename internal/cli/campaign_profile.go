@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/LucasLuchetta/Damocline/internal/campaign"
 	"github.com/LucasLuchetta/Damocline/internal/campaignprofile"
 	"github.com/LucasLuchetta/Damocline/internal/config"
 )
@@ -148,7 +149,7 @@ func campaignProfileRun(args []string, store campaignprofile.Store, stdout, stde
 		fmt.Fprintln(stderr, "usage: damocline campaign profile run --name NAME (--authorized | --dry-run) [runtime opt-ins]")
 		return 2
 	}
-	profile, _, err := store.Load(*name)
+	profile, _, sourceSHA256, err := store.LoadWithSHA256(*name)
 	if err != nil {
 		fmt.Fprintf(stderr, "profile load error: %v\n", err)
 		return 2
@@ -240,7 +241,8 @@ func campaignProfileRun(args []string, store campaignprofile.Store, stdout, stde
 	if *metrics != "" {
 		argsOut = append(argsOut, "--app-metrics-endpoint", *metrics, "--app-metrics-interval", metricsInterval.String())
 	}
-	return campaignCmd(argsOut, stdout, stderr)
+	source := &campaign.WorkloadSource{Type: "campaign_profile", Name: profile.Name, SchemaVersion: profile.SchemaVersion, FileSHA256: sourceSHA256}
+	return campaignCmdWithWorkloadSource(argsOut, source, stdout, stderr)
 }
 
 func jsonEncodeScenario(w io.Writer, scenario config.Scenario) error {

@@ -158,6 +158,11 @@ func TestValidProfileMatrixRejectsUntestedRateAndShape(t *testing.T) {
 	if validProfileMatrix(profiles) {
 		t.Fatal("unmeasured response shape was accepted")
 	}
+	profiles = syntheticCalibration().Preflight.Fixture.WorkloadProfiles
+	profiles[len(profiles)-7].ArrivalRate = 30
+	if validProfileMatrix(profiles) {
+		t.Fatal("untested TLS load rate was accepted")
+	}
 }
 
 func TestHealthyStageMatrixRequiresExactRequestedRates(t *testing.T) {
@@ -192,8 +197,8 @@ func TestHealthyStageMatrixRequiresExactRequestedRates(t *testing.T) {
 
 func TestCalibrationLedgersReconcileIndependently(t *testing.T) {
 	document := syntheticCalibration()
-	if !aggregateServerLedgerMatches(document) || !profileLedgersMatch(document.Preflight.Fixture.WorkloadProfiles, document.WorkloadObservations) || !workloadRunsMatch(document.Preflight.Fixture.WorkloadProfiles, document.WorkloadRuns) || !soakMatches(document.SoakRun) {
-		t.Fatalf("complete synthetic lab fixture failed a ledger: aggregate=%t profiles=%t runs=%t soak=%t", aggregateServerLedgerMatches(document), profileLedgersMatch(document.Preflight.Fixture.WorkloadProfiles, document.WorkloadObservations), workloadRunsMatch(document.Preflight.Fixture.WorkloadProfiles, document.WorkloadRuns), soakMatches(document.SoakRun))
+	if !aggregateServerLedgerMatches(document) || !profileLedgersMatch(document.Preflight.Fixture.WorkloadProfiles, document.WorkloadObservations) || !workloadRunsMatch(document.Preflight.Fixture.WorkloadProfiles, document.WorkloadRuns, document.WorkloadObservations) || !soakMatches(document.SoakRun) {
+		t.Fatalf("complete synthetic lab fixture failed a ledger: aggregate=%t profiles=%t runs=%t soak=%t", aggregateServerLedgerMatches(document), profileLedgersMatch(document.Preflight.Fixture.WorkloadProfiles, document.WorkloadObservations), workloadRunsMatch(document.Preflight.Fixture.WorkloadProfiles, document.WorkloadRuns, document.WorkloadObservations), soakMatches(document.SoakRun))
 	}
 	document.Server.ResponseBodyBytes++
 	if aggregateServerLedgerMatches(document) {
@@ -203,6 +208,11 @@ func TestCalibrationLedgersReconcileIndependently(t *testing.T) {
 	document.WorkloadObservations[0].ServerTCPConnections++
 	if profileLedgersMatch(document.Preflight.Fixture.WorkloadProfiles, document.WorkloadObservations) {
 		t.Fatal("independent profile TCP connection discrepancy was accepted")
+	}
+	document = syntheticCalibration()
+	document.WorkloadRuns[33].Steps[0].HTTPTrace.TLSCount++
+	if workloadRunsMatch(document.Preflight.Fixture.WorkloadProfiles, document.WorkloadRuns, document.WorkloadObservations) {
+		t.Fatal("client trace and independent TLS handshake/TCP ledgers were not cross-checked")
 	}
 }
 
@@ -252,6 +262,19 @@ func TestTransportMatrixRequiresExactPassingFixtureSet(t *testing.T) {
 			t.Fatalf("mutated transport case identity was accepted: %+v", gate)
 		}
 	}
+}
+
+func TestTransportArtifactRejectsDuplicateJSONKeys(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "duplicate-transport.json")
+	if err := os.WriteFile(path, []byte(`{"schema_version":1,"schema_\u0076ersion":1}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, gate := range assessTransportArtifact(path) {
+		if gate.Name == "transport_artifact" && gate.Status == "FAILED" {
+			return
+		}
+	}
+	t.Fatal("transport artifact with duplicate schema keys was not rejected")
 }
 
 func TestQualityRecomputationRejectsSelfDeclaredPositiveState(t *testing.T) {
@@ -366,7 +389,7 @@ func syntheticCalibration() calibrationDocument {
 	var document calibrationDocument
 	document.SchemaVersion = 1
 	document.Status = "REFERENCE_SMOKE_PASSED"
-	document.Preflight.SchemaVersion = 9
+	document.Preflight.SchemaVersion = 11
 	document.Preflight.ScenarioFingerprint = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	runtimeInfo := verifiedTestRuntime()
 	document.Preflight.Generator = calibration.Generator{
@@ -428,16 +451,20 @@ func syntheticCalibration() calibrationDocument {
 			}
 		}
 	}
-	for _, rate := range []int{2, 5, 10} {
+	for _, rate := range []int{2, 5, 10, 20, 40} {
 		profile := calibratedProfile{ID: fmt.Sprintf("https-get-4k-response-shape-r%d", rate), Mode: "arrival", TransportScheme: "https", Method: "GET", Path: "/matrix/https-4k",
 			ResponseBodyBytes: 4096, ArrivalRate: rate, MaxRPS: 50, Users: 10, Duration: "5s", Timeout: "1s", ConnectionPolicy: "reuse"}
 		document.Preflight.Fixture.WorkloadProfiles = append(document.Preflight.Fixture.WorkloadProfiles, profile)
 		planned := int64(rate * 5)
+		handshakes := int64(1)
+		if rate >= 20 {
+			handshakes = 2 // one accepted TLS connection carried no request
+		}
 		document.WorkloadObservations = append(document.WorkloadObservations, workloadObservation{
 			ProfileID: profile.ID, Mode: "arrival", ArrivalAccountingApplicable: true, Scheduled: planned, Admitted: planned, Started: planned, Completed: planned,
-			Outcome: "PASS", ClientCompleteBodyObservations: planned, ClientTLSHandshakes: 1,
+			Outcome: "PASS", ClientCompleteBodyObservations: planned, ClientTLSHandshakes: handshakes,
 			ClientResponseMinBytes: 4096, ClientResponseMaxBytes: 4096, ClientResponseTotalBytes: planned * 4096,
-			ServerReceived: planned, ServerCompleted: planned, ServerTCPConnections: 1, ServerResponseBodyBytes: planned * 4096,
+			ServerReceived: planned, ServerCompleted: planned, ServerTCPConnections: 1, ServerAcceptedTLSConnections: handshakes, ServerResponseBodyBytes: planned * 4096,
 		})
 		metric := report.MetricSet{Total: int(planned), Success: int(planned), P95MS: 21,
 			HTTP:         report.HTTPDiagnostics{StatusCodes: map[int]int{200: int(planned)}, Status2xx: int(planned)},
@@ -445,7 +472,7 @@ func syntheticCalibration() calibrationDocument {
 		document.WorkloadRuns = append(document.WorkloadRuns, report.Result{
 			ArrivalsScheduled: planned, ArrivalsAdmitted: intPointer64(planned), IterationsStarted: planned, IterationsCompleted: planned, Outcome: "PASS",
 			Metrics: metric, Config: report.RunConfig{Users: 10, Duration: "5s", RequestTimeout: "1s", ConnectionPolicy: "reuse", MaxRPS: 50, Mode: "arrival", ArrivalRate: rate},
-			Steps: []report.StepResult{{Method: "GET", Path: profile.Path, Metrics: metric, HTTPTrace: report.HTTPTrace{TLSCount: 1}}},
+			Steps: []report.StepResult{{Method: "GET", Path: profile.Path, Metrics: metric, HTTPTrace: report.HTTPTrace{TLSCount: int(handshakes)}}},
 		})
 	}
 	for _, users := range []int{1, 2, 5, 10, 20, 50} {

@@ -763,12 +763,13 @@ func workloadProfileObservation(profile calibration.WorkloadProfile, run report.
 		ClientCompleteBodyObservations: body.CompleteObservations,
 		ClientTLSHandshakes:            totalTLSHandshakes(run),
 		ClientResponseMinBytes:         body.MinBytes, ClientResponseMaxBytes: body.MaxBytes,
-		ClientResponseTotalBytes: body.TotalBytes,
-		ServerReceived:           after.ProfileReceived[counterID] - before.ProfileReceived[counterID],
-		ServerCompleted:          after.ProfileCompleted[counterID] - before.ProfileCompleted[counterID],
-		ServerTCPConnections:     after.ProfileTCPConnections[counterID] - before.ProfileTCPConnections[counterID],
-		ServerRequestBodyBytes:   after.ProfileRequestBytes[counterID] - before.ProfileRequestBytes[counterID],
-		ServerResponseBodyBytes:  after.ProfileResponseBytes[counterID] - before.ProfileResponseBytes[counterID],
+		ClientResponseTotalBytes:     body.TotalBytes,
+		ServerReceived:               after.ProfileReceived[counterID] - before.ProfileReceived[counterID],
+		ServerCompleted:              after.ProfileCompleted[counterID] - before.ProfileCompleted[counterID],
+		ServerTCPConnections:         after.ProfileTCPConnections[counterID] - before.ProfileTCPConnections[counterID],
+		ServerAcceptedTLSConnections: after.AcceptedTLSConnections - before.AcceptedTLSConnections,
+		ServerRequestBodyBytes:       after.ProfileRequestBytes[counterID] - before.ProfileRequestBytes[counterID],
+		ServerResponseBodyBytes:      after.ProfileResponseBytes[counterID] - before.ProfileResponseBytes[counterID],
 	}
 }
 
@@ -827,11 +828,27 @@ func checkWorkloadProfile(profile calibration.WorkloadProfile, run report.Result
 		observation.ServerRequestBodyBytes == int64(profile.RequestBodyBytes)*completed && observation.ServerResponseBodyBytes == int64(profile.ResponseBodyBytes)*completed
 	expectedTCPConnections, hasExpectedTCPConnections := calibration.ExpectedReferenceTCPConnections(profile, measurementCount)
 	tcpConnectionLedgerMatches := hasExpectedTCPConnections && observation.ServerTCPConnections == expectedTCPConnections
+	higherRateTLS := profile.TransportScheme == "https" && profile.ArrivalRate >= 20
+	if higherRateTLS {
+		tcpConnectionLedgerMatches = observation.ServerTCPConnections >= 1 && observation.ServerTCPConnections <= planned
+	}
 	if closedLoop {
 		tcpConnectionLedgerMatches = observation.ServerTCPConnections > 0 && observation.ServerTCPConnections <= observation.ServerReceived
 	}
 	expectedTLSHandshakes, hasExpectedTLSHandshakes := calibration.ExpectedReferenceTLSHandshakes(profile, max(int64(1), completed))
 	tlsHandshakeLedgerMatches := hasExpectedTLSHandshakes && observation.ClientTLSHandshakes == expectedTLSHandshakes
+	if higherRateTLS {
+		traceHandshakes := int64(-1)
+		if len(run.Steps) == 1 {
+			traceHandshakes = int64(run.Steps[0].HTTPTrace.TLSCount)
+		}
+		tlsHandshakeLedgerMatches = observation.ClientTLSHandshakes == traceHandshakes &&
+			observation.ClientTLSHandshakes == observation.ServerAcceptedTLSConnections && observation.ClientTLSHandshakes >= 1 && observation.ClientTLSHandshakes <= planned && observation.ServerTCPConnections <= observation.ServerAcceptedTLSConnections
+	} else if profile.TransportScheme == "https" {
+		tlsHandshakeLedgerMatches = tlsHandshakeLedgerMatches && observation.ClientTLSHandshakes == observation.ServerAcceptedTLSConnections
+	} else {
+		tlsHandshakeLedgerMatches = tlsHandshakeLedgerMatches && observation.ClientTLSHandshakes == 0 && observation.ServerAcceptedTLSConnections == 0
+	}
 	var issues []string
 	if !hasRecognizedMeasurementQuality(quality) {
 		state := "missing"

@@ -14,8 +14,9 @@ and the measurement quality recomputed from the saved report. Stale or altered
 stage labels and self-declared positive quality are flagged as
 `INVALID_EVIDENCE`. Missing telemetry is not filled in or treated as zero.
 
-Closed-loop campaign schema v13 also records the objective contract before
-traffic: aggregate and per-workflow journey p95/error limits, minimum samples,
+Closed-loop campaign schema v15 optionally records workload source identity: source kind, exact bounded source-file SHA-256, and semantic workload fingerprint (plus logical profile name/schema where applicable). Offline validation rejects malformed source descriptors and semantic fingerprints that differ from any recorded phase. Profile verification checks whether a saved profile still has the exact bytes recorded at run time; historical campaigns report that identity as not recorded. Hashes are unkeyed and do not authenticate authorship, capture environment-backed values, or attest target state.
+
+Schema v14 also records the objective contract before traffic: aggregate and per-workflow journey p95/error limits, minimum samples,
 window coverage for journeys, steps, and configured workflows, a 100%
 started-work completion ratio, and zero dropped arrivals. The offline audit checks those declarations against each required
 phase and its saved window ledger. Older campaign schemas remain readable but
@@ -34,6 +35,22 @@ The audit distinguishes:
 - `INVALID_EVIDENCE`: malformed or internally contradictory persisted
   evidence, including fabricated or stale stage/quality labels.
 
+Schema-v14 campaign results retain one aggregate request p95 per completed
+observation trial and summarize those repeat-level values with the median, MAD,
+and a descriptive median +/- 3 MAD band. The offline audit recomputes these
+fields from saved phases. The robust summary is emitted only when at least two
+observation trials completed; an incomplete campaign with one completed phase
+does not imply zero spread. This is an outlier/spread summary over 2–5 trials,
+not a confidence interval. It does not treat requests inside a trial as
+independent experiments, account for dependence between sequential trials, or
+test stationarity; those statistical methods remain open work.
+
+The terminal audit calls these repeated phases observations; it does not assert
+that they are independent. With one completed observation, it prints that
+single result and says the robust summary is unavailable. The offline audit
+recomputes schema-v14 robust fields before checking the persisted summary, so
+valid saved summaries remain `MATCHED` while altered values remain invalid.
+
 Recomputed quality `LIMITED` remains visible *separately* from the
 observational verdict. Only the separately validated loopback calibration
 owns the current positive generator measurement envelope. For a specific
@@ -41,15 +58,34 @@ business-demand check, pass `--peak-users` (and optional growth and reserve
 percentages) to `audit`. The combined JSON assessment contains the observed
 audit and demand plan in one artifact, including the original peak/growth/reserve
 inputs; `plan` remains available for a standalone demand check. `--report-out FILE.md` writes executive and technical sections from that same assessment and
-records an offline replay command pinned to each source campaign's SHA-256
-evidence ID. You can pin an audit explicitly with repeated
-`--expect-evidence-id sha256:<64-hex>` flags, one per `--campaign` in argument
-order. The audit stops before writing assessment outputs if any source digest
-differs. A digest identifies normalized evidence fields; it is not a signature or proof of who
-produced them.
+records an offline replay command pinned to both each source campaign's
+decoded evidence ID and exact file-byte SHA-256. You can pin an audit explicitly
+with repeated `--expect-evidence-id sha256:<64-hex>` and
+`--expect-campaign-file-sha256 sha256:<64-hex>` flags, one of each per
+`--campaign` in argument order. Assessment schema v6 and collection schema v5
+also record the auditor version and exact executable SHA-256. Generated replay
+commands pass `--expect-auditor-sha256`; a different executable is rejected
+before campaign files are read or outputs are written. This lets reviewers see
+which implementation produced the assessment and reproduce it with the same
+binary. The audit hashes the same bounded campaign byte buffer it decodes, then
+stops before writing assessment outputs if any expected digest differs.
+The decoded evidence ID identifies the normalized fields interpreted by this
+auditor; the file hash also covers whitespace and fields unknown to this
+reader. Campaign and executable hashes are unkeyed digests, not signatures,
+immutable storage, or proof of who built or produced the evidence. If the exact
+auditor binary is unavailable later, reviewers can still inspect the recorded
+version and digest but cannot satisfy the generated exact-binary replay check.
+
+The Markdown report body does not include the report's local output path, so
+changing `--report-out` does not change its contents. Given the same source
+campaign path and bytes, auditor binary, and demand inputs, replay produces
+byte-identical Markdown. The source path remains in the offline replay command;
+reports may contain private paths, target origins, or scenario labels and should
+remain with the local evidence.
 
 Each assessment includes a SHA-256 digest of the normalized, schema-decoded
-campaign evidence and each reviewed phase report, the workload fingerprint
+campaign evidence, a separate SHA-256 digest of the exact source file bytes,
+and a digest of each reviewed phase report, the workload fingerprint
 recorded by each run, target, timestamps and observation durations, the sum of required phase durations,
 observed levels, workflow failures visible in observation evidence, and known
 unknowns. These digests identify the evidence fields interpreted by this
@@ -58,6 +94,26 @@ replacement. Confidence
 is explicitly `NOT_ESTABLISHED`: current conditional intervals assume IID
 observations and do not establish dependence-aware confidence. Demand is not
 extrapolated into untested workload levels.
+
+The audit also summarizes the declared workload revision, application revision,
+and environment across every non-warm-up phase. `CONSISTENT` means those saved
+labels match within this campaign; `UNKNOWN` means one or more required phases
+lacks a label; `CHANGED` means a label changes between phases and makes the
+campaign inconclusive. These declarations are not independently authenticated.
+Campaign collections require the labels to be present and match across every
+level before they report an aggregate tested boundary. When that check fails,
+each level's audit remains visible and the collection is `NOT_COMPARABLE`.
+
+Open-arrival `goal` assessments apply the same declared-identity rule across
+every non-warm-up phase. Missing labels remain `UNKNOWN`, and changed labels
+cannot produce a positive exact-target result. The generated replay command
+pins both the exact source campaign bytes and the auditor executable SHA-256;
+each mismatch is rejected before output files are written. These hashes are
+unkeyed change identifiers, not signatures or proof of build origin. The
+auditor pin is supported for open-arrival campaign assessments, whose JSON and
+Markdown output records the auditor version and executable digest. Older
+campaigns without phase identity remain readable but cannot establish that
+identity.
 
 `workflow_breaches` identifies each trial, required phase, tested VU level,
 workflow, breached p95/error objective, and observed values. A failure count
@@ -69,10 +125,12 @@ The Markdown report records phase-level controls, source and phase evidence
 IDs, observation statistics, confidence limits and a replay command. It includes
 the target origin and may contain private scenario labels, so keep it with local
 reports. It does not embed the full scenario or credentials. Preserve the private
-profile and use `campaign profile verify` to check that profile against the saved
-campaign before rerunning the workload. The generated replay command verifies
-the campaign evidence ID before it recomputes the assessment; this catches
-changes to interpreted source fields but does not authenticate their origin.
+profile and use `campaign profile verify` to check its exact file-byte identity
+and phase controls against the saved campaign before rerunning the workload.
+Older campaigns cannot establish exact source-byte identity. The generated replay command verifies
+both campaign digests before it recomputes the assessment; this catches
+changes to interpreted fields and any change to source bytes, but does not
+authenticate their origin.
 
 To inspect separately recorded campaigns at multiple active-workload levels,
 repeat `--campaign`:
@@ -81,7 +139,8 @@ repeat `--campaign`:
 damocline audit --campaign reports/campaign-2-vus.json --campaign reports/campaign-4-vus.json --campaign reports/campaign-8-vus.json --peak-users 4 --out reports/level-assessment.json
 ```
 
-The collection retains a full audit and evidence digest for each level. It
+The collection retains a full audit, semantic evidence ID, and exact source
+file-byte SHA-256 for each level. It
 aggregates pass/fail observations only when all campaigns have the same
 non-empty workload fingerprint, target, environment and application/workload
 revisions, SLOs, timing, request controls, phase schedule and repeat count;
@@ -95,6 +154,23 @@ only recorded outcomes. A pass at a higher level after a failure at a lower
 level is labeled `NON_MONOTONIC`; the tool will not infer a capacity threshold.
 A demand target still requires a campaign at its exact
 calculated level and is never interpolated from neighboring campaigns.
+
+The human and JSON outputs expose `scenario_identity_consistency` separately
+from generator-environment consistency. `CONSISTENT` includes the shared
+workload revision, application revision, and declared environment in the
+collection summary; `UNKNOWN` or `CHANGED` prevents level aggregation and is
+shown with the individual level evidence. This status makes the comparison
+decision explicit rather than changing the declaration's trust level.
+
+The collection also records generator-environment consistency across every
+required phase and tested level. It compares the path-free runner identity
+(OS, architecture, Go version and source/build identity), logical CPU count,
+GOMAXPROCS, effective CPU capacity, and the source used to determine that
+capacity. Missing or unavailable identity/capacity, or a change between phases
+or levels, makes the collection `NOT_COMPARABLE`; each level's offline audit
+remains available. These fields describe the generator process and its observed
+CPU entitlement. They do not attest the physical host, host model, operating
+system image, target identity, or environment authenticity.
 
 The collection also reports the highest passing tested level and first failing
 tested level as separate observations. `upper_bound_state` is

@@ -3,6 +3,7 @@ package insights
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -276,6 +277,113 @@ func TestReadRunRejectsBrokenInput(t *testing.T) {
 	}
 }
 
+func TestReadRunRejectsDuplicateJSONKeys(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "duplicate.json")
+	if err := os.WriteFile(path, []byte(`{"schema_version":1,"schema_\u0076ersion":1}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadRun(path); err == nil || !strings.Contains(err.Error(), "ambiguous JSON") {
+		t.Fatalf("duplicate report schema key was not rejected clearly: %v", err)
+	}
+}
+
+func TestReadRunRejectsMissingAggregateCountersAcrossSupportedSchemas(t *testing.T) {
+	for version := 1; version <= report.CurrentSchemaVersion; version++ {
+		t.Run(fmt.Sprintf("schema_%d", version), func(t *testing.T) {
+			data, err := os.ReadFile(filepath.Join("testdata", "reports", fmt.Sprintf("schema-v%d.json", version)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var root map[string]json.RawMessage
+			if err := json.Unmarshal(data, &root); err != nil {
+				t.Fatal(err)
+			}
+			var metrics map[string]json.RawMessage
+			if err := json.Unmarshal(root["metrics"], &metrics); err != nil {
+				t.Fatal(err)
+			}
+			for _, field := range []string{"total", "success", "failures"} {
+				t.Run("missing_"+field, func(t *testing.T) {
+					candidate := make(map[string]json.RawMessage, len(metrics))
+					candidateRoot := make(map[string]json.RawMessage, len(root))
+					for key, value := range root {
+						candidateRoot[key] = value
+					}
+					for key, value := range metrics {
+						candidate[key] = value
+					}
+					delete(candidate, field)
+					encodedMetrics, err := json.Marshal(candidate)
+					if err != nil {
+						t.Fatal(err)
+					}
+					candidateRoot["metrics"] = encodedMetrics
+					encoded, err := json.Marshal(candidateRoot)
+					if err != nil {
+						t.Fatal(err)
+					}
+					path := filepath.Join(t.TempDir(), "missing-counter.json")
+					if err := os.WriteFile(path, encoded, 0o600); err != nil {
+						t.Fatal(err)
+					}
+					if _, err := ReadRun(path); err == nil || !strings.Contains(err.Error(), "absence cannot be interpreted as zero") {
+						t.Fatalf("missing %s counter was not rejected as unknown: %v", field, err)
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestReadRunRejectsMissingTargetAcrossSupportedSchemas(t *testing.T) {
+	for version := 1; version <= report.CurrentSchemaVersion; version++ {
+		t.Run(fmt.Sprintf("schema_%d", version), func(t *testing.T) {
+			data, err := os.ReadFile(filepath.Join("testdata", "reports", fmt.Sprintf("schema-v%d.json", version)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var root map[string]json.RawMessage
+			if err := json.Unmarshal(data, &root); err != nil {
+				t.Fatal(err)
+			}
+			delete(root, "target")
+			encoded, err := json.Marshal(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(t.TempDir(), "missing-target.json")
+			if err := os.WriteFile(path, encoded, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := ReadRun(path); err == nil || !strings.Contains(err.Error(), "target identity") {
+				t.Fatalf("schema-v%d report without target identity was accepted: %v", version, err)
+			}
+		})
+	}
+}
+
+func TestValidateRunReportRequiresHTTPOriginTarget(t *testing.T) {
+	for _, target := range []string{"", "app.example.com", "file://app.example.com", "https://user:secret@app.example.com", "https://app.example.com/path", "https://app.example.com?tenant=private", "https://app.example.com#section"} {
+		t.Run(target, func(t *testing.T) {
+			r := synthetic()
+			r.Target = target
+			if err := ValidateRunReport(r); err == nil || !strings.Contains(err.Error(), "target identity") {
+				t.Fatalf("invalid target identity %q was accepted: %v", target, err)
+			}
+		})
+	}
+	for _, target := range []string{"http://127.0.0.1", "https://app.example.com", "http://[::1]:8080"} {
+		t.Run("valid_"+target, func(t *testing.T) {
+			r := synthetic()
+			r.Target = target
+			r.ObservationSeconds = 30
+			if err := ValidateRunReport(r); err != nil {
+				t.Fatalf("valid HTTP origin %q was rejected: %v", target, err)
+			}
+		})
+	}
+}
+
 func TestReadRunAcceptsSchemaThreeGeneratorHealth(t *testing.T) {
 	r := synthetic()
 	r.SchemaVersion = 3
@@ -480,7 +588,8 @@ func TestReadRunAcceptsCurrentSchemaFourteenConnectionPolicyAndWindowLedgers(t *
 	r.ObservationSeconds = 30
 	r.Config.WindowDuration = "1s"
 	r.Windows = []report.WindowResult{{StartSeconds: 0, EndSeconds: 1,
-		Steps: []report.WindowMetric{{Name: r.Steps[0].Name, Metrics: r.Steps[0].Metrics}},
+		Metrics: r.Steps[0].Metrics,
+		Steps:   []report.WindowMetric{{Name: r.Steps[0].Name, Metrics: r.Steps[0].Metrics}},
 	}}
 	markSchema20FailureClassification(&r)
 	path := filepath.Join(t.TempDir(), "schema-v14-windows.json")
@@ -671,12 +780,16 @@ func TestSupportedReportSchemaGoldensRoundTrip(t *testing.T) {
 					t.Fatal("schema-v29 local request rejection counts were not preserved")
 				}
 			case 30:
-				if got.StatisticalMethods != report.CurrentStatisticalMethods() {
+				if got.StatisticalMethods != report.StatisticalMethodsV30() {
 					t.Fatal("schema-v30 percentile and confidence methods were not preserved")
 				}
 			case 31:
 				if !report.HasValidGeneratorIdentity(got) || got.GeneratorIdentity.RunnerIdentity == "" {
 					t.Fatal("schema-v31 generator identity was not preserved")
+				}
+			case 32:
+				if got.StatisticalMethods != report.CurrentStatisticalMethods() || got.Metrics.P99RankIntervalState() != report.P99IntervalInsufficient {
+					t.Fatal("schema-v32 p99 method or low-sample state was not preserved")
 				}
 			}
 		})
@@ -695,6 +808,17 @@ func TestReadRunRejectsInvalidApplicationMetricsTimeline(t *testing.T) {
 	}
 	if _, err := ReadRun(path); err == nil {
 		t.Fatal("negative application-metrics duration was accepted")
+	}
+}
+
+func TestWriteLabelsP99SampleAdequacyAndConditionalAssumption(t *testing.T) {
+	r := report.Result{SchemaVersion: 32, StatisticalMethods: report.CurrentStatisticalMethods(), Metrics: report.MetricSet{Total: 42, P99MS: 150}}
+	var output bytes.Buffer
+	Write(&output, r, nil, nil)
+	for _, expected := range []string{"P99 REQUEST INTERVAL: INSUFFICIENT_SAMPLES (n=42; minimum 1000", "does not establish independence or a p99 objective"} {
+		if !strings.Contains(output.String(), expected) {
+			t.Errorf("insights omitted %q: %s", expected, output.String())
+		}
 	}
 }
 

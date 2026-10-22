@@ -96,7 +96,7 @@ func passingCalibrationWorkloadObservations() []calibration.WorkloadObservation 
 			ClientCompleteBodyObservations: planned, ClientResponseMinBytes: int64(profile.ResponseBodyBytes),
 			ClientTLSHandshakes:    tlsHandshakes,
 			ClientResponseMaxBytes: int64(profile.ResponseBodyBytes), ClientResponseTotalBytes: responseBytes,
-			ServerReceived: planned, ServerCompleted: planned, ServerTCPConnections: tcpConnections,
+			ServerReceived: planned, ServerCompleted: planned, ServerTCPConnections: tcpConnections, ServerAcceptedTLSConnections: tlsHandshakes,
 			ServerRequestBodyBytes: int64(profile.RequestBodyBytes) * planned, ServerResponseBodyBytes: responseBytes,
 		})
 		if closedLoop {
