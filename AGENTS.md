@@ -21,6 +21,7 @@ Build a local-first, open-source system to measure sustainable application capac
 - Source updates must not overwrite local edits, reset branches or automatically update non-interactive benchmark commands. Only safe fast-forward updates from an explicit Git remote may run after opt-in.
 - Never embed real user-specific or customer application domains, production IP addresses, internal paths, test identities, or infrastructure details in public tests, documentation, commits, issues, or PR descriptions. Use reserved documentation domains (for example `app.example.com`), loopback addresses, and synthetic fixtures. Keep private scenarios and reports local and gitignored.
 - Do not copy implementation code from other tools without license review and attribution.
+- For PR validation, run the relevant checks locally and do not wait for GitHub-hosted CI unless the user explicitly asks for hosted checks.
 
 ## Before opening a PR
 
