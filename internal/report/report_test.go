@@ -26,6 +26,39 @@ func TestWriteAnyJSONRejectsOversizedReportWithoutCreatingFile(t *testing.T) {
 	}
 }
 
+func TestP99RankIntervalStatesAndSchemaValidation(t *testing.T) {
+	for _, tc := range []struct {
+		n    int
+		want P99IntervalState
+	}{{n: 999, want: P99IntervalInsufficient}, {n: 1_000, want: P99IntervalConditionalIID}, {n: 1_000_001, want: P99IntervalResourceLimit}} {
+		metrics := MetricSet{Total: tc.n, P99MS: 99}
+		if tc.n == 1_000 {
+			metrics.P99IID95Exact, metrics.P99IID95LowerMS, metrics.P99IID95UpperMS = true, 90, 100
+		}
+		if got := metrics.P99RankIntervalState(); got != tc.want {
+			t.Errorf("n=%d: state=%s want %s", tc.n, got, tc.want)
+		}
+	}
+	base := Result{SchemaVersion: CurrentSchemaVersion, StatisticalMethods: CurrentStatisticalMethods(), Metrics: MetricSet{Total: 1_000, P99MS: 99, P99IID95Exact: true, P99IID95LowerMS: 90, P99IID95UpperMS: 100}}
+	if !HasValidStatisticalMethods(base) {
+		t.Fatal("valid schema-v32 p99 interval rejected")
+	}
+	base.Metrics.P99IID95Exact = false
+	if HasValidStatisticalMethods(base) {
+		t.Fatal("adequate schema-v32 metric set without its required interval accepted")
+	}
+	base.Metrics.P99IID95Exact = true
+	base.Metrics.P95IID95Exact = true
+	base.Metrics.P95MS, base.Metrics.P95IID95LowerMS, base.Metrics.P95IID95UpperMS = 80, 85, 90
+	if HasValidStatisticalMethods(base) {
+		t.Fatal("p95 interval that excludes the reported percentile was accepted")
+	}
+	legacy := Result{SchemaVersion: 31, StatisticalMethods: StatisticalMethodsV30(), Metrics: MetricSet{Total: 1_000}}
+	if !HasValidStatisticalMethods(legacy) {
+		t.Fatal("schema-v31 p95-only method metadata rejected")
+	}
+}
+
 func TestWriteAnyJSONAtomicallyReplacesRestrictedReport(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "report.json")

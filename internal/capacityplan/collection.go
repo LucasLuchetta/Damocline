@@ -23,24 +23,30 @@ const MaxCampaignCollectionSize = 20
 // levels. Its verdict is descriptive: it never interpolates an untested level
 // or interprets the observations as a sustainable-capacity curve.
 type CampaignCollectionAssessment struct {
-	SchemaVersion       int                       `json:"schema_version"`
-	AssessmentType      string                    `json:"assessment_type"`
-	State               string                    `json:"state"`
-	Scenario            string                    `json:"scenario,omitempty"`
-	Target              string                    `json:"target,omitempty"`
-	WorkloadFingerprint string                    `json:"workload_fingerprint,omitempty"`
-	Levels              []CampaignLevelAssessment `json:"levels"`
-	PassingLevels       []int                     `json:"observed_passing_levels"`
-	FailingLevels       []int                     `json:"observed_failing_levels"`
-	InconclusiveLevels  []int                     `json:"inconclusive_levels"`
-	HighestPassingLevel *int                      `json:"highest_passing_tested_level,omitempty"`
-	FirstFailingLevel   *int                      `json:"first_failing_tested_level,omitempty"`
-	UpperBound          string                    `json:"upper_bound_state"`
-	ObservationPattern  string                    `json:"observation_pattern"`
-	DemandInputs        *capacitygoal.Goal        `json:"demand_inputs,omitempty"`
-	Demand              *Result                   `json:"demand,omitempty"`
-	DemandEvidenceID    string                    `json:"demand_evidence_id,omitempty"`
-	Findings            []string                  `json:"findings"`
+	SchemaVersion              int                       `json:"schema_version"`
+	Auditor                    AuditorIdentity           `json:"auditor"`
+	GeneratorEnvironmentStatus string                    `json:"generator_environment_consistency"`
+	AssessmentType             string                    `json:"assessment_type"`
+	State                      string                    `json:"state"`
+	Scenario                   string                    `json:"scenario,omitempty"`
+	Target                     string                    `json:"target,omitempty"`
+	WorkloadFingerprint        string                    `json:"workload_fingerprint,omitempty"`
+	WorkloadRevision           string                    `json:"workload_revision,omitempty"`
+	ApplicationRevision        string                    `json:"application_revision,omitempty"`
+	Environment                string                    `json:"environment,omitempty"`
+	ScenarioIdentityStatus     string                    `json:"scenario_identity_consistency"`
+	Levels                     []CampaignLevelAssessment `json:"levels"`
+	PassingLevels              []int                     `json:"observed_passing_levels"`
+	FailingLevels              []int                     `json:"observed_failing_levels"`
+	InconclusiveLevels         []int                     `json:"inconclusive_levels"`
+	HighestPassingLevel        *int                      `json:"highest_passing_tested_level,omitempty"`
+	FirstFailingLevel          *int                      `json:"first_failing_tested_level,omitempty"`
+	UpperBound                 string                    `json:"upper_bound_state"`
+	ObservationPattern         string                    `json:"observation_pattern"`
+	DemandInputs               *capacitygoal.Goal        `json:"demand_inputs,omitempty"`
+	Demand                     *Result                   `json:"demand,omitempty"`
+	DemandEvidenceID           string                    `json:"demand_evidence_id,omitempty"`
+	Findings                   []string                  `json:"findings"`
 }
 
 type CampaignLevelAssessment struct {
@@ -68,6 +74,48 @@ type campaignLevelShape struct {
 	Budget              string                      `json:"budget,omitempty"`
 	Repeats             int                         `json:"repeats"`
 	Controls            *campaignRunShape           `json:"controls,omitempty"`
+}
+
+type campaignIdentityShape struct {
+	WorkloadRevision    string
+	ApplicationRevision string
+	Environment         string
+}
+
+func campaignCollectionIdentity(e campaign.Result) (campaignIdentityShape, string) {
+	var first campaignIdentityShape
+	seen := false
+	for _, trial := range e.Trials {
+		for _, phase := range trial.Phases {
+			if phase.Name == "warmup" {
+				continue
+			}
+			run := phase.Run.Config
+			if strings.TrimSpace(run.WorkloadRevision) == "" || strings.TrimSpace(run.ApplicationRevision) == "" || strings.TrimSpace(run.Environment) == "" {
+				return campaignIdentityShape{}, "UNKNOWN"
+			}
+			current := campaignIdentityShape{WorkloadRevision: run.WorkloadRevision, ApplicationRevision: run.ApplicationRevision, Environment: run.Environment}
+			if seen && current != first {
+				return campaignIdentityShape{}, "CHANGED"
+			}
+			first, seen = current, true
+		}
+	}
+	if !seen {
+		return campaignIdentityShape{}, "UNKNOWN"
+	}
+	return first, "CONSISTENT"
+}
+
+func campaignCollectionIdentityError(status string) string {
+	switch status {
+	case "UNKNOWN":
+		return "workload revision, application revision, or declared environment is missing"
+	case "CHANGED":
+		return "workload revision, application revision, or declared environment changes between required phases"
+	default:
+		return ""
+	}
 }
 
 type campaignRunShape struct {
@@ -103,11 +151,12 @@ func BuildCampaignCollectionAssessment(evidence []campaign.Result, goal *capacit
 		return CampaignCollectionAssessment{}, fmt.Errorf("campaign collection must contain 2-%d reports", MaxCampaignCollectionSize)
 	}
 	result := CampaignCollectionAssessment{
-		SchemaVersion:  2,
-		AssessmentType: "CAMPAIGN_LEVEL_COLLECTION",
-		State:          "OBSERVED_LEVELS_ONLY",
-		Levels:         make([]CampaignLevelAssessment, 0, len(evidence)),
-		PassingLevels:  []int{}, FailingLevels: []int{}, InconclusiveLevels: []int{},
+		SchemaVersion:          5,
+		AssessmentType:         "CAMPAIGN_LEVEL_COLLECTION",
+		State:                  "OBSERVED_LEVELS_ONLY",
+		ScenarioIdentityStatus: "UNKNOWN",
+		Levels:                 make([]CampaignLevelAssessment, 0, len(evidence)),
+		PassingLevels:          []int{}, FailingLevels: []int{}, InconclusiveLevels: []int{},
 		ObservationPattern: "UNAVAILABLE",
 		UpperBound:         "UNKNOWN",
 		Findings: []string{
@@ -116,10 +165,12 @@ func BuildCampaignCollectionAssessment(evidence []campaign.Result, goal *capacit
 		},
 	}
 	type levelEvidence struct {
-		campaign   campaign.Result
-		shape      string
-		reason     string
-		comparable bool
+		campaign          campaign.Result
+		shape             string
+		environment       string
+		environmentStatus string
+		reason            string
+		comparable        bool
 	}
 	levels := make([]levelEvidence, 0, len(evidence))
 	seen := make(map[int]bool, len(evidence))
@@ -129,14 +180,29 @@ func BuildCampaignCollectionAssessment(evidence []campaign.Result, goal *capacit
 		}
 		seen[item.BaseUsers] = true
 		shape, err := campaignCollectionShape(item)
+		shapeComparable := err == nil
 		if err != nil {
 			shape = ""
 		}
-		levels = append(levels, levelEvidence{campaign: item, shape: shape, reason: errorText(err), comparable: err == nil})
+		environment, environmentStatus, environmentErr := campaignCollectionEnvironment(item)
+		if environmentErr != nil {
+			if err == nil {
+				err = environmentErr
+			} else {
+				err = fmt.Errorf("%v; %w", err, environmentErr)
+			}
+		}
+		levels = append(levels, levelEvidence{campaign: item, shape: shape, environment: environment, environmentStatus: environmentStatus, reason: errorText(err), comparable: shapeComparable})
 	}
 	sort.Slice(levels, func(i, j int) bool { return levels[i].campaign.BaseUsers < levels[j].campaign.BaseUsers })
 	comparable := true
 	firstShape := ""
+	firstEnvironment := ""
+	firstIdentity := campaignIdentityShape{}
+	identityUnknown := false
+	identityChanged := false
+	environmentUnknown := false
+	environmentChanged := false
 	invalid := false
 	for i, item := range levels {
 		assessment, err := BuildAssessment(item.campaign, nil)
@@ -158,17 +224,67 @@ func BuildCampaignCollectionAssessment(evidence []campaign.Result, goal *capacit
 			comparable = false
 			result.Findings = append(result.Findings, fmt.Sprintf("Level %d VUs has a different declared workload or control signature.", item.campaign.BaseUsers))
 		}
+		identity, identityStatus := campaignCollectionIdentity(item.campaign)
+		if identityStatus == "UNKNOWN" {
+			identityUnknown = true
+			comparable = false
+			result.Findings = append(result.Findings, fmt.Sprintf("Level %d VUs cannot be compared: workload revision, application revision, or declared environment is missing.", item.campaign.BaseUsers))
+		} else if identityStatus == "CHANGED" {
+			identityChanged = true
+			comparable = false
+			result.Findings = append(result.Findings, fmt.Sprintf("Level %d VUs changes workload, application, or environment identity between required phases.", item.campaign.BaseUsers))
+		} else if firstIdentity == (campaignIdentityShape{}) {
+			firstIdentity = identity
+		} else if identity != firstIdentity {
+			identityChanged = true
+			comparable = false
+			result.Findings = append(result.Findings, fmt.Sprintf("Level %d VUs was measured with a different workload revision, application revision, or declared environment.", item.campaign.BaseUsers))
+		}
+		if item.environmentStatus == "UNKNOWN" {
+			environmentUnknown = true
+			comparable = false
+			result.Findings = append(result.Findings, fmt.Sprintf("Level %d VUs cannot be compared: %s.", item.campaign.BaseUsers, item.reason))
+		} else if item.environmentStatus == "CHANGED" {
+			environmentChanged = true
+			comparable = false
+			result.Findings = append(result.Findings, fmt.Sprintf("Level %d VUs has changing generator identity or effective CPU capacity between required phases.", item.campaign.BaseUsers))
+		} else if firstEnvironment == "" {
+			firstEnvironment = item.environment
+		} else if item.environment != firstEnvironment {
+			environmentChanged = true
+			comparable = false
+			result.Findings = append(result.Findings, fmt.Sprintf("Level %d VUs was measured with a different generator identity or effective CPU capacity.", item.campaign.BaseUsers))
+		}
+	}
+	switch {
+	case identityChanged:
+		result.ScenarioIdentityStatus = "CHANGED"
+	case identityUnknown:
+		result.ScenarioIdentityStatus = "UNKNOWN"
+	default:
+		result.ScenarioIdentityStatus = "CONSISTENT"
+	}
+	switch {
+	case environmentChanged:
+		result.GeneratorEnvironmentStatus = "CHANGED"
+	case environmentUnknown:
+		result.GeneratorEnvironmentStatus = "UNKNOWN"
+	default:
+		result.GeneratorEnvironmentStatus = "CONSISTENT"
 	}
 	if invalid {
 		result.State = "INVALID_EVIDENCE"
 		result.Findings = append(result.Findings, "At least one campaign contains invalid evidence; combined level conclusions are not reported.")
 	} else if !comparable {
 		result.State = "NOT_COMPARABLE"
-		result.Findings = append(result.Findings, "Campaigns do not share a complete matching declared workload and control signature; per-level audits are retained, but levels are not aggregated.")
+		result.Findings = append(result.Findings, "Campaigns do not share complete matching workload, control, and known generator-environment signatures; per-level audits are retained, but levels are not aggregated.")
 	} else {
 		result.Scenario = levels[0].campaign.Scenario
 		result.Target = levels[0].campaign.Target
 		result.WorkloadFingerprint = firstWorkloadFingerprint(levels[0].campaign)
+		result.WorkloadRevision = firstIdentity.WorkloadRevision
+		result.ApplicationRevision = firstIdentity.ApplicationRevision
+		result.Environment = firstIdentity.Environment
 		for _, level := range result.Levels {
 			switch level.Assessment.Audit.State {
 			case "OBSERVED_PASS_ONLY":
@@ -232,6 +348,47 @@ func BuildCampaignCollectionAssessment(evidence []campaign.Result, goal *capacit
 		}
 	}
 	return result, nil
+}
+
+func campaignCollectionEnvironment(e campaign.Result) (string, string, error) {
+	type environmentShape struct {
+		Identity       report.GeneratorIdentity `json:"identity"`
+		LogicalCPUs    int                      `json:"logical_cpus"`
+		GOMAXPROCS     int                      `json:"gomaxprocs"`
+		CapacityCores  float64                  `json:"cpu_capacity_cores"`
+		CapacitySource string                   `json:"cpu_capacity_source"`
+	}
+	var first environmentShape
+	seen := false
+	for _, trial := range e.Trials {
+		for _, phase := range trial.Phases {
+			if phase.Name == "warmup" {
+				continue
+			}
+			run := phase.Run
+			if run.SchemaVersion < 31 || !report.HasValidGeneratorIdentity(run) || run.GeneratorIdentity.RunnerIdentityMethod == "unavailable" || run.Generator == nil ||
+				!run.Generator.CPUCapacityKnown || run.Generator.LogicalCPUs < 1 || run.Generator.GOMAXPROCS < 1 || run.Generator.CPUCapacityCores <= 0 || math.IsNaN(run.Generator.CPUCapacityCores) || math.IsInf(run.Generator.CPUCapacityCores, 0) || run.Generator.CPUCapacitySource == "" {
+				return "", "UNKNOWN", fmt.Errorf("unknown generator identity or effective CPU capacity in a required phase")
+			}
+			current := environmentShape{
+				Identity: run.GeneratorIdentity, LogicalCPUs: run.Generator.LogicalCPUs, GOMAXPROCS: run.Generator.GOMAXPROCS,
+				CapacityCores: run.Generator.CPUCapacityCores, CapacitySource: run.Generator.CPUCapacitySource,
+			}
+			if seen && current != first {
+				return "", "CHANGED", fmt.Errorf("generator identity or effective CPU capacity changed between required phases")
+			}
+			first, seen = current, true
+		}
+	}
+	if !seen {
+		return "", "UNKNOWN", fmt.Errorf("campaign has no required phase generator-environment evidence")
+	}
+	data, err := json.Marshal(first)
+	if err != nil {
+		return "", "UNKNOWN", err
+	}
+	digest := sha256.Sum256(data)
+	return hex.EncodeToString(digest[:]), "CONSISTENT", nil
 }
 
 func campaignCollectionShape(e campaign.Result) (string, error) {

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"net/url"
 	"os"
 	"reflect"
 	"strings"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/LucasLuchetta/Damocline/internal/appmetrics"
 	"github.com/LucasLuchetta/Damocline/internal/hostmon"
+	"github.com/LucasLuchetta/Damocline/internal/jsonartifact"
 	"github.com/LucasLuchetta/Damocline/internal/report"
 	"github.com/LucasLuchetta/Damocline/internal/statistics"
 )
@@ -38,8 +40,15 @@ type Assessment struct {
 
 func ReadRun(path string) (report.Result, error) {
 	var r report.Result
-	if err := readJSON(path, &r); err != nil {
+	data, err := readJSONData(path)
+	if err != nil {
 		return r, err
+	}
+	if err := report.ValidateMetricCountersInArtifactJSON(data); err != nil {
+		return report.Result{}, fmt.Errorf("invalid run metric evidence: %w", err)
+	}
+	if err := json.Unmarshal(data, &r); err != nil {
+		return report.Result{}, fmt.Errorf("decode report: %w", err)
 	}
 	if err := ValidateRunReport(r); err != nil {
 		return report.Result{}, err
@@ -50,6 +59,9 @@ func ReadRun(path string) (report.Result, error) {
 // ValidateRunReport checks an already decoded run report using the same
 // schema and evidence rules as ReadRun.
 func ValidateRunReport(r report.Result) error {
+	if !validTargetIdentity(r.Target) {
+		return errors.New("run report target identity must be an absolute HTTP(S) origin without credentials or path")
+	}
 	if r.SchemaVersion < 1 || r.SchemaVersion > report.CurrentSchemaVersion || r.Name == "" || r.Metrics.Total < 0 || r.Metrics.Success < 0 || r.Metrics.Failures < 0 || r.Metrics.Success+r.Metrics.Failures != r.Metrics.Total || r.Config.Users < 1 || r.ElapsedSeconds <= 0 || (r.SchemaVersion >= 4 && r.ObservationSeconds <= 0) || (r.SchemaVersion >= 11 && !validFingerprint(r.Config.WorkloadFingerprint)) || (r.SchemaVersion >= 14 && r.Config.ConnectionPolicy != "reuse" && r.Config.ConnectionPolicy != "new_per_request") {
 		return errors.New("not a valid Damocline HTTP run report")
 	}
@@ -82,6 +94,11 @@ func ValidateRunReport(r report.Result) error {
 		}
 	}
 	return nil
+}
+
+func validTargetIdentity(value string) bool {
+	u, err := url.Parse(value)
+	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Hostname() != "" && u.User == nil && u.Path == "" && u.RawPath == "" && u.RawQuery == "" && !u.ForceQuery && u.Fragment == ""
 }
 
 func validThinkTimeProvenance(r report.Result) bool {
@@ -164,23 +181,34 @@ func ReadHost(path string) (hostmon.Result, error) {
 	return r, nil
 }
 func readJSON(path string, out any) error {
-	f, err := os.Open(path)
+	data, err := readJSONData(path)
 	if err != nil {
-		return fmt.Errorf("open report: %w", err)
-	}
-	defer f.Close()
-	var data []byte
-	data, err = io.ReadAll(io.LimitReader(f, maxReportFile+1))
-	if err != nil {
-		return fmt.Errorf("read report: %w", err)
-	}
-	if len(data) > maxReportFile {
-		return errors.New("report exceeds 16 MiB maximum")
+		return err
 	}
 	if err := json.Unmarshal(data, out); err != nil {
 		return fmt.Errorf("decode report: %w", err)
 	}
 	return nil
+}
+
+func readJSONData(path string) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("open report: %w", err)
+	}
+	defer f.Close()
+	var data []byte
+	data, err = io.ReadAll(io.LimitReader(f, maxReportFile+1))
+	if err != nil {
+		return nil, fmt.Errorf("read report: %w", err)
+	}
+	if len(data) > maxReportFile {
+		return nil, errors.New("report exceeds 16 MiB maximum")
+	}
+	if err := jsonartifact.RejectDuplicateKeys(data); err != nil {
+		return nil, fmt.Errorf("report contains ambiguous JSON: %w", err)
+	}
+	return data, nil
 }
 
 // Evaluate distinguishes meeting configured objectives from proving capacity.
@@ -421,6 +449,10 @@ func Write(w io.Writer, r report.Result, host *hostmon.Result, previous *report.
 	fmt.Fprintf(w, "HOST METRICS:   %s\n", a.Infrastructure)
 	if r.SchemaVersion >= 30 {
 		fmt.Fprintf(w, "STATISTICS: nearest-rank percentiles; %s at %.0f%% under %s.\n", r.StatisticalMethods.P95IntervalMethod, r.StatisticalMethods.P95IntervalConfidence*100, r.StatisticalMethods.P95IntervalAssumption)
+		if r.SchemaVersion >= 32 {
+			minimum, _ := statistics.MinimumSamplesForPercentileRankInterval95(0.99)
+			fmt.Fprintf(w, "P99 REQUEST INTERVAL: %s (n=%d; minimum %d for exact 95%% ranks). The nearest-rank p99 remains descriptive; the interval assumes IID stationary observations and does not establish independence or a p99 objective.\n", r.Metrics.P99RankIntervalState(), r.Metrics.Total, minimum)
+		}
 	} else if r.Metrics.P95IID95Approximation {
 		fmt.Fprintln(w, "STATISTICS: historical approximate p95 rank interval; IID/stationarity assumptions apply.")
 	}

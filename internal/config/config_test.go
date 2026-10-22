@@ -34,6 +34,17 @@ func TestLoadEnforcesExactScenarioByteLimit(t *testing.T) {
 	}
 }
 
+func TestLoadRejectsDuplicateJSONKeys(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "duplicate-scenario.json")
+	data := []byte(`{"name":"synthetic","name":"other"}`)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "ambiguous JSON") {
+		t.Fatalf("duplicate scenario key was not rejected clearly: %v", err)
+	}
+}
+
 func TestScenarioV1MigratesLegacyStepsAndWorkflows(t *testing.T) {
 	legacy := good()
 	migrated, err := MigrateScenario(legacy)

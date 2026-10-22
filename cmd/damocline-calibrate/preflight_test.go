@@ -71,7 +71,7 @@ func passingWorkloadObservations() []preflightWorkloadObservation {
 			ClientResponseMaxBytes:         int64(profile.ResponseBodyBytes),
 			ClientResponseTotalBytes:       responseBytes,
 			ServerReceived:                 planned, ServerCompleted: planned,
-			ServerTCPConnections:   tcpConnections,
+			ServerTCPConnections: tcpConnections, ServerAcceptedTLSConnections: tlsHandshakes,
 			ServerRequestBodyBytes: requestBytes, ServerResponseBodyBytes: responseBytes,
 		})
 	}

@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math"
+	"sort"
 	"time"
 
 	"github.com/LucasLuchetta/Damocline/internal/calibration"
@@ -16,7 +17,17 @@ import (
 	"github.com/LucasLuchetta/Damocline/internal/report"
 )
 
-const CurrentSchemaVersion = 13
+const CurrentSchemaVersion = 15
+
+// WorkloadSource identifies the exact bounded configuration bytes used to
+// construct a campaign. Digests identify bytes but do not authenticate origin.
+type WorkloadSource struct {
+	Type                string `json:"type"`
+	Name                string `json:"name,omitempty"`
+	SchemaVersion       int    `json:"schema_version,omitempty"`
+	FileSHA256          string `json:"file_sha256"`
+	SemanticFingerprint string `json:"semantic_fingerprint,omitempty"`
+}
 
 const (
 	DefaultWallTimeLimit = 15 * time.Minute
@@ -70,6 +81,7 @@ func effectiveStabilityPolicy(policy StabilityPolicy) StabilityPolicy {
 }
 
 type Options struct {
+	WorkloadSource     *WorkloadSource
 	Warmup             time.Duration
 	Stabilization      time.Duration
 	Observation        time.Duration
@@ -150,6 +162,7 @@ type Result struct {
 	SchemaVersion          int                             `json:"schema_version"`
 	ExecutionState         string                          `json:"execution_state,omitempty"`
 	Scenario               string                          `json:"scenario"`
+	WorkloadSource         *WorkloadSource                 `json:"workload_source,omitempty"`
 	BaseUsers              int                             `json:"base_users"`
 	Target                 string                          `json:"target"`
 	StartedAt              string                          `json:"started_at"`
@@ -202,6 +215,12 @@ type Variability struct {
 	ThroughputMaxRPS            float64 `json:"throughput_max_rps"`
 	SuccessfulJourneysMinPerSec float64 `json:"successful_journeys_min_per_second"`
 	SuccessfulJourneysMaxPerSec float64 `json:"successful_journeys_max_per_second"`
+	RequestP95MedianMS          float64 `json:"request_p95_median_ms,omitempty"`
+	RequestP95MADMS             float64 `json:"request_p95_mad_ms,omitempty"`
+	RequestP95RobustLowerMS     float64 `json:"request_p95_robust_lower_ms,omitempty"`
+	RequestP95RobustUpperMS     float64 `json:"request_p95_robust_upper_ms,omitempty"`
+	RequestP95RobustMethod      string  `json:"request_p95_robust_method,omitempty"`
+	RequestP95RobustAssumption  string  `json:"request_p95_robust_assumption,omitempty"`
 }
 
 type Runner func(context.Context, config.Validated) report.Result
@@ -223,8 +242,8 @@ func Validate(options Options) error {
 	if err := ValidateStabilityPolicy(effectiveStabilityPolicy(options.Stability)); err != nil {
 		return err
 	}
-	if options.Warmup < 0 || options.Warmup > 3*time.Minute || options.Recovery < 0 || options.Recovery > 3*time.Minute {
-		return fmt.Errorf("warmup and recovery must be between 0 and 3m")
+	if options.Warmup < 0 || options.Warmup > 3*time.Minute || options.Recovery <= 0 || options.Recovery > 3*time.Minute {
+		return fmt.Errorf("warmup must be between 0 and 3m and recovery must be greater than 0 and at most 3m")
 	}
 	if options.Stabilization < 0 || options.Stabilization > stabilizationLimit || (options.Stabilization > 0 && options.Stabilization < 10*time.Second) {
 		return fmt.Errorf("stabilization must be between 10s and %s when enabled", stabilizationLimit)
@@ -401,6 +420,7 @@ func WithRunnerProgress(ctx context.Context, base config.Validated, options Opti
 		SchemaVersion:       CurrentSchemaVersion,
 		ExecutionState:      "RUNNING",
 		Scenario:            base.Scenario.Name,
+		WorkloadSource:      options.WorkloadSource,
 		BaseUsers:           base.Scenario.Users,
 		Target:              base.Base.Scheme + "://" + base.Base.Host,
 		StartedAt:           time.Now().UTC().Format(time.RFC3339),
@@ -745,6 +765,12 @@ func ClassifyEvidence(run report.Result) (string, string) {
 // policy for one phase before applying its observed journey SLO verdict.
 func ClassifyEvidenceWithObjectives(run report.Result, objectives ObjectiveContract, phase string) (string, string) {
 	state, reason := ClassifyEvidence(run)
+	return ApplyObjectiveContract(run, objectives, phase, state, reason)
+}
+
+// ApplyObjectiveContract applies declared coverage and delivery rules to an
+// already classified phase while preserving the campaign family's classifier.
+func ApplyObjectiveContract(run report.Result, objectives ObjectiveContract, phase, state, reason string) (string, string) {
 	if state == "INVALID_DELIVERY" || state == "INSUFFICIENT_EVIDENCE" {
 		return state, reason
 	}
@@ -861,12 +887,14 @@ func ClassifyPhase(evidence Result, run report.Result, phase string) (string, st
 
 func summarizeObservationVariability(trials []Trial) *Variability {
 	summary := Variability{P95MinMS: math.Inf(1), ErrorRateMin: math.Inf(1), ThroughputMinRPS: math.Inf(1), SuccessfulJourneysMinPerSec: math.Inf(1)}
+	var requestP95s []float64
 	for _, trial := range trials {
 		for _, phase := range trial.Phases {
 			if phase.Name != "observation" || phase.Run.WindowSeconds() <= 0 {
 				continue
 			}
 			summary.Runs++
+			requestP95s = append(requestP95s, phase.Run.Metrics.P95MS)
 			summary.P95MinMS = math.Min(summary.P95MinMS, phase.Run.Metrics.P95MS)
 			summary.P95MaxMS = math.Max(summary.P95MaxMS, phase.Run.Metrics.P95MS)
 			summary.ErrorRateMin = math.Min(summary.ErrorRateMin, phase.Run.ErrorsRate)
@@ -882,5 +910,43 @@ func summarizeObservationVariability(trials []Trial) *Variability {
 	if summary.Runs == 0 {
 		return nil
 	}
+	if median, mad, ok := SummarizeRobustRepeatSpread(requestP95s); ok {
+		summary.RequestP95MedianMS = median
+		summary.RequestP95MADMS = mad
+		// Median +/- three median absolute deviations is a descriptive
+		// repeat-level outlier screen, not a confidence interval.
+		summary.RequestP95RobustLowerMS = math.Max(0, median-3*mad)
+		summary.RequestP95RobustUpperMS = median + 3*mad
+		summary.RequestP95RobustMethod = "MEDIAN_PLUS_MINUS_3_MAD"
+		summary.RequestP95RobustAssumption = "INDEPENDENT_OBSERVATION_PHASES_DESCRIPTIVE_ONLY"
+	}
 	return &summary
+}
+
+func SummarizeRobustRepeatSpread(values []float64) (median, mad float64, ok bool) {
+	if len(values) < 2 {
+		return 0, 0, false
+	}
+	ordered := append([]float64(nil), values...)
+	for _, value := range ordered {
+		if math.IsNaN(value) || math.IsInf(value, 0) || value < 0 {
+			return 0, 0, false
+		}
+	}
+	sort.Float64s(ordered)
+	median = medianOfSorted(ordered)
+	deviations := make([]float64, len(ordered))
+	for i, value := range ordered {
+		deviations[i] = math.Abs(value - median)
+	}
+	sort.Float64s(deviations)
+	return median, medianOfSorted(deviations), true
+}
+
+func medianOfSorted(values []float64) float64 {
+	middle := len(values) / 2
+	if len(values)%2 == 1 {
+		return values[middle]
+	}
+	return values[middle-1]/2 + values[middle]/2
 }

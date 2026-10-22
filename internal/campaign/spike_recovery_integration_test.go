@@ -23,9 +23,12 @@ func TestClosedAndOpenCampaignsMeasureSpikeAndRecoveryAgainstControlledServer(t 
 		base := integrationScenario(t, server.URL, 1, 100, "closed", 0)
 		base.Window = 1 * time.Second
 		base.Scenario.WindowDuration = base.Window.String()
+		stability := campaign.DefaultStabilityPolicy()
+		stability.MaxP95IncreasePercent = 100
+		stability.MaxP95IncreaseMS = 100
 		result, err := campaign.WithRunner(context.Background(), base, campaign.Options{
 			Observation: 10 * time.Second, SpikeUsers: 4, SpikeDuration: 10 * time.Second,
-			Recovery: 10 * time.Second, Repeats: 2,
+			Recovery: 10 * time.Second, Repeats: 2, Stability: stability,
 		}, func(ctx context.Context, phase config.Validated) report.Result {
 			saturated.Store(phase.Scenario.Users == 4)
 			defer saturated.Store(false)
@@ -55,9 +58,12 @@ func TestClosedAndOpenCampaignsMeasureSpikeAndRecoveryAgainstControlledServer(t 
 		base := integrationScenario(t, server.URL, 30, 100, "arrival", 24)
 		base.Window = 1 * time.Second
 		base.Scenario.WindowDuration = base.Window.String()
+		stability := campaign.DefaultStabilityPolicy()
+		stability.MaxP95IncreasePercent = 100
+		stability.MaxP95IncreaseMS = 100
 		result, err := arrivalcampaign.WithRunner(context.Background(), base, arrivalcampaign.Options{
 			Observation: 10 * time.Second, SpikeRate: 48, SpikeDuration: 10 * time.Second,
-			Recovery: 10 * time.Second, Repeats: 2,
+			Recovery: 10 * time.Second, Repeats: 2, Stability: stability,
 		}, func(ctx context.Context, phase config.Validated) report.Result {
 			saturated.Store(phase.Scenario.ArrivalRate == 48)
 			defer saturated.Store(false)

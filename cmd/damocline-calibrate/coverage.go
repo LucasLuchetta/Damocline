@@ -113,6 +113,11 @@ func evaluatedReferenceRates(a assessment) []int {
 		}
 		unique[stage.ArrivalRate] = true
 	}
+	for _, profile := range a.Preflight.Fixture.WorkloadProfiles {
+		if profile.Mode == "arrival" {
+			unique[profile.ArrivalRate] = true
+		}
+	}
 	var rates []int
 	for r := range unique {
 		rates = append(rates, r)
@@ -247,12 +252,13 @@ func compareScenarioToReference(s config.Scenario, a assessment, calibrationErr 
 	}
 
 	u, err := url.Parse(s.BaseURL)
-	if err != nil || u == nil || u.Host == "" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" ||
-		u.Scheme != "http" || net.ParseIP(u.Hostname()) == nil ||
-		!net.ParseIP(u.Hostname()).Equal(net.ParseIP("127.0.0.1")) {
-		r.add("transport", coverageOutside, "The fixture used unencrypted IPv4 loopback; HTTPS, DNS and remote networking were not validated.")
+	loopback := err == nil && u != nil && u.Host != "" && u.User == nil && u.Path == "" && u.RawQuery == "" && u.Fragment == "" &&
+		net.ParseIP(u.Hostname()) != nil && net.ParseIP(u.Hostname()).Equal(net.ParseIP("127.0.0.1"))
+	transportCovered := loopback && (u.Scheme == "http" || u.Scheme == "https" && exactProfileControlsMatch(a.Preflight.Fixture.WorkloadProfiles, s, connectionPolicy))
+	if !transportCovered {
+		r.add("transport", coverageOutside, "The fixture covered IPv4 loopback HTTP and only exact trusted HTTPS profiles; remote networking remains unverified.")
 	} else {
-		r.add("transport", coverageMatched, "The URL declares IPv4 HTTP loopback; it is not proof that the target is the controlled fixture.")
+		r.add("transport", coverageMatched, "The URL declares IPv4 loopback transport covered by a matching local profile; it is not proof that the target is the controlled fixture.")
 	}
 
 	r.add("response_body_size", coverageUnknown, "The fixture returned exactly 4096 bytes; an HTTP scenario does not attest the target's actual response-size distribution.")
@@ -279,9 +285,14 @@ func exactProfileControlsMatch(profiles []calibration.WorkloadProfile, s config.
 	if s.MaxConnectionsPerHost != 0 {
 		return false
 	}
+	transportScheme := "http"
+	if target, err := url.Parse(s.BaseURL); err == nil && target.Scheme != "" {
+		transportScheme = target.Scheme
+	}
 	for _, profile := range profiles {
 		if profile.ArrivalRate == s.ArrivalRate && profile.MaxRPS == s.MaxRPS && profile.Users == s.Users &&
-			profile.Duration == s.Duration && profile.Timeout == s.Timeout && profile.ConnectionPolicy == connectionPolicy {
+			profile.Duration == s.Duration && profile.Timeout == s.Timeout && profile.ConnectionPolicy == connectionPolicy &&
+			profile.TransportScheme == transportScheme {
 			return true
 		}
 	}

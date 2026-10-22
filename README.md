@@ -180,7 +180,10 @@ replay command pinned to the source campaign's SHA-256 evidence ID. Replay
 fails before writing output if the interpreted campaign evidence has changed.
 For a collection, the command pins each ID in the same order as its `--campaign`
 argument. These digests detect source changes relative to the report but are
-not signatures and do not authenticate who produced the evidence. The Markdown
+canonical JSON hashes of decoded report fields, not hashes of original file
+bytes: whitespace-only changes and fields unknown to the reader are outside
+the check. They are unkeyed identifiers, not signatures or immutable storage,
+and do not authenticate who produced the evidence. The Markdown
 file is created without overwriting and requests
 mode 0600; Windows inherits the destination directory's ACL. It includes the
 target origin and may contain private workload details; keep it with local
@@ -251,6 +254,11 @@ write the full trial and phase report to a unique file under
 `.damocline/reports/` unless `--out` is provided. Profiles capture settings, not
 target state or credentials; environment variables and body data must be supplied
 at run time. Do not commit local profiles or reports.
+
+Every closed-loop campaign now requires a nonzero recovery phase so an observed
+pass can be independently audited. Saved profiles with `recovery: "0s"` are
+rejected; set an explicit positive recovery duration before importing or running
+them. The tool does not silently add extra target traffic to older profiles.
 
 `campaign profile verify` performs an offline comparison of the saved profile's
 workload and campaign controls against the phase configurations recorded in a
@@ -391,7 +399,7 @@ This intentionally produces `INCONCLUSIVE` for application-capacity readiness: t
 
 ## Run the repeated G0 acceptance lab
 
-The acceptance lab runs bounded, independent calibrator processes against fresh loopback reference servers, then runs the local HTTP transport fixture matrix. Acceptance manifest v5 checks 30 exact HTTP arrival shape/connection/rate profiles, three trusted HTTPS reuse profiles, and six closed-loop VU profiles at 1/2/5/10/20/50 users. It reconciles mode-specific client iterations and response sizes with independent server request/body/TCP counters, then checks the 30-second controlled soak, overload and HTTP-failure controls, and persisted quality recomputation. These short local generator profiles do not establish application capacity or longer campaign headroom. Two repeats are required; three are allowed for the baseline matrix. Each repeat has a 240-second default deadline, and every requested run is recorded.
+The acceptance lab runs bounded, independent calibrator processes against fresh loopback reference servers, then runs the local HTTP transport fixture matrix. Acceptance manifest v7 checks 30 exact HTTP arrival shape/connection/rate profiles, five trusted HTTPS reuse profiles including 20 and 40 starts/s, and six closed-loop VU profiles at 1/2/5/10/20/50 users. It reconciles mode-specific client iterations, response sizes, client TLS handshakes against independently accepted TLS sockets, request-carrying TCP connections, and server request/body counters. Concurrent HTTPS dials that complete a handshake but carry no request remain visible in their own ledger. The lab then checks the 30-second controlled soak, overload and HTTP-failure controls, and persisted quality recomputation. These short local generator profiles do not establish application capacity or longer campaign headroom. Two repeats are required; three are allowed for the baseline matrix. Each repeat has a 240-second default deadline, and every requested run is recorded.
 
 Build both local commands first:
 

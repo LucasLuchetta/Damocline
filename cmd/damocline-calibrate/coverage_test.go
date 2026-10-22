@@ -74,7 +74,7 @@ func TestOfflineReferenceShapeNeverBecomesCapacityApproval(t *testing.T) {
 	if got.Status != "INCONCLUSIVE" || got.Shape != "DECLARED_SHAPE_RESEMBLES_REFERENCE" {
 		t.Fatalf("fixture-like declared inputs are not sufficient for a capacity PASS: %+v", got)
 	}
-	if len(got.TestedArrivalRates) != 7 || got.TestedArrivalRates[6] != 100 {
+	if len(got.TestedArrivalRates) != 8 || got.TestedArrivalRates[7] != 100 {
 		t.Fatalf("reference rates not preserved: %+v", got.TestedArrivalRates)
 	}
 	findDimension(t, got, "workload_model", coverageMatched)

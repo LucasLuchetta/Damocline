@@ -48,6 +48,46 @@ func TestPercentileRankInterval95ForP95(t *testing.T) {
 	}
 }
 
+func TestPercentileRankInterval95ForP99Boundaries(t *testing.T) {
+	if _, _, err := PercentileRankInterval95(999, .99); err == nil {
+		t.Fatal("p99 interval accepted fewer than 1,000 samples")
+	}
+	lower, upper, err := PercentileRankInterval95(1_000, .99)
+	if err != nil || lower < 1 || upper > 1_000 || lower >= upper {
+		t.Fatalf("unexpected p99 exact rank interval %d-%d, err=%v", lower, upper, err)
+	}
+	if _, _, err := PercentileRankInterval95(MaxExactPercentileRankIntervalSamples+1, .99); err == nil {
+		t.Fatal("p99 interval exceeded its one-million-sample resource limit")
+	}
+}
+
+func TestMinimumSamplesForPercentileRankInterval95(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		percentile float64
+		want       int
+		wantErr    bool
+	}{
+		{name: "p95", percentile: .95, want: 200},
+		{name: "p99", percentile: .99, want: 1_000},
+		{name: "resource limit", percentile: .9999999, wantErr: true},
+		{name: "invalid percentile", percentile: 1, wantErr: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := MinimumSamplesForPercentileRankInterval95(test.percentile)
+			if test.wantErr {
+				if err == nil {
+					t.Fatalf("accepted percentile %g", test.percentile)
+				}
+				return
+			}
+			if err != nil || got != test.want {
+				t.Fatalf("minimum=(%d,%v), want %d", got, err, test.want)
+			}
+		})
+	}
+}
+
 func TestPercentileRankInterval95RejectsInadequateTailSamples(t *testing.T) {
 	if _, _, err := PercentileRankInterval95(100, 0.95); err == nil {
 		t.Fatal("p95 needs at least ten expected tail observations")

@@ -31,11 +31,11 @@
     "observation": "10s",
     "spike_users": 0,
     "spike_duration": "0s",
-    "recovery": "0s",
+    "recovery": "10s",
     "soak": "0s",
     "cooldown": "0s",
     "repeats": 2,
-    "budget": "20s",
+    "budget": "2m40s",
     "stability_policy": {
       "minimum_windows": 3,
       "minimum_samples_per_window": 20,

@@ -38,7 +38,10 @@ func (o ObjectiveContract) MatchesRun(run report.Result) bool {
 		return false
 	}
 	if o.WindowDuration != "AUTO_PER_PHASE" {
-		if run.Config.WindowDuration != o.WindowDuration {
+		declared, parseErr := time.ParseDuration(o.WindowDuration)
+		phaseDuration, durationErr := time.ParseDuration(run.Config.Duration)
+		observed, observedErr := time.ParseDuration(run.Config.WindowDuration)
+		if parseErr != nil || durationErr != nil || observedErr != nil || observed != min(declared, phaseDuration) {
 			return false
 		}
 	} else if run.Config.WindowDuration != "" {

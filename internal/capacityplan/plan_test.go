@@ -2,8 +2,10 @@ package capacityplan
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -17,6 +19,349 @@ import (
 	"github.com/LucasLuchetta/Damocline/internal/generatorhealth"
 	"github.com/LucasLuchetta/Damocline/internal/report"
 )
+
+func TestReadCampaignRejectsDuplicateJSONKeys(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "campaign.json")
+	data := []byte(`{"schema_version":1,"schema_\u0076ersion":1}`)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadCampaign(path); err == nil {
+		t.Fatal("campaign with duplicate JSON keys was accepted")
+	}
+}
+
+func TestReadCampaignRequiresPersistedTopLevelEvidence(t *testing.T) {
+	valid, err := json.Marshal(auditFixture())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var root map[string]json.RawMessage
+	if err := json.Unmarshal(valid, &root); err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{"started_at", "warmup", "trials"} {
+		t.Run("missing_"+field, func(t *testing.T) {
+			candidate := make(map[string]json.RawMessage, len(root))
+			for key, value := range root {
+				candidate[key] = value
+			}
+			delete(candidate, field)
+			writeCampaignAndAssertRejected(t, candidate)
+		})
+	}
+	for _, value := range []string{`null`, `"not-a-timestamp"`, `""`} {
+		t.Run("invalid_started_at_"+strings.Trim(value, `"`), func(t *testing.T) {
+			candidate := make(map[string]json.RawMessage, len(root))
+			for key, raw := range root {
+				candidate[key] = raw
+			}
+			candidate["started_at"] = json.RawMessage(value)
+			writeCampaignAndAssertRejected(t, candidate)
+		})
+	}
+}
+
+func TestReadCampaignRequiresValidStartTimestampFromSchemaV5(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("testdata", "campaigns", "schema-v4.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var root map[string]json.RawMessage
+	if err := json.Unmarshal(data, &root); err != nil {
+		t.Fatal(err)
+	}
+	root["schema_version"] = json.RawMessage(`5`)
+	for name, timestamp := range map[string]string{"empty": `""`, "invalid": `"yesterday"`, "null": `null`} {
+		t.Run(name, func(t *testing.T) {
+			candidate := make(map[string]json.RawMessage, len(root))
+			for key, value := range root {
+				candidate[key] = value
+			}
+			candidate["started_at"] = json.RawMessage(timestamp)
+			writeCampaignAndAssertRejected(t, candidate)
+		})
+	}
+	root["started_at"] = json.RawMessage(`"2026-01-02T03:04:05Z"`)
+	writeCampaignAndAssertAccepted(t, root)
+}
+
+func TestReadCampaignRequiresPersistedNestedTrialAndPhaseEvidence(t *testing.T) {
+	valid, err := json.Marshal(auditFixture())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name   string
+		mutate func(map[string]json.RawMessage) error
+	}{
+		{name: "trial_number", mutate: func(root map[string]json.RawMessage) error {
+			return mutateCampaignTrial(root, func(trial map[string]json.RawMessage) { delete(trial, "number") })
+		}},
+		{name: "trial_phases", mutate: func(root map[string]json.RawMessage) error {
+			return mutateCampaignTrial(root, func(trial map[string]json.RawMessage) { delete(trial, "phases") })
+		}},
+		{name: "trial_phases_null", mutate: func(root map[string]json.RawMessage) error {
+			return mutateCampaignTrial(root, func(trial map[string]json.RawMessage) { trial["phases"] = json.RawMessage(`null`) })
+		}},
+		{name: "trial_outcome", mutate: func(root map[string]json.RawMessage) error {
+			return mutateCampaignTrial(root, func(trial map[string]json.RawMessage) { delete(trial, "outcome") })
+		}},
+		{name: "phase_name", mutate: func(root map[string]json.RawMessage) error {
+			return mutateCampaignPhase(root, func(phase map[string]json.RawMessage) { delete(phase, "name") })
+		}},
+		{name: "phase_run", mutate: func(root map[string]json.RawMessage) error {
+			return mutateCampaignPhase(root, func(phase map[string]json.RawMessage) { delete(phase, "run") })
+		}},
+		{name: "phase_run_null", mutate: func(root map[string]json.RawMessage) error {
+			return mutateCampaignPhase(root, func(phase map[string]json.RawMessage) { phase["run"] = json.RawMessage(`null`) })
+		}},
+		{name: "embedded_run_schema", mutate: func(root map[string]json.RawMessage) error {
+			return mutateCampaignPhaseRun(root, func(run map[string]json.RawMessage) { delete(run, "schema_version") })
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var root map[string]json.RawMessage
+			if err := json.Unmarshal(valid, &root); err != nil {
+				t.Fatal(err)
+			}
+			if err := tc.mutate(root); err != nil {
+				t.Fatal(err)
+			}
+			writeCampaignAndAssertRejected(t, root)
+		})
+	}
+	var root map[string]json.RawMessage
+	if err := json.Unmarshal(valid, &root); err != nil {
+		t.Fatal(err)
+	}
+	var trials []json.RawMessage
+	if err := json.Unmarshal(root["trials"], &trials); err != nil {
+		t.Fatal(err)
+	}
+	var pending map[string]json.RawMessage
+	if err := json.Unmarshal(trials[0], &pending); err != nil {
+		t.Fatal(err)
+	}
+	var phases []json.RawMessage
+	if err := json.Unmarshal(pending["phases"], &phases); err != nil {
+		t.Fatal(err)
+	}
+	var phase map[string]json.RawMessage
+	if err := json.Unmarshal(phases[0], &phase); err != nil {
+		t.Fatal(err)
+	}
+	delete(phase, "run")
+	phases[0], _ = json.Marshal(phase)
+	pending["phases"], _ = json.Marshal(phases)
+	root["pending_trial"], _ = json.Marshal(pending)
+	writeCampaignAndAssertRejected(t, root)
+}
+
+func mutateCampaignTrial(root map[string]json.RawMessage, mutate func(map[string]json.RawMessage)) error {
+	var trials []json.RawMessage
+	if err := json.Unmarshal(root["trials"], &trials); err != nil {
+		return err
+	}
+	var trial map[string]json.RawMessage
+	if err := json.Unmarshal(trials[0], &trial); err != nil {
+		return err
+	}
+	mutate(trial)
+	trials[0], _ = json.Marshal(trial)
+	root["trials"], _ = json.Marshal(trials)
+	return nil
+}
+
+func mutateCampaignPhase(root map[string]json.RawMessage, mutate func(map[string]json.RawMessage)) error {
+	return mutateCampaignTrial(root, func(trial map[string]json.RawMessage) {
+		var phases []json.RawMessage
+		if err := json.Unmarshal(trial["phases"], &phases); err != nil {
+			return
+		}
+		var phase map[string]json.RawMessage
+		if err := json.Unmarshal(phases[0], &phase); err != nil {
+			return
+		}
+		mutate(phase)
+		phases[0], _ = json.Marshal(phase)
+		trial["phases"], _ = json.Marshal(phases)
+	})
+}
+
+func mutateCampaignPhaseRun(root map[string]json.RawMessage, mutate func(map[string]json.RawMessage)) error {
+	return mutateCampaignPhase(root, func(phase map[string]json.RawMessage) {
+		var run map[string]json.RawMessage
+		if err := json.Unmarshal(phase["run"], &run); err != nil {
+			return
+		}
+		mutate(run)
+		phase["run"], _ = json.Marshal(run)
+	})
+}
+
+func writeCampaignAndAssertRejected(t *testing.T, fields map[string]json.RawMessage) {
+	t.Helper()
+	data, err := json.Marshal(fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "campaign.json")
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadCampaign(path); err == nil {
+		t.Fatal("campaign with missing or malformed required evidence was accepted")
+	}
+}
+
+func writeCampaignAndAssertAccepted(t *testing.T, fields map[string]json.RawMessage) {
+	t.Helper()
+	data, err := json.Marshal(fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "campaign.json")
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadCampaign(path); err != nil {
+		t.Fatalf("campaign with valid required evidence was rejected: %v", err)
+	}
+}
+
+func TestReadCampaignRejectsMissingEmbeddedRunCounters(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("testdata", "campaigns", "schema-v4.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var root map[string]any
+	if err := json.Unmarshal(data, &root); err != nil {
+		t.Fatal(err)
+	}
+	trials := root["trials"].([]any)
+	trial := trials[0].(map[string]any)
+	phases := trial["phases"].([]any)
+	phase := phases[0].(map[string]any)
+	run := phase["run"].(map[string]any)
+	metrics := run["metrics"].(map[string]any)
+	delete(metrics, "total")
+	encoded, err := json.Marshal(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "missing-run-counter.json")
+	if err := os.WriteFile(path, encoded, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadCampaign(path); err == nil || !strings.Contains(err.Error(), "absence cannot be interpreted as zero") {
+		t.Fatalf("missing embedded run counter was not rejected as unknown: %v", err)
+	}
+}
+
+func TestHistoricalCampaignFixturesRemainReadableAndAuditable(t *testing.T) {
+	for _, version := range []int{2, 4} {
+		t.Run(fmt.Sprintf("schema_v%d", version), func(t *testing.T) {
+			path := filepath.Join("testdata", "campaigns", fmt.Sprintf("schema-v%d.json", version))
+			evidence, digest, err := ReadCampaignWithFileSHA256(path)
+			if err != nil {
+				t.Fatalf("read historical fixture: %v", err)
+			}
+			if evidence.SchemaVersion != version {
+				t.Fatalf("fixture schema = %d, want %d", evidence.SchemaVersion, version)
+			}
+			if !strings.HasPrefix(digest, "sha256:") || len(digest) != len("sha256:")+64 {
+				t.Fatalf("invalid exact source digest %q", digest)
+			}
+			if err := ValidateSavedCampaign(evidence); err != nil {
+				t.Fatalf("historical campaign no longer validates: %v", err)
+			}
+			audit := AuditCampaign(evidence)
+			wantSpread := "MATCHED"
+			if version == 2 {
+				wantSpread = "NOT_RECORDED"
+			}
+			if audit.State != "INCONCLUSIVE" || audit.SpreadConsistency != wantSpread {
+				t.Fatalf("historical campaign audit changed: state=%s spread=%s findings=%v", audit.State, audit.SpreadConsistency, audit.Findings)
+			}
+			if audit.ObservationSpread == nil || audit.ObservationSpread.Runs != 2 {
+				t.Fatalf("observation evidence was not recomputed: %+v", audit.ObservationSpread)
+			}
+			for _, altered := range []string{"UNKNOWN", "NON_STATIONARY"} {
+				candidate := evidence
+				candidate.Trials = append([]campaign.Trial(nil), evidence.Trials...)
+				candidate.Trials[0].Phases = append([]campaign.Phase(nil), evidence.Trials[0].Phases...)
+				candidate.Trials[0].Phases[0].Stability = altered
+				if err := ValidateSavedCampaign(candidate); err == nil {
+					t.Fatalf("historical PASS accepted altered observation stability %q", altered)
+				}
+			}
+			if version == 2 {
+				data, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var artifact map[string]json.RawMessage
+				if err := json.Unmarshal(data, &artifact); err != nil {
+					t.Fatal(err)
+				}
+				var spread map[string]json.RawMessage
+				if err := json.Unmarshal(artifact["observation_variability"], &spread); err != nil {
+					t.Fatal(err)
+				}
+				delete(spread, "successful_journeys_min_per_second")
+				delete(spread, "successful_journeys_max_per_second")
+				artifact["observation_variability"], err = json.Marshal(spread)
+				if err != nil {
+					t.Fatal(err)
+				}
+				missingPath := filepath.Join(t.TempDir(), "schema-v2-missing-journey-throughput.json")
+				missingData, err := json.Marshal(artifact)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(missingPath, missingData, 0o600); err != nil {
+					t.Fatal(err)
+				}
+				missing, err := ReadCampaign(missingPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				missingAudit := AuditCampaign(missing)
+				if missingAudit.State != "INCONCLUSIVE" || missingAudit.SpreadConsistency != "NOT_RECORDED" {
+					t.Fatalf("missing legacy throughput was inferred as zero: state=%s spread=%s", missingAudit.State, missingAudit.SpreadConsistency)
+				}
+			}
+		})
+	}
+}
+
+func TestHistoricalPartialFailureFixturesRemainReadableAndAuditable(t *testing.T) {
+	for _, version := range []int{2, 4} {
+		t.Run(fmt.Sprintf("schema_v%d", version), func(t *testing.T) {
+			path := filepath.Join("testdata", "campaigns", fmt.Sprintf("schema-v%d.json", version))
+			evidence, err := ReadCampaign(path)
+			if err != nil {
+				t.Fatalf("read historical fixture: %v", err)
+			}
+			evidence.Outcome = "FAIL"
+			last := &evidence.Trials[len(evidence.Trials)-1]
+			last.Outcome = "FAIL"
+			last.Phases = append([]campaign.Phase(nil), last.Phases[:1]...)
+			last.Phases[0].Run.Outcome = "FAIL"
+			last.Phases[0].EvidenceState = "FAIL_OBSERVED"
+			evidence.ObservationVariability = nil
+
+			if err := ValidateSavedCampaign(evidence); err != nil {
+				t.Fatalf("valid historical partial failure rejected: %v", err)
+			}
+			audit := AuditCampaign(evidence)
+			if audit.State == "INVALID_EVIDENCE" {
+				t.Fatalf("historical partial failure became invalid evidence: %v", audit.Findings)
+			}
+		})
+	}
+}
 
 func TestCampaignAuditValidatesAndCapsAttachedApplicationMetrics(t *testing.T) {
 	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC).Format(time.RFC3339Nano)

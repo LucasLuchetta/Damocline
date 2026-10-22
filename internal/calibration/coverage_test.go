@@ -240,6 +240,46 @@ func TestConnectionPolicyRequiresExactProfileControls(t *testing.T) {
 	}
 }
 
+func TestHigherRateTLSProfilesRequireExactTransportAndControls(t *testing.T) {
+	a := passingArtifact(t)
+	local := testRuntime()
+	a.Preflight.Generator.RunnerVersion = local.RunnerVersion
+	now := time.Now().UTC()
+	a.Preflight.StartedAt = now.Add(-2 * time.Minute).Format(time.RFC3339Nano)
+	a.Preflight.FinishedAt = now.Add(-time.Minute).Format(time.RFC3339Nano)
+
+	makeScenario := func(scheme string, rate int) config.Scenario {
+		return config.Scenario{BaseURL: scheme + "://127.0.0.1", Mode: "arrival", ArrivalRate: rate, Users: 10,
+			MaxRPS: 50, Duration: "5s", Timeout: "1s", ConnectionPolicy: "reuse",
+			Steps: []config.Step{{Name: "read", Method: "GET", Path: "/matrix/https-4k"}}}
+	}
+	for _, rate := range []int{20, 40} {
+		got := AssessScenario(makeScenario("https", rate), a.Preflight, local, now)
+		matched := make(map[string]bool)
+		for _, name := range []string{"arrival_rate", "connection_policy", "request_rate_ceiling", "duration", "declared_workload_shape", "declared_transport"} {
+			for _, dimension := range got.Dimensions {
+				if dimension.Name == name {
+					matched[name] = dimension.Status == "MATCHED"
+					if !matched[name] {
+						t.Fatalf("exact HTTPS profile at %d/s did not match %s: %+v", rate, name, got.Dimensions)
+					}
+				}
+			}
+		}
+		for _, name := range []string{"arrival_rate", "connection_policy", "request_rate_ceiling", "duration", "declared_workload_shape", "declared_transport"} {
+			if !matched[name] {
+				t.Fatalf("exact HTTPS profile at %d/s omitted dimension %s: %+v", rate, name, got.Dimensions)
+			}
+		}
+	}
+	borrowedHTTP := AssessScenario(makeScenario("http", 40), a.Preflight, local, now)
+	for _, dimension := range borrowedHTTP.Dimensions {
+		if dimension.Name == "arrival_rate" && dimension.Status == "MATCHED" {
+			t.Fatalf("HTTP scenario borrowed an HTTPS-only rate profile: %+v", borrowedHTTP.Dimensions)
+		}
+	}
+}
+
 func TestNewConnectionProfileDoesNotInterpolateRates(t *testing.T) {
 	a := passingArtifact(t)
 	scenario := config.Scenario{BaseURL: "http://127.0.0.1", Mode: "arrival", ArrivalRate: 7, Users: 10,

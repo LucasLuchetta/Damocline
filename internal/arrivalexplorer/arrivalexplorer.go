@@ -3,7 +3,10 @@
 package arrivalexplorer
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -14,6 +17,60 @@ import (
 	"github.com/LucasLuchetta/Damocline/internal/engine"
 	"github.com/LucasLuchetta/Damocline/internal/report"
 )
+
+// ValidateArtifactJSON rejects omitted persisted open-arrival exploration
+// fields before decoding can turn them into Go zero values.
+func ValidateArtifactJSON(data []byte) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil || fields == nil {
+		return errors.New("arrival exploration must be a JSON object")
+	}
+	version, ok := fields["schema_version"]
+	var schema int
+	if !ok || json.Unmarshal(version, &schema) != nil || schema < 1 || schema > 2 {
+		return errors.New("arrival exploration has a missing or unsupported schema_version")
+	}
+	required := []string{"scenario", "target", "started_at", "stage_duration", "repeats", "journey_worker_limit", "min_scheduled_journey_starts_per_second", "max_scheduled_journey_starts_per_second", "outcome", "probes", "notes"}
+	if schema >= 2 {
+		required = append(required, "requested_min_scheduled_starts_per_second", "requested_max_scheduled_starts_per_second", "calibrated_probe_rates")
+	}
+	for _, name := range required {
+		value, exists := fields[name]
+		if !exists || bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+			return fmt.Errorf("arrival exploration is missing required field %q; absence cannot be interpreted as zero", name)
+		}
+	}
+	var probes []json.RawMessage
+	if err := json.Unmarshal(fields["probes"], &probes); err != nil || probes == nil || !bytes.HasPrefix(bytes.TrimSpace(fields["probes"]), []byte("[")) {
+		return errors.New("arrival exploration probes must be a JSON array")
+	}
+	for i, raw := range probes {
+		var probe map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &probe); err != nil || probe == nil {
+			return fmt.Errorf("arrival exploration probe %d must be a JSON object", i+1)
+		}
+		for _, name := range []string{"scheduled_journey_starts_per_second", "status", "runs"} {
+			value, exists := probe[name]
+			if !exists || bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+				return fmt.Errorf("arrival exploration probe %d is missing required field %q", i+1, name)
+			}
+		}
+		var runs []json.RawMessage
+		if err := json.Unmarshal(probe["runs"], &runs); err != nil || runs == nil || !bytes.HasPrefix(bytes.TrimSpace(probe["runs"]), []byte("[")) {
+			return fmt.Errorf("arrival exploration probe %d runs must be a JSON array", i+1)
+		}
+		for j, run := range runs {
+			var reportFields map[string]json.RawMessage
+			if err := json.Unmarshal(run, &reportFields); err != nil || reportFields == nil {
+				return fmt.Errorf("arrival exploration probe %d run %d must be a JSON object", i+1, j+1)
+			}
+			if value, exists := reportFields["schema_version"]; !exists || bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+				return fmt.Errorf("arrival exploration probe %d run %d is missing required field %q", i+1, j+1, "schema_version")
+			}
+		}
+	}
+	return nil
+}
 
 const generatorUtilizationGuard = 0.90
 

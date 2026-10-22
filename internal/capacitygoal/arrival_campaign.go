@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/LucasLuchetta/Damocline/internal/appmetrics"
@@ -63,6 +64,22 @@ func EvaluateJourneyCampaign(saved arrivalcampaign.Result, goal JourneyStartGoal
 		saved.MinSamplesPerStep < 1 || saved.Repeats < 2 || saved.Repeats > 5 || len(saved.Trials) == 0 {
 		return JourneyStartAssessment{}, errors.New("invalid or empty arrival campaign artifact")
 	}
+	if saved.SchemaVersion >= 8 {
+		if saved.Objectives == nil || saved.StabilityPolicy == nil {
+			return JourneyStartAssessment{}, errors.New("predeclared arrival campaign objectives or stability policy are missing")
+		}
+		if err := saved.Objectives.Validate(); err != nil {
+			return JourneyStartAssessment{}, fmt.Errorf("invalid predeclared arrival campaign objectives: %w", err)
+		}
+		if err := campaign.ValidateStabilityPolicy(*saved.StabilityPolicy); err != nil {
+			return JourneyStartAssessment{}, fmt.Errorf("invalid persisted arrival stability policy: %w", err)
+		}
+		if saved.Objectives.MinimumObservationWindows != saved.StabilityPolicy.MinimumWindows || saved.Objectives.MinimumSamplesPerWindow != saved.StabilityPolicy.MinimumSamplesPerWindow {
+			return JourneyStartAssessment{}, errors.New("predeclared arrival window objectives disagree with the saved stability policy")
+		}
+	} else if saved.Objectives != nil || saved.StabilityPolicy != nil {
+		return JourneyStartAssessment{}, errors.New("predeclared arrival objectives are unsupported by this campaign schema")
+	}
 	if saved.PeakStartsPerSecond > 0 {
 		expected, calcErr := EvaluatedJourneyStarts(JourneyStartGoal{PeakStartsPerSecond: saved.PeakStartsPerSecond, GrowthPercent: saved.GrowthPercent, ReservePercent: saved.ReservePercent})
 		if calcErr != nil || expected != saved.BaseStartsPerSecond || goal.PeakStartsPerSecond != saved.PeakStartsPerSecond || goal.GrowthPercent != saved.GrowthPercent || goal.ReservePercent != saved.ReservePercent {
@@ -83,6 +100,21 @@ func EvaluateJourneyCampaign(saved arrivalcampaign.Result, goal JourneyStartGoal
 			"The campaign is repeated and sustained only for its recorded phases and duration; passing evidence does not establish universal or long-term production capacity.",
 			"No infrastructure upgrade is justified by this HTTP evidence alone."},
 		Next: []string{"Use representative, independently verified workflows and session identities at the exact demand target.", "Collect time-aligned application and dependency evidence before making a capacity or infrastructure decision."}}
+	var identityMissing bool
+	assessment.ScenarioIdentityStatus, assessment.WorkloadRevision, assessment.ApplicationRevision, assessment.DeclaredEnvironment, identityMissing = arrivalCampaignIdentity(saved)
+	switch assessment.ScenarioIdentityStatus {
+	case "UNKNOWN":
+		assessment.Findings = append(assessment.Findings, "Workload revision, application revision, or declared environment is missing from one or more required phases; scenario identity is not established.")
+	case "CHANGED":
+		assessment.Findings = append(assessment.Findings, "Workload revision, application revision, or declared environment changes between required phases; the exact scenario identity is not consistent.")
+		if identityMissing {
+			assessment.Findings = append(assessment.Findings, "One or more required phases also lack workload revision, application revision, or environment identity metadata.")
+		}
+	}
+	if saved.SchemaVersion >= 8 {
+		assessment.Objectives = saved.Objectives
+		assessment.StabilityPolicy = saved.StabilityPolicy
+	}
 	if err := validateCampaignWindowDuration(saved.WindowDuration, options); err != nil {
 		return JourneyStartAssessment{}, err
 	}
@@ -114,6 +146,7 @@ func EvaluateJourneyCampaign(saved arrivalcampaign.Result, goal JourneyStartGoal
 	}
 	seenStarted := map[string]bool{}
 	observedSLOFailure := false
+	assessmentLimitedNativePass := false
 	var baselineConfig []byte
 	totalMetricBytes := 0
 	for index, trial := range saved.Trials {
@@ -128,9 +161,14 @@ func EvaluateJourneyCampaign(saved arrivalcampaign.Result, goal JourneyStartGoal
 			return JourneyStartAssessment{}, errors.New("campaign continued after an aborted cooldown trial")
 		}
 		phasePass := len(trial.Phases) == len(planned)
+		qualityLimited := false
+		nonQualityAssessmentIssue := !phasePass
 		for phaseIndex, phase := range trial.Phases {
 			expected := planned[phaseIndex]
 			run := phase.Run
+			if saved.SchemaVersion >= 8 && phase.Name != "warmup" && !saved.Objectives.MatchesRun(run) {
+				return JourneyStartAssessment{}, errors.New("native arrival phase controls disagree with the predeclared objective contract")
+			}
 			if run.ApplicationMetrics != nil {
 				if run.SchemaVersion < 25 {
 					return JourneyStartAssessment{}, errors.New("application-metrics timeline is not supported by its run-report schema")
@@ -171,7 +209,7 @@ func EvaluateJourneyCampaign(saved arrivalcampaign.Result, goal JourneyStartGoal
 			} else if !bytes.Equal(baselineConfig, configBytes) {
 				return JourneyStartAssessment{}, errors.New("campaign phases do not share the same workload and environment controls")
 			}
-			state, _ := arrivalcampaign.ClassifyEvidence(run)
+			state, _ := arrivalcampaign.ClassifyCampaignPhase(saved, run, phase.Name)
 			phaseWindow, windowErr := time.ParseDuration(saved.WindowDuration)
 			if windowErr != nil {
 				return JourneyStartAssessment{}, errors.New("campaign observation window is invalid")
@@ -184,7 +222,11 @@ func EvaluateJourneyCampaign(saved arrivalcampaign.Result, goal JourneyStartGoal
 			}
 			stability := ""
 			if expected.Name == "stabilization" || expected.Name == "observation" || expected.Name == "soak" {
-				stability = campaign.AssessStability(run)
+				policy := campaign.DefaultStabilityPolicy()
+				if saved.SchemaVersion >= 8 {
+					policy = *saved.StabilityPolicy
+				}
+				stability = campaign.AssessStabilityWithPolicy(run, policy)
 			}
 			if phase.EvidenceState != state || phase.Stability != stability {
 				return JourneyStartAssessment{}, errors.New("saved phase evidence labels disagree with native report data")
@@ -194,8 +236,13 @@ func EvaluateJourneyCampaign(saved arrivalcampaign.Result, goal JourneyStartGoal
 					return JourneyStartAssessment{}, errors.New("a failed arrival spike phase is missing its recovery observation")
 				}
 			}
-			if expected.Required && campaignHasAdequateSLOFailure(run, state, expected.Name == "observation" || expected.Name == "soak") {
+			if expected.Required && state == "FAIL_OBSERVED" && report.AssessQuality(run).State == report.QualityValid &&
+				campaignSLOBreachForObjectives(run, saved.Objectives) && campaignCoverageIssue(run, expected.Name == "stabilization" || expected.Name == "observation" || expected.Name == "soak") == "" && campaignGeneratorIssue(run) == "" {
 				observedSLOFailure = true
+			}
+			if expected.Required && (expected.Name == "stabilization" || expected.Name == "observation" || expected.Name == "soak") &&
+				state == "FAIL_OBSERVED" && stability != "NO_LARGE_DRIFT_DETECTED" {
+				phasePass = false
 			}
 			if state == "INSUFFICIENT_EVIDENCE" || state == "INVALID_DELIVERY" {
 				if trial.Outcome != "INCONCLUSIVE" && !(inProgressCheckpoint && trial.Outcome == "ABORTED" && index == len(saved.Trials)-1) {
@@ -208,11 +255,25 @@ func EvaluateJourneyCampaign(saved arrivalcampaign.Result, goal JourneyStartGoal
 			if expected.Required && run.Outcome != "PASS" && state == "PASS_OBSERVED" {
 				return JourneyStartAssessment{}, errors.New("required phase did not pass its native outcome")
 			}
-			if expected.Required && (state != "PASS_OBSERVED" || run.Outcome != "PASS" ||
-				(expected.Name == "stabilization" || expected.Name == "observation" || expected.Name == "soak") && stability != "NO_LARGE_DRIFT_DETECTED" ||
-				report.AssessQuality(run).State != report.QualityValid || campaignSLOBreach(run) ||
-				campaignCoverageIssue(run, expected.Name == "stabilization" || expected.Name == "observation" || expected.Name == "soak") != "" || campaignGeneratorIssue(run) != "") {
-				phasePass = false
+			if expected.Required {
+				quality := report.AssessQuality(run)
+				nativePhasePass := state == "PASS_OBSERVED" && run.Outcome == "PASS" &&
+					(!(expected.Name == "stabilization" || expected.Name == "observation" || expected.Name == "soak") || stability == "NO_LARGE_DRIFT_DETECTED") &&
+					!campaignSLOBreachForObjectives(run, saved.Objectives) &&
+					campaignCoverageIssue(run, expected.Name == "stabilization" || expected.Name == "observation" || expected.Name == "soak") == "" && campaignGeneratorIssue(run) == ""
+				if !nativePhasePass {
+					phasePass = false
+					nonQualityAssessmentIssue = true
+				}
+				switch quality.State {
+				case report.QualityValid:
+				case report.QualityLimited:
+					phasePass = false
+					qualityLimited = true
+				default:
+					phasePass = false
+					nonQualityAssessmentIssue = true
+				}
 			}
 		}
 		if trial.Outcome != "PASS" && trial.Outcome != "FAIL" && trial.Outcome != "INCONCLUSIVE" && trial.Outcome != "ABORTED" {
@@ -225,7 +286,10 @@ func EvaluateJourneyCampaign(saved arrivalcampaign.Result, goal JourneyStartGoal
 			allPass = false
 		}
 		if trial.Outcome == "PASS" && !phasePass {
-			return JourneyStartAssessment{}, errors.New("trial PASS does not match its phase evidence")
+			if !qualityLimited || nonQualityAssessmentIssue {
+				return JourneyStartAssessment{}, errors.New("trial PASS does not match its phase evidence")
+			}
+			assessmentLimitedNativePass = true
 		}
 		if trial.Outcome == "FAIL" && phasePass {
 			return JourneyStartAssessment{}, errors.New("trial FAIL does not match its phase evidence")
@@ -237,17 +301,23 @@ func EvaluateJourneyCampaign(saved arrivalcampaign.Result, goal JourneyStartGoal
 			return JourneyStartAssessment{}, errors.New("campaign continued after a non-passing or incomplete trial")
 		}
 	}
-	if saved.Outcome == "PASS" && !allPass || saved.Outcome == "ABORTED" && saved.Trials[len(saved.Trials)-1].Outcome != "ABORTED" ||
+	if saved.Outcome == "PASS" && !allPass && !assessmentLimitedNativePass || saved.Outcome == "ABORTED" && saved.Trials[len(saved.Trials)-1].Outcome != "ABORTED" ||
 		saved.Outcome == "FAIL" && saved.Trials[len(saved.Trials)-1].Outcome != "FAIL" || saved.Outcome == "INCONCLUSIVE" && saved.Trials[len(saved.Trials)-1].Outcome != "INCONCLUSIVE" {
 		return JourneyStartAssessment{}, errors.New("campaign outcome disagrees with its terminal trial")
 	}
-	if allPass {
+	if allPass && assessment.ScenarioIdentityStatus == "CONSISTENT" {
 		assessment.State = "SUSTAINED_TARGET_PASSED_UNDER_TESTED_CONDITIONS"
 		matched := target
 		assessment.MatchedStartsPerSecond = &matched
 		assessment.MatchedTrials = len(saved.Trials)
 		assessment.Findings = append(assessment.Findings, fmt.Sprintf("All %d trials passed their required phases at exactly %d scheduled journey starts/s, under the saved workload, generator limits, SLOs, and observation schedule.", len(saved.Trials), target))
 		return assessment, nil
+	}
+	if allPass && assessment.ScenarioIdentityStatus != "CONSISTENT" {
+		assessment.Findings = append(assessment.Findings, "All native phase outcomes passed, but missing scenario identity metadata prevents a positive exact-demand assessment.")
+	}
+	if assessmentLimitedNativePass {
+		assessment.Findings = append(assessment.Findings, "One or more native trials passed their declared phase SLOs, but measurement quality does not meet the capacity-assessment threshold; the result remains insufficient evidence.")
 	}
 	if saved.Outcome == "FAIL" && observedSLOFailure {
 		assessment.State = "SLO_MISSED_AT_TESTED_TARGET"
@@ -256,6 +326,38 @@ func EvaluateJourneyCampaign(saved arrivalcampaign.Result, goal JourneyStartGoal
 		assessment.Findings = append(assessment.Findings, "The campaign ended with a failing phase, but the saved evidence does not establish a valid target SLO miss with adequate delivery, measurement quality and generator headroom.")
 	}
 	return assessment, nil
+}
+
+func arrivalCampaignIdentity(saved arrivalcampaign.Result) (status, workloadRevision, applicationRevision, environment string, missing bool) {
+	seen := false
+	changed := false
+	for _, trial := range saved.Trials {
+		for _, phase := range trial.Phases {
+			if phase.Name == "warmup" {
+				continue
+			}
+			config := phase.Run.Config
+			if strings.TrimSpace(config.WorkloadRevision) == "" || strings.TrimSpace(config.ApplicationRevision) == "" || strings.TrimSpace(config.Environment) == "" {
+				missing = true
+				continue
+			}
+			if !seen {
+				workloadRevision, applicationRevision, environment = config.WorkloadRevision, config.ApplicationRevision, config.Environment
+				seen = true
+				continue
+			}
+			if config.WorkloadRevision != workloadRevision || config.ApplicationRevision != applicationRevision || config.Environment != environment {
+				changed = true
+			}
+		}
+	}
+	if changed {
+		return "CHANGED", "", "", "", missing
+	}
+	if !seen || missing {
+		return "UNKNOWN", "", "", "", missing
+	}
+	return "CONSISTENT", workloadRevision, applicationRevision, environment, false
 }
 
 func comparableCampaignConfig(config report.RunConfig) ([]byte, error) {
@@ -457,6 +559,34 @@ func campaignGeneratorIssue(run report.Result) string {
 func campaignHasAdequateSLOFailure(run report.Result, state string, stableWindows bool) bool {
 	return state == "FAIL_OBSERVED" && report.AssessQuality(run).State == report.QualityValid &&
 		campaignSLOBreach(run) && campaignCoverageIssue(run, stableWindows) == "" && campaignGeneratorIssue(run) == ""
+}
+
+func campaignSLOBreachForObjectives(run report.Result, objectives *campaign.ObjectiveContract) bool {
+	if objectives == nil {
+		return campaignSLOBreach(run)
+	}
+	breaches := func(metrics report.MetricSet) bool {
+		return metrics.Total > 0 && (metrics.P95MS > objectives.JourneyP95LimitMS || float64(metrics.Failures)/float64(metrics.Total) > objectives.MaxJourneyErrorRate)
+	}
+	if breaches(run.Journeys) {
+		return true
+	}
+	for _, profile := range run.Profiles {
+		if breaches(profile.Journeys) {
+			return true
+		}
+	}
+	for _, window := range run.Windows {
+		if breaches(window.Journeys) {
+			return true
+		}
+		for _, profile := range window.Profiles {
+			if breaches(profile.Metrics) {
+				return true
+			}
+		}
+	}
+	return savedRunSLOBreach(run)
 }
 
 func campaignSLOBreach(run report.Result) bool {

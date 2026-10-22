@@ -1,16 +1,21 @@
 --- DAMOCLINE | CAMPAIGN LEVEL AUDIT (OFFLINE) ---
-Level collection verdict: INCONCLUSIVE
-Scenario: offline | target: http://127.0.0.1:18080
-Observed passing levels: [] | failing levels: [] | inconclusive levels: [2 4]
-Observed pattern: NO_DECISIVE_LEVEL
-  2 VUs: ABORTED | audit INCONCLUSIVE | measurement LIMITED | evidence sha256:eb76655decc7e0758ad6a9ff1ec9d64aeba495c9f40c193dc280c08b9afe4ed2
+Level collection verdict: NOT_COMPARABLE
+Generator environment consistency: UNKNOWN
+Scenario identity consistency: UNKNOWN
+Scenario, target and workload match: NOT ESTABLISHED
+Observed passing levels: [] | failing levels: [] | inconclusive levels: []
+Observed pattern: UNAVAILABLE
+  2 VUs: ABORTED | audit INCONCLUSIVE | measurement LIMITED | evidence sha256:e661424828950e4463cd51dc974a9a921a9a9ff51027a258a1899d0b2cefebeb
     Repeat pass probability interval unavailable: 1 trial(s) were not terminal PASS/FAIL outcomes.
-  4 VUs: ABORTED | audit INCONCLUSIVE | measurement LIMITED | evidence sha256:16197f03c9f2f7b9bf4f9cad88af6f363b98c3ed80f7e6d485e80f653551ab04
+  4 VUs: ABORTED | audit INCONCLUSIVE | measurement LIMITED | evidence sha256:d9a2c65d4fd99ffdc1a5c7357d999c189c6e25d058c26972a3fd4ad589c6e2d8
     Repeat pass probability interval unavailable: 1 trial(s) were not terminal PASS/FAIL outcomes.
 Demand target: 3 workload-equivalent active actors | plan state: INSUFFICIENT_EVIDENCE
   - A demand decision requires a campaign at the exact calculated workload level; nearby levels are not interpolated.
   - Each level is audited independently; no result is interpolated or extrapolated to an untested workload.
   - Observed passing and failing levels do not establish a monotone capacity boundary or sustainable human-user capacity.
-  - No campaign level has a decisive observed pass or fail outcome.
-  - Declared workload signatures match, but physical generator identity, actual demand equivalence, dependence, and stationarity are not independently established.
+  - Level 2 VUs cannot be compared: workload revision, application revision, or declared environment is missing.
+  - Level 2 VUs cannot be compared: campaign has no required phase generator-environment evidence.
+  - Level 4 VUs cannot be compared: workload revision, application revision, or declared environment is missing.
+  - Level 4 VUs cannot be compared: campaign has no required phase generator-environment evidence.
+  - Campaigns do not share complete matching workload, control, and known generator-environment signatures; per-level audits are retained, but levels are not aggregated.
 No traffic was generated; every level remains linked to its saved campaign evidence.

@@ -14,7 +14,7 @@ func TestPlanCommandRejectsSelfDeclaredQualityWithoutGeneratingTraffic(t *testin
 	file := filepath.Join(t.TempDir(), "campaign.json")
 	passed := planReadyReport()
 	evidence := campaign.Result{
-		SchemaVersion: 1, Scenario: "synthetic app", BaseUsers: 30, Repeats: 2, Outcome: "PASS",
+		SchemaVersion: 1, Scenario: "synthetic app", BaseUsers: 30, Target: "http://127.0.0.1:18080", StartedAt: "", Warmup: "0s", Observation: "10s", Recovery: "10s", Repeats: 2, Outcome: "PASS",
 		ObservationVariability: &campaign.Variability{Runs: 2, P95MinMS: 20, P95MaxMS: 30, ErrorRateMin: 0, ErrorRateMax: 0, ThroughputMinRPS: 20, ThroughputMaxRPS: 30},
 		Trials: []campaign.Trial{
 			{Number: 1, Outcome: "PASS", Phases: []campaign.Phase{{Name: "observation", Run: passed}, {Name: "recovery", Run: passed}}},
@@ -41,9 +41,9 @@ func TestPlanCommandRejectsSelfDeclaredQualityWithoutGeneratingTraffic(t *testin
 
 func TestPlanCommandKeepsLimitedCampaignInsufficient(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "campaign.json")
-	limited := report.Result{Outcome: "PASS", Quality: &report.Quality{State: report.QualityLimited}}
+	limited := report.Result{SchemaVersion: 29, Outcome: "PASS", Quality: &report.Quality{State: report.QualityLimited}}
 	evidence := campaign.Result{
-		SchemaVersion: 1, Scenario: "synthetic app", BaseUsers: 20, Repeats: 2, Outcome: "PASS",
+		SchemaVersion: 1, Scenario: "synthetic app", BaseUsers: 20, Target: "http://127.0.0.1:18080", StartedAt: "", Warmup: "0s", Observation: "10s", Recovery: "10s", Repeats: 2, Outcome: "PASS",
 		Trials: []campaign.Trial{
 			{Number: 1, Outcome: "PASS", Phases: []campaign.Phase{{Name: "observation", Run: limited}, {Name: "recovery", Run: limited}}},
 			{Number: 2, Outcome: "PASS", Phases: []campaign.Phase{{Name: "observation", Run: limited}, {Name: "recovery", Run: limited}}},
@@ -68,7 +68,7 @@ func TestPlanCommandKeepsLimitedCampaignInsufficient(t *testing.T) {
 
 func TestPlanCommandRejectsInvalidCampaign(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "campaign.json")
-	if err := report.WriteAnyJSON(file, campaign.Result{SchemaVersion: 1, Scenario: "synthetic", BaseUsers: 30, Repeats: 2, Outcome: "PASS"}); err != nil {
+	if err := report.WriteAnyJSON(file, campaign.Result{SchemaVersion: 1, Scenario: "synthetic", BaseUsers: 30, Target: "http://127.0.0.1:18080", StartedAt: "", Warmup: "0s", Observation: "10s", Recovery: "10s", Repeats: 2, Trials: []campaign.Trial{}, Outcome: "PASS"}); err != nil {
 		t.Fatal(err)
 	}
 	var out, errOut bytes.Buffer
@@ -86,7 +86,7 @@ func planReadyReport() report.Result {
 		P95IID95LowerMS: 20, P95IID95UpperMS: 50, P95IID95Approximation: true,
 	}
 	return report.Result{
-		Outcome: "PASS", ObservationSeconds: 10,
+		SchemaVersion: 29, Outcome: "PASS", ObservationSeconds: 10,
 		Config:  report.RunConfig{P95LimitMS: 100, MaxErrorRate: 0.01, MinSamplesPerStep: 1, WindowDuration: "10s"},
 		Metrics: metrics, Steps: []report.StepResult{{Name: "step", Metrics: metrics}},
 		Windows: []report.WindowResult{{StartSeconds: 0, EndSeconds: 10, Metrics: metrics}},

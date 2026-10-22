@@ -15,7 +15,7 @@ import (
 
 func fixtureProfile(t *testing.T) Profile {
 	t.Helper()
-	profile, err := New("checkout", "synthetic local fixture", config.Scenario{Name: "fixture", BaseURL: "http://127.0.0.1:8080", Users: 2, Duration: "10s", Timeout: "1s", MaxRPS: 10, P95LimitMS: 1000, MaxErrorRate: 1, Steps: []config.Step{{Name: "read", Method: "GET", Path: "/"}}}, campaign.Options{Warmup: 0, Observation: 10 * time.Second, Recovery: 0, Repeats: 2})
+	profile, err := New("checkout", "synthetic local fixture", config.Scenario{Name: "fixture", BaseURL: "http://127.0.0.1:8080", Users: 2, Duration: "10s", Timeout: "1s", MaxRPS: 10, P95LimitMS: 1000, MaxErrorRate: 1, Steps: []config.Step{{Name: "read", Method: "GET", Path: "/"}}}, campaign.Options{Warmup: 0, Observation: 10 * time.Second, Recovery: 10 * time.Second, Repeats: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,6 +39,29 @@ func TestProfileRoundTripAndRuntimeConsentAbsent(t *testing.T) {
 	}
 }
 
+func TestDecodeRejectsDuplicateJSONKeys(t *testing.T) {
+	data := []byte(`{"schema_version":1,"schema_\u0076ersion":1}`)
+	if _, _, err := Decode(data); err == nil || !strings.Contains(err.Error(), "ambiguous JSON") {
+		t.Fatalf("duplicate profile schema key was not rejected clearly: %v", err)
+	}
+}
+
+func TestDecodeRejectsOmittedCurrentProfileControls(t *testing.T) {
+	base := string(mustJSON(t, fixtureProfile(t)))
+	for _, mutation := range []struct{ fragment, replacement string }{
+		{`"repeats":2,`, ""}, {`"max_error_rate":1,`, ""}, {`"max_p95_increase_ms":5,`, ""},
+		{`"repeats":2`, `"repeats":null`},
+	} {
+		mutated := strings.Replace(base, mutation.fragment, mutation.replacement, 1)
+		if mutated == base {
+			t.Fatalf("fixture lacks required field fragment %q", mutation.fragment)
+		}
+		if _, _, err := Decode([]byte(mutated)); err == nil {
+			t.Fatalf("accepted profile with omitted persisted field %q", mutation.fragment)
+		}
+	}
+}
+
 func TestV0MigrationAndFutureSchemaRejected(t *testing.T) {
 	legacy := fixtureProfile(t)
 	legacy.SchemaVersion = 0
@@ -55,6 +78,9 @@ func TestV0MigrationAndFutureSchemaRejected(t *testing.T) {
 	}
 	if _, _, err := Decode([]byte(`{"schema_version":999}`)); err == nil {
 		t.Fatal("accepted future schema")
+	}
+	if _, _, err := Decode([]byte(`{"schema_version":null}`)); err == nil {
+		t.Fatal("accepted null schema version as a legacy profile")
 	}
 }
 
@@ -88,7 +114,7 @@ func TestSecretsMustRemainExternalReferences(t *testing.T) {
 		t.Fatal("accepted literal credential in a versioned workflow profile")
 	}
 	workflowScenario.Workflows[0].Steps[0].Headers["Authorization"] = "${DAMOCLINE_TOKEN}"
-	if _, err := New("versioned-secret", "", workflowScenario, campaign.Options{Observation: 10 * time.Second, Repeats: 2}); err != nil {
+	if _, err := New("versioned-secret", "", workflowScenario, campaign.Options{Observation: 10 * time.Second, Recovery: 10 * time.Second, Repeats: 2}); err != nil {
 		t.Fatalf("rejected environment-backed workflow credential: %v", err)
 	}
 }
@@ -107,6 +133,14 @@ func TestPublishedCampaignProfileExampleIsRunnable(t *testing.T) {
 	}
 	if _, err := profile.CampaignOptions(); err != nil {
 		t.Fatalf("example campaign controls are invalid: %v", err)
+	}
+}
+
+func TestProfileWithZeroRecoveryIsRejected(t *testing.T) {
+	profile := fixtureProfile(t)
+	profile.Options.Recovery = "0s"
+	if _, _, err := Decode(mustJSON(t, profile)); err == nil || !strings.Contains(err.Error(), "recovery") {
+		t.Fatalf("profile without auditable recovery was accepted: %v", err)
 	}
 }
 

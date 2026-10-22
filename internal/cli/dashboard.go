@@ -13,6 +13,7 @@ import (
 	"github.com/LucasLuchetta/Damocline/internal/capacitygoal"
 	"github.com/LucasLuchetta/Damocline/internal/capacityplan"
 	"github.com/LucasLuchetta/Damocline/internal/insights"
+	"github.com/LucasLuchetta/Damocline/internal/jsonartifact"
 	"github.com/LucasLuchetta/Damocline/internal/report"
 	"github.com/LucasLuchetta/Damocline/internal/reportui"
 )
@@ -38,9 +39,20 @@ func loadDashboardHandler(path string) (http.Handler, error) {
 	if len(data) > maxDashboardArtifactBytes {
 		return nil, errors.New("dashboard artifact exceeds the 16 MiB safety limit")
 	}
+	if err := jsonartifact.RejectDuplicateKeys(data); err != nil {
+		return nil, fmt.Errorf("dashboard artifact contains ambiguous JSON: %w", err)
+	}
 	var shape dashboardArtifactShape
 	if err := json.Unmarshal(data, &shape); err != nil {
 		return nil, fmt.Errorf("invalid dashboard artifact JSON: %w", err)
+	}
+	if shape.ArrivalCampaignVersion != nil {
+		if err := arrivalcampaign.ValidateArtifactJSON(data); err != nil {
+			return nil, fmt.Errorf("invalid arrival campaign evidence: %w", err)
+		}
+	}
+	if err := report.ValidateMetricCountersInArtifactJSON(data); err != nil {
+		return nil, fmt.Errorf("dashboard artifact has incomplete metric evidence: %w", err)
 	}
 	if shape.ArrivalCampaignVersion != nil {
 		var saved arrivalcampaign.Result
@@ -63,6 +75,9 @@ func loadDashboardHandler(path string) (http.Handler, error) {
 		return reportui.CampaignHandler(presentation), nil
 	}
 	if shape.BaseUsers != nil {
+		if err := capacityplan.ValidateCampaignArtifact(data); err != nil {
+			return nil, fmt.Errorf("invalid closed-loop campaign evidence: %w", err)
+		}
 		var saved campaign.Result
 		if err := json.Unmarshal(data, &saved); err != nil {
 			return nil, fmt.Errorf("invalid closed-loop campaign JSON: %w", err)

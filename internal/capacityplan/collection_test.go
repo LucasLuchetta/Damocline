@@ -34,7 +34,7 @@ func TestCampaignCollectionAggregatesOnlyMatchedLevels(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if assessment.State != "OBSERVED_LEVELS_ONLY" || assessment.ObservationPattern != "PASS_BELOW_FAIL" || assessment.Scenario != "synthetic" || assessment.Target != lower.Target || assessment.WorkloadFingerprint == "" {
+	if assessment.State != "OBSERVED_LEVELS_ONLY" || assessment.ObservationPattern != "PASS_BELOW_FAIL" || assessment.Scenario != "synthetic" || assessment.Target != lower.Target || assessment.WorkloadFingerprint == "" || assessment.ScenarioIdentityStatus != "CONSISTENT" || assessment.WorkloadRevision != "workload-v1" || assessment.ApplicationRevision != "app-v1" || assessment.Environment != "synthetic" {
 		t.Fatalf("matching campaign levels did not aggregate: %+v", assessment)
 	}
 	if len(assessment.Levels) != 2 || assessment.Levels[0].TestedUsers != 2 || assessment.Levels[1].TestedUsers != 4 {
@@ -51,6 +51,62 @@ func TestCampaignCollectionAggregatesOnlyMatchedLevels(t *testing.T) {
 	}
 	if strings.Contains(strings.Join(assessment.Demand.Findings, " "), "nearby levels are not interpolated") {
 		t.Fatalf("tested exact demand was treated as untested: %+v", assessment.Demand)
+	}
+	if assessment.GeneratorEnvironmentStatus != "CONSISTENT" {
+		t.Fatalf("matching recorded generator environments were not identified: %s", assessment.GeneratorEnvironmentStatus)
+	}
+}
+
+func TestCampaignCollectionRequiresMatchingScenarioIdentity(t *testing.T) {
+	first := auditFixtureAtUsers(2)
+	second := auditFixtureAtUsers(4)
+	second.Trials[0].Phases[0].Run.Config.ApplicationRevision = "app-v2"
+	assessment, err := BuildCampaignCollectionAssessment([]campaign.Result{first, second}, nil)
+	if err != nil || assessment.State != "NOT_COMPARABLE" || assessment.ScenarioIdentityStatus != "CHANGED" || len(assessment.PassingLevels)+len(assessment.FailingLevels) != 0 {
+		t.Fatalf("campaign levels from different application revisions were combined: status=%s state=%s err=%v", assessment.ScenarioIdentityStatus, assessment.State, err)
+	}
+
+	second = auditFixtureAtUsers(4)
+	second.Trials[1].Phases[0].Run.Config.WorkloadRevision = ""
+	assessment, err = BuildCampaignCollectionAssessment([]campaign.Result{first, second}, nil)
+	if err != nil || assessment.State != "NOT_COMPARABLE" || assessment.ScenarioIdentityStatus != "UNKNOWN" {
+		t.Fatalf("missing scenario identity was treated as a match: status=%s state=%s err=%v", assessment.ScenarioIdentityStatus, assessment.State, err)
+	}
+}
+
+func TestCampaignCollectionRequiresConsistentKnownGeneratorEnvironment(t *testing.T) {
+	first := auditFixtureAtUsers(2)
+	second := auditFixtureAtUsers(4)
+	for i := range second.Trials {
+		for j := range second.Trials[i].Phases {
+			second.Trials[i].Phases[j].Run.GeneratorIdentity.RunnerIdentity = strings.Repeat("b", 40)
+		}
+	}
+	assessment, err := BuildCampaignCollectionAssessment([]campaign.Result{first, second}, nil)
+	if err != nil || assessment.State != "NOT_COMPARABLE" || assessment.GeneratorEnvironmentStatus != "CHANGED" || len(assessment.Levels) != 2 {
+		t.Fatalf("different runner builds were aggregated: status=%s assessment=%+v err=%v", assessment.GeneratorEnvironmentStatus, assessment, err)
+	}
+
+	second = auditFixtureAtUsers(4)
+	for i := range second.Trials {
+		for j := range second.Trials[i].Phases {
+			second.Trials[i].Phases[j].Run.Generator.CPUCapacityKnown = false
+		}
+	}
+	assessment, err = BuildCampaignCollectionAssessment([]campaign.Result{first, second}, nil)
+	if err != nil || assessment.State != "NOT_COMPARABLE" || assessment.GeneratorEnvironmentStatus != "UNKNOWN" || len(assessment.Levels) != 2 {
+		t.Fatalf("missing CPU entitlement evidence was treated as matching: status=%s assessment=%+v err=%v", assessment.GeneratorEnvironmentStatus, assessment, err)
+	}
+
+	second = auditFixtureAtUsers(4)
+	second.Trials[0].Phases[1].Run.Generator.CPUCapacityCores = 0.5
+	second.Trials[0].Phases[1].Run.Generator.CPUCapacitySource = "cgroup_cpu_quota"
+	second.Trials[0].Phases[1].Run.Generator.GoCPUCapacitySeconds = 5
+	second.Trials[0].Phases[1].Run.Generator.GoCPUUtilizationRatio = 0.2
+	second.Trials[0].Phases[1].Run.Generator.MeanProcessCPUUtilizationRatio = 0.2
+	assessment, err = BuildCampaignCollectionAssessment([]campaign.Result{first, second}, nil)
+	if err != nil || assessment.State != "NOT_COMPARABLE" || assessment.GeneratorEnvironmentStatus != "CHANGED" {
+		t.Fatalf("intra-campaign CPU entitlement change was not rejected: status=%s assessment=%+v err=%v", assessment.GeneratorEnvironmentStatus, assessment, err)
 	}
 }
 

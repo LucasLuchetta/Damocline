@@ -15,6 +15,7 @@ import (
 
 	"github.com/LucasLuchetta/Damocline/internal/arrivalexplorer"
 	"github.com/LucasLuchetta/Damocline/internal/calibration"
+	"github.com/LucasLuchetta/Damocline/internal/campaign"
 	"github.com/LucasLuchetta/Damocline/internal/config"
 	"github.com/LucasLuchetta/Damocline/internal/reference"
 	"github.com/LucasLuchetta/Damocline/internal/report"
@@ -534,6 +535,33 @@ func TestCampaignDryRunShowsBoundedWallTime(t *testing.T) {
 	code := Run([]string{"campaign", "--config", path, "--warmup", "0s", "--observation", "10s", "--recovery", "10s", "--repeats", "2", "--dry-run"}, &stdout, &stderr)
 	if code != 0 || !strings.Contains(stdout.String(), "wall-time cap 2m40s") || !strings.Contains(stdout.String(), "Trial 1 observation: 10s at 10 VUs") || !strings.Contains(stdout.String(), "Trial 2 recovery: 10s at 10 VUs") || !strings.Contains(stdout.String(), "DRY RUN: no traffic generated") {
 		t.Fatalf("campaign preview did not show its effective cap: code=%d out=%s err=%s", code, stdout.String(), stderr.String())
+	}
+}
+
+func TestCampaignWithoutRecoveryFailsBeforeReadingScenarioOrWritingReport(t *testing.T) {
+	directory := t.TempDir()
+	missingScenario := filepath.Join(directory, "not-read.json")
+	outputPath := filepath.Join(directory, "campaign.json")
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"campaign", "--config", missingScenario, "--observation", "10s", "--recovery", "0s", "--repeats", "2", "--authorized", "--out", outputPath}, &stdout, &stderr)
+	if code != 2 || !strings.Contains(stderr.String(), "recovery") || strings.Contains(stderr.String(), "configuration error") {
+		t.Fatalf("campaign without recovery was not rejected during preflight: code=%d out=%s err=%s", code, stdout.String(), stderr.String())
+	}
+	if _, err := os.Stat(outputPath); !os.IsNotExist(err) {
+		t.Fatalf("invalid campaign created an output artifact: stat err=%v", err)
+	}
+}
+
+func TestCampaignRepeatSummaryLabelsMedianMADAsDescriptive(t *testing.T) {
+	variability := campaign.Variability{Runs: 5, P95MinMS: 100, P95MaxMS: 200, ErrorRateMin: 0, ErrorRateMax: .01,
+		ThroughputMinRPS: 8, ThroughputMaxRPS: 10, SuccessfulJourneysMinPerSec: 7, SuccessfulJourneysMaxPerSec: 9,
+		RequestP95MedianMS: 120, RequestP95MADMS: 10, RequestP95RobustLowerMS: 90, RequestP95RobustUpperMS: 150}
+	var output bytes.Buffer
+	writeCampaignObservationSummary(&output, &variability)
+	for _, expected := range []string{"median 120ms", "MAD 10ms", "90-150ms", "not a confidence interval", "dependent or non-stationary"} {
+		if !strings.Contains(output.String(), expected) {
+			t.Fatalf("campaign summary omitted %q: %s", expected, output.String())
+		}
 	}
 }
 

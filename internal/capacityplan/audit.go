@@ -23,9 +23,15 @@ type CampaignAudit struct {
 	SchemaVersion           int                         `json:"schema_version"`
 	ExecutionState          string                      `json:"execution_state,omitempty"`
 	EvidenceID              string                      `json:"evidence_id"`
+	SourceFileSHA256        string                      `json:"source_file_sha256,omitempty"`
 	ScenarioFingerprint     string                      `json:"scenario_fingerprint,omitempty"`
+	WorkloadSource          *campaign.WorkloadSource    `json:"workload_source,omitempty"`
 	Scenario                string                      `json:"scenario"`
 	Target                  string                      `json:"target,omitempty"`
+	DeclaredEnvironment     string                      `json:"declared_environment,omitempty"`
+	WorkloadRevision        string                      `json:"workload_revision,omitempty"`
+	ApplicationRevision     string                      `json:"application_revision,omitempty"`
+	IdentityStatus          string                      `json:"scenario_identity_status"`
 	StartedAt               string                      `json:"started_at,omitempty"`
 	DemandTargetUsers       int                         `json:"demand_target_users,omitempty"`
 	TestedBaseUsers         int                         `json:"tested_base_users"`
@@ -88,9 +94,13 @@ type ObservationTrial struct {
 	Trial                    int      `json:"trial"`
 	Requests                 int      `json:"requests"`
 	RequestP95MS             float64  `json:"request_p95_ms"`
+	RequestP99MS             float64  `json:"request_p99_ms"`
+	RequestP99IntervalState  string   `json:"request_p99_interval_state"`
 	RequestErrorRate         *float64 `json:"request_error_rate,omitempty"`
 	CompletedJourneys        int      `json:"completed_journeys"`
 	JourneyP95MS             float64  `json:"journey_p95_ms"`
+	JourneyP99MS             float64  `json:"journey_p99_ms"`
+	JourneyP99IntervalState  string   `json:"journey_p99_interval_state"`
 	JourneyErrorRate         *float64 `json:"journey_error_rate,omitempty"`
 	SuccessfulJourneysPerSec float64  `json:"successful_journeys_per_second"`
 }
@@ -132,11 +142,20 @@ type PhaseAudit struct {
 // interval and does not establish decision confidence.
 type Assessment struct {
 	SchemaVersion int                  `json:"schema_version"`
+	Auditor       AuditorIdentity      `json:"auditor"`
 	Audit         CampaignAudit        `json:"audit"`
 	Confidence    ConfidenceDimensions `json:"confidence_dimensions"`
 	DemandInputs  *capacitygoal.Goal   `json:"demand_inputs,omitempty"`
 	Demand        *Result              `json:"demand,omitempty"`
 	State         string               `json:"state"`
+}
+
+// AuditorIdentity identifies the tool build that interpreted the campaign.
+// The executable digest identifies exact bytes, while the version is a
+// human-readable label; neither attests who built or distributed the binary.
+type AuditorIdentity struct {
+	Version          string `json:"version"`
+	ExecutableSHA256 string `json:"executable_sha256"`
 }
 
 // ConfidenceDimensions keeps measurement evidence, workload representativeness,
@@ -151,7 +170,7 @@ type ConfidenceDimensions struct {
 
 func BuildAssessment(e campaign.Result, goal *capacitygoal.Goal) (Assessment, error) {
 	audit := AuditCampaign(e)
-	assessment := Assessment{SchemaVersion: 4, Audit: audit, Confidence: assessConfidence(e, audit), State: audit.State}
+	assessment := Assessment{SchemaVersion: 6, Audit: audit, Confidence: assessConfidence(e, audit), State: audit.State}
 	if goal != nil {
 		plan, err := Evaluate(e, *goal)
 		if err != nil {
@@ -251,6 +270,8 @@ func AuditCampaign(e campaign.Result) CampaignAudit {
 		ExecutionState:         original.ExecutionState,
 		EvidenceID:             evidenceDigest(original),
 		Scenario:               e.Scenario,
+		DeclaredEnvironment:    e.DeclaredEnvironment,
+		WorkloadSource:         e.WorkloadSource,
 		TestedBaseUsers:        e.BaseUsers,
 		HostType:               "NOT_RECORDED",
 		GeneratorRuntimeStatus: "UNKNOWN", GeneratorCapacityStatus: "UNKNOWN", GeneratorEnvironments: []GeneratorEnvironment{},
@@ -267,6 +288,22 @@ func AuditCampaign(e campaign.Result) CampaignAudit {
 	}
 	a.GeneratorEnvironments, a.GeneratorRuntimeStatus, a.GeneratorCapacityStatus = summarizeGeneratorEnvironments(e)
 	a.ObservationTrials, a.ObservationSpread = recomputeObservationEvidence(e)
+	if a.ObservationSpread != nil && e.SchemaVersion >= 14 {
+		// Recompute the robust repeat-level summary from saved observation
+		// phases; persisted aggregate fields are never treated as authority.
+		var p95s []float64
+		for _, observation := range a.ObservationTrials {
+			p95s = append(p95s, observation.RequestP95MS)
+		}
+		if median, mad, ok := campaign.SummarizeRobustRepeatSpread(p95s); ok {
+			a.ObservationSpread.RequestP95MedianMS = median
+			a.ObservationSpread.RequestP95MADMS = mad
+			a.ObservationSpread.RequestP95RobustLowerMS = math.Max(0, median-3*mad)
+			a.ObservationSpread.RequestP95RobustUpperMS = median + 3*mad
+			a.ObservationSpread.RequestP95RobustMethod = "MEDIAN_PLUS_MINUS_3_MAD"
+			a.ObservationSpread.RequestP95RobustAssumption = "INDEPENDENT_OBSERVATION_PHASES_DESCRIPTIVE_ONLY"
+		}
+	}
 	a.SpreadConsistency = observationSpreadConsistency(e, a.ObservationSpread)
 	a.Repeatability = summarizeRepeatability(e.Trials)
 	if a.SpreadConsistency == "MISMATCHED" {
@@ -321,6 +358,16 @@ func AuditCampaign(e campaign.Result) CampaignAudit {
 	if len(e.Trials) > 0 && len(e.Trials[0].Phases) > 0 {
 		a.Target = e.Trials[0].Phases[0].Run.Target
 	}
+	var identityMissing bool
+	a.IdentityStatus, a.WorkloadRevision, a.ApplicationRevision, a.DeclaredEnvironment, identityMissing = campaignIdentity(e)
+	if a.IdentityStatus == "CHANGED" {
+		a.Findings = append(a.Findings, "Scenario identity or declared environment changes between required phases; results cannot be treated as one scenario/environment observation.")
+		if identityMissing {
+			a.Findings = append(a.Findings, "One or more required phases also lack workload revision, application revision, or environment identity metadata.")
+		}
+	} else if a.IdentityStatus == "UNKNOWN" {
+		a.Findings = append(a.Findings, "Workload revision, application revision, or environment identity is missing from one or more required phases; scenario identity is not established.")
+	}
 	if len(e.Trials) > 0 {
 		for _, phase := range e.Trials[0].Phases {
 			if phase.Name != "warmup" {
@@ -351,7 +398,10 @@ func AuditCampaign(e campaign.Result) CampaignAudit {
 		return a
 	}
 
-	invalid, inconclusive, limited := a.State == "INVALID_EVIDENCE", a.GeneratorRuntimeStatus == "CHANGED" || a.GeneratorCapacityStatus == "CHANGED", false
+	invalid, inconclusive, limited := a.State == "INVALID_EVIDENCE", a.GeneratorRuntimeStatus == "CHANGED" || a.GeneratorCapacityStatus == "CHANGED" || a.IdentityStatus == "CHANGED", false
+	if a.IdentityStatus == "UNKNOWN" {
+		inconclusive = true
+	}
 	for _, trial := range e.Trials {
 		for _, phase := range trial.Phases {
 			if phase.Name == "warmup" {
@@ -385,9 +435,18 @@ func AuditCampaign(e campaign.Result) CampaignAudit {
 				a.Findings = append(a.Findings, fmt.Sprintf("Trial %d %s claims %s measurement quality but recomputes to %s.", trial.Number, phase.Name, phase.Run.Quality.State, quality.State))
 			}
 			if e.SchemaVersion >= 2 {
-				if phase.EvidenceState != state || ((phase.Name == "observation" || phase.Name == "soak") && phase.Stability != stability) {
+				legacyClassification := e.SchemaVersion == 2 || e.SchemaVersion == 4
+				legacyStability := legacyClassification
+				if (!legacyClassification && phase.EvidenceState != state) || ((phase.Name == "observation" || phase.Name == "soak") && !legacyStability && phase.Stability != stability) {
 					invalid = true
 					a.Findings = append(a.Findings, fmt.Sprintf("Trial %d %s has stale or altered stage evidence.", trial.Number, phase.Name))
+				}
+				if legacyClassification && !validHistoricalPhaseState(phase.EvidenceState) {
+					invalid = true
+					a.Findings = append(a.Findings, fmt.Sprintf("Trial %d %s has an unsupported historical phase classification.", trial.Number, phase.Name))
+				} else if legacyClassification && phase.EvidenceState != state {
+					inconclusive = true
+					a.Findings = append(a.Findings, fmt.Sprintf("Trial %d %s historical %s classification conflicts with the current recomputed %s result.", trial.Number, phase.Name, phase.EvidenceState, state))
 				}
 			}
 			if state == "INVALID_DELIVERY" || state == "INSUFFICIENT_EVIDENCE" || stability == "NON_STATIONARY" || stability == "INSUFFICIENT_WINDOWS" {
@@ -429,6 +488,15 @@ func AuditCampaign(e campaign.Result) CampaignAudit {
 		a.Findings = append(a.Findings, "All recorded mandatory stages met their observed objectives; statistical and workload-specific certification remain separate decisions.")
 	}
 	return a
+}
+
+func validHistoricalPhaseState(value string) bool {
+	switch value {
+	case "INVALID_DELIVERY", "PASS_OBSERVED", "FAIL_OBSERVED", "INSUFFICIENT_EVIDENCE":
+		return true
+	default:
+		return false
+	}
 }
 
 func summarizeGeneratorEnvironments(e campaign.Result) ([]GeneratorEnvironment, string, string) {
@@ -492,6 +560,38 @@ func summarizeGeneratorEnvironments(e campaign.Result) ([]GeneratorEnvironment, 
 		capacityStatus = "UNKNOWN"
 	}
 	return rows, identityStatus, capacityStatus
+}
+
+func campaignIdentity(e campaign.Result) (status, workloadRevision, applicationRevision, environment string, missing bool) {
+	seen := false
+	changed := false
+	for _, trial := range e.Trials {
+		for _, phase := range trial.Phases {
+			if phase.Name == "warmup" {
+				continue
+			}
+			run := phase.Run.Config
+			if strings.TrimSpace(run.WorkloadRevision) == "" || strings.TrimSpace(run.ApplicationRevision) == "" || strings.TrimSpace(run.Environment) == "" {
+				missing = true
+				continue
+			}
+			if !seen {
+				workloadRevision, applicationRevision, environment = run.WorkloadRevision, run.ApplicationRevision, run.Environment
+				seen = true
+				continue
+			}
+			if run.WorkloadRevision != workloadRevision || run.ApplicationRevision != applicationRevision || run.Environment != environment {
+				changed = true
+			}
+		}
+	}
+	if changed {
+		return "CHANGED", "", "", "", missing
+	}
+	if !seen || missing {
+		return "UNKNOWN", "", "", "", missing
+	}
+	return "CONSISTENT", workloadRevision, applicationRevision, environment, false
 }
 
 func summarizeRepeatability(trials []campaign.Trial) RepeatabilityEvidence {
@@ -577,8 +677,10 @@ func recomputeObservationEvidence(e campaign.Result) ([]ObservationTrial, *campa
 			run := phase.Run
 			observation := ObservationTrial{
 				Trial: trial.Number, Requests: run.Metrics.Total, RequestP95MS: run.Metrics.P95MS,
+				RequestP99MS: run.Metrics.P99MS, RequestP99IntervalState: string(run.Metrics.P99RankIntervalState()),
 				RequestErrorRate: observedErrorRate(run.Metrics), CompletedJourneys: run.Journeys.Total,
-				JourneyP95MS: run.Journeys.P95MS, JourneyErrorRate: observedErrorRate(run.Journeys),
+				JourneyP95MS: run.Journeys.P95MS, JourneyP99MS: run.Journeys.P99MS,
+				JourneyP99IntervalState: string(run.Journeys.P99RankIntervalState()), JourneyErrorRate: observedErrorRate(run.Journeys),
 				SuccessfulJourneysPerSec: report.SuccessfulJourneysPerSecond(run),
 			}
 			observations = append(observations, observation)
@@ -610,6 +712,11 @@ func observedErrorRate(metrics report.MetricSet) *float64 {
 }
 
 func observationSpreadConsistency(e campaign.Result, recomputed *campaign.Variability) string {
+	if e.SchemaVersion < 3 && e.ObservationVariability != nil {
+		// Schema v2 predates journey-throughput fields. Its decoded zero values
+		// are absent evidence, so the full modern summary cannot be compared.
+		return "NOT_RECORDED"
+	}
 	if recomputed == nil {
 		if e.ObservationVariability == nil {
 			return "NO_OBSERVATIONS"
@@ -619,7 +726,17 @@ func observationSpreadConsistency(e campaign.Result, recomputed *campaign.Variab
 	if e.ObservationVariability == nil {
 		return "NOT_RECORDED"
 	}
-	if *e.ObservationVariability != *recomputed {
+	want := *recomputed
+	got := *e.ObservationVariability
+	// Campaign schemas added fields over time. Compare only values that the
+	// artifact version actually recorded; zero-valued fields introduced later
+	// are missing evidence, not evidence of an observed zero.
+	if e.SchemaVersion < 14 {
+		want.RequestP95MedianMS, want.RequestP95MADMS = got.RequestP95MedianMS, got.RequestP95MADMS
+		want.RequestP95RobustLowerMS, want.RequestP95RobustUpperMS = got.RequestP95RobustLowerMS, got.RequestP95RobustUpperMS
+		want.RequestP95RobustMethod, want.RequestP95RobustAssumption = got.RequestP95RobustMethod, got.RequestP95RobustAssumption
+	}
+	if got != want {
 		return "MISMATCHED"
 	}
 	return "MATCHED"

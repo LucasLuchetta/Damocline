@@ -2,10 +2,12 @@ package reference
 
 import (
 	"bytes"
+	"crypto/tls"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -40,6 +42,33 @@ func TestControlSnapshotDoesNotEnterWorkRequestLedger(t *testing.T) {
 	_ = response.Body.Close()
 	if response.StatusCode != http.StatusOK || h.Snapshot().Received != 1 || h.Snapshot().Completed != 1 {
 		t.Fatalf("work request was not independently counted: status=%d snapshot=%+v", response.StatusCode, h.Snapshot())
+	}
+}
+
+func TestSnapshotCountsAcceptedTLSConnectionsWithoutRequest(t *testing.T) {
+	h, err := New(Config{MaxConcurrent: 1, MaxRequests: 10, Profiles: []WorkloadProfile{
+		{ID: "synthetic-get", CounterID: "synthetic-shape", Method: http.MethodGet, Path: "/matrix/get", ResponseBodyBytes: 1},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewUnstartedServer(h)
+	server.Config.ConnContext = h.ConnContext
+	server.StartTLS()
+	defer server.Close()
+
+	transport := server.Client().Transport.(*http.Transport)
+	conn, err := tls.Dial("tcp", strings.TrimPrefix(server.URL, "https://"), transport.TLSClientConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := conn.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	snapshot := h.Snapshot()
+	if snapshot.AcceptedTLSConnections != 1 || snapshot.ProfileTCPConnections["/matrix/get"] != 0 || snapshot.Received != 0 {
+		t.Fatalf("accepted TLS socket without a request was not represented independently: %+v", snapshot)
 	}
 }
 

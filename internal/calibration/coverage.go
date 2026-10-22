@@ -295,6 +295,9 @@ func AssessScenario(s config.Scenario, rec Record, local Runtime, now time.Time)
 			break
 		}
 	}
+	if !rateMatched && mode == "arrival" && exactProfileControlsMatch(rec.Fixture.WorkloadProfiles, s, connectionPolicy) {
+		rateMatched = true
+	}
 	if mode != "arrival" || !rateMatched {
 		add("arrival_rate", "OUTSIDE_REFERENCE", "Only exact recorded arrival rates are eligible; rates are not interpolated.")
 	} else {
@@ -367,10 +370,11 @@ func AssessScenario(s config.Scenario, rec Record, local Runtime, now time.Time)
 		add("timing", "OUTSIDE_REFERENCE", "Timeout, ramp-up or think time differs from the fixture.")
 	}
 	u, parseErr := url.Parse(s.BaseURL)
-	if parseErr == nil && u.Scheme == "http" && u.User == nil && u.Path == "" && u.RawQuery == "" && u.Fragment == "" && net.ParseIP(u.Hostname()) != nil && net.ParseIP(u.Hostname()).Equal(net.ParseIP("127.0.0.1")) {
-		add("declared_transport", "MATCHED", "The URL declares unencrypted IPv4 loopback; server identity is unverified.")
+	if parseErr == nil && (u.Scheme == "http" || u.Scheme == "https") && u.User == nil && u.Path == "" && u.RawQuery == "" && u.Fragment == "" && net.ParseIP(u.Hostname()) != nil && net.ParseIP(u.Hostname()).Equal(net.ParseIP("127.0.0.1")) &&
+		(u.Scheme == "http" || exactProfileControlsMatch(rec.Fixture.WorkloadProfiles, s, connectionPolicy)) {
+		add("declared_transport", "MATCHED", "The URL declares IPv4 loopback transport covered by a matching local profile; server identity remains unverified.")
 	} else {
-		add("declared_transport", "OUTSIDE_REFERENCE", "Only unencrypted IPv4 loopback was tested.")
+		add("declared_transport", "OUTSIDE_REFERENCE", "Only IPv4 loopback HTTP and exact trusted HTTPS fixture profiles were exercised; remote network behavior remains unverified.")
 	}
 	add("response_shape", "UNVERIFIED", "Calibrated response sizes are recorded for local profiles, but the scenario does not prove the target's actual response-size or timing distribution.")
 	add("fixture_identity", "UNVERIFIED", "No authenticated signal proves the configured endpoint is the measured fixture server.")
@@ -474,10 +478,14 @@ func exactArrivalProfileDuration(s config.Scenario, rate int, rec Record) (strin
 	if timeout == "" {
 		timeout = "8s"
 	}
+	transportScheme := "http"
+	if target, err := url.Parse(s.BaseURL); err == nil && target.Scheme != "" {
+		transportScheme = target.Scheme
+	}
 	for _, profile := range rec.Fixture.WorkloadProfiles {
 		if profile.ArrivalRate == rate && profile.MaxRPS == s.MaxRPS && profile.Users == s.Users &&
 			profile.Timeout == timeout && profile.ConnectionPolicy == connectionPolicy &&
-			profile.Mode == "arrival" && profile.TransportScheme == "http" {
+			profile.Mode == "arrival" && profile.TransportScheme == transportScheme {
 			return profile.Duration, true
 		}
 	}
@@ -671,9 +679,14 @@ func exactProfileControlsMatch(profiles []WorkloadProfile, s config.Scenario, co
 	if s.MaxConnectionsPerHost != 0 {
 		return false
 	}
+	transportScheme := "http"
+	if target, err := url.Parse(s.BaseURL); err == nil && target.Scheme != "" {
+		transportScheme = target.Scheme
+	}
 	for _, profile := range profiles {
 		if profile.ArrivalRate == s.ArrivalRate && profile.MaxRPS == s.MaxRPS && profile.Users == s.Users &&
-			profile.Duration == s.Duration && profile.Timeout == s.Timeout && profile.ConnectionPolicy == connectionPolicy {
+			profile.Duration == s.Duration && profile.Timeout == s.Timeout && profile.ConnectionPolicy == connectionPolicy &&
+			profile.TransportScheme == transportScheme {
 			return true
 		}
 	}

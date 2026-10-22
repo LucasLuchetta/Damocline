@@ -132,6 +132,23 @@ func TestCampaignExportsDropFreeTextAndPreservePhaseMetrics(t *testing.T) {
 	if exported.Kind != "open_arrival_campaign" || exported.Workload.JourneyStartsPS != 7 || exported.Workload.WorkerLimit != 20 {
 		t.Fatalf("open-arrival units were not preserved separately: %+v", exported.Workload)
 	}
+	policy := campaign.DefaultStabilityPolicy()
+	contract := campaign.ObjectiveContract{Version: 1, JourneyScope: "AGGREGATE_AND_EACH_WORKFLOW", JourneyP95LimitMS: 500,
+		MaxJourneyErrorRate: .1, MinSamplesPerStep: 1, MinCompletedWorkRatio: 1, MinimumObservationWindows: policy.MinimumWindows,
+		MinimumSamplesPerWindow: policy.MinimumSamplesPerWindow, WindowDuration: "10s"}
+	arrival.SchemaVersion = arrivalcampaign.CurrentSchemaVersion
+	arrival.Objectives, arrival.StabilityPolicy = &contract, &policy
+	arrival.Target = "https://app.example.com"
+	data, err = Marshal(FromArrivalCampaign(arrival))
+	if err != nil || !strings.Contains(string(data), `"predeclared_objectives"`) || !strings.Contains(string(data), `"stability_policy"`) {
+		t.Fatalf("current open-arrival export omitted replayable objectives: err=%v export=%s", err, data)
+	}
+	contract.JourneyScope = secret
+	arrival.Objectives = &contract
+	data, err = Marshal(FromArrivalCampaign(arrival))
+	if err != nil || strings.Contains(string(data), secret) || strings.Contains(string(data), `"predeclared_objectives"`) {
+		t.Fatalf("invalid caller-controlled objective contract escaped the redacted export: err=%v export=%s", err, data)
+	}
 }
 
 func TestExplorerExportsPreserveLoadUnitsAndDropPrivateText(t *testing.T) {

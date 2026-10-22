@@ -128,7 +128,9 @@ func TestConnectionPoolQueueWaitIsMeasuredAndReported(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	v.Duration = 350 * time.Millisecond
+	// Keep enough observation time for the first 2 RPS slot even when the
+	// Windows runner is briefly descheduled while the full suite is running.
+	v.Duration = 2 * time.Second
 	r := Run(context.Background(), v)
 	if len(r.Steps) != 1 || r.Steps[0].HTTPTrace.ConnectionWaitCount == 0 || r.Steps[0].HTTPTrace.ConnectionWaitMS < 10 {
 		t.Fatalf("limited transport did not retain a reused-connection wait: %+v", r.Steps)
@@ -150,7 +152,7 @@ func TestConnectionPoolQueueWaitIsMeasuredAndReported(t *testing.T) {
 	}
 }
 
-func TestHTTPTraceReconcilesFailedWriteAndTransportError(t *testing.T) {
+func TestHTTPTraceReconcilesImmediateConnectionRefusal(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		<-r.Context().Done()
 	}))
@@ -167,11 +169,79 @@ func TestHTTPTraceReconcilesFailedWriteAndTransportError(t *testing.T) {
 		t.Fatalf("expected a recorded local transport failure: %+v", r.Steps)
 	}
 	step := r.Steps[0]
-	if step.HTTPTrace.CompleteCount != step.HTTPTrace.RequestAttemptCount || step.HTTPTrace.RateWaitCount < step.HTTPTrace.CompleteCount || step.HTTPTrace.CompleteMS <= 0 {
+	if step.HTTPTrace.CompleteCount != step.HTTPTrace.RequestAttemptCount || step.HTTPTrace.RateWaitCount < step.HTTPTrace.CompleteCount {
 		t.Fatalf("transport-failure phase counters did not reconcile: %+v", step.HTTPTrace)
 	}
 	if r.Quality == nil || r.Quality.State == report.QualityInvalid {
 		t.Fatalf("valid failed-request trace must not make accounting invalid: %+v", r.Quality)
+	}
+}
+
+func TestHTTPTraceMeasuresAndSerializesDelayedTransportFailure(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var accepted atomic.Int64
+	var connections sync.WaitGroup
+	acceptDone := make(chan struct{})
+	go func() {
+		defer close(acceptDone)
+		for {
+			conn, acceptErr := listener.Accept()
+			if acceptErr != nil {
+				return
+			}
+			accepted.Add(1)
+			connections.Add(1)
+			go func() {
+				defer connections.Done()
+				defer conn.Close()
+				time.Sleep(35 * time.Millisecond)
+			}()
+		}
+	}()
+
+	v := scenario(t, "http://"+listener.Addr().String(), []config.Step{{Name: "delayed-close", Path: "/"}})
+	v.Duration = 350 * time.Millisecond
+	v.Timeout = 200 * time.Millisecond
+	v.Scenario.Users = 1
+	v.Scenario.MaxRPS = 2
+	r := Run(context.Background(), v)
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	<-acceptDone
+	connections.Wait()
+
+	if len(r.Steps) != 1 || r.Steps[0].Metrics.Failures == 0 {
+		t.Fatalf("expected a recorded delayed loopback transport failure: %+v", r.Steps)
+	}
+	step := r.Steps[0]
+	trace := step.HTTPTrace
+	if trace.RequestAttemptCount == 0 || trace.CompleteCount != trace.RequestAttemptCount || trace.RateWaitCount < trace.CompleteCount || trace.WriteCount != trace.CompleteCount || trace.FirstByteCount != 0 {
+		t.Fatalf("delayed transport-failure phases did not reconcile: trace=%+v", trace)
+	}
+	if accepted.Load() != int64(trace.RequestAttemptCount) {
+		t.Fatalf("independent accepted-connection ledger does not reconcile: accepted=%d trace=%+v", accepted.Load(), trace)
+	}
+	if trace.CompleteMS < float64(trace.CompleteCount)*20 {
+		t.Fatalf("known server-side delay was not retained in full-request timing: trace=%+v", trace)
+	}
+	if r.Quality == nil || r.Quality.State == report.QualityInvalid {
+		t.Fatalf("accounted delayed transport failures must remain arithmetically valid: %+v", r.Quality)
+	}
+
+	encoded, err := json.Marshal(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded report.Result
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if got := decoded.Steps[0].HTTPTrace.CompleteMS; got <= 0 || got != trace.CompleteMS {
+		t.Fatalf("serialized full-request timing changed: got %.6f ms, want %.6f ms", got, trace.CompleteMS)
 	}
 }
 

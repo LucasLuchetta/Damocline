@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/LucasLuchetta/Damocline/internal/campaign"
 	"github.com/LucasLuchetta/Damocline/internal/config"
 	"github.com/LucasLuchetta/Damocline/internal/generatorhealth"
 	"github.com/LucasLuchetta/Damocline/internal/report"
@@ -42,6 +43,41 @@ func TestWithRunnerKeepsArrivalScheduleAndAbortsWithinBudget(t *testing.T) {
 	}
 }
 
+func TestWithRunnerPersistsConfiguredStabilityPolicy(t *testing.T) {
+	base := validatedArrival(t)
+	policy := campaign.DefaultStabilityPolicy()
+	policy.MaxP95IncreasePercent = 75
+	policy.MaxP95IncreaseMS = 25
+	result, err := WithRunner(context.Background(), base, Options{
+		Observation: 10 * time.Second, Recovery: 10 * time.Second, Repeats: 2, Stability: policy,
+	}, func(_ context.Context, phase config.Validated) report.Result {
+		return syntheticArrivalPhase(phase, "PASS")
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.StabilityPolicy == nil || *result.StabilityPolicy != policy || result.Objectives == nil ||
+		result.Objectives.MinimumObservationWindows != policy.MinimumWindows || result.Objectives.MinimumSamplesPerWindow != policy.MinimumSamplesPerWindow {
+		t.Fatalf("configured arrival stability policy was not persisted with matching objectives: policy=%+v objectives=%+v", result.StabilityPolicy, result.Objectives)
+	}
+}
+
+func TestValidateRejectsInvalidStabilityPolicyBeforeTraffic(t *testing.T) {
+	base := validatedArrival(t)
+	policy := campaign.DefaultStabilityPolicy()
+	policy.MaxP95IncreaseMS = -1
+	called := false
+	_, err := WithRunner(context.Background(), base, Options{
+		Observation: 10 * time.Second, Recovery: 10 * time.Second, Repeats: 2, Stability: policy,
+	}, func(context.Context, config.Validated) report.Result {
+		called = true
+		return report.Result{Outcome: "PASS"}
+	})
+	if err == nil || called {
+		t.Fatalf("invalid arrival stability policy reached traffic: called=%v err=%v", called, err)
+	}
+}
+
 func TestCooldownSeparatesArrivalTrialsAndPersistsRunIDs(t *testing.T) {
 	base := validatedArrival(t)
 	cooldown := 25 * time.Millisecond
@@ -62,7 +98,11 @@ func TestCooldownSeparatesArrivalTrialsAndPersistsRunIDs(t *testing.T) {
 	})
 	if err != nil || result.Outcome != "PASS" || result.Cooldown != cooldown.String() || len(result.Trials) != 2 ||
 		result.Trials[0].RunID == "" || result.Trials[0].RunID == result.Trials[1].RunID || len(trialStarts) != 2 || trialStarts[1].Sub(trialStarts[0]) < cooldown {
-		t.Fatalf("arrival cooldown or independent trial identity was not preserved: starts=%v result=%+v err=%v", trialStarts, result, err)
+		t.Fatalf("arrival campaign = outcome=%s calls=%d quality=%+v", result.Outcome, calls, report.AssessQuality(result.Trials[0].Phases[0].Run))
+	}
+	if result.Objectives == nil || result.StabilityPolicy == nil || result.Objectives.JourneyScope != "AGGREGATE_AND_EACH_WORKFLOW" ||
+		result.Objectives.MinimumObservationWindows != result.StabilityPolicy.MinimumWindows || result.Objectives.MinimumSamplesPerWindow != result.StabilityPolicy.MinimumSamplesPerWindow {
+		t.Fatalf("arrival campaign did not persist its matching predeclared objective and stability contracts: objectives=%+v stability=%+v", result.Objectives, result.StabilityPolicy)
 	}
 	if len(snapshots) < 7 || snapshots[len(snapshots)-1].ExecutionState != "COMPLETED" {
 		t.Fatalf("arrival campaign did not persist its final state: %+v", snapshots)
@@ -131,7 +171,7 @@ func TestArrivalCampaignRunsRecoveryAfterObservedSpikeFailure(t *testing.T) {
 		return syntheticArrivalPhase(v, outcome)
 	})
 	if err != nil || result.Outcome != "FAIL" || len(rates) != 3 || rates[0] != 1 || rates[1] != 2 || rates[2] != 1 {
-		t.Fatalf("spike failure did not retain its recovery phase: outcome=%s rates=%v err=%v", result.Outcome, rates, err)
+		t.Fatalf("spike campaign = outcome=%s rates=%v phase=%+v err=%v", result.Outcome, rates, result.Trials[0].Phases[0], err)
 	}
 	phases := result.Trials[0].Phases
 	if len(phases) != 3 || phases[0].Name != "observation" || phases[1].Name != "spike" || phases[1].EvidenceState != "FAIL_OBSERVED" || phases[2].Name != "recovery" || phases[2].Run.Outcome != "PASS" {
@@ -141,35 +181,45 @@ func TestArrivalCampaignRunsRecoveryAfterObservedSpikeFailure(t *testing.T) {
 
 func syntheticArrivalPhase(v config.Validated, outcome string) report.Result {
 	run := report.Result{
-		SchemaVersion: 15, Name: v.Scenario.Name, Target: v.Base.Scheme + "://" + v.Base.Host,
+		SchemaVersion: report.CurrentSchemaVersion, StatisticalMethods: report.CurrentStatisticalMethods(),
+		GeneratorIdentity: report.GeneratorIdentity{OS: "linux", Architecture: "amd64", GoVersion: "go1.24.0", RunnerIdentityMethod: "git_commit", RunnerIdentity: strings.Repeat("a", 40)},
+		Name:              v.Scenario.Name, Target: v.Base.Scheme + "://" + v.Base.Host,
 		Outcome: outcome, ElapsedSeconds: v.Duration.Seconds(), ObservationSeconds: v.Duration.Seconds(),
 		Config: report.RunConfig{Mode: "arrival", Users: v.Scenario.Users, ArrivalRate: v.Scenario.ArrivalRate,
 			MaxRPS: v.Scenario.MaxRPS, P95LimitMS: v.Scenario.P95LimitMS, MaxErrorRate: v.Scenario.MaxErrorRate,
 			MinSamplesPerStep: v.Scenario.MinSamplesPerStep, RequestTimeout: v.Scenario.Timeout,
-			Duration: v.Duration.String(), WindowDuration: v.Window.String(), WorkloadFingerprint: v.WorkloadFingerprint},
-		Metrics:   report.MetricSet{Total: 80, Success: 80, P95MS: 100},
-		Journeys:  report.MetricSet{Total: 80, Success: 80, P95MS: 100},
-		Generator: &generatorhealth.Summary{Samples: 5, GoCPUValid: true, ProcessSamples: 5, ProcessCPUValid: true},
+			Duration: v.Duration.String(), WindowDuration: v.Window.String(), WorkloadFingerprint: v.WorkloadFingerprint, ConnectionPolicy: "reuse"},
+		Metrics:           report.MetricSet{Total: 100, Success: 100, P95MS: 100, P99MS: 100, HTTP: report.HTTPDiagnostics{FailureClassificationVersion: 1, StatusCodes: map[int]int{200: 100}, Status2xx: 100}, ResponseBody: report.ResponseBodyDiagnostics{CompleteObservations: 100}},
+		Journeys:          report.MetricSet{Total: 100, Success: 100, P95MS: 100, P99MS: 100},
+		Steps:             []report.StepResult{{Name: "read", Method: http.MethodGet, Metrics: report.MetricSet{Total: 100, Success: 100, P95MS: 100, P99MS: 100, HTTP: report.HTTPDiagnostics{FailureClassificationVersion: 1, StatusCodes: map[int]int{200: 100}, Status2xx: 100}, ResponseBody: report.ResponseBodyDiagnostics{CompleteObservations: 100}}, HTTPTrace: report.HTTPTrace{RequestAttemptCount: 100, CompleteCount: 100, WriteCount: 100, DNSStartCount: 100, RateWaitCount: 100, DNSCount: 100, ConnectCount: 100, ConnectStartCount: 100, TLSCount: 100, TLSStartCount: 100, FirstByteCount: 100, BodyCount: 100}}},
+		Generator:         &generatorhealth.Summary{Samples: 5, GoCPUValid: true, GOMAXPROCS: 1, CPUCapacityCores: 1, CPUCapacitySource: "test", CPUCapacityKnown: true, LogicalCPUs: 1, ObservedSeconds: 10, SamplingIntervalMS: 1000, MaxSampleGapMS: 1000, GoCPUCapacitySeconds: 10, PeakHeapAllocBytes: 1, PeakGoroutines: 1, ProcessSamples: 5, ProcessCPUSamples: 5, ProcessCPUValid: true, PeakProcessRSSBytes: 1},
+		ArrivalsScheduled: 100, ArrivalsAdmitted: int64Pointer(100), ArrivalsCancelledBeforeAdmission: int64Pointer(0), SchedulerLagSamples: 100, SchedulerLagMethod: "test",
+		IterationsStarted: 100, IterationsCompleted: 100,
 	}
 	if outcome == "FAIL" {
-		run.Metrics.Success, run.Metrics.Failures = 0, 80
-		run.Journeys.Success, run.Journeys.Failures = 0, 80
+		run.Metrics.Success, run.Metrics.Failures = 0, 100
+		run.Journeys.Success, run.Journeys.Failures = 0, 100
+		run.Steps[0].Metrics.Success, run.Steps[0].Metrics.Failures = 0, 100
 	}
 	windowCount := int((v.Duration + v.Window - 1) / v.Window)
 	for index := 0; index < windowCount; index++ {
 		window := report.WindowResult{
 			StartSeconds: float64(index) * v.Window.Seconds(), EndSeconds: min(float64(index+1)*v.Window.Seconds(), v.Duration.Seconds()),
-			Metrics:  report.MetricSet{Total: 20, Success: 20, P95MS: 100},
-			Journeys: report.MetricSet{Total: 20, Success: 20, P95MS: 100},
+			Metrics:  report.MetricSet{Total: 20, Success: 20, P95MS: 100, P99MS: 100, HTTP: report.HTTPDiagnostics{FailureClassificationVersion: 1, StatusCodes: map[int]int{200: 20}, Status2xx: 20}, ResponseBody: report.ResponseBodyDiagnostics{CompleteObservations: 20}},
+			Journeys: report.MetricSet{Total: 20, Success: 20, P95MS: 100, P99MS: 100},
+			Steps:    []report.WindowMetric{{Name: "read", Metrics: report.MetricSet{Total: 20, Success: 20, P95MS: 100, P99MS: 100, HTTP: report.HTTPDiagnostics{FailureClassificationVersion: 1, StatusCodes: map[int]int{200: 20}, Status2xx: 20}, ResponseBody: report.ResponseBodyDiagnostics{CompleteObservations: 20}}}},
 		}
 		if outcome == "FAIL" {
 			window.Metrics.Success, window.Metrics.Failures = 0, 20
+			window.Steps[0].Metrics.Success, window.Steps[0].Metrics.Failures = 0, 20
 			window.Journeys.Success, window.Journeys.Failures = 0, 20
 		}
 		run.Windows = append(run.Windows, window)
 	}
 	return run
 }
+
+func int64Pointer(value int64) *int64 { return &value }
 
 func TestValidateRequiresBudgetToCoverBoundedPhaseDrains(t *testing.T) {
 	base := validatedArrival(t)
@@ -253,7 +303,7 @@ func TestWithRunnerPreservesTrialAndPhaseSchedule(t *testing.T) {
 	defer server.Close()
 	base, err := config.Parse(config.Scenario{
 		Name: "arrival-campaign-loopback", BaseURL: server.URL, Users: 2, Mode: "arrival", ArrivalRate: 1,
-		Duration: "10s", WindowDuration: "2s", MaxRPS: 10, Timeout: "2s", P95LimitMS: 5000, MaxErrorRate: .1,
+		Duration: "10s", WindowDuration: "2s", MaxRPS: 20, Timeout: "2s", P95LimitMS: 5000, MaxErrorRate: .1,
 		MinSamplesPerStep: 1, Steps: []config.Step{{Name: "read", Method: http.MethodGet, Path: "/", ExpectedStatus: []int{http.StatusOK}}},
 	}, config.Options{Authorized: true})
 	if err != nil {
@@ -362,7 +412,7 @@ func validatedArrival(t *testing.T) config.Validated {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
 	t.Cleanup(server.Close)
 	base, err := config.Parse(config.Scenario{Name: "bounded", BaseURL: server.URL, Users: 2, Mode: "arrival", ArrivalRate: 1,
-		Duration: "10s", WindowDuration: "2s", MaxRPS: 10, Timeout: "2s", P95LimitMS: 5000, MaxErrorRate: .1, MinSamplesPerStep: 1,
+		Duration: "10s", WindowDuration: "2s", MaxRPS: 20, Timeout: "2s", P95LimitMS: 5000, MaxErrorRate: .1, MinSamplesPerStep: 1,
 		Steps: []config.Step{{Name: "read", Method: http.MethodGet, Path: "/", ExpectedStatus: []int{http.StatusOK}}}}, config.Options{Authorized: true})
 	if err != nil {
 		t.Fatal(err)

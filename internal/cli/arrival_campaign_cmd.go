@@ -13,6 +13,7 @@ import (
 	"github.com/LucasLuchetta/Damocline/internal/appmetrics"
 	"github.com/LucasLuchetta/Damocline/internal/arrivalcampaign"
 	"github.com/LucasLuchetta/Damocline/internal/calibration"
+	"github.com/LucasLuchetta/Damocline/internal/campaign"
 	"github.com/LucasLuchetta/Damocline/internal/capacitygoal"
 	"github.com/LucasLuchetta/Damocline/internal/config"
 	"github.com/LucasLuchetta/Damocline/internal/engine"
@@ -38,6 +39,11 @@ func arrivalCampaignCmd(args []string, stdout, stderr io.Writer) int {
 	maxGeneratorRSSMB := fs.Uint64("max-generator-rss-mb", 0, "abort when sampled generator process RSS exceeds this MiB limit (0 disables)")
 	guardrailSamples := fs.Int("resource-guardrail-samples", 2, "consecutive process samples required to trigger resource aborts (2-20)")
 	repeats := fs.Int("repeats", 2, "independent trials (2-5)")
+	minWindows := fs.Int("stability-min-windows", 3, "minimum complete windows for the drift screen (3-20)")
+	minSamples := fs.Int("stability-min-samples", 20, "minimum completed samples in each window (20-100000)")
+	maxP95IncreasePercent := fs.Float64("stability-max-p95-increase-percent", 20, "maximum p95 increase before drift is reported (>0-100)")
+	maxP95IncreaseMS := fs.Float64("stability-max-p95-increase-ms", 5, "minimum absolute p95 increase before drift is reported (0-10000)")
+	maxThroughputDropPercent := fs.Float64("stability-max-throughput-drop-percent", 20, "maximum throughput decrease before drift is reported (>0-100)")
 	budget := fs.Duration("budget", 0, "maximum wall-time cap including drains (15m; long-run mode up to 2h)")
 	peak := fs.Int("peak-journeys-per-second", 0, "business peak scheduled journey-start demand/s")
 	growth := fs.Float64("growth-percent", 0, "projected demand growth percent")
@@ -102,6 +108,7 @@ func arrivalCampaignCmd(args []string, stdout, stderr io.Writer) int {
 	}
 	options := arrivalcampaign.Options{Warmup: *warmup, Stabilization: *stabilization, Observation: *observation, SpikeRate: *spikeRate, SpikeDuration: *spikeDuration,
 		Recovery: *recovery, Soak: *soak, Cooldown: *cooldown, Repeats: *repeats, Budget: *budget, PeakRate: *peak, GrowthPercent: *growth, ReservePercent: *reserve,
+		Stability:  campaign.StabilityPolicy{MinimumWindows: *minWindows, MinimumSamplesPerWindow: *minSamples, MaxP95IncreasePercent: *maxP95IncreasePercent, MaxP95IncreaseMS: *maxP95IncreaseMS, MaxThroughputDropPercent: *maxThroughputDropPercent},
 		Guardrails: guardrails,
 		LongRun:    *longRun, StagingConfirmed: *stagingConfirmed}
 	if err := arrivalcampaign.Validate(config.Validated{Scenario: scenario}, options); err != nil {

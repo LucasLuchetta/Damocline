@@ -4,6 +4,7 @@ package reference
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"io"
@@ -42,21 +43,22 @@ type WorkloadProfile struct {
 }
 
 type Snapshot struct {
-	Received              int64
-	Completed             int64
-	Success               int64
-	Failures              int64
-	Cancelled             int64
-	Rejected              int64
-	PeakConcurrent        int64
-	PeakQueued            int64
-	RequestBodyBytes      int64
-	ResponseBodyBytes     int64
-	ProfileTCPConnections map[string]int64 `json:"profile_tcp_connections,omitempty"`
-	ProfileReceived       map[string]int64 `json:"profile_received,omitempty"`
-	ProfileCompleted      map[string]int64 `json:"profile_completed,omitempty"`
-	ProfileRequestBytes   map[string]int64 `json:"profile_request_body_bytes,omitempty"`
-	ProfileResponseBytes  map[string]int64 `json:"profile_response_body_bytes,omitempty"`
+	Received               int64
+	Completed              int64
+	Success                int64
+	Failures               int64
+	Cancelled              int64
+	Rejected               int64
+	PeakConcurrent         int64
+	PeakQueued             int64
+	AcceptedTLSConnections int64 `json:"accepted_tls_connections,omitempty"`
+	RequestBodyBytes       int64
+	ResponseBodyBytes      int64
+	ProfileTCPConnections  map[string]int64 `json:"profile_tcp_connections,omitempty"`
+	ProfileReceived        map[string]int64 `json:"profile_received,omitempty"`
+	ProfileCompleted       map[string]int64 `json:"profile_completed,omitempty"`
+	ProfileRequestBytes    map[string]int64 `json:"profile_request_body_bytes,omitempty"`
+	ProfileResponseBytes   map[string]int64 `json:"profile_response_body_bytes,omitempty"`
 }
 
 type acceptedConnectionContextKey struct{}
@@ -74,6 +76,7 @@ type Handler struct {
 	queued                 atomic.Int64
 	peakActive             atomic.Int64
 	peakQueued             atomic.Int64
+	acceptedTLSConnections atomic.Int64
 	requestBodyBytes       atomic.Int64
 	responseBodyBytes      atomic.Int64
 	nextConnectionID       atomic.Int64
@@ -139,7 +142,10 @@ func New(config Config) (*Handler, error) {
 // ConnContext assigns a server-side identity to each accepted TCP connection.
 // Configure it as http.Server.ConnContext to count distinct connections that
 // carry requests for each synthetic fixture path.
-func (h *Handler) ConnContext(ctx context.Context, _ net.Conn) context.Context {
+func (h *Handler) ConnContext(ctx context.Context, conn net.Conn) context.Context {
+	if _, ok := conn.(*tls.Conn); ok {
+		h.acceptedTLSConnections.Add(1)
+	}
 	return context.WithValue(ctx, acceptedConnectionContextKey{}, h.nextConnectionID.Add(1))
 }
 
@@ -287,7 +293,8 @@ func (h *Handler) Snapshot() Snapshot {
 		Received: h.received.Load(), Completed: h.completed.Load(), Success: h.success.Load(),
 		Failures: h.failures.Load(), Cancelled: h.cancelled.Load(), Rejected: h.rejected.Load(),
 		PeakConcurrent: h.peakActive.Load(), PeakQueued: h.peakQueued.Load(),
-		RequestBodyBytes: h.requestBodyBytes.Load(), ResponseBodyBytes: h.responseBodyBytes.Load(),
+		AcceptedTLSConnections: h.acceptedTLSConnections.Load(),
+		RequestBodyBytes:       h.requestBodyBytes.Load(), ResponseBodyBytes: h.responseBodyBytes.Load(),
 		ProfileTCPConnections: profileConnections, ProfileReceived: profileReceived, ProfileCompleted: profileCompleted,
 		ProfileRequestBytes: profileRequestBytes, ProfileResponseBytes: profileResponseBytes,
 	}

@@ -19,6 +19,7 @@ import (
 	"github.com/LucasLuchetta/Damocline/internal/capacityplan"
 	"github.com/LucasLuchetta/Damocline/internal/explorer"
 	"github.com/LucasLuchetta/Damocline/internal/insights"
+	"github.com/LucasLuchetta/Damocline/internal/jsonartifact"
 	"github.com/LucasLuchetta/Damocline/internal/report"
 	"github.com/LucasLuchetta/Damocline/internal/reportexport"
 )
@@ -46,6 +47,10 @@ func reportExportCmd(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "cannot read source artifact: %v\n", err)
 		return 2
 	}
+	if err := jsonartifact.RejectDuplicateKeys(data); err != nil {
+		fmt.Fprintf(stderr, "source artifact contains ambiguous JSON: %v\n", err)
+		return 2
+	}
 	var shape struct {
 		SchemaVersion      *int            `json:"schema_version"`
 		ArrivalCampaign    *int            `json:"arrival_campaign_schema_version"`
@@ -56,6 +61,16 @@ func reportExportCmd(args []string, stdout, stderr io.Writer) int {
 	}
 	if err := json.Unmarshal(data, &shape); err != nil {
 		fmt.Fprintf(stderr, "invalid source artifact JSON: %v\n", err)
+		return 2
+	}
+	if shape.ArrivalCampaign != nil {
+		if err := arrivalcampaign.ValidateArtifactJSON(data); err != nil {
+			fmt.Fprintf(stderr, "arrival campaign has incomplete evidence: %v\n", err)
+			return 2
+		}
+	}
+	if err := report.ValidateMetricCountersInArtifactJSON(data); err != nil {
+		fmt.Fprintf(stderr, "source artifact has incomplete metric evidence: %v\n", err)
 		return 2
 	}
 	var evidence reportexport.Evidence
@@ -77,6 +92,10 @@ func reportExportCmd(args []string, stdout, stderr io.Writer) int {
 		}
 		evidence = reportexport.FromArrivalCampaign(saved)
 	case shape.BaseUsers != nil:
+		if err := capacityplan.ValidateCampaignArtifact(data); err != nil {
+			fmt.Fprintf(stderr, "closed-loop campaign has incomplete evidence: %v\n", err)
+			return 2
+		}
 		var saved campaign.Result
 		if json.Unmarshal(data, &saved) != nil || capacityplan.ValidateSavedCampaign(saved) != nil {
 			fmt.Fprintln(stderr, "closed-loop campaign is invalid or unsupported")
@@ -85,6 +104,10 @@ func reportExportCmd(args []string, stdout, stderr io.Writer) int {
 		evidence = reportexport.FromClosedCampaign(saved)
 	case shape.SchemaVersion != nil && len(shape.Probes) > 0 && string(shape.Probes) != "null":
 		if shape.JourneyWorkerLimit != nil {
+			if err := arrivalexplorer.ValidateArtifactJSON(data); err != nil {
+				fmt.Fprintf(stderr, "arrival exploration has incomplete evidence: %v\n", err)
+				return 2
+			}
 			var saved arrivalexplorer.Result
 			if json.Unmarshal(data, &saved) != nil {
 				fmt.Fprintln(stderr, "arrival exploration is invalid or unsupported")
@@ -100,6 +123,10 @@ func reportExportCmd(args []string, stdout, stderr io.Writer) int {
 			}
 			evidence = reportexport.FromArrivalExplorer(saved)
 		} else {
+			if err := explorer.ValidateArtifactJSON(data); err != nil {
+				fmt.Fprintf(stderr, "closed-loop exploration has incomplete evidence: %v\n", err)
+				return 2
+			}
 			var saved explorer.Result
 			if json.Unmarshal(data, &saved) != nil {
 				fmt.Fprintln(stderr, "closed-loop exploration is invalid or unsupported")
