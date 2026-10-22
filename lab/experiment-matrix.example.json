@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "replicates": 3,
+  "observation": "20s",
+  "recovery": "10s",
+  "variants": [
+    {
+      "name": "baseline-2vu",
+      "users": 2,
+      "max_rps": 100,
+      "target_delay_ms": 50,
+      "target_parallel": 4,
+      "target_queue": 16,
+      "p95_limit_ms": 1000,
+      "max_error_rate": 0.01
+    },
+    {
+      "name": "constrained-2vu",
+      "users": 2,
+      "max_rps": 100,
+      "target_delay_ms": 50,
+      "target_parallel": 1,
+      "target_queue": 4,
+      "p95_limit_ms": 1000,
+      "max_error_rate": 0.01
+    }
+  ]
+}

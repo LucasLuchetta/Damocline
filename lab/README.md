@@ -276,3 +276,36 @@ These whole-container readings supplement the host sensor where Docker Desktop
 does not expose target cgroups. Host UTC is not calibrated against the engine's
 monotonic phase timer, and boundary grouping is approximate. Docker polling
 overhead is not measured; these metrics are diagnostic, not causal evidence.
+
+## Fast local experiment matrix
+
+Use `run-matrix.ps1` with `experiment-matrix.example.json` to run bounded,
+parameterized experiments against independent local `damocline-labtarget`
+processes. Run it from Windows PowerShell with `curl.exe` available. The runner
+builds the CLI and target once, randomizes the order with
+a recorded seed, creates a fresh target and port for every replicate, captures
+campaign and offline-audit artifacts, and writes a matrix manifest. Each
+campaign contains two observation trials; `replicates` controls independent
+fresh-process campaigns per variant. Change users, target delay, target
+parallelism/queue, request ceiling, and SLOs in the matrix file.
+
+`-MaxParallel` controls the number of simultaneous target/generator workers
+(1-8). The default is four for faster exploratory matrices. Each run is capped
+at 1,000 virtual users, 1,000 RPS, 60 seconds of observation and recovery,
+20 fresh-process replicates per variant, and 100 total workers per invocation.
+All workers still
+share one physical machine, so contention between workers is part of the
+environment and can bias latency or generator health. Record the concurrency
+level, avoid treating shared-host parallel runs as independent-host capacity
+evidence, and repeat decision-grade confirmation under controlled resource
+conditions. The matrix is a fast experimental harness, not a substitute for a
+representative application workload or a qualified generator envelope.
+
+Example:
+
+```powershell
+.\lab\run-matrix.ps1 -Matrix .\lab\experiment-matrix.example.json -MaxParallel 4 -Seed 42
+```
+
+Artifacts are local under `lab/artifacts/matrix/` and should remain private
+unless reviewed for environment-specific values.
