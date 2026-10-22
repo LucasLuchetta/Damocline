@@ -17,6 +17,8 @@ The name evokes the **Sword of Damocles**: apparently stable systems can have li
 > [!IMPORTANT]
 > **Experimental advanced HTTP engine:** native closed-loop and arrival-rate scheduling, repeated virtual-user capacity exploration, independent cookie sessions, Linux CPU/RAM sampling, and UTC report correlation are available. Manual temporary browser login is experimental. Automatic login replay, full-browser load tests, per-container telemetry, and universal generator-ceiling certification are not implemented. A passing test is **not** a universal maximum-users claim.
 
+An optional Linux `damocline-sensor` service can expose bounded host and selected process/cgroup readings to authorized experiments. It is separate from the load generator and requires a bearer token; sensor coverage does not identify bottlenecks or certify capacity.
+
 The CLI also provides a bounded repeated `arrival-campaign` for open-loop journey-start rates. It preserves scheduled starts/s as a separate unit from worker limits, completed journeys/s, and HTTP requests/s; current external run quality still does not certify sustainable capacity.
 
 ## The problem
