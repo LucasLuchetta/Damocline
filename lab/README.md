@@ -289,9 +289,17 @@ campaign contains two observation trials; `replicates` controls independent
 fresh-process campaigns per variant. Change users, target delay, target
 parallelism/queue, request ceiling, and SLOs in the matrix file.
 
+On Windows, each worker also writes a resource sidecar with sampled host
+CPU/memory and target/generator process CPU/working set, approximately aligned
+to campaign phases. The sidecar preserves actual sample intervals and missing
+counter gaps. Host CPU and memory are machine-wide and repeated for each worker;
+they are not attributable to an individual campaign. Process CPU uses
+cumulative `Get-Process` processor-time ticks. Polling overhead is unmeasured,
+so these samples are diagnostic covariates rather than causal evidence.
+
 `-MaxParallel` controls the number of simultaneous target/generator workers
 (1-8). The default is four for faster exploratory matrices. Each run is capped
-at 1,000 virtual users, 1,000 RPS, 60 seconds of observation and recovery,
+at 50 virtual users, 100 RPS, 60 seconds of observation and recovery,
 20 fresh-process replicates per variant, and 100 total workers per invocation.
 All workers still
 share one physical machine, so contention between workers is part of the

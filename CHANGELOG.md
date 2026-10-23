@@ -350,3 +350,4 @@ This project follows a human-maintained changelog. No release exists yet.
 - Separate candidate-level and predeclared-failure p95/error ranges in capacity assessments instead of presenting different load levels as one repeatability range; retain zero-error minima.
 - Link each campaign, phase, and measurement-quality row in protocol Markdown directly to its campaign evidence digest.
 - Report declared peak demand, growth, reserve, and signed conditional arithmetic margin separately from any operational demand margin.
+- Capture sampled Windows host and per-worker process CPU/memory in bounded local experiment-matrix resource sidecars, preserving sample gaps and shared-host limitations.
