@@ -33,6 +33,15 @@ const (
 	SamplerCollectionWallLimit = 0.05
 )
 
+// HasRequiredCPUSamples checks CPU source availability, not headroom or full
+// sampler coverage. Schema v33 requires OS process CPU but permits an unavailable
+// Go CPU-class estimate; earlier schemas retain their original requirement.
+func HasRequiredCPUSamples(r Result) bool {
+	g := r.Generator
+	return g != nil && g.Samples >= 2 && g.ProcessSamples >= 2 && g.ProcessCPUValid &&
+		(g.GoCPUValid || r.SchemaVersion >= 33)
+}
+
 // GeneratorEvidenceIssue reports whether a short workload-level comparison
 // lacks delivery, process-health, or headroom evidence. A nonempty result means
 // a failed stage cannot be attributed to the application from this report.
@@ -54,8 +63,7 @@ func GeneratorCapacityIssue(r Result) string {
 	if r.SchemaVersion >= 31 && (!HasValidGeneratorIdentity(r) || r.GeneratorIdentity.RunnerIdentityMethod == "unavailable") {
 		return "Generator runtime or executable identity is incomplete."
 	}
-	if r.Metrics.Total <= 0 || r.Generator == nil || r.Generator.Samples < 2 || !r.Generator.GoCPUValid ||
-		r.Generator.ProcessSamples < 2 || !r.Generator.ProcessCPUValid || r.Generator.PeakProcessRSSBytes == 0 {
+	if r.Metrics.Total <= 0 || !HasRequiredCPUSamples(r) || r.Generator.PeakProcessRSSBytes == 0 {
 		return "Generator process health evidence is incomplete."
 	}
 	if r.ArrivalsDropped > 0 || r.ArrivalsDroppedLate > 0 || r.ArrivalsDroppedBusy > 0 ||
@@ -66,7 +74,7 @@ func GeneratorCapacityIssue(r Result) string {
 	if r.Config.MaxRPS <= 0 || r.WindowSeconds() <= 0 {
 		return "Configured request ceiling or observation duration is missing."
 	}
-	if r.Generator.GoCPUUtilizationRatio >= GeneratorUtilizationGuard || r.Generator.MeanProcessCPUUtilizationRatio >= GeneratorUtilizationGuard {
+	if (r.Generator.GoCPUValid && r.Generator.GoCPUUtilizationRatio >= GeneratorUtilizationGuard) || r.Generator.MeanProcessCPUUtilizationRatio >= GeneratorUtilizationGuard {
 		return "Generator CPU reached the project's conservative utilization guardrail."
 	}
 	if float64(r.Metrics.Total)/r.WindowSeconds() >= GeneratorUtilizationGuard*float64(r.Config.MaxRPS) {
@@ -255,9 +263,9 @@ func AssessQuality(r Result) *Quality {
 		r.ArrivalsDropped > 0 || r.Outcome == "ABORTED" {
 		limit("Work was cancelled or offered demand was not completely delivered.")
 	}
-	if r.Generator == nil || r.Generator.Samples < 2 || !r.Generator.GoCPUValid {
+	if r.Generator == nil || r.Generator.Samples < 2 || (r.SchemaVersion < 33 && !r.Generator.GoCPUValid) {
 		limit("Generator runtime sampling is unavailable or inadequate.")
-	} else if r.Generator.GoCPUUtilizationRatio >= 0.9 {
+	} else if r.Generator.GoCPUValid && r.Generator.GoCPUUtilizationRatio >= 0.9 {
 		limit("Generator runtime CPU may be saturated.")
 	}
 	if r.Generator == nil || r.Generator.ProcessSamples < 2 || !r.Generator.ProcessCPUValid {
@@ -298,6 +306,10 @@ func AssessQuality(r Result) *Quality {
 	}
 	if r.SchemaVersion >= 10 && r.Generator != nil {
 		g := r.Generator
+		if r.SchemaVersion >= 33 && !g.GoCPUValid &&
+			(g.GoCPUBusySeconds != 0 || g.GoCPUCapacitySeconds != 0 || g.GoCPUUtilizationRatio != 0) {
+			invalidate("Unavailable Go runtime CPU estimate retains numeric observations.")
+		}
 		values := []float64{g.ObservedSeconds, g.SamplingIntervalMS, g.SampleCollectionTotalMS, g.SampleCollectionMaxMS, g.MaxSampleGapMS, g.GoCPUBusySeconds, g.GoCPUCapacitySeconds, g.GoCPUUtilizationRatio, g.PeakProcessCPUUtilizationRatio, g.MeanProcessCPUUtilizationRatio}
 		for _, value := range values {
 			if math.IsNaN(value) || math.IsInf(value, 0) || value < 0 {

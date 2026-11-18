@@ -345,11 +345,10 @@ func classify(r report.Result, scenario config.Validated) (string, string) {
 		return "INVALID_DELIVERY", "Scheduled starts or configured journeys were dropped or cancelled; offered workload was not fully delivered."
 	}
 	if r.Metrics.Total <= 0 || r.Config.MaxRPS <= 0 || r.WindowSeconds() <= 0 || r.Generator == nil ||
-		r.Generator.Samples < 2 || !r.Generator.GoCPUValid || r.Generator.ProcessSamples < 2 ||
-		!r.Generator.ProcessCPUValid || r.Generator.PeakProcessRSSBytes == 0 {
+		!report.HasRequiredCPUSamples(r) || r.Generator.PeakProcessRSSBytes == 0 {
 		return "INSUFFICIENT_EVIDENCE", "The probe lacks request, duration, or generator process-health evidence."
 	}
-	if r.Generator.GoCPUUtilizationRatio >= generatorUtilizationGuard ||
+	if (r.Generator.GoCPUValid && r.Generator.GoCPUUtilizationRatio >= generatorUtilizationGuard) ||
 		r.Generator.MeanProcessCPUUtilizationRatio >= generatorUtilizationGuard {
 		return "INVALID_DELIVERY", "Generator CPU reached the conservative utilization guardrail."
 	}

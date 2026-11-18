@@ -245,8 +245,12 @@ func (a *accumulator) finish() Summary {
 		busyBegin := a.base.cpuTotal - a.base.cpuIdle
 		busyEnd := a.latest.cpuTotal - a.latest.cpuIdle
 		busyDelta := busyEnd - busyBegin
+		totalDelta := a.latest.cpuTotal - a.base.cpuTotal
+		idleDelta := a.latest.cpuIdle - a.base.cpuIdle
 		capacity := secs * capacityCores(a.base)
-		if busyDelta >= 0 && busyDelta <= capacity*1.05 {
+		// Runtime CPU-class counters may still describe the last GC snapshot.
+		// A stationary source does not establish idle CPU in this window.
+		if totalDelta > 0 && idleDelta >= 0 && idleDelta <= totalDelta && busyDelta >= 0 && busyDelta <= capacity*1.05 {
 			s.GoCPUBusySeconds = busyDelta
 			s.GoCPUCapacitySeconds = capacity
 			s.GoCPUUtilizationRatio = busyDelta / capacity

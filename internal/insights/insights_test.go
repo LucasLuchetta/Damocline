@@ -791,6 +791,10 @@ func TestSupportedReportSchemaGoldensRoundTrip(t *testing.T) {
 				if got.StatisticalMethods != report.CurrentStatisticalMethods() || got.Metrics.P99RankIntervalState() != report.P99IntervalInsufficient {
 					t.Fatal("schema-v32 p99 method or low-sample state was not preserved")
 				}
+			case 33:
+				if got.Generator == nil || got.Generator.GoCPUValid || !got.Generator.ProcessCPUValid || got.Generator.MeanProcessCPUUtilizationRatio != .25 {
+					t.Fatal("schema-v33 measured process CPU and unavailable runtime estimate were not preserved")
+				}
 			}
 		})
 	}

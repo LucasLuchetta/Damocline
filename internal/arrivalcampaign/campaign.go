@@ -566,10 +566,10 @@ func ClassifyEvidence(run report.Result) (string, string) {
 		return "INSUFFICIENT_EVIDENCE", "The native arrival phase did not establish a conclusive SLO result."
 	}
 	if run.Metrics.Total <= 0 || run.Config.MaxRPS <= 0 || run.WindowSeconds() <= 0 || run.Generator == nil ||
-		run.Generator.Samples < 2 || !run.Generator.GoCPUValid || run.Generator.ProcessSamples < 2 || !run.Generator.ProcessCPUValid {
+		!report.HasRequiredCPUSamples(run) {
 		return "INSUFFICIENT_EVIDENCE", "Arrival delivery or generator health evidence is incomplete."
 	}
-	if run.Generator.GoCPUUtilizationRatio >= generatorUtilizationGuard || run.Generator.MeanProcessCPUUtilizationRatio >= generatorUtilizationGuard ||
+	if (run.Generator.GoCPUValid && run.Generator.GoCPUUtilizationRatio >= generatorUtilizationGuard) || run.Generator.MeanProcessCPUUtilizationRatio >= generatorUtilizationGuard ||
 		float64(run.Metrics.Total)/run.WindowSeconds() >= generatorUtilizationGuard*float64(run.Config.MaxRPS) {
 		return "INVALID_DELIVERY", "Generator CPU or the configured client request ceiling may limit the offered arrival rate."
 	}

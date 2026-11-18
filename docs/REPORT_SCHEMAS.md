@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-The engine currently emits schema v32. The `insights` reader accepts v1 through v32 and rejects unknown future versions. Historical reports are read into the current Go model without rewriting the original file; fields introduced after a report's schema version remain absent and are not evidence of a measured zero.
+The engine currently emits schema v33. The `insights` reader accepts v1 through v33 and rejects unknown future versions. Historical reports are read into the current Go model without rewriting the original file; fields introduced after a report's schema version remain absent and are not evidence of a measured zero.
 
 | Version | Fields introduced or versioned | Compatibility meaning |
 | --- | --- | --- |
@@ -37,8 +37,24 @@ The engine currently emits schema v32. The `insights` reader accepts v1 through 
 | v30 | Declares nearest-rank latency percentiles and the exact binomial order-statistic method for 95% p95 rank intervals, with the IID/stationarity assumption. Exact intervals are marked per metric set; historical normal-rank intervals remain explicitly labeled as approximations. | Exact binomial rank coverage is conservative under IID observations. Temporal or actor-level dependence can still make the nominal interval under-cover; a deterministic clustered simulation demonstrates this limitation. Computation is bounded to one million samples; above that, no rank interval is emitted. |
 | v31 | Path-free generator identity: OS, architecture, Go version, and either full source commit, full executable SHA-256, module version, or explicit unavailability. | Identity compares runner builds, not physical hosts, target identity, hardware model, or operating-system image. Missing identity is unknown for historical schemas; malformed or absent v31 identity is invalid. |
 | v32 | Adds exact binomial 95% p99 order-statistic rank intervals and fixed method metadata to run reports. | An interval is recorded only from 1,000 through 1,000,000 observations, with at least ten expected observations in each tail. The IID/stationarity assumption is conditional and does not establish independence, representativeness, or a p99 objective. Below the sample screen, the point p99 remains a descriptive nearest-rank estimate and report views mark `INSUFFICIENT_SAMPLES`. Above the resource cap, they mark `ANALYSIS_RESOURCE_LIMIT`. |
+| v33 | Distinguishes stationary Go CPU counters from valid measured idle CPU; requires OS process CPU while retaining independent pressure signals. | Missing Go estimates remain explicit and cannot replace missing OS process evidence. Legacy CPU requirements remain versioned; other quality gates continue to apply. |
 
 For schema-v11 and newer reports attached to calibration, workload-shape assessment recomputes the fingerprint only for the persisted single-step `GET /work` reference subset. The run fingerprint covers declared step status, text and JSON scalar assertions, but their values are not persisted in reports. Schema-v14 reports record whether the engine reuses connections or opens a new connection per request. The fixed calibration covers reuse only; `new_per_request` is outside its envelope. Other request shapes remain unverified because reports do not retain all request templates or values needed for safe reconstruction. A matching fingerprint is not a signature, endpoint attestation, or general workload-equivalence proof. Schema-v15 and newer reports may report `VALID_WITHIN_ENVELOPE` only for the calibrator's own 30-second loopback soak when calibration, same-executable identity, generator health, response observations and independent server counters reconcile. This qualifies that controlled fixture execution only.
+
+## CPU source availability in v33
+
+Schema v33 requires measured OS process CPU and the existing sample counts.
+An unavailable Go CPU-class estimate does not replace OS measurements or hide
+pressure they establish. Stationary Go GC-snapshot counters remain unavailable,
+not a measured idle window. An unavailable estimate must retain zero numeric
+fields. All process CPU thresholds, entitlement, sampler coverage/cost and
+controlled-reference identity/workload/server-ledger gates remain required.
+
+Schemas v1-v32 retain their original CPU availability checks. No historical
+artifact is rewritten or retroactively qualified. Descriptive redacted exports
+now retain explicit `go_cpu_valid` and `process_cpu_valid` flags so an unavailable
+zero estimate is distinguishable from measured zero CPU. The v33 golden fixture
+preserves measured process CPU alongside an unavailable Go estimate.
 
 ## Reader and fixture policy
 

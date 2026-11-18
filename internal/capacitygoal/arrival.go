@@ -383,14 +383,13 @@ func savedRunCoverageIssue(run report.Result) string {
 }
 
 func savedRunGeneratorIssue(run report.Result) string {
-	if run.Metrics.Total <= 0 || run.Generator == nil || run.Generator.Samples < 2 || !run.Generator.GoCPUValid ||
-		run.Generator.ProcessSamples < 2 || !run.Generator.ProcessCPUValid || run.Generator.PeakProcessRSSBytes == 0 ||
+	if run.Metrics.Total <= 0 || !report.HasRequiredCPUSamples(run) || run.Generator.PeakProcessRSSBytes == 0 ||
 		run.ArrivalsDropped > 0 || run.ArrivalsDroppedLate > 0 || run.ArrivalsDroppedBusy > 0 ||
 		run.ArrivalsCancelledBeforeAdmission == nil || *run.ArrivalsCancelledBeforeAdmission > 0 ||
 		run.Metrics.Cancelled > 0 || run.Journeys.Cancelled > 0 || run.Config.MaxRPS <= 0 || run.WindowSeconds() <= 0 {
 		return "Generator health or complete workload delivery is not established for the exact target."
 	}
-	if run.Generator.GoCPUUtilizationRatio >= generatorUtilizationGuard ||
+	if (run.Generator.GoCPUValid && run.Generator.GoCPUUtilizationRatio >= generatorUtilizationGuard) ||
 		run.Generator.MeanProcessCPUUtilizationRatio >= generatorUtilizationGuard ||
 		float64(run.Metrics.Total)/run.WindowSeconds() >= generatorUtilizationGuard*float64(run.Config.MaxRPS) {
 		return "Generator CPU or the configured client request-rate ceiling may be limiting the exact target."

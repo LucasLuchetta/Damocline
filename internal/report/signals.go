@@ -19,9 +19,11 @@ func DetectSignals(r Result) []Signal {
 	}
 	if r.Generator == nil || r.Generator.Samples < 2 || !r.Generator.GoCPUValid ||
 		!r.Generator.ProcessCPUValid {
-		add("GENERATOR_TELEMETRY_UNAVAILABLE", "client", "Generator CPU/process evidence is missing or unsupported; resource attribution is unknown.")
-	} else if r.Generator.GoCPUUtilizationRatio >= 0.9 ||
-		r.Generator.PeakProcessCPUUtilizationRatio >= 0.9 {
+		add("GENERATOR_TELEMETRY_UNAVAILABLE", "client", "At least one generator CPU source is unavailable; independently valid observations from another source remain usable. This is not target CPU telemetry.")
+	}
+	if g := r.Generator; g != nil && g.Samples >= 2 &&
+		(g.GoCPUValid && g.GoCPUUtilizationRatio >= 0.9 ||
+			g.ProcessCPUValid && (g.PeakProcessCPUUtilizationRatio >= 0.9 || g.MeanProcessCPUUtilizationRatio >= 0.9)) {
 		add("GENERATOR_CPU_PRESSURE", "client", "Sampled local generator CPU is high; this is not proof of a target bottleneck.")
 	}
 	if r.Config.MaxRPS > 0 && r.WindowSeconds() > 0 &&
