@@ -288,12 +288,17 @@ func RunConfigFor(v config.Validated) report.RunConfig {
 }
 
 func runWithTransport(parent context.Context, v config.Validated, transport *http.Transport) report.Result {
-	started := time.Now()
-	runnerIdentityMethod, runnerIdentity := calibration.SourceIdentity()
+	return runWithTransportAndIdentity(parent, v, transport, calibration.SourceIdentity)
+}
+
+func runWithTransportAndIdentity(parent context.Context, v config.Validated, transport *http.Transport, identitySource func() (string, string)) report.Result {
+	// Executable provenance is preparation, not part of the load observation.
+	runnerIdentityMethod, runnerIdentity := identitySource()
 	generatorIdentity := report.GeneratorIdentity{
 		OS: runtime.GOOS, Architecture: runtime.GOARCH, GoVersion: runtime.Version(),
 		RunnerIdentityMethod: runnerIdentityMethod, RunnerIdentity: runnerIdentity,
 	}
+	started := time.Now()
 	scheduleDeadline := started.Add(v.Duration)
 	// Stop admitting new work at the configured boundary, then allow any
 	// already-started journey a bounded time to finish.
@@ -398,12 +403,13 @@ func runWithTransport(parent context.Context, v config.Validated, transport *htt
 				fullyCompleted = false
 				break
 			}
+			rateWait := time.Since(waitStarted)
 			s, extracted := execute(ctx, client, v.Base, v.Timeout, step, variables, &inFlight)
 			if step.Method != http.MethodGet && step.Method != http.MethodHead && s.trace.RequestAttemptCount > 0 {
 				cleanupNeeded = true
 			}
 			s.trace.RateWaitCount = 1
-			s.trace.RateWaitMS = ms(time.Since(waitStarted))
+			s.trace.RateWaitMS = ms(rateWait)
 			coll.add(s)
 			for name, value := range extracted {
 				variables[name] = value
@@ -458,9 +464,10 @@ func runWithTransport(parent context.Context, v config.Validated, transport *htt
 					if !waitToken(cleanupCtx, ticker.C) {
 						break
 					}
+					rateWait := time.Since(waitStarted)
 					s, _ := execute(cleanupCtx, client, v.Base, v.Timeout, step, variables, &inFlight)
 					s.trace.RateWaitCount = 1
-					s.trace.RateWaitMS = ms(time.Since(waitStarted))
+					s.trace.RateWaitMS = ms(rateWait)
 					coll.add(s)
 					if !s.success {
 						journeyOk = false

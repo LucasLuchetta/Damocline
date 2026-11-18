@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Measure rate-token wait only through admission for normal and cleanup steps;
+  exclude executable identity preparation from the load observation clock.
+  Stabilize the delayed transport-failure fixture with one bounded arrival.
+
 - Add a bounded, randomized local experiment-matrix runner with configurable
   lab-target parameters, fresh-process replicates, parallel workers, campaign
   audits, and a manifest that records the randomization seed and concurrency.
