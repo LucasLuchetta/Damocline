@@ -52,3 +52,19 @@ process CPU at least 90%, a client-only pressure signal and LIMITED quality.
 This adds coverage for G0-07/G0-14, not completion: direct sampler CPU-cost
 calibration, advancing snapshot freshness, controlled external host pressure,
 hardware classes and bare-metal Linux remain unverified. See ADR 0132.
+
+## Report serialization resource boundary
+
+The shared writer now inspects plain artifact values, field metadata and
+potential escaped names before encoding, including omitted and embedded fields.
+Its 32 MiB accounting budget and 128-level nesting guard complement the exact
+16 MiB output limit; they are not a process-RSS ceiling. Tests reject callback
+execution, oversized string/map copies and excessive encoded field names.
+Bounded integration fixtures perform 32 accepted 1 MiB writes and 32 rejected
+64 MiB writes with byte/temp-file reconciliation, an 8 MiB retained-heap-growth
+screen and a 256 MiB child peak-RSS screen. Linux additionally exercises a
+kernel EFBIG partial write in an isolated child and verifies destination
+preservation, temporary-file cleanup and a subsequent successful write.
+This is partial G0-09 coverage. Aggregate worker memory, longer engine leaks,
+actual full-disk failure, interrupted replacement and crash durability remain
+unverified. See ADR 0135 for measurement boundaries and previous failed probes.

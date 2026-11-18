@@ -667,11 +667,11 @@ func WriteJSON(path string, r Result) error { return WriteAnyJSON(path, r) }
 // WriteJSONBytes writes an already serialized JSON artifact without changing
 // its bytes. It uses the same size limit and atomic replacement as WriteAnyJSON.
 func WriteJSONBytes(path string, data []byte) error {
+	if len(data) > maxReportBytes {
+		return errReportTooLarge
+	}
 	if !json.Valid(data) {
 		return errors.New("report is not valid JSON")
-	}
-	if len(data) > maxReportBytes {
-		return errors.New("report exceeds the 16 MiB output limit")
 	}
 	return writeReportBytes(path, data)
 }
@@ -679,23 +679,26 @@ func WriteJSONBytes(path string, data []byte) error {
 // WriteJSONBytesExclusive writes a new JSON artifact without replacing an
 // existing destination. It is used for immutable archive entries.
 func WriteJSONBytesExclusive(path string, data []byte) error {
+	if len(data) > maxReportBytes {
+		return errReportTooLarge
+	}
 	if !json.Valid(data) {
 		return errors.New("report is not valid JSON")
-	}
-	if len(data) > maxReportBytes {
-		return errors.New("report exceeds the 16 MiB output limit")
 	}
 	return writeReportBytesExclusive(path, data)
 }
 
 // WriteAnyJSON safely writes redacted report values to a restricted local file.
 func WriteAnyJSON(path string, r any) error {
+	if err := checkReportShape(r); err != nil {
+		return err
+	}
 	data, err := json.MarshalIndent(r, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal report: %w", err)
 	}
 	if len(data)+1 > maxReportBytes {
-		return errors.New("report exceeds the 16 MiB output limit")
+		return errReportTooLarge
 	}
 	data = append(data, '\n')
 	return writeReportBytes(path, data)
