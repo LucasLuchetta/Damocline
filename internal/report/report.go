@@ -31,7 +31,9 @@ import (
 // v30 records percentile methods and exact IID order-statistic rank intervals;
 // v31 records path-free generator runtime and executable provenance; v32 adds
 // conditional exact IID rank intervals for p99 when sample counts permit them.
-const CurrentSchemaVersion = 32
+// Version 33 requires measured OS process CPU and preserves unavailable Go
+// runtime CPU-class estimates as unknown rather than measured idle CPU.
+const CurrentSchemaVersion = 33
 
 // GeneratorIdentity records path-free runtime and executable provenance.
 // It identifies the generator process, not the physical host or target.

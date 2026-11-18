@@ -39,3 +39,16 @@ This matrix records implementation, automated-test and runtime-validation eviden
 ## G0 exit decision
 
 G0 remains **open**. Positive results are established only for the controlled Windows and recorded Docker Desktop/WSL2 loopback soaks. Cross-host/hardware-class equivalence, bare-metal Linux, broad transport/failure matrices, statistical dependence handling, and multiple other G0 acceptance gaps remain.
+
+## CPU source availability correction (schema v33)
+
+Stationary Go CPU-class counters are now unavailable rather than a measured
+idle window. OS process CPU and existing sampler/headroom gates remain required;
+legacy report requirements remain versioned. Deterministic source-availability
+and reader/export fixtures accompany a bounded four-second native-engine CPU
+pressure fixture (20 loopback starts, child GOMAXPROCS=1, 20-second parent
+deadline). The fixture requires independent request reconciliation, measured
+process CPU at least 90%, a client-only pressure signal and LIMITED quality.
+This adds coverage for G0-07/G0-14, not completion: direct sampler CPU-cost
+calibration, advancing snapshot freshness, controlled external host pressure,
+hardware classes and bare-metal Linux remain unverified. See ADR 0132.

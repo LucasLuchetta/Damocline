@@ -546,11 +546,11 @@ func campaignCoverageIssue(run report.Result, requireStableWindows bool) string 
 }
 
 func campaignGeneratorIssue(run report.Result) string {
-	if run.Generator == nil || run.Generator.Samples < 2 || !run.Generator.GoCPUValid || run.Generator.ProcessSamples < 2 || !run.Generator.ProcessCPUValid || run.Generator.PeakProcessRSSBytes == 0 || run.Metrics.Total <= 0 || run.WindowSeconds() <= 0 || run.Config.MaxRPS <= 0 ||
+	if !report.HasRequiredCPUSamples(run) || run.Generator.PeakProcessRSSBytes == 0 || run.Metrics.Total <= 0 || run.WindowSeconds() <= 0 || run.Config.MaxRPS <= 0 ||
 		run.ArrivalsDropped > 0 || run.ArrivalsDroppedLate > 0 || run.ArrivalsDroppedBusy > 0 || run.ArrivalsCancelledBeforeAdmission == nil || *run.ArrivalsCancelledBeforeAdmission > 0 || run.Metrics.Cancelled > 0 || run.Journeys.Cancelled > 0 {
 		return "generator health or complete workload delivery is not established"
 	}
-	if run.Generator.GoCPUUtilizationRatio >= .90 || run.Generator.MeanProcessCPUUtilizationRatio >= .90 || float64(run.Metrics.Total)/run.WindowSeconds() >= .90*float64(run.Config.MaxRPS) {
+	if (run.Generator.GoCPUValid && run.Generator.GoCPUUtilizationRatio >= .90) || run.Generator.MeanProcessCPUUtilizationRatio >= .90 || float64(run.Metrics.Total)/run.WindowSeconds() >= .90*float64(run.Config.MaxRPS) {
 		return "generator or client request-rate guardrail may limit offered load"
 	}
 	return ""

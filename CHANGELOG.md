@@ -91,6 +91,8 @@ This project follows a human-maintained changelog. No release exists yet.
 
 ## [Unreleased]
 
+- Treat stationary Go CPU-class counters as unavailable rather than measured idle CPU. Schema v33 still requires measured OS process CPU and all other headroom gates, preserves legacy CPU availability checks, retains independent client CPU pressure signals, and exports explicit CPU source validity flags. See ADR 0132.
+
 - Add the opt-in `damocline-sensor` Linux service with bearer-authenticated, bounded host and optional process/cgroup observations; remote listeners require TLS and the default bind is loopback.
 - Preserve detected workload/application/environment identity changes when other required campaign phases also lack identity fields, and report both facts; apply the same logic in closed-loop audit and open-arrival goal assessment.
 - Reject current campaign profiles and calibration artifacts that omit required persisted controls or generator/fixture evidence, while preserving schema-versioned historical calibration fields and explicit zero values.
