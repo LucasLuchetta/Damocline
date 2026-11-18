@@ -36,3 +36,30 @@ func TestExportKeepsUnavailableRuntimeCPUDistinctFromMeasuredProcessCPU(t *testi
 		t.Fatal("serialized export omitted the explicit false/true availability flags")
 	}
 }
+
+func TestExportMarksHistoricalMeanCPUUnknownWithoutLosingPeak(t *testing.T) {
+	var health generatorhealth.Summary
+	if err := json.Unmarshal([]byte(`{"process_cpu_valid":true,"peak_process_cpu_utilization_ratio":0.75}`), &health); err != nil {
+		t.Fatal(err)
+	}
+	out := FromRun(report.Result{SchemaVersion: 11, Generator: &health})
+	if !out.Run.Generator.ProcessCPUValid || out.Run.Generator.MeanProcessCPUValid || out.Run.Generator.PeakProcessCPU != .75 {
+		t.Fatal("export lost independent peak/mean availability")
+	}
+	data, err := Marshal(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !json.Valid(data) {
+		t.Fatal("invalid export")
+	}
+	var root map[string]json.RawMessage
+	_ = json.Unmarshal(data, &root)
+	var run map[string]json.RawMessage
+	_ = json.Unmarshal(root["run"], &run)
+	var generator map[string]json.RawMessage
+	_ = json.Unmarshal(run["generator"], &generator)
+	if string(generator["mean_process_cpu_valid"]) != "false" {
+		t.Fatal("export omitted the explicit unavailable-mean flag")
+	}
+}

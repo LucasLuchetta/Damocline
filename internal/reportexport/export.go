@@ -223,14 +223,15 @@ type Scheduler struct {
 }
 
 type Generator struct {
-	Samples          int     `json:"samples"`
-	ObservedSeconds  float64 `json:"observed_seconds"`
-	GoCPUUtilization float64 `json:"go_cpu_utilization_ratio"`
-	GoCPUValid       bool    `json:"go_cpu_valid"`
-	ProcessCPUValid  bool    `json:"process_cpu_valid"`
-	MeanProcessCPU   float64 `json:"mean_process_cpu_utilization_ratio"`
-	PeakProcessCPU   float64 `json:"peak_process_cpu_utilization_ratio"`
-	MaxSampleGapMS   float64 `json:"max_sample_gap_ms"`
+	Samples             int     `json:"samples"`
+	ObservedSeconds     float64 `json:"observed_seconds"`
+	GoCPUUtilization    float64 `json:"go_cpu_utilization_ratio"`
+	GoCPUValid          bool    `json:"go_cpu_valid"`
+	ProcessCPUValid     bool    `json:"process_cpu_valid"`
+	MeanProcessCPUValid bool    `json:"mean_process_cpu_valid"`
+	MeanProcessCPU      float64 `json:"mean_process_cpu_utilization_ratio"`
+	PeakProcessCPU      float64 `json:"peak_process_cpu_utilization_ratio"`
+	MaxSampleGapMS      float64 `json:"max_sample_gap_ms"`
 }
 
 type AppMetrics struct {
@@ -417,7 +418,7 @@ func redactRun(r report.Result) *Run {
 	if r.Generator != nil {
 		out.Generator = &Generator{Samples: r.Generator.Samples, ObservedSeconds: r.Generator.ObservedSeconds,
 			GoCPUUtilization: r.Generator.GoCPUUtilizationRatio, GoCPUValid: r.Generator.GoCPUValid, ProcessCPUValid: r.Generator.ProcessCPUValid,
-			MeanProcessCPU: r.Generator.MeanProcessCPUUtilizationRatio,
+			MeanProcessCPUValid: r.Generator.MeanProcessCPUAvailable(), MeanProcessCPU: r.Generator.MeanProcessCPUUtilizationRatio,
 			PeakProcessCPU: r.Generator.PeakProcessCPUUtilizationRatio, MaxSampleGapMS: r.Generator.MaxSampleGapMS}
 	}
 	if r.ApplicationMetrics != nil {

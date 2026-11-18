@@ -34,11 +34,12 @@ const (
 )
 
 // HasRequiredCPUSamples checks CPU source availability, not headroom or full
-// sampler coverage. Schema v33 requires OS process CPU but permits an unavailable
+// sampler coverage. A recorded OS window mean is required; a peak alone cannot
+// establish it. Schema v33 permits an unavailable
 // Go CPU-class estimate; earlier schemas retain their original requirement.
 func HasRequiredCPUSamples(r Result) bool {
 	g := r.Generator
-	return g != nil && g.Samples >= 2 && g.ProcessSamples >= 2 && g.ProcessCPUValid &&
+	return g != nil && g.Samples >= 2 && g.ProcessSamples >= 2 && g.MeanProcessCPUAvailable() &&
 		(g.GoCPUValid || r.SchemaVersion >= 33)
 }
 
@@ -272,6 +273,9 @@ func AssessQuality(r Result) *Quality {
 		limit("Generator process measurements are missing or unsupported.")
 	}
 	if r.Generator != nil {
+		if r.Generator.MeanProcessCPUUnavailable {
+			limit("Generator window-mean process CPU was not recorded; missing evidence is not measured idle CPU.")
+		}
 		if r.SchemaVersion < 23 && (r.Generator.Guardrails != nil || r.Generator.GuardrailTrigger != nil) {
 			invalidate("Pre-v23 reports cannot carry generator resource guardrail evidence.")
 		}
@@ -339,7 +343,7 @@ func AssessQuality(r Result) *Quality {
 		if r.SchemaVersion >= 19 && (g.LogicalCPUs < 1 || g.CPUCapacityCores > float64(g.LogicalCPUs)) {
 			invalidate("Generator logical CPU and effective-capacity evidence is inconsistent.")
 		}
-		if g.ProcessCPUValid && g.MeanProcessCPUUtilizationRatio >= 0.9 {
+		if g.MeanProcessCPUAvailable() && g.MeanProcessCPUUtilizationRatio >= 0.9 {
 			limit("Mean generator process CPU reached at least 90% of detected CPU capacity; sustained generator headroom is not established.")
 		}
 		if g.SamplingIntervalMS <= 0 || g.Samples < 2 {

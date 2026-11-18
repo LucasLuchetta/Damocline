@@ -70,3 +70,13 @@ preservation, temporary-file cleanup and a subsequent successful write.
 This is partial G0-09 coverage. Aggregate worker memory, longer engine leaks,
 actual full-disk failure, interrupted replacement and crash durability remain
 unverified. See ADR 0135 for measurement boundaries and previous failed probes.
+
+## CPU observation presence in saved artifacts
+
+Schema-v12+ valid CPU claims require explicit numeric observations before typed
+decoding across direct runs, completed/pending campaign phases and exploration
+probes. Historical pre-v12 missing process means remain readable with an unknown
+marker preserved through re-encoding; they cannot qualify CPU headroom. Peak
+pressure remains independent, and insights/redacted exports disclose unknown
+means. This closes one concrete missing-versus-zero path in G0-17; other profile,
+audit and campaign field contracts remain open. See ADR 0136.

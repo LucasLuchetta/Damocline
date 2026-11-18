@@ -1,6 +1,6 @@
 {
   "schema_version": 33,
-  "generator": {"samples":4,"process_samples":4,"go_cpu_valid":false,"process_cpu_valid":true,"mean_process_cpu_utilization_ratio":0.25},
+  "generator": {"samples":4,"process_samples":4,"go_cpu_valid":false,"process_cpu_valid":true,"mean_process_cpu_utilization_ratio":0.25,"peak_process_cpu_utilization_ratio":0.25},
   "statistical_methods": {
     "percentile_estimator": "NEAREST_RANK",
     "p95_interval_method": "EXACT_BINOMIAL_ORDER_STATISTIC_RANKS",
