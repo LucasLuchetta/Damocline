@@ -29,8 +29,11 @@ func TestRateTokenWaitExcludesHTTPExecution(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 	defer cancel()
-	before := time.Now()
-	run := Run(ctx, v)
+	var before time.Time
+	run := runWithTransportAndIdentity(ctx, v, nil, func() (string, string) {
+		before = time.Now()
+		return "git_commit", "0123456789abcdef0123456789abcdef01234567"
+	})
 	if run.Metrics.Success != 1 || len(run.Steps) != 1 {
 		t.Fatalf("single loopback request did not complete: %+v", run.Metrics)
 	}
