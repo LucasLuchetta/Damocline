@@ -64,6 +64,7 @@ func spendJSONString(budget *int, value string) error {
 // artifact writer: arbitrary serialization callbacks are not executed.
 func checkReportShape(value any) error {
 	budget := 2 * maxReportBytes
+	seenTypes := make(map[reflect.Type]bool)
 	var walk func(reflect.Value, int) error
 	walk = func(v reflect.Value, depth int) error {
 		budget -= 1 + 2*depth
@@ -79,6 +80,11 @@ func checkReportShape(value any) error {
 				return errReportResourceBudget
 			}
 			return nil
+		}
+		// Encoder construction inspects nested field types even when values
+		// are nil, empty or omitted. Bound that metadata before encoding too.
+		if err := spendReportTypeMetadata(&budget, v.Type(), seenTypes, 0); err != nil {
+			return err
 		}
 		if v.Kind() == reflect.Interface {
 			if v.IsNil() {
@@ -251,6 +257,11 @@ func checkReportShape(value any) error {
 					if !knownTime && reportTypeImplements(fieldValue.Type(), zeroMethodType) {
 						return errors.New("unsupported custom zero-value method in report")
 					}
+					zeroCost, err := reportZeroInspectionCost(fieldValue.Type(), 0, budget)
+					if err != nil {
+						return err
+					}
+					budget -= zeroCost
 					if fieldValue.IsZero() {
 						continue
 					}
@@ -334,6 +345,84 @@ func spendReportFieldName(budget *int, tagName, fieldName string) error {
 	}
 	*budget = min(fieldBudget, tagBudget)
 	return nil
+}
+
+// The standard encoder constructs nested encoders before checking field values.
+// Charge each reachable type once, including names in omitted/nil descendants.
+func spendReportTypeMetadata(budget *int, typ reflect.Type, seen map[reflect.Type]bool, depth int) error {
+	if seen[typ] {
+		return nil
+	}
+	if depth > 128 {
+		return errReportResourceBudget
+	}
+	*budget -= 64 + 2*depth // type traversal and the visited-set entry
+	if *budget < 0 {
+		return errReportResourceBudget
+	}
+	seen[typ] = true
+	if typ == timeType || typ == rawJSONType || typ == numberType {
+		return nil
+	}
+	switch typ.Kind() {
+	case reflect.Pointer, reflect.Array, reflect.Slice:
+		return spendReportTypeMetadata(budget, typ.Elem(), seen, depth+1)
+	case reflect.Map:
+		if err := spendReportTypeMetadata(budget, typ.Key(), seen, depth+1); err != nil {
+			return err
+		}
+		return spendReportTypeMetadata(budget, typ.Elem(), seen, depth+1)
+	case reflect.Struct:
+		for i := 0; i < typ.NumField(); i++ {
+			field := typ.Field(i)
+			if !field.Anonymous && field.PkgPath != "" {
+				continue
+			}
+			*budget -= len(field.Tag)
+			if *budget < 0 {
+				return errReportResourceBudget
+			}
+			name, _, _ := strings.Cut(field.Tag.Get("json"), ",")
+			if name == "-" {
+				continue
+			}
+			if err := spendReportFieldName(budget, name, field.Name); err != nil {
+				return err
+			}
+			if err := spendReportTypeMetadata(budget, field.Type, seen, depth+1); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// IsZero can inspect every array element and hidden struct field. Bound its
+// possible byte/node work before calling it, including zero-sized elements.
+func reportZeroInspectionCost(typ reflect.Type, depth, limit int) (int, error) {
+	if limit < 1 || depth > 128 || typ.Size() > uintptr(limit) {
+		return 0, errReportResourceBudget
+	}
+	cost := 1
+	switch typ.Kind() {
+	case reflect.Array:
+		if typ.Len() != 0 {
+			itemCost, err := reportZeroInspectionCost(typ.Elem(), depth+1, limit-1)
+			if err != nil || typ.Len() > (limit-1)/itemCost {
+				return 0, errReportResourceBudget
+			}
+			cost += typ.Len() * itemCost
+		}
+	case reflect.Struct:
+		for i := 0; i < typ.NumField(); i++ {
+			fieldCost, err := reportZeroInspectionCost(typ.Field(i).Type, depth+1, limit-cost)
+			if err != nil {
+				return 0, err
+			}
+			cost += fieldCost
+		}
+	}
+	return max(cost, int(typ.Size())), nil
 }
 
 func hasJSONOption(options, want string) bool {

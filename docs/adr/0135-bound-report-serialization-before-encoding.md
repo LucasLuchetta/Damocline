@@ -30,6 +30,10 @@ input cap and are checked for JSON validity, nesting, HTML escaping and pretty
 printing cost. Inspect exported children of unexported embedded structs too. Charge potential
 encoded names even for omitted fields, before the standard encoder can cache
 them; charge tag lookup work and the larger of tag/fallback field names.
+Inspect reachable type metadata once even behind nil/omitted values, because
+the encoder constructs those descendants before considering values. Precharge
+the possible byte/node work of builtin `IsZero`, including hidden fields and
+zero-sized array elements, before testing composite `omitzero` fields.
 Reject arbitrary JSON/text serialization callbacks and custom `IsZero` methods
 used by `omitzero`, including pointer receiver methods. Their allocation and
 execution cannot be bounded by inspecting the underlying value. Ignored fields

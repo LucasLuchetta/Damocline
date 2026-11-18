@@ -76,6 +76,12 @@ func TestReportBudgetPreservesStandardEncodingForArtifactValues(t *testing.T) {
 			Float float64 `json:"float,string"`
 		}{Bool: true, Int: -123, Uint: 456, Float: 1e20},
 		map[int]string{-10: "integer key"}, json.Number("123.456e-2"),
+		struct {
+			Zero struct{ N int } `json:"zero,omitzero"`
+		}{},
+		struct {
+			Zero struct{ N int } `json:"zero,omitzero"`
+		}{Zero: struct{ N int }{N: 1}},
 		map[time.Time]string{at: "time key"}, map[json.Number]int{json.Number("<key>"): 1},
 		[]float64{0, 1e20, 1e-5, 1e-7, math.MaxFloat64}, []float32{1e20, 1e-5},
 		struct {
@@ -225,6 +231,30 @@ func TestReportBudgetCountsJSONNumberMapKeysAsStrings(t *testing.T) {
 	value := map[json.Number]int{json.Number(strings.Repeat("<", 6<<20)): 1}
 	if err := checkReportShape(value); !errors.Is(err, errReportResourceBudget) {
 		t.Fatalf("escaped map key was charged as a numeric literal: %v", err)
+	}
+	runtime.KeepAlive(value)
+}
+
+func TestReportBudgetInspectsTypesBehindOmittedValues(t *testing.T) {
+	inner := reflect.StructOf([]reflect.StructField{{Name: "Value", Type: reflect.TypeFor[string](), Tag: reflect.StructTag(`json:"` + strings.Repeat("<", 6<<20) + `"`)}})
+	for _, fieldType := range []reflect.Type{reflect.PointerTo(inner), reflect.SliceOf(inner), reflect.MapOf(reflect.TypeFor[string](), inner), inner} {
+		root := reflect.StructOf([]reflect.StructField{{Name: "Nested", Type: fieldType, Tag: `json:"nested,omitempty,omitzero"`}})
+		value := reflect.New(root).Elem().Interface()
+		if err := checkReportShape(value); !errors.Is(err, errReportResourceBudget) {
+			t.Fatalf("omitted %s hid excessive encoder metadata: %v", fieldType.Kind(), err)
+		}
+		runtime.KeepAlive(value)
+	}
+}
+
+func TestReportBudgetBoundsCompositeZeroInspection(t *testing.T) {
+	// Zero-sized elements isolate logical work from input allocation. IsZero's
+	// implementation may optimize this today; the guard must not depend on it.
+	value := &struct {
+		Values [64 << 20][0]func() `json:"values,omitzero"`
+	}{}
+	if err := checkReportShape(value); !errors.Is(err, errReportResourceBudget) {
+		t.Fatalf("oversized composite zero inspection escaped its work budget: %v", err)
 	}
 	runtime.KeepAlive(value)
 }

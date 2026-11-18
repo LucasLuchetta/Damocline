@@ -76,7 +76,8 @@ The application-under-test may comprise multiple services. There is no single ph
 
 The shared report writer inspects plain artifact values before JSON encoding.
 A 32 MiB serialization accounting budget and 128-level nesting bound limit
-escaped-string, structural, numeric and indentation work; arbitrary JSON/text
+escaped-string, structural, numeric, reachable-type metadata and indentation
+work, plus composite zero-value inspection; arbitrary JSON/text
 callbacks and custom `omitzero` methods are rejected. Bounded standard-library
 time, number and raw-JSON values remain supported. The exact serialized output
 limit is still 16 MiB, and rejection precedes filesystem changes. The accounting

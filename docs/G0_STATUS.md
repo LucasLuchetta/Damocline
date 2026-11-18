@@ -56,7 +56,9 @@ hardware classes and bare-metal Linux remain unverified. See ADR 0132.
 ## Report serialization resource boundary
 
 The shared writer now inspects plain artifact values, field metadata and
-potential escaped names before encoding, including omitted and embedded fields.
+potential escaped names before encoding, including nil/omitted descendants and
+embedded fields. Builtin composite zero checks are precharged for their possible
+byte/node work, including hidden fields and zero-sized array elements.
 Its 32 MiB accounting budget and 128-level nesting guard complement the exact
 16 MiB output limit; they are not a process-RSS ceiling. Tests reject callback
 execution, oversized string/map copies and excessive encoded field names.
