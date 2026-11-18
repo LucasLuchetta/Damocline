@@ -37,6 +37,11 @@ func TestRateTokenWaitExcludesHTTPExecution(t *testing.T) {
 	if run.Metrics.Success != 1 || len(run.Steps) != 1 {
 		t.Fatalf("single loopback request did not complete: %+v", run.Metrics)
 	}
+	trace := run.Steps[0].HTTPTrace
+	if run.Journeys.Total != 1 || trace.CompleteCount != 1 ||
+		trace.RateWaitMS+trace.CompleteMS > run.Journeys.MeanMS+2 {
+		t.Fatalf("disjoint token wait and HTTP execution exceed their containing journey: wait=%.6f ms http=%.6f ms journey=%.6f ms", trace.RateWaitMS, trace.CompleteMS, run.Journeys.MeanMS)
+	}
 	select {
 	case at := <-received:
 		assertRateWaitEndsBeforeServerReceipt(t, run.Steps[0].HTTPTrace, before, at)
