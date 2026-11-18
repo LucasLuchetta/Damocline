@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Identify modified or non-VCS builds by the complete executable SHA-256.
+  Calibration comparisons retain full source revisions or digests, and
+  module versions alone remain unverified.
+
 - Measure rate-token wait only through admission for normal and cleanup steps;
   exclude executable identity preparation from the load observation clock.
   Stabilize the delayed transport-failure fixture with one bounded arrival.

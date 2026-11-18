@@ -4,6 +4,11 @@
 
 Accepted
 
+Identity selection for new builds is refined by
+[ADR 0134](0134-bind-modified-builds-to-complete-executable-identities.md):
+only explicit clean metadata permits a commit identity, and modified or non-VCS
+builds require the complete executable digest rather than a module version.
+
 ## Context
 
 A campaign can compare measured phases only when the load generator's runtime and effective CPU environment are known to be comparable. Run reports already record Go runtime health and CPU entitlement, but they do not persist an identity for the runtime and executable build. Offline reports therefore cannot tell whether phases ran on the same build. A local filesystem path would create privacy leakage and would not be a portable identity.
