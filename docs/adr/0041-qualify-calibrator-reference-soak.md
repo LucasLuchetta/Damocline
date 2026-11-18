@@ -4,6 +4,10 @@
 
 Accepted (experimental).
 
+The runner identity selection and shortened digests described below are refined
+for new builds by
+[ADR 0134](0134-bind-modified-builds-to-complete-executable-identities.md).
+
 ## Context
 
 Run quality correctly remained LIMITED because normal HTTP reports cannot prove that their target is the local reference fixture. The calibrator does own a separate loopback fixture process and can independently observe its request ledger. A positive result is useful only for qualifying that exact controlled execution and must not upgrade ordinary application runs.

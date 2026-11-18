@@ -297,62 +297,71 @@ var fingerprintPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 var workloadFingerprintPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 var versionPattern = regexp.MustCompile(`^[A-Za-z0-9._@+-]{1,120}$`)
 
-// SourceRunnerVersion records either the VCS source revision or the module
-// build version. It never embeds working-tree paths or local build settings.
-// SourceIdentity returns a path-free identity for the running generator binary.
-// A commit identifies source when VCS build metadata is present; otherwise the
-// complete executable digest identifies the exact bytes that ran.
+// SourceIdentity returns a path-free clean source revision or complete executable
+// digest. Modified builds cannot claim the identity of their base commit.
 func SourceIdentity() (method, identity string) {
 	info, ok := debug.ReadBuildInfo()
-	if ok {
+	if !ok {
+		info = nil
+	}
+	return sourceIdentity(info, executableDigest)
+}
+
+var revisionPattern = regexp.MustCompile(`^[0-9a-fA-F]{40}$`)
+
+func sourceIdentity(info *debug.BuildInfo, digest func() string) (string, string) {
+	var revision string
+	clean := false
+	if info != nil {
 		for _, item := range info.Settings {
-			if item.Key == "vcs.revision" && regexp.MustCompile(`^[0-9a-fA-F]{40}$`).MatchString(item.Value) {
-				return "git_commit", strings.ToLower(item.Value)
+			switch item.Key {
+			case "vcs.revision":
+				if revisionPattern.MatchString(item.Value) {
+					revision = strings.ToLower(item.Value)
+				}
+			case "vcs.modified":
+				clean = item.Value == "false"
 			}
 		}
 	}
-	if executable, err := os.Executable(); err == nil {
-		file, openErr := os.Open(executable)
-		if openErr == nil {
-			defer file.Close()
-			hash := sha256.New()
-			if _, copyErr := io.Copy(hash, file); copyErr == nil {
-				return "executable_sha256", hex.EncodeToString(hash.Sum(nil))
-			}
-		}
+	if revision != "" && clean {
+		return "git_commit", revision
 	}
-	if ok && versionPattern.MatchString(info.Main.Version) && info.Main.Version != "(devel)" {
-		return "module_version", info.Main.Version
+	if value := digest(); fingerprintPattern.MatchString(value) {
+		return "executable_sha256", value
 	}
 	return "unavailable", ""
 }
 
+// SourceRunnerVersion uses full identities for calibration comparison. Historical
+// shortened identities remain readable but cannot match a newly generated one.
 func SourceRunnerVersion() string {
-	info, ok := debug.ReadBuildInfo()
-	if ok {
-		for _, item := range info.Settings {
-			if item.Key == "vcs.revision" && regexp.MustCompile(`^[0-9a-fA-F]{40}$`).MatchString(item.Value) {
-				return "source-" + item.Value[:12]
-			}
-		}
+	method, identity := SourceIdentity()
+	switch method {
+	case "git_commit":
+		return "source-" + identity
+	case "executable_sha256":
+		return "binary-" + identity
+	default:
+		return "source-development"
 	}
-	// Some supported builds do not embed VCS metadata. Bind their runtime
-	// identity to the executable bytes so a same-binary calibration can still
-	// be compared without claiming a source revision.
-	if executable, err := os.Executable(); err == nil {
-		file, openErr := os.Open(executable)
-		if openErr == nil {
-			defer file.Close()
-			hash := sha256.New()
-			if _, copyErr := io.Copy(hash, file); copyErr == nil {
-				return "binary-" + hex.EncodeToString(hash.Sum(nil))[:24]
-			}
-		}
+}
+
+func executableDigest() string {
+	executable, err := os.Executable()
+	if err != nil {
+		return ""
 	}
-	if ok && versionPattern.MatchString(info.Main.Version) && info.Main.Version != "(devel)" {
-		return info.Main.Version
+	file, err := os.Open(executable)
+	if err != nil {
+		return ""
 	}
-	return "source-development"
+	defer file.Close()
+	hash := sha256.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		return ""
+	}
+	return hex.EncodeToString(hash.Sum(nil))
 }
 
 func Fingerprint(fixture Fixture) (string, error) {
