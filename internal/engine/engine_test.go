@@ -202,11 +202,15 @@ func TestHTTPTraceMeasuresAndSerializesDelayedTransportFailure(t *testing.T) {
 		}
 	}()
 
-	v := scenario(t, "http://"+listener.Addr().String(), []config.Step{{Name: "delayed-close", Path: "/"}})
-	v.Duration = 350 * time.Millisecond
-	v.Timeout = 200 * time.Millisecond
-	v.Scenario.Users = 1
-	v.Scenario.MaxRPS = 2
+	v, err := config.Parse(config.Scenario{
+		Name: "delayed transport close", BaseURL: "http://" + listener.Addr().String(),
+		Users: 1, Mode: "arrival", ArrivalRate: 1, Duration: "1s", MaxRPS: 100,
+		Timeout: "200ms", P95LimitMS: 2000, MaxErrorRate: 0, MinSamplesPerStep: 1,
+		Steps: []config.Step{{Name: "delayed-close", Path: "/"}},
+	}, config.Options{Authorized: true})
+	if err != nil {
+		t.Fatal(err)
+	}
 	r := Run(context.Background(), v)
 	if err := listener.Close(); err != nil {
 		t.Fatal(err)
@@ -219,6 +223,13 @@ func TestHTTPTraceMeasuresAndSerializesDelayedTransportFailure(t *testing.T) {
 	}
 	step := r.Steps[0]
 	trace := step.HTTPTrace
+	if r.ArrivalsScheduled != 1 || r.ArrivalsDropped != 0 || trace.RequestAttemptCount != 1 {
+		t.Fatalf("single delayed-close arrival was not reconciled: scheduled=%d dropped=%d trace=%+v", r.ArrivalsScheduled, r.ArrivalsDropped, trace)
+	}
+	if step.Metrics.Total != 1 || step.Metrics.Failures != 1 || step.Metrics.Cancelled != 0 ||
+		step.Metrics.HTTP.TransportFailures != 1 || step.Metrics.HTTP.NetworkTimeouts != 0 {
+		t.Fatalf("delayed close was not classified as the intended transport failure: %+v", step.Metrics)
+	}
 	if trace.RequestAttemptCount == 0 || trace.CompleteCount != trace.RequestAttemptCount || trace.RateWaitCount < trace.CompleteCount || trace.WriteCount != trace.CompleteCount || trace.FirstByteCount != 0 {
 		t.Fatalf("delayed transport-failure phases did not reconcile: trace=%+v", trace)
 	}
