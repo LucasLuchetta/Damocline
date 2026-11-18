@@ -31,6 +31,8 @@ jobs:
           go test ./internal/engine -run '^$' -fuzz '^FuzzQueryEscapeByteLengthMatchesStandardLibrary$' -fuzztime=5s -parallel=2
           go test ./internal/engine -run '^$' -fuzz '^FuzzInterpolateURLNeverReturnsOversizedURL$' -fuzztime=5s -parallel=2
           go test ./internal/jsonartifact -run '^$' -fuzz '^FuzzRejectDuplicateKeysNeverAcceptsInvalidJSON$' -fuzztime=5s -parallel=2
+          go test ./internal/report -run '^$' -fuzz '^FuzzReportJSONStringBudgetMatchesStandardLibrary$' -fuzztime=5s -parallel=2
+          go test ./internal/report -run '^$' -fuzz '^FuzzReportRawJSONBudgetBoundsIndentation$' -fuzztime=5s -parallel=2
       - name: Validate bounded native CPU pressure in isolated Linux container
         run: >-
           docker run --rm --network=none --cpus=2 --memory=1g --pids-limit=128
@@ -38,6 +40,12 @@ jobs:
           golang:1.24.13-bookworm go test -buildvcs=false -tags integration
           ./internal/engine -run '^TestNativeEngineCPUWorkProducesClientPressureSignal$'
           -count=1 -timeout=1m
+      - name: Validate bounded report resources and Linux partial writes
+        run: >-
+          docker run --rm --network=none --cpus=2 --memory=1g --pids-limit=128
+          -e GOMAXPROCS=2 -v "$PWD:/workspace:ro" -w /workspace
+          golang:1.24.13-bookworm go test -buildvcs=false -tags integration
+          ./internal/testresource ./internal/report -count=1 -timeout=2m
       - name: Compile from source (CI only)
         run: go build -o /tmp/damocline-check ./cmd/damocline
       - name: Smoke test source CLI
@@ -118,6 +126,8 @@ jobs:
         run: go test ./...
       - name: Validate bounded native CPU pressure on Windows
         run: go test -buildvcs=false -tags integration ./internal/engine -run '^TestNativeEngineCPUWorkProducesClientPressureSignal$' -count=1 -timeout=1m
+      - name: Validate bounded report resources on Windows
+        run: go test -buildvcs=false -tags integration ./internal/testresource ./internal/report -count=1 -timeout=2m
       - name: Install the source launcher (no packaged EXE)
         shell: pwsh
         run: .\setup.cmd

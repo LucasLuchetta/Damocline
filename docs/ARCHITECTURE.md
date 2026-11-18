@@ -74,6 +74,17 @@ The application-under-test may comprise multiple services. There is no single ph
 
 ## Safety must precede load generation
 
+The shared report writer inspects plain artifact values before JSON encoding.
+A 32 MiB serialization accounting budget and 128-level nesting bound limit
+escaped-string, structural, numeric, reachable-type metadata and indentation
+work, plus composite zero-value inspection; arbitrary JSON/text
+callbacks and custom `omitzero` methods are rejected. Bounded standard-library
+time, number and raw-JSON values remain supported. The exact serialized output
+limit is still 16 MiB, and rejection precedes filesystem changes. The accounting
+budget can conservatively reject models whose final JSON would fit; it is not
+an RSS ceiling. See [ADR 0135](adr/0135-bound-report-serialization-before-encoding.md)
+for the resource fixture and compatibility boundary.
+
 The shipped test commands require explicit authorization for traffic and enforce configured duration, concurrency/rate ceilings, request deadlines, and opt-in write operations. Prefer staging and synthetic data; these controls bound tests but do not establish target ownership or guarantee that every workload is safe for every application.
 
 ## Development boundaries

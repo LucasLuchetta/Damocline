@@ -91,6 +91,8 @@ This project follows a human-maintained changelog. No release exists yet.
 
 ## [Unreleased]
 
+- Bound report serialization before encoding with a conservative 32 MiB accounting budget and 128-level nesting limit. Reject arbitrary serialization callbacks, oversized values and field metadata before output creation; preserve the exact 16 MiB artifact limit and atomic replacement. Add bounded writer-memory and Linux partial-write failure fixtures (ADR 0135).
+
 - Treat stationary Go CPU-class counters as unavailable rather than measured idle CPU. Schema v33 still requires measured OS process CPU and all other headroom gates, preserves legacy CPU availability checks, retains independent client CPU pressure signals, and exports explicit CPU source validity flags. See ADR 0132.
 
 - Add the opt-in `damocline-sensor` Linux service with bearer-authenticated, bounded host and optional process/cgroup observations; remote listeners require TLS and the default bind is loopback.

@@ -4,6 +4,9 @@
 
 Accepted.
 
+Serialization resource inspection before encoding is added in
+[ADR 0135](0135-bound-report-serialization-before-encoding.md).
+
 ## Context
 
 The scenario loader used a 1 MiB limited reader but could accept an object that fit within the limit followed by more than 1 MiB of whitespace. Report readers already reject artifacts above 16 MiB, while the writer had no matching cap.
