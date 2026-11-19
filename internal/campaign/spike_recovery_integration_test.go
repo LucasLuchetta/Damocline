@@ -18,7 +18,8 @@ import (
 func TestClosedAndOpenCampaignsMeasureSpikeAndRecoveryAgainstControlledServer(t *testing.T) {
 	t.Run("closed-loop", func(t *testing.T) {
 		var saturated atomic.Bool
-		server := newSpikeRecoveryServer(&saturated)
+		var served atomic.Int64
+		server := newSpikeRecoveryServer(&saturated, &served)
 		defer server.Close()
 		base := integrationScenario(t, server.URL, 1, 100, "closed", 0)
 		base.Window = 1 * time.Second
@@ -32,7 +33,7 @@ func TestClosedAndOpenCampaignsMeasureSpikeAndRecoveryAgainstControlledServer(t 
 		}, func(ctx context.Context, phase config.Validated) report.Result {
 			saturated.Store(phase.Scenario.Users == 4)
 			defer saturated.Store(false)
-			return engine.Run(ctx, phase)
+			return runWithPhaseLedger(t, ctx, phase, &served)
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -59,7 +60,8 @@ func TestClosedAndOpenCampaignsMeasureSpikeAndRecoveryAgainstControlledServer(t 
 
 	t.Run("open-arrival", func(t *testing.T) {
 		var saturated atomic.Bool
-		server := newSpikeRecoveryServer(&saturated)
+		var served atomic.Int64
+		server := newSpikeRecoveryServer(&saturated, &served)
 		defer server.Close()
 		base := integrationScenario(t, server.URL, 30, 100, "arrival", 24)
 		base.Window = 1 * time.Second
@@ -73,7 +75,7 @@ func TestClosedAndOpenCampaignsMeasureSpikeAndRecoveryAgainstControlledServer(t 
 		}, func(ctx context.Context, phase config.Validated) report.Result {
 			saturated.Store(phase.Scenario.ArrivalRate == 48)
 			defer saturated.Store(false)
-			return engine.Run(ctx, phase)
+			return runWithPhaseLedger(t, ctx, phase, &served)
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -112,13 +114,29 @@ func stoppedByDriftScreen(t *testing.T, outcome, phaseName, stability, evidenceS
 	return true
 }
 
-func newSpikeRecoveryServer(saturated *atomic.Bool) *httptest.Server {
+func runWithPhaseLedger(t *testing.T, ctx context.Context, phase config.Validated, served *atomic.Int64) report.Result {
+	t.Helper()
+	before := served.Load()
+	run := engine.Run(ctx, phase)
+	count := served.Load() - before
+	if count == 0 || count != int64(run.Metrics.Total) || count != int64(run.Metrics.Success) ||
+		count != run.IterationsCompleted || run.Metrics.Cancelled != 0 {
+		t.Fatalf("phase ledger disagrees: server_200=%d client_requests=%d successes=%d cancelled=%d completed_iterations=%d",
+			count, run.Metrics.Total, run.Metrics.Success, run.Metrics.Cancelled, run.IterationsCompleted)
+	}
+	t.Logf("phase ledger reconciled: mode=%s users=%d arrival_rate=%d server_200=%d outcome=%s",
+		phase.Scenario.Mode, phase.Scenario.Users, phase.Scenario.ArrivalRate, count, run.Outcome)
+	return run
+}
+
+func newSpikeRecoveryServer(saturated *atomic.Bool, served *atomic.Int64) *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		if saturated.Load() {
 			time.Sleep(450 * time.Millisecond)
 		} else {
 			time.Sleep(30 * time.Millisecond)
 		}
+		served.Add(1)
 		w.WriteHeader(http.StatusOK)
 	}))
 }
