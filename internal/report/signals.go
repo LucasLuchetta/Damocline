@@ -51,6 +51,9 @@ func DetectSignals(r Result) []Signal {
 	if r.SchemaVersion >= 17 && r.Config.Mode == "arrival" && r.ArrivalsAdmitted != nil && *r.ArrivalsAdmitted != r.IterationsStarted {
 		add("CLIENT_ADMISSION_MISMATCH", "arrival_ledger", "Scheduler admissions do not reconcile with worker-started iterations.")
 	}
+	if r.SchemaVersion >= 20 && r.Metrics.HTTP.FailureClassificationVersion == 1 && r.Metrics.HTTP.ConnectionFailures > 0 {
+		add("CONNECTION_ESTABLISHMENT_FAILURE", "client_transport", "The client recorded a connection establishment failure. The underlying cause and target receipt are unknown.")
+	}
 	foundServerStatus := false
 	for reason, n := range r.Metrics.Reasons {
 		if n <= 0 || !strings.HasPrefix(reason, "http_") || len(reason) != 8 {

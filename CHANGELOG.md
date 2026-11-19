@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Report classified connection establishment failures as a distinct client
+  transport finding with unknown cause and target receipt.
+
 - Add a bounded repeated engine-memory integration fixture with a separate
   loopback server ledger, generator-only peak RSS and post-GC retained heap
   screens. This does not establish long-duration leak freedom or capacity.

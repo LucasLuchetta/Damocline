@@ -97,6 +97,11 @@ Quality validation requires body-read outcomes to reconcile with HTTP responses,
 
 With `run --calibration`, `observed_response_latency` screens every named step's client-observed request p50/p95 against the reference fixture's coarse 15–150 ms guardrail. Schema-v13 additionally requires at least 100 successful observations in every configured step window and screens each window separately; fewer observations are `UNVERIFIED`. The floor is a screening rule, not statistical sufficiency, and these percentiles are descriptive estimates with no dependence-aware uncertainty. `MATCHED` means only that aggregate and window per-step percentiles fell inside the local fixture guardrail. It does not establish server processing time, fixture endpoint identity, or an application SLO. A difference is an observed signal, not a root-cause diagnosis. Ordinary run quality remains LIMITED.
 
+`CONNECTION_ESTABLISHMENT_FAILURE` describes a client-observed dial failure
+from the versioned transport classification ledger. The finding is separate
+from reused-connection acquisition waits and HTTP error statuses. The ledger
+does not establish the underlying cause or whether the target received work.
+
 ## HTTP client timing boundaries (G0-12 partial)
 
 Schema-v14 scenarios distinguish `connection_policy: reuse` from `connection_policy: new_per_request`. The latter disables keep-alives in the shared engine transport; it is a connection-creation policy, not a connected-session or VU count. Run reports persist this setting, and workload fingerprints differ when it changes. The current local preflight covers reuse only, so a new-per-request workload is outside the calibrated envelope. Actual accepted-connection counts require an instrumented server ledger.
