@@ -33,6 +33,22 @@ func TestArrivalWorkerExhaustionReconcilesIndependentLedger(t *testing.T) {
 	}
 
 	result := Run(context.Background(), validated)
+	busySignals := 0
+	for _, signal := range result.Signals {
+		switch signal.Code {
+		case "CLIENT_WORKERS_BUSY":
+			busySignals++
+			if signal.Origin != "client" {
+				t.Errorf("worker exhaustion was attributed outside the generator: %+v", signal)
+			}
+		case "CLIENT_SCHEDULER_LATE", "CLIENT_RATE_CEILING_NEAR",
+			"CLIENT_CONNECTION_ACQUISITION_WAIT", "CONNECTION_ESTABLISHMENT_FAILURE", "HTTP_ERROR_RESPONSE":
+			t.Errorf("isolated worker exhaustion produced unrelated finding: %+v", signal)
+		}
+	}
+	if busySignals != 1 {
+		t.Fatalf("expected one worker exhaustion finding, got %+v", result.Signals)
+	}
 	ledger := fixture.Snapshot()
 	if result.ArrivalsScheduled != 4 || result.IterationsStarted != 1 || result.ArrivalsDroppedBusy != 3 || result.ArrivalsDroppedLate != 0 || result.ArrivalsDropped != 3 {
 		t.Fatalf("worker exhaustion was not classified as busy drops: %+v", result)
