@@ -15,3 +15,6 @@ Closed-loop campaign schema v13 and open-arrival campaign schema v8 persist an o
 ## Consequences
 
 Reviewers can reproduce which declared criteria governed an observed campaign outcome and detect phase evidence that no longer matches them. The contract does not prove workload representativeness, target identity, independence, stationarity, or capacity beyond the recorded conditions. Historical schemas remain readable and are labeled as lacking this contract.
+
+Raw persisted-field presence, including valid zero controls, is enforced by
+[ADR 0137](0137-require-recorded-campaign-objective-fields.md).

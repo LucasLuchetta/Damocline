@@ -91,6 +91,8 @@ This project follows a human-maintained changelog. No release exists yet.
 
 ## [Unreleased]
 
+- Require every recorded predeclared-objective field in closed-loop campaign v13+ and open-arrival campaign v8+ artifacts. Missing/null zero-valued error/drop controls no longer become inferred criteria; older schemas and explicit zeros remain readable (ADR 0137).
+
 - Reject missing numeric observations behind valid CPU claims in schema-v12+ saved runs and nested evidence. Preserve an unrecorded historical process mean as unknown through decoding, headroom screening, insights and exports; a known peak remains independent (ADR 0136).
 
 - Bound report serialization before encoding with a conservative 32 MiB accounting budget and 128-level nesting limit. Reject arbitrary serialization callbacks, oversized values and field metadata before output creation; preserve the exact 16 MiB artifact limit and atomic replacement. Add bounded writer-memory and Linux partial-write failure fixtures (ADR 0135).

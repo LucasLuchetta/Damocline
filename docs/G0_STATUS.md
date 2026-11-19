@@ -80,3 +80,13 @@ marker preserved through re-encoding; they cannot qualify CPU headroom. Peak
 pressure remains independent, and insights/redacted exports disclose unknown
 means. This closes one concrete missing-versus-zero path in G0-17; other profile,
 audit and campaign field contracts remain open. See ADR 0136.
+
+## Predeclared objective presence
+
+Both campaign families reject absent/null fields inside recorded objective
+contracts from their introduction versions (closed-loop v13, open-arrival v8).
+This includes valid zero error/drop controls that typed decoding otherwise
+cannot distinguish from omission. Shared raw reader checks run before offline
+assessment/report output; older schemas keep their original lack of a contract.
+This adds G0-17 coverage, not proof of when criteria were chosen or completion of
+other artifact-field and measurement requirements. See ADR 0137.
