@@ -71,6 +71,23 @@ This is partial G0-09 coverage. Aggregate worker memory, longer engine leaks,
 actual full-disk failure, interrupted replacement and crash durability remain
 unverified. See ADR 0135 for measurement boundaries and previous failed probes.
 
+## Repeated engine memory fixture
+
+An integration fixture runs one warm-up and three measured native-engine runs
+in one fresh child, with the owned HTTP server and its independent request/byte
+ledgers in the parent process. Each run uses 50 workers, 100 scheduled starts/s
+for two seconds and 2 MiB responses, retaining the unchanged request-rate ceiling.
+The first 50 handlers send response prefixes before a shared final-byte barrier.
+All admitted work and body bytes must reconcile; explicit busy/late drops are
+retained, and quality remains LIMITED. Post-GC heap growth is screened against
+16 MiB above warm-up and generator-only process peak RSS against 512 MiB.
+The fixture logs the actual workload, retained heap and OS measurement method.
+See ADR 0138 for its command, deadlines and measurement boundaries.
+
+This provides a bounded aggregate-worker and repeated-run regression screen,
+not long-duration leak freedom, induced low-memory/OOM validation, cross-host
+evidence or capacity qualification. The report-writer fixture remains separate.
+
 ## CPU observation presence in saved artifacts
 
 Schema-v12+ valid CPU claims require explicit numeric observations before typed
