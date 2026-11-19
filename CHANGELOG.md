@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Require all five recorded stability thresholds in campaign artifacts with
+  predeclared objectives. Explicit zero thresholds remain readable.
+
 - Report classified connection establishment failures as a distinct client
   transport finding with unknown cause and target receipt.
 
