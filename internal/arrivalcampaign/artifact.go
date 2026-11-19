@@ -67,6 +67,9 @@ func ValidateArtifactJSON(data []byte) error {
 		if err := campaign.ValidateObjectiveArtifactJSON(root["objectives"]); err != nil {
 			return err
 		}
+		if err := campaign.ValidateStabilityPolicyArtifactJSON(root["stability_policy"]); err != nil {
+			return err
+		}
 	}
 	return nil
 }

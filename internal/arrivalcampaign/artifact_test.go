@@ -32,7 +32,7 @@ func TestValidateArtifactJSONRequiresPersistedEvidence(t *testing.T) {
 		"trials":           []any{map[string]any{"run_id": strings.Repeat("a", 32), "number": 1, "phases": []any{map[string]any{"name": "observation", "evidence_state": "PASS_OBSERVED", "run": map[string]any{"schema_version": 32}}}, "outcome": "PASS"}},
 		"outcome":          "PASS",
 		"objectives":       campaign.ObjectiveContract{},
-		"stability_policy": map[string]any{},
+		"stability_policy": campaign.StabilityPolicy{},
 	}
 	encoded, err := json.Marshal(valid)
 	if err != nil {

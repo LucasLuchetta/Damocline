@@ -403,6 +403,9 @@ func validateCampaignArtifactPresence(data []byte) error {
 		if err := campaign.ValidateObjectiveArtifactJSON(fields["objectives"]); err != nil {
 			return err
 		}
+		if err := campaign.ValidateStabilityPolicyArtifactJSON(fields["stability_policy"]); err != nil {
+			return err
+		}
 	}
 	return nil
 }

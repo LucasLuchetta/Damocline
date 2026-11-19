@@ -23,11 +23,52 @@ func campaignObject(t *testing.T, arrival bool, schema int, objectives map[strin
 			root[key] = value
 		}
 	}
+	root["stability_policy"] = campaign.DefaultStabilityPolicy()
 	data, err := json.Marshal(root)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return data
+}
+
+func TestCampaignReadersRejectOmittedStabilityThreshold(t *testing.T) {
+	objectives, _ := json.Marshal(recordedObjectives())
+	for _, arrival := range []bool{false, true} {
+		schema, validate := 13, capacityplan.ValidateCampaignArtifact
+		if arrival {
+			schema, validate = 8, arrivalcampaign.ValidateArtifactJSON
+		}
+		data := campaignObject(t, arrival, schema, nil)
+		var root map[string]json.RawMessage
+		if err := json.Unmarshal(data, &root); err != nil {
+			t.Fatal(err)
+		}
+		root["objectives"] = objectives
+		root["stability_policy"] = json.RawMessage(`{"minimum_windows":3,"minimum_samples_per_window":20,"max_p95_increase_percent":0,"max_p95_increase_ms":0,"max_throughput_drop_percent":0}`)
+		valid, _ := json.Marshal(root)
+		if err := validate(valid); err != nil {
+			t.Fatalf("explicit stability thresholds rejected: %v", err)
+		}
+		var policy map[string]json.RawMessage
+		if err := json.Unmarshal(root["stability_policy"], &policy); err != nil {
+			t.Fatal(err)
+		}
+		for field, value := range policy {
+			delete(policy, field)
+			root["stability_policy"], _ = json.Marshal(policy)
+			missing, _ := json.Marshal(root)
+			if err := validate(missing); err == nil || !strings.Contains(err.Error(), field) {
+				t.Errorf("arrival=%v missing %s: %v", arrival, field, err)
+			}
+			policy[field] = json.RawMessage("null")
+			root["stability_policy"], _ = json.Marshal(policy)
+			null, _ := json.Marshal(root)
+			if err := validate(null); err == nil || !strings.Contains(err.Error(), field) {
+				t.Errorf("arrival=%v null %s: %v", arrival, field, err)
+			}
+			policy[field] = value
+		}
+	}
 }
 
 func TestCampaignReadersRejectOmittedObjectiveFields(t *testing.T) {
