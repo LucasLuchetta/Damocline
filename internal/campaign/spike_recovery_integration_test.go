@@ -184,6 +184,75 @@ type phaseEvidence struct {
 	outcome string
 }
 
+func TestNativeCampaignCancellationReconcilesServerReceipt(t *testing.T) {
+	for _, mode := range []string{"closed", "arrival"} {
+		t.Run(mode, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			var received atomic.Int64
+			handlerDone := make(chan struct{}, 1)
+			server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+				received.Add(1)
+				cancel()
+				<-r.Context().Done()
+				select {
+				case handlerDone <- struct{}{}:
+				default:
+				}
+			}))
+			defer server.Close()
+
+			rate := 0
+			if mode == "arrival" {
+				rate = 1
+			}
+			base := integrationScenario(t, server.URL, 1, 10, mode, rate)
+			calls := 0
+			runner := func(ctx context.Context, phase config.Validated) report.Result {
+				calls++
+				return engine.Run(ctx, phase)
+			}
+			var run report.Result
+			var outcome, phaseName string
+			switch mode {
+			case "closed":
+				result, err := campaign.WithRunner(ctx, base, campaign.Options{
+					Observation: 10 * time.Second, Recovery: 10 * time.Second, Repeats: 2,
+				}, runner)
+				if err != nil || len(result.Trials) != 1 || len(result.Trials[0].Phases) != 1 {
+					t.Fatalf("expected one interrupted phase: %+v, %v", result, err)
+				}
+				phase := result.Trials[0].Phases[0]
+				outcome, phaseName, run = result.Outcome, phase.Name, phase.Run
+			case "arrival":
+				result, err := arrivalcampaign.WithRunner(ctx, base, arrivalcampaign.Options{
+					Observation: 10 * time.Second, Recovery: 10 * time.Second, Repeats: 2,
+				}, runner)
+				if err != nil || len(result.Trials) != 1 || len(result.Trials[0].Phases) != 1 {
+					t.Fatalf("expected one interrupted phase: %+v, %v", result, err)
+				}
+				phase := result.Trials[0].Phases[0]
+				outcome, phaseName, run = result.Outcome, phase.Name, phase.Run
+			}
+			select {
+			case <-handlerDone:
+			case <-time.After(time.Second):
+				t.Fatal("server did not observe the interrupted request")
+			}
+			if outcome != "ABORTED" || phaseName != "observation" || run.Outcome != "ABORTED" ||
+				calls != 1 || received.Load() != 1 || run.Metrics.Cancelled != 1 ||
+				run.Metrics.Success != 0 || run.IterationsStarted != 1 || run.IterationsCompleted != 0 {
+				t.Fatalf("interruption ledgers disagree: campaign=%s phase=%s run=%s calls=%d received=%d requests=%+v iterations=%d/%d",
+					outcome, phaseName, run.Outcome, calls, received.Load(), run.Metrics, run.IterationsStarted, run.IterationsCompleted)
+			}
+			if mode == "arrival" && (run.ArrivalsAdmitted == nil || *run.ArrivalsAdmitted != 1 ||
+				run.ArrivalsScheduled != *run.ArrivalsAdmitted+run.ArrivalsDropped) {
+				t.Fatalf("interrupted arrival schedule did not reconcile: %+v", run)
+			}
+		})
+	}
+}
+
 func assertObservedSpikeRecovery(t *testing.T, outcome string, phases []phaseEvidence) {
 	t.Helper()
 	if outcome != "FAIL" || len(phases) != 3 {
