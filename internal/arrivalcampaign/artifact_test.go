@@ -2,6 +2,7 @@ package arrivalcampaign
 
 import (
 	"encoding/json"
+	"github.com/LucasLuchetta/Damocline/internal/campaign"
 	"strings"
 	"testing"
 )
@@ -30,7 +31,7 @@ func TestValidateArtifactJSONRequiresPersistedEvidence(t *testing.T) {
 		"repeats":          2,
 		"trials":           []any{map[string]any{"run_id": strings.Repeat("a", 32), "number": 1, "phases": []any{map[string]any{"name": "observation", "evidence_state": "PASS_OBSERVED", "run": map[string]any{"schema_version": 32}}}, "outcome": "PASS"}},
 		"outcome":          "PASS",
-		"objectives":       map[string]any{},
+		"objectives":       campaign.ObjectiveContract{},
 		"stability_policy": map[string]any{},
 	}
 	encoded, err := json.Marshal(valid)

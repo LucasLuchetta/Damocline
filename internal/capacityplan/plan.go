@@ -399,6 +399,11 @@ func validateCampaignArtifactPresence(data []byte) error {
 			return fmt.Errorf("campaign pending_trial: %w", err)
 		}
 	}
+	if schemaVersion >= 13 {
+		if err := campaign.ValidateObjectiveArtifactJSON(fields["objectives"]); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/LucasLuchetta/Damocline/internal/campaign"
 	"github.com/LucasLuchetta/Damocline/internal/jsonartifact"
 )
 
@@ -60,6 +61,11 @@ func ValidateArtifactJSON(data []byte) error {
 		}
 		if err := validateArrivalTrialArtifact(pending, schema); err != nil {
 			return fmt.Errorf("arrival campaign pending trial: %w", err)
+		}
+	}
+	if schema >= 8 {
+		if err := campaign.ValidateObjectiveArtifactJSON(root["objectives"]); err != nil {
+			return err
 		}
 	}
 	return nil
