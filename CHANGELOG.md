@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add a bounded repeated engine-memory integration fixture with a separate
+  loopback server ledger, generator-only peak RSS and post-GC retained heap
+  screens. This does not establish long-duration leak freedom or capacity.
+
 - Identify modified or non-VCS builds by the complete executable SHA-256.
   Calibration comparisons retain full source revisions or digests, and
   module versions alone remain unverified.
