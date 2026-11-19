@@ -322,6 +322,9 @@ func Evaluate(r report.Result, host *hostmon.Result) Assessment {
 		if g.ProcessSamples > 0 {
 			a.Findings = append(a.Findings, Finding{"INFO", fmt.Sprintf("Load-generator OS process: peak sampled resident memory %.1f MiB across %d samples.", float64(g.PeakProcessRSSBytes)/(1024*1024), g.ProcessSamples)})
 			if g.ProcessCPUValid {
+				if !g.MeanProcessCPUAvailable() {
+					a.Findings = append(a.Findings, Finding{"CAUTION", "Window-mean generator process CPU was not recorded; it is unknown, not measured idle CPU. The recorded peak remains diagnostic."})
+				}
 				capacityBasis := "GOMAXPROCS capacity"
 				if r.SchemaVersion >= 18 {
 					capacityBasis = "detected CPU capacity"

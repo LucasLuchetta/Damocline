@@ -160,3 +160,10 @@ Run reports from schema v31 and later also record path-free generator runtime an
 Capacity-assessment evidence IDs hash the canonical JSON produced from the decoded campaign or run model. Replaying an assessment with its expected ID detects changes to fields represented by that model before outputs are written. The ID is unkeyed: it does not authenticate a producer, file custody, capture time, target, host, or workload claim, and changes limited to source JSON whitespace or fields unknown to the reader do not change it. Keep the original campaign and private scenario/profile under controlled local retention when byte-level preservation or a complete workload rerun matters.
 
 Executable identity preparation finishes before the engine observation clock starts. Normal and cleanup step rate-token waits end at admission, before HTTP execution. Historical timing totals are read as recorded and are not retroactively corrected. These boundaries do not calibrate clock accuracy under OS pressure. See [ADR 0133](adr/0133-http-token-wait-and-observation-boundaries.md).
+
+Saved schema-v12+ reports declaring valid CPU sources must include their numeric
+observations. Historical process means omitted before that version remain
+unknown, not measured idle: decoding records `mean_process_cpu_unavailable`,
+which survives re-encoding. This prevents headroom qualification while preserving
+known peak observations. Redacted exports retain independent process-read and
+mean-availability flags. Original files are not rewritten. See ADR 0136.

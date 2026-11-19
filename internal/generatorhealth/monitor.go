@@ -40,6 +40,7 @@ type Summary struct {
 	PeakProcessRSSBytes            uint64            `json:"peak_process_rss_bytes,omitempty"`
 	PeakProcessCPUUtilizationRatio float64           `json:"peak_process_cpu_utilization_ratio"`
 	MeanProcessCPUUtilizationRatio float64           `json:"mean_process_cpu_utilization_ratio"`
+	MeanProcessCPUUnavailable      bool              `json:"mean_process_cpu_unavailable,omitempty"`
 	ProcessCPUValid                bool              `json:"process_cpu_valid"`
 	Guardrails                     *Guardrails       `json:"guardrails,omitempty"`
 	GuardrailTrigger               *GuardrailTrigger `json:"guardrail_trigger,omitempty"`

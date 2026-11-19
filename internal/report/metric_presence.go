@@ -11,7 +11,8 @@ import (
 // ValidateMetricCountersInArtifactJSON rejects persisted run evidence where
 // required counters were omitted and would otherwise decode as measured zero.
 // It handles a run directly and run reports embedded in campaigns and
-// exploration results. Optional diagnostic structures remain optional.
+// exploration results. Valid CPU claims also require their numeric observations
+// from schema v12. Optional diagnostic structures remain optional.
 func ValidateMetricCountersInArtifactJSON(data []byte) error {
 	var root map[string]json.RawMessage
 	if err := json.Unmarshal(data, &root); err != nil || root == nil {
@@ -52,6 +53,9 @@ func validateRunMetricCounters(raw json.RawMessage, path string) error {
 	schemaVersion := 0
 	if value, ok := run["schema_version"]; ok {
 		_ = json.Unmarshal(value, &schemaVersion)
+	}
+	if err := validateClaimedCPUFields(run["generator"], schemaVersion, path+".generator"); err != nil {
+		return err
 	}
 	metrics, ok := run["metrics"]
 	if !ok {
@@ -300,6 +304,38 @@ func validateProbesMetricCounters(raw json.RawMessage) error {
 		for j, run := range values {
 			if err := validateRunMetricCounters(run, fmt.Sprintf("%s.runs[%d]", path, j)); err != nil {
 				return err
+			}
+		}
+	}
+	return nil
+}
+
+// The mean process CPU field was added during schema v11. From v12 onward,
+// producers always persisted it alongside a valid CPU claim. Older omissions
+// remain historical unknowns rather than being retroactively required.
+func validateClaimedCPUFields(raw json.RawMessage, schema int, path string) error {
+	if schema < 12 || len(raw) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return nil
+	}
+	var generator map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &generator); err != nil || generator == nil {
+		return fmt.Errorf("%s must be an object", path)
+	}
+	for _, source := range []struct {
+		flag   string
+		fields []string
+	}{
+		{"process_cpu_valid", []string{"mean_process_cpu_utilization_ratio", "peak_process_cpu_utilization_ratio"}},
+		{"go_cpu_valid", []string{"go_cpu_busy_seconds", "go_cpu_capacity_seconds", "go_cpu_utilization_ratio"}},
+	} {
+		var valid bool
+		if flag, ok := generator[source.flag]; !ok || json.Unmarshal(flag, &valid) != nil || !valid {
+			continue
+		}
+		for _, name := range source.fields {
+			value, present := generator[name]
+			if !present || bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+				return fmt.Errorf("%s claims %s but omits required %s; absence cannot be interpreted as measured zero", path, source.flag, name)
 			}
 		}
 	}
