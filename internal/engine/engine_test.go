@@ -491,6 +491,18 @@ func TestHTTPDiagnosticsIdentifyLoopbackConnectionRefusal(t *testing.T) {
 	if r.Quality == nil || r.Quality.State == report.QualityInvalid {
 		t.Fatalf("accounted refused connections must not corrupt measurement arithmetic: %+v", r.Quality)
 	}
+	found := false
+	for _, signal := range r.Signals {
+		switch signal.Code {
+		case "CONNECTION_ESTABLISHMENT_FAILURE":
+			found = signal.Origin == "client_transport"
+		case "HTTP_ERROR_RESPONSE", "CLIENT_CONNECTION_ACQUISITION_WAIT":
+			t.Errorf("connection refusal produced unrelated signal: %+v", signal)
+		}
+	}
+	if !found {
+		t.Fatalf("missing client transport finding: %+v", r.Signals)
+	}
 }
 
 func TestHTTPDiagnosticsIdentifyLoopbackTCPReset(t *testing.T) {
