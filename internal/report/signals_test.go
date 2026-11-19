@@ -1,12 +1,39 @@
 package report
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/LucasLuchetta/Damocline/internal/generatorhealth"
+	"github.com/LucasLuchetta/Damocline/internal/scheduler"
 )
+
+func TestSignalsDistinguishAnIsolatedSchedulerPause(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	first := true
+	stats := scheduler.Drive(ctx, 500*time.Millisecond, 20, func() bool {
+		if first {
+			first = false
+			time.Sleep(130 * time.Millisecond)
+		}
+		return true
+	})
+	if !stats.Consistent() || stats.Planned != 10 || stats.DroppedLate == 0 ||
+		stats.DroppedBusy != 0 || stats.CancelledBeforeAdmission != 0 {
+		t.Fatalf("expected only reconciled late drops after the injected pause: %+v", stats)
+	}
+	signals := DetectSignals(Result{
+		ArrivalsDroppedLate: stats.DroppedLate,
+		Generator:           &generatorhealth.Summary{Samples: 2, GoCPUValid: true, ProcessCPUValid: true},
+	})
+	if len(signals) != 1 || signals[0].Code != "CLIENT_SCHEDULER_LATE" || signals[0].Origin != "client" {
+		t.Fatalf("expected only the client scheduler finding: %+v", signals)
+	}
+}
 
 func TestSignalsClassifyClientAndHTTPObservationsWithoutCausality(t *testing.T) {
 	r := validSyntheticQualityRun()
