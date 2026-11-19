@@ -22,7 +22,7 @@ This matrix records implementation, automated-test and runtime-validation eviden
 | G0-14 | Structured status, assertion, timeout, DNS-resolution, connection-establishment, TLS/transport, redirect, 429 and response-size diagnostics (`internal/engine`, `internal/report`, `internal/insights`). Schema v20 requires an explicit failure-classification marker. | Deterministic native-engine fixtures classify injected NXDOMAIN and SERVFAIL as DNS resolution failures, keep a local resolver blackhole in the network-timeout category, and classify local connection refusal separately; reset fixtures remain general transport failure after connection establishment. HTTP counters reconcile with classified failure reasons across aggregate, step and observation-window ledgers; schema-v20 golden and missing-marker rejection tests cover report compatibility. Full Windows and quota-bounded Docker Linux suites pass when gates run serially. | DNS response subtypes are not persisted separately; TLS certificate subcategories and broader transport matrix remain incomplete. A detected client phase is not proof of the underlying cause; a failed connection establishment never means an HTTP request reached the server. Rate-limit suppression is not emitted because the local governor delays rather than discards work. |
 | G0-15 | Separate reference server ledger reconciles normal, overloaded, failed, cancelled and draining requests. | Independent loopback tests cover six admitted arrivals finishing after scheduling, a three-step journey with think time finishing after the observation window, a second step cancelled while waiting for a rate token at natural drain expiry, six requests cancelled by external abort during drain, and a child generator killed after its first request is received. The natural expiry records one server request (completed) and one undelivered cancelled step; the forced-stop fixture records 1 received = 1 cancelled and leaves no final client report. | More stage/termination combinations remain untested. Forced termination cannot persist a client-side final ledger/report; the independent server-side ledger is the only surviving evidence in that case. |
 | G0-16 | Three quality states are recalculated from report fields. A positive state is gated on the exact calibrator fixture, current binary/runtime/effective CPU entitlement, generator health, response shape/latency, scheduler lag, independent server ledger and current-schema journey conservation; it is independent of SLO outcome. The acceptance lab recalculates the soak quality from the persisted report and refuses a mismatch. | Windows positive path as previously recorded; Linux Docker Desktop/WSL2 schema-v7 runs each recomputed the real 30-second soak as `VALID_WITHIN_ENVELOPE` with effective capacity matching the 4-core cgroup quota. Altered/self-declared quality and mismatched capacity tests fail closed. A natural drain-deadline fixture with one undelivered cancelled step is classified LIMITED, never PASS. | Positive evidence qualifies only the synthetic same-host fixture/window, binary and recorded runtime. No cross-host/hardware-class validation, external target certification, dependence-aware percentile confidence, or bare-metal Linux result. |
-| G0-17 | Bounded run reader supports v1-v32 and JSON goldens for every supported version; missing legacy fields remain unknown. Calibration artifacts require explicit top-level, preflight, generator, and fixture fields, with CPU, workload-fingerprint, and profile requirements gated by calibration schema version. Campaign artifacts require top-level scenario, target, stage, repeat, trial, outcome, and timestamp fields; schema-v5+ timestamps must parse as RFC3339. Required nested trial, phase, and embedded run schema fields are checked before typed decoding, including pending checkpoint trials. | Run fixtures cover every supported version. Calibration mutation tests remove generator, healthy-stage, workload-observation, and scheduler-lag evidence; campaign-profile tests remove required controls; campaign-reader, dashboard, and export tests remove required top-level evidence and mutate schema-v5/current timestamp values; campaign-reader tests remove trial/phase fields and embedded run objects/schema markers. Historical v2/v4 campaign timestamps retain their schema semantics. Explicit zero values remain distinguishable from absence. | Other required fields across exploration, profile, and audit families still need systematic presence coverage; additional schema-specific nested campaign presence remains partial; no file-rewriting migration is implemented. |
+| G0-17 | Bounded run reader supports v1-v33 and JSON goldens for every supported version; missing legacy fields remain unknown. Calibration artifacts require explicit top-level, preflight, generator, and fixture fields, with CPU, workload-fingerprint, and profile requirements gated by calibration schema version. Campaign artifacts require top-level scenario, target, stage, repeat, trial, outcome, and timestamp fields; schema-v5+ timestamps must parse as RFC3339. Required nested trial, phase, and embedded run schema fields are checked before typed decoding, including pending checkpoint trials. | Run fixtures cover every supported version. Calibration mutation tests remove generator, healthy-stage, workload-observation, and scheduler-lag evidence; campaign-profile tests remove required controls; campaign-reader, dashboard, and export tests remove required top-level evidence and mutate schema-v5/current timestamp values; campaign-reader tests remove trial/phase fields and embedded run objects/schema markers. Historical v2/v4 campaign timestamps retain their schema semantics. Explicit zero values remain distinguishable from absence. | Other required fields across exploration, profile, and audit families still need systematic presence coverage; additional schema-specific nested campaign presence remains partial; no file-rewriting migration is implemented. |
 
 ## Current platform evidence
 
@@ -39,6 +39,32 @@ This matrix records implementation, automated-test and runtime-validation eviden
 ## G0 exit decision
 
 G0 remains **open**. Positive results are established only for the controlled Windows and recorded Docker Desktop/WSL2 loopback soaks. Cross-host/hardware-class equivalence, bare-metal Linux, broad transport/failure matrices, statistical dependence handling, and multiple other G0 acceptance gaps remain.
+
+## Evidence from the latest validation cycle
+
+- G0-04/G0-15: native closed-loop and open-arrival tests reconcile server
+  responses per observation, spike and recovery phase. Separate interruption
+  tests reconcile one server receipt and cancellation in observation and verify
+  that later phases never start (PRs #169 and #170). Other transitions remain open.
+- G0-05/G0-14: isolated checks distinguish a client rate ceiling, busy workers,
+  scheduler lateness and connection establishment failures. The TLS refusal
+  fixture reconciles one failed handshake, one independently accepted TCP
+  socket and zero HTTP requests (PRs #164–#168). Connection acquisition waits
+  alone leave the pool exhaustion cause unknown.
+- G0-07: the sampler benchmark records process CPU delta per sample, wall time
+  and allocations (PR #172). It measures fixed batches and leaves sampler
+  overhead under sustained load open.
+- G0-08: both opt-in envelope gates apply the inclusive 24-hour age and
+  five-minute future-skew limits (PR #173). The interval is an operational
+  policy whose empirical lifetime remains open.
+- G0-10: commit `cc0ba0a` passed two repeats of 41 profiles and 13 gates
+  each, plus ten transport cases, on native Windows locally and in hosted
+  Windows/Linux CI. The hosted Linux job used a four-core container quota.
+  The recorded status was `PASS_LOCAL_REFERENCE_ONLY` in each environment.
+  See [the hosted run](https://github.com/LucasLuchetta/Damocline/actions/runs/44629954050).
+- G0-17: current campaign readers require all five stability policy fields in
+  closed-loop schema v13+ and open-arrival schema v8+ (PR #171). They reject
+  missing and null fields and preserve explicit zero values at the presence check.
 
 ## CPU source availability correction (schema v33)
 
