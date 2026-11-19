@@ -40,6 +40,32 @@ This matrix records implementation, automated-test and runtime-validation eviden
 
 G0 remains **open**. Positive results are established only for the controlled Windows and recorded Docker Desktop/WSL2 loopback soaks. Cross-host/hardware-class equivalence, bare-metal Linux, broad transport/failure matrices, statistical dependence handling, and multiple other G0 acceptance gaps remain.
 
+## Evidence from the latest validation cycle
+
+- G0-04/G0-15: native closed-loop and open-arrival tests reconcile server
+  responses per observation, spike and recovery phase. Separate interruption
+  tests reconcile one server receipt and cancellation in observation and verify
+  that later phases never start (PRs #169 and #170). Other transitions remain open.
+- G0-05/G0-14: isolated checks distinguish a client rate ceiling, busy workers,
+  scheduler lateness and connection establishment failures. The TLS refusal
+  fixture reconciles one failed handshake, one independently accepted TCP
+  socket and zero HTTP requests (PRs #164–#168). Connection acquisition waits
+  alone leave the pool exhaustion cause unknown.
+- G0-07: the sampler benchmark records process CPU delta per sample, wall time
+  and allocations (PR #172). It measures fixed batches and leaves sampler
+  overhead under sustained load open.
+- G0-08: both opt-in envelope gates apply the inclusive 24-hour age and
+  five-minute future-skew limits (PR #173). The interval is an operational
+  policy whose empirical lifetime remains open.
+- G0-10: commit `cc0ba0a` passed two repeats of 41 profiles and 13 gates
+  each, plus ten transport cases, on native Windows locally and in hosted
+  Windows/Linux CI. The hosted Linux job used a four-core container quota.
+  The recorded status was `PASS_LOCAL_REFERENCE_ONLY` in each environment.
+  See [the hosted run](https://github.com/LucasLuchetta/Damocline/actions/runs/44629954050).
+- G0-17: current campaign readers require all five stability policy fields in
+  closed-loop schema v13+ and open-arrival schema v8+ (PR #171). They reject
+  missing and null fields and preserve explicit zero values at the presence check.
+
 ## CPU source availability correction (schema v33)
 
 Stationary Go CPU-class counters are now unavailable rather than a measured
