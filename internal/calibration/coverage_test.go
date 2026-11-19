@@ -152,11 +152,9 @@ func TestArrivalEnvelopeRequiresExactHealthyMatrixAndRuntime(t *testing.T) {
 	if got := AssessArrivalEnvelope(wrongShape, []int{2}, record, local, now); got.Status != "BLOCKED" {
 		t.Fatalf("uncalibrated request shape must block: %+v", got)
 	}
-	stale := record
-	stale.FinishedAt = now.Add(-25 * time.Hour).Format(time.RFC3339Nano)
-	if got := AssessArrivalEnvelope(scenario, []int{2}, stale, local, now); got.Status != "BLOCKED" {
-		t.Fatalf("stale calibration must block: %+v", got)
-	}
+	assertFreshnessBoundaries(t, now.Add(-time.Minute), func(at time.Time) string {
+		return AssessArrivalEnvelope(scenario, []int{2}, record, local, at).Status
+	})
 	changedRuntime := local
 	changedRuntime.GOMAXPROCS++
 	if got := AssessArrivalEnvelope(scenario, []int{2}, record, changedRuntime, now); got.Status != "BLOCKED" {
@@ -190,11 +188,9 @@ func TestClosedLoopEnvelopeRequiresExactVersionedVUProfile(t *testing.T) {
 	if got := AssessClosedLoopEnvelope(changed, []int{5}, record, local, now); got.Status != "BLOCKED" {
 		t.Fatalf("ramp-up change borrowed a VU profile: %+v", got)
 	}
-	stale := record
-	stale.FinishedAt = now.Add(-25 * time.Hour).Format(time.RFC3339Nano)
-	if got := AssessClosedLoopEnvelope(scenario, []int{5}, stale, local, now); got.Status != "BLOCKED" {
-		t.Fatalf("stale closed-loop calibration remained usable: %+v", got)
-	}
+	assertFreshnessBoundaries(t, now.Add(-time.Minute), func(at time.Time) string {
+		return AssessClosedLoopEnvelope(scenario, []int{5}, record, local, at).Status
+	})
 	legacy := record
 	legacy.SchemaVersion = 8
 	legacy.Fixture.WorkloadProfiles = referenceWorkloadProfilesV8()
@@ -343,6 +339,26 @@ func TestSchemaTwoRejectsAlteredWorkloadFingerprint(t *testing.T) {
 	a.Preflight.FixtureWorkloadFingerprint = "sha256:" + strings.Repeat("0", 64)
 	if err := ValidateRecord(a.Preflight); err == nil {
 		t.Fatal("altered reference workload fingerprint was accepted")
+	}
+}
+
+func assertFreshnessBoundaries(t *testing.T, finished time.Time, assess func(time.Time) string) {
+	t.Helper()
+	for _, tc := range []struct {
+		name string
+		age  time.Duration
+		want string
+	}{
+		{"exact expiry", 24 * time.Hour, "READY"},
+		{"expired", 24*time.Hour + time.Nanosecond, "BLOCKED"},
+		{"exact clock skew allowance", -5 * time.Minute, "READY"},
+		{"excess future skew", -5*time.Minute - time.Nanosecond, "BLOCKED"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := assess(finished.Add(tc.age)); got != tc.want {
+				t.Fatalf("calibration age %v: got %s, want %s", tc.age, got, tc.want)
+			}
+		})
 	}
 }
 
