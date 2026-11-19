@@ -444,15 +444,40 @@ func TestHTTPDiagnosticsCountLocalFailureMatrix(t *testing.T) {
 }
 
 func TestHTTPDiagnosticsIdentifyTLSHandshakeFailure(t *testing.T) {
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
+	var accepted, received atomic.Int64
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		received.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	server.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+		if state == http.StateNew {
+			accepted.Add(1)
+		}
+	}
+	server.StartTLS()
 	defer server.Close()
-	v := scenario(t, server.URL, []config.Step{{Name: "tls", Path: "/"}})
-	v.Duration = 250 * time.Millisecond
-	v.Scenario.Users = 1
-	v.Scenario.MaxRPS = 10
-	r := Run(context.Background(), v)
-	if r.Metrics.HTTP.TLSFailures == 0 || r.Metrics.HTTP.TransportFailures != 0 || r.Metrics.HTTP.Status2xx != 0 {
-		t.Fatalf("local TLS handshake failure was not classified without inventing a response: %+v", r.Metrics.HTTP)
+	v, err := config.Parse(config.Scenario{
+		Name: "untrusted loopback TLS", BaseURL: server.URL,
+		Users: 1, Mode: "arrival", ArrivalRate: 1, Duration: "1s",
+		MaxRPS: 10, Timeout: "500ms", P95LimitMS: 1000,
+		Steps: []config.Step{{Name: "tls", Path: "/"}},
+	}, config.Options{Authorized: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	r := Run(ctx, v)
+	d := r.Metrics.HTTP
+	if r.ArrivalsScheduled != 1 || r.IterationsStarted != 1 || r.IterationsCompleted != 1 ||
+		r.Metrics.Total != 1 || r.Metrics.Failures != 1 || d.TLSFailures != 1 ||
+		d.TransportFailures != 0 || d.ConnectionFailures != 0 || d.NetworkTimeouts != 0 ||
+		len(d.StatusCodes) != 0 || accepted.Load() != 1 || received.Load() != 0 {
+		t.Fatalf("TLS failure ledgers disagree: client=%+v socket_accepts=%d HTTP_requests=%d", r.Metrics, accepted.Load(), received.Load())
+	}
+	if len(r.Steps) != 1 || r.Steps[0].Metrics.HTTP.TLSFailures != 1 ||
+		r.Steps[0].HTTPTrace.TLSStartCount != 1 || r.Steps[0].HTTPTrace.TLSCount != 1 {
+		t.Fatalf("expected one observed failed handshake: %+v", r.Steps)
 	}
 	if r.Quality == nil || r.Quality.State == report.QualityInvalid {
 		t.Fatalf("classified TLS failure should remain arithmetically valid: %+v", r.Quality)
