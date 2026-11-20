@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add a bounded loopback fixture that compares engine scheduler lag,
+  first-byte timing and arrival ledgers with server-side monotonic
+  references, with and without in-process CPU pressure (ADR 0145).
+
 - Require a recorded phase evidence state in closed-loop campaign reports
   with predeclared objectives.
 
