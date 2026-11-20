@@ -56,6 +56,13 @@ func DefaultStabilityPolicy() StabilityPolicy {
 	}
 }
 
+// DefaultStabilityPolicyForSLO applies the latency noise floor for a new campaign.
+func DefaultStabilityPolicyForSLO(requestP95LimitMS float64) StabilityPolicy {
+	policy := DefaultStabilityPolicy()
+	policy.MaxP95IncreaseMS = max(policy.MaxP95IncreaseMS, requestP95LimitMS/100)
+	return policy
+}
+
 func ValidateStabilityPolicy(policy StabilityPolicy) error {
 	if policy.MinimumWindows < 3 || policy.MinimumWindows > 20 {
 		return fmt.Errorf("stability minimum-windows must be between 3 and 20")
@@ -329,7 +336,10 @@ func ValidateForScenario(base config.Validated, options Options) error {
 	if options.LongRun && base.Scenario.Environment != "staging" {
 		return fmt.Errorf("long-run campaigns require scenario environment to be explicitly declared as staging")
 	}
-	policy := effectiveStabilityPolicy(options.Stability)
+	policy := options.Stability
+	if policy == (StabilityPolicy{}) {
+		policy = DefaultStabilityPolicyForSLO(base.Scenario.P95LimitMS)
+	}
 	if err := NewObjectiveContract(base, policy).Validate(); err != nil {
 		return err
 	}
@@ -417,7 +427,9 @@ func WithRunnerProgress(ctx context.Context, base config.Validated, options Opti
 		return Result{}, fmt.Errorf("required closed-loop calibration does not cover every planned VU level")
 	}
 	options.Budget = PlannedBudget(options)
-	options.Stability = effectiveStabilityPolicy(options.Stability)
+	if options.Stability == (StabilityPolicy{}) {
+		options.Stability = DefaultStabilityPolicyForSLO(base.Scenario.P95LimitMS)
+	}
 	options.Guardrails = effectiveGeneratorGuardrails(options.Guardrails)
 	stabilityPolicy := options.Stability
 	objectiveContract := NewObjectiveContract(base, stabilityPolicy)
