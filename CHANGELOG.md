@@ -9,6 +9,14 @@
   ledger stage-by-termination combinations for external abort and forced
   kill. These are test-only and do not change runtime behavior.
 
+- Add a bounded loopback fixture that compares engine scheduler lag,
+  first-byte timing and arrival ledgers with server-side monotonic
+  references, with and without in-process CPU pressure (ADR 0145).
+
+- Defer record signing, host attestation, validated calibration lifetime
+  and default gate enforcement past G0 (ADR 0148), and record the G0-11
+  safety ceiling recheck.
+
 - Require a recorded phase evidence state in closed-loop campaign reports
   with predeclared objectives.
 
