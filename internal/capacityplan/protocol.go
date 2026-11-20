@@ -436,7 +436,7 @@ func matchProtocolCampaign(p CapacityProtocol, c campaign.Result) error {
 			if p.RequireHostSensor && (phase.HostTelemetry == nil || phase.HostTelemetry.Coverage != "COMPLETE") {
 				return errors.New("protocol requires complete host sensor evidence in every required phase")
 			}
-			if r.Config.Environment != p.Environment || r.Config.WorkloadRevision != p.WorkloadRevision || r.Config.ApplicationRevision != p.ApplicationRevision || r.Config.WorkloadFingerprint != p.WorkloadFingerprint || r.Config.P95LimitMS != p.MaxP95MS || r.Config.MaxErrorRate != p.MaxErrorRate {
+			if r.Config.Environment != p.Environment || r.Config.WorkloadRevision != p.WorkloadRevision || r.Config.ApplicationRevision != p.ApplicationRevision || r.Config.WorkloadFingerprint != p.WorkloadFingerprint || r.Config.JourneyLatencyLimitMS() != p.MaxP95MS || r.Config.MaxErrorRate != p.MaxErrorRate {
 				return errors.New("campaign workload, environment, revision, or SLO differs from sealed protocol")
 			}
 			if phase.Name == "observation" {

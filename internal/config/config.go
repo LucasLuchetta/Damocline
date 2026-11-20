@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"net/url"
 	"os"
@@ -42,6 +43,7 @@ type Scenario struct {
 	MaxConnectionsPerHost    int               `json:"max_connections_per_host,omitempty"`
 	MaxRPS                   int               `json:"max_rps"`
 	P95LimitMS               float64           `json:"p95_limit_ms"`
+	JourneyP95LimitMS        float64           `json:"journey_p95_limit_ms,omitempty"`
 	MaxErrorRate             float64           `json:"max_error_rate"`
 	Mode                     string            `json:"mode,omitempty"`
 	ArrivalRate              int               `json:"arrival_rate,omitempty"`
@@ -327,6 +329,9 @@ func Parse(s Scenario, o Options) (Validated, error) {
 	}
 	if s.P95LimitMS <= 0 || s.P95LimitMS > 120000 {
 		return v, errors.New("p95_limit_ms must be in (0,120000]")
+	}
+	if math.IsNaN(s.JourneyP95LimitMS) || s.JourneyP95LimitMS < 0 || s.JourneyP95LimitMS > 120000 {
+		return v, errors.New("journey_p95_limit_ms must be omitted or in (0,120000]")
 	}
 	if s.MaxErrorRate < 0 || s.MaxErrorRate > 1 {
 		return v, errors.New("max_error_rate must be between 0 and 1")

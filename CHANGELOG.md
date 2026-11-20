@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add optional scenario field `journey_p95_limit_ms` (run report schema v35, ADR 0150). When set, completed-journey latency checks for the run, each window and each profile use it instead of `p95_limit_ms`, so workloads with think time can pass. Offline campaign, goal, plan and audit readers apply the saved value. Without it, behavior is unchanged, and runs with think time now warn that the journey objective includes think time.
+
 - Stop reporting a false INVALID scheduler-admission mismatch for
   closed-loop runs, whose admission count is zero by design.
 

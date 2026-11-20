@@ -374,6 +374,9 @@ func AssessQuality(r Result) *Quality {
 	if r.SchemaVersion >= 14 && r.Config.ConnectionPolicy != "reuse" && r.Config.ConnectionPolicy != "new_per_request" {
 		invalidate("Current report connection policy is absent or unsupported.")
 	}
+	if !ValidJourneyP95Limit(r) {
+		invalidate("The optional completed-journey p95 limit is out of range or predates schema v35.")
+	}
 	if math.IsNaN(r.ErrorsRate) || math.IsInf(r.ErrorsRate, 0) || r.ErrorsRate < 0 || r.ErrorsRate > 1 ||
 		math.IsNaN(r.SchedulerLagP50MS) || math.IsInf(r.SchedulerLagP50MS, 0) ||
 		math.IsNaN(r.SchedulerLagP95MS) || math.IsInf(r.SchedulerLagP95MS, 0) ||
@@ -1484,4 +1487,14 @@ func equalResponseBodyDiagnostics(a, b ResponseBodyDiagnostics) bool {
 		a.IncompleteObservations == b.IncompleteObservations &&
 		a.OversizedObservations == b.OversizedObservations &&
 		a.MinBytes == b.MinBytes && a.MaxBytes == b.MaxBytes && a.TotalBytes == b.TotalBytes
+}
+
+// ValidJourneyP95Limit accepts an absent journey limit for every schema and a
+// finite limit in (0,120000] ms only from schema v35.
+func ValidJourneyP95Limit(r Result) bool {
+	limit := r.Config.JourneyP95LimitMS
+	if limit == 0 {
+		return true
+	}
+	return r.SchemaVersion >= JourneyP95LimitSchemaVersion && !math.IsNaN(limit) && !math.IsInf(limit, 0) && limit > 0 && limit <= 120000
 }

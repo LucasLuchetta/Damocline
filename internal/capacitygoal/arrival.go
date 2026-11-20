@@ -198,7 +198,7 @@ func validateProbeRecord(p arrivalexplorer.Probe, ex arrivalexplorer.Result, sta
 	var firstConfig []byte
 	seenStartedAt := make(map[string]bool, len(p.Runs))
 	for index, run := range p.Runs {
-		if run.SchemaVersion != report.CurrentSchemaVersion {
+		if !assessableRunSchema(run.SchemaVersion) {
 			continue // Older, non-target probes remain descriptive legacy evidence.
 		}
 		if run.Config.Mode != "arrival" || run.Config.ArrivalRate != p.JourneysPerSecond || run.Config.Users != ex.WorkerLimit || run.Config.Duration != stage.String() {
@@ -241,7 +241,7 @@ func assessSavedProbe(p arrivalexplorer.Probe, ex arrivalexplorer.Result, stage 
 	}
 	allPass := true
 	for index, run := range p.Runs {
-		if run.SchemaVersion != report.CurrentSchemaVersion {
+		if !assessableRunSchema(run.SchemaVersion) {
 			return "INSUFFICIENT_EVIDENCE", "The exact target contains a native report schema that this assessor cannot fully verify."
 		}
 		state, reason := classifySavedRun(run)
@@ -275,7 +275,7 @@ func classifySavedRun(run report.Result) (string, string) {
 	if run.Outcome == "ABORTED" {
 		return "ABORTED", "The exact target was interrupted."
 	}
-	if run.SchemaVersion != report.CurrentSchemaVersion {
+	if !assessableRunSchema(run.SchemaVersion) {
 		return "INSUFFICIENT_EVIDENCE", "The exact target contains a native report schema that this assessor cannot fully verify."
 	}
 	quality := report.AssessQuality(run)
@@ -306,11 +306,15 @@ func classifySavedRun(run report.Result) (string, string) {
 }
 
 func savedRunSLOBreach(run report.Result) bool {
-	breaches := func(metrics report.MetricSet) bool {
-		return metrics.P95MS > run.Config.P95LimitMS ||
+	breachesLimit := func(metrics report.MetricSet, p95LimitMS float64) bool {
+		return metrics.P95MS > p95LimitMS ||
 			metrics.Total > 0 && float64(metrics.Failures)/float64(metrics.Total) > run.Config.MaxErrorRate
 	}
-	if breaches(run.Metrics) || breaches(run.Journeys) {
+	breaches := func(metrics report.MetricSet) bool { return breachesLimit(metrics, run.Config.P95LimitMS) }
+	journeyBreaches := func(metrics report.MetricSet) bool {
+		return breachesLimit(metrics, run.Config.JourneyLatencyLimitMS())
+	}
+	if breaches(run.Metrics) || journeyBreaches(run.Journeys) {
 		return true
 	}
 	for _, step := range run.Steps {
@@ -319,12 +323,12 @@ func savedRunSLOBreach(run report.Result) bool {
 		}
 	}
 	for _, profile := range run.Profiles {
-		if breaches(profile.Journeys) {
+		if journeyBreaches(profile.Journeys) {
 			return true
 		}
 	}
 	for _, window := range run.Windows {
-		if breaches(window.Metrics) || breaches(window.Journeys) {
+		if breaches(window.Metrics) || journeyBreaches(window.Journeys) {
 			return true
 		}
 		for _, step := range window.Steps {
@@ -333,7 +337,7 @@ func savedRunSLOBreach(run report.Result) bool {
 			}
 		}
 		for _, profile := range window.Profiles {
-			if breaches(profile.Metrics) {
+			if journeyBreaches(profile.Metrics) {
 				return true
 			}
 		}
@@ -395,4 +399,11 @@ func savedRunGeneratorIssue(run report.Result) string {
 		return "Generator CPU or the configured client request-rate ceiling may be limiting the exact target."
 	}
 	return ""
+}
+
+// assessableRunSchema accepts the run schemas whose complete evidence this
+// assessor verifies. Schema v35 only adds the optional journey p95 limit, so
+// v34 reports remain assessable with their recorded request limit.
+func assessableRunSchema(version int) bool {
+	return version >= 34 && version <= report.CurrentSchemaVersion
 }

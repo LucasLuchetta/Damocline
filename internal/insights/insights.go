@@ -62,7 +62,7 @@ func ValidateRunReport(r report.Result) error {
 	if !validTargetIdentity(r.Target) {
 		return errors.New("run report target identity must be an absolute HTTP(S) origin without credentials or path")
 	}
-	if r.SchemaVersion < 1 || r.SchemaVersion > report.CurrentSchemaVersion || r.Name == "" || r.Metrics.Total < 0 || r.Metrics.Success < 0 || r.Metrics.Failures < 0 || r.Metrics.Success+r.Metrics.Failures != r.Metrics.Total || r.Config.Users < 1 || r.ElapsedSeconds <= 0 || (r.SchemaVersion >= 4 && r.ObservationSeconds <= 0) || (r.SchemaVersion >= 11 && !validFingerprint(r.Config.WorkloadFingerprint)) || (r.SchemaVersion >= 14 && r.Config.ConnectionPolicy != "reuse" && r.Config.ConnectionPolicy != "new_per_request") {
+	if r.SchemaVersion < 1 || r.SchemaVersion > report.CurrentSchemaVersion || r.Name == "" || r.Metrics.Total < 0 || r.Metrics.Success < 0 || r.Metrics.Failures < 0 || r.Metrics.Success+r.Metrics.Failures != r.Metrics.Total || r.Config.Users < 1 || r.ElapsedSeconds <= 0 || (r.SchemaVersion >= 4 && r.ObservationSeconds <= 0) || (r.SchemaVersion >= 11 && !validFingerprint(r.Config.WorkloadFingerprint)) || (r.SchemaVersion >= 14 && r.Config.ConnectionPolicy != "reuse" && r.Config.ConnectionPolicy != "new_per_request") || !report.ValidJourneyP95Limit(r) {
 		return errors.New("not a valid Damocline HTTP run report")
 	}
 	if (r.SchemaVersion >= 16 && (r.ArrivalsCancelledBeforeAdmission == nil || *r.ArrivalsCancelledBeforeAdmission < 0)) ||
@@ -259,7 +259,14 @@ func Evaluate(r report.Result, host *hostmon.Result) Assessment {
 		a.Findings = append(a.Findings, Finding{"CAUTION", fmt.Sprintf("Long-tail latency: request p99 reached %.0f ms versus p95 of %.0f ms. Investigate intermittent slow requests.", r.Metrics.P99MS, r.Metrics.P95MS)})
 	}
 	if r.Journeys.Total > 0 {
-		a.Findings = append(a.Findings, Finding{"INFO", fmt.Sprintf("Complete journey p95: %.0f ms, including configured think time; this is different from HTTP request p95.", r.Journeys.P95MS)})
+		if r.Config.JourneyP95LimitMS > 0 {
+			a.Findings = append(a.Findings, Finding{"INFO", fmt.Sprintf("Complete journey p95: %.0f ms, including configured think time (journey_p95_limit_ms: %.0f ms); this is different from HTTP request p95.", r.Journeys.P95MS, r.Config.JourneyP95LimitMS)})
+		} else {
+			a.Findings = append(a.Findings, Finding{"INFO", fmt.Sprintf("Complete journey p95: %.0f ms, including configured think time; this is different from HTTP request p95.", r.Journeys.P95MS)})
+		}
+	}
+	if r.Config.JourneyP95LimitMS <= 0 && r.Config.P95LimitMS > 0 && r.Config.ConfiguresThinkTime() {
+		a.Findings = append(a.Findings, Finding{"CAUTION", report.JourneyLimitIncludesThinkTimeWarning})
 	}
 	if r.ObservationSeconds > 0 {
 		a.Findings = append(a.Findings, Finding{"INFO", fmt.Sprintf("Successful configured journey throughput: %.2f/s; %.2f complete journeys/s including failures; %d journeys cancelled before completion. max_rps is an HTTP request ceiling and is not comparable to journey throughput.", report.SuccessfulJourneysPerSecond(r), report.CompletedJourneysPerSecond(r), r.Journeys.Cancelled)})
@@ -496,7 +503,7 @@ func Write(w io.Writer, r report.Result, host *hostmon.Result, previous *report.
 
 func writeComparison(w io.Writer, old, current report.Result) {
 	fmt.Fprintln(w, "\nComparison with previous run:")
-	compatible := old.Target == current.Target && old.SchemaVersion >= 14 && current.SchemaVersion >= 14 && old.Config.ConnectionPolicy == current.Config.ConnectionPolicy && validFingerprint(old.Config.WorkloadFingerprint) && old.Config.WorkloadFingerprint == current.Config.WorkloadFingerprint && old.Config.WorkloadRevision != "" && old.Config.WorkloadRevision == current.Config.WorkloadRevision && old.Config.Environment != "" && old.Config.Environment == current.Config.Environment && old.Config.ProfileMixBasis == current.Config.ProfileMixBasis && old.Config.ProfileMixReference == current.Config.ProfileMixReference && old.Config.Users == current.Config.Users && old.Config.Duration == current.Config.Duration && old.Config.RampUp == current.Config.RampUp && old.Config.MaxRPS == current.Config.MaxRPS && old.Config.Mode == current.Config.Mode && old.Config.ArrivalRate == current.Config.ArrivalRate && old.Config.SeparateSessions == current.Config.SeparateSessions && old.Config.ThinkTime == current.Config.ThinkTime && old.Config.RequestTimeout == current.Config.RequestTimeout && old.Config.P95LimitMS == current.Config.P95LimitMS && old.Config.MaxErrorRate == current.Config.MaxErrorRate && old.Config.MinSamplesPerStep == current.Config.MinSamplesPerStep && old.Config.WindowDuration == current.Config.WindowDuration && sameSteps(old.Steps, current.Steps) && sameProfiles(old.Config.Profiles, current.Config.Profiles)
+	compatible := old.Target == current.Target && old.SchemaVersion >= 14 && current.SchemaVersion >= 14 && old.Config.ConnectionPolicy == current.Config.ConnectionPolicy && validFingerprint(old.Config.WorkloadFingerprint) && old.Config.WorkloadFingerprint == current.Config.WorkloadFingerprint && old.Config.WorkloadRevision != "" && old.Config.WorkloadRevision == current.Config.WorkloadRevision && old.Config.Environment != "" && old.Config.Environment == current.Config.Environment && old.Config.ProfileMixBasis == current.Config.ProfileMixBasis && old.Config.ProfileMixReference == current.Config.ProfileMixReference && old.Config.Users == current.Config.Users && old.Config.Duration == current.Config.Duration && old.Config.RampUp == current.Config.RampUp && old.Config.MaxRPS == current.Config.MaxRPS && old.Config.Mode == current.Config.Mode && old.Config.ArrivalRate == current.Config.ArrivalRate && old.Config.SeparateSessions == current.Config.SeparateSessions && old.Config.ThinkTime == current.Config.ThinkTime && old.Config.RequestTimeout == current.Config.RequestTimeout && old.Config.P95LimitMS == current.Config.P95LimitMS && old.Config.JourneyP95LimitMS == current.Config.JourneyP95LimitMS && old.Config.MaxErrorRate == current.Config.MaxErrorRate && old.Config.MinSamplesPerStep == current.Config.MinSamplesPerStep && old.Config.WindowDuration == current.Config.WindowDuration && sameSteps(old.Steps, current.Steps) && sameProfiles(old.Config.Profiles, current.Config.Profiles)
 	if !compatible {
 		fmt.Fprintln(w, "  Comparison eligibility: NOT_COMPARABLE.")
 		fmt.Fprintln(w, "  [LIMIT] Workload fingerprint, connection policy, revision, environment, load controls, acceptance criteria, authentication mode, target, or routes differ, are malformed, or are unrecorded. Older report schemas do not record connection policy. This is NOT a controlled comparison.")
