@@ -91,8 +91,18 @@ func TestUniformThinkTimeRunsThroughTwoStepJourney(t *testing.T) {
 
 func TestThreeProfilesShareRateBudgetWithTimingOverrides(t *testing.T) {
 	var received atomic.Int64
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	requests := map[string]*atomic.Int64{
+		"/browse": {}, "/browse/detail": {}, "/search": {},
+		"/search/results": {}, "/review": {}, "/review/detail": {},
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		received.Add(1)
+		count, ok := requests[r.URL.Path]
+		if !ok {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		count.Add(1)
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()
@@ -121,10 +131,31 @@ func TestThreeProfilesShareRateBudgetWithTimingOverrides(t *testing.T) {
 	if len(result.Profiles) != 3 || len(result.Config.Profiles) != 3 {
 		t.Fatalf("three profile ledgers missing: %+v", result.Profiles)
 	}
-	for _, profile := range result.Profiles {
+	var pauses int
+	var pauseMS float64
+	minimumPauseMS := map[string]float64{"browse": 5, "search": 10, "review": 10}
+	for i, profile := range result.Profiles {
 		if profile.ActorsObserved < 1 || profile.ActorsObserved > s.Users || profile.Journeys.Total == 0 {
 			t.Fatalf("profile %q lacks journey-start or actor evidence: %+v", profile.Name, profile)
 		}
+		configured := s.Profiles[i]
+		journeys := profile.Journeys.Success
+		if profile.Name != configured.Name || journeys != profile.Journeys.Total ||
+			int64(journeys) != requests[configured.Steps[0].Path].Load() ||
+			int64(journeys) != requests[configured.Steps[1].Path].Load() {
+			t.Fatalf("profile journey counts disagree with server: %+v", profile)
+		}
+		if profile.ThinkTimeObservations != journeys ||
+			profile.ObservedThinkTimeMS < minimumPauseMS[profile.Name]*float64(journeys) ||
+			profile.Journeys.MeanMS+.001 < profile.ObservedThinkTimeMS/float64(journeys) {
+			t.Fatalf("profile pause ledger does not fit completed journeys: %+v", profile)
+		}
+		pauses += profile.ThinkTimeObservations
+		pauseMS += profile.ObservedThinkTimeMS
+	}
+	if result.ThinkTimeObservations != pauses || math.Abs(result.ObservedThinkTimeMS-pauseMS) > .003 {
+		t.Fatalf("aggregate think-time ledger disagrees with profiles: total=%d/%.3fms profiles=%d/%.3fms",
+			result.ThinkTimeObservations, result.ObservedThinkTimeMS, pauses, pauseMS)
 	}
 	if result.Config.ProfileSelection != "per_journey_start" {
 		t.Fatalf("profile selection semantics missing: %+v", result.Config)
