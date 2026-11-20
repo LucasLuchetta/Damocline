@@ -38,7 +38,22 @@ This matrix records implementation, automated-test and runtime-validation eviden
 
 ## G0 exit decision
 
-G0 remains **open**. Positive results are established only for the controlled Windows and recorded Docker Desktop/WSL2 loopback soaks. Cross-host/hardware-class equivalence, bare-metal Linux, broad transport/failure matrices, statistical dependence handling, and multiple other G0 acceptance gaps remain.
+G0 is **closed** on the roadmap exit test, within the local reference scope ([ADR 0149](adr/0149-close-g0-on-the-exit-test.md)). Passing G0 is not a sustainable application capacity result.
+
+- **Repeatable calibration on the actual generator class:** at merged revision `418b167`, cross-built linux/amd64 acceptance and calibrator binaries were checked by SHA-256 across the upload to an independent bare-metal Linux x86-64 host with 4 CPUs. Two bounded repeats then passed as `PASS_LOCAL_REFERENCE_ONLY`, with every manifest rule passing.
+  - Effective CPU capacity was detected (`runtime_logical_cpus_and_gomaxprocs`, ADR 0144).
+  - All 11 controlled soaks were `VALID_WITHIN_ENVELOPE`.
+  - Hosted Windows and Linux acceptance also passed in CI.
+- **Workload inside the validated envelope:** opt-in exact calibration gates stop before any traffic when evidence is stale, mismatched or not equivalent. Safety ceilings are unchanged (G0-11).
+- **Scheduling, cancellation, timing and counts reconcile:** loopback fixtures check these against independent server ledgers. This includes bounded in-process CPU pressure, where over-tolerance runs are classified as degraded, not valid (ADR 0145). It also covers connection caps, abort and kill stages, mixed journeys, and DNS and TLS failure subtypes (ADR 0147).
+- **Process health present or explicitly unavailable:** generator CPU, sampler gaps and RSS are recorded, or marked unavailable.
+
+The "remaining" column of each gate above is carried forward as post-G0 hardening and must not be described as verified. ADR 0148 also defers four items past G0:
+
+- record signing
+- physical host attestation
+- validated calibration lifetime
+- default gate enforcement
 
 ## Evidence from the latest validation cycle
 
