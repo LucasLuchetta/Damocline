@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Stop reporting a false INVALID scheduler-admission mismatch for
+  closed-loop runs, whose admission count is zero by design.
+
 - Close G0 on the roadmap exit test within the local reference scope
   (ADR 0149). Per-gate remaining gaps move to post-G0 hardening.
 

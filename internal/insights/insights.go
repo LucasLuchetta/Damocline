@@ -360,11 +360,20 @@ func Evaluate(r report.Result, host *hostmon.Result) Assessment {
 	if r.ArrivalsDroppedBusy > 0 {
 		a.Findings = append(a.Findings, Finding{"LIMIT", fmt.Sprintf("%d arrivals had no idle synthetic worker; server bottleneck is not established.", r.ArrivalsDroppedBusy)})
 	}
+	// Closed-loop workers start iterations without scheduler admission, so
+	// their recorded admission count must be zero; open-arrival admissions
+	// must equal worker-started iterations.
 	if r.SchemaVersion >= 17 && r.ArrivalsAdmitted != nil {
-		if *r.ArrivalsAdmitted != r.IterationsStarted {
+		expectedAdmitted := r.IterationsStarted
+		if r.Config.Mode != "arrival" {
+			expectedAdmitted = 0
+		}
+		if *r.ArrivalsAdmitted != expectedAdmitted {
 			a.Findings = append(a.Findings, Finding{"INVALID", "Scheduler-admitted arrivals do not reconcile with worker-started iterations."})
 		} else {
-			a.Findings = append(a.Findings, Finding{"INFO", fmt.Sprintf("Scheduler admitted %d arrivals; worker-started iterations reconcile exactly.", *r.ArrivalsAdmitted)})
+			if r.Config.Mode == "arrival" {
+				a.Findings = append(a.Findings, Finding{"INFO", fmt.Sprintf("Scheduler admitted %d arrivals; worker-started iterations reconcile exactly.", *r.ArrivalsAdmitted)})
+			}
 		}
 	}
 	if r.ArrivalsCancelledBeforeAdmission != nil && *r.ArrivalsCancelledBeforeAdmission > 0 {
