@@ -244,6 +244,16 @@ func capacityCmd(args []string, stdout, stderr io.Writer) int {
 		}
 		f.Close()
 		defer os.Remove(lock)
+		if *resume {
+			state, err := completedCapacity(*dir, *budget)
+			if err != nil {
+				return fail(err)
+			}
+			if state != "" {
+				fmt.Fprintf(stdout, "Reused completed audit and executive report. Assessment: %s.\n", state)
+				return 0
+			}
+		}
 	}
 	if *hook != "" && !*dry {
 		restore, err := provisionCapacityCookies(*hook, hookArgs, scenario.PerVUCookieEnvPrefix, *maxUsers)
@@ -367,13 +377,6 @@ func capacityCmd(args []string, stdout, stderr io.Writer) int {
 	}
 	reportPath := filepath.Join(*dir, "capacity.md")
 	auditJSON := filepath.Join(*dir, "audit.json")
-	if _, err := os.Stat(reportPath); err == nil && *resume {
-		if _, err := os.Stat(auditJSON); err != nil {
-			return fail(err)
-		}
-		fmt.Fprintln(stdout, "Reused completed audit and executive report.")
-		return 0
-	}
 	auditReportPath := reportPath
 	if *intensity > 0 {
 		auditReportPath = filepath.Join(*dir, "capacity-audit.md")
@@ -395,6 +398,31 @@ func capacityCmd(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	return 0
+}
+
+func completedCapacity(dir string, budget time.Duration) (string, error) {
+	reportPath := filepath.Join(dir, "capacity.md")
+	data, err := readCapacityFile(reportPath)
+	if os.IsNotExist(err) {
+		return "", nil
+	}
+	if err != nil || len(data) == 0 {
+		return "", errors.New("saved executive report cannot be reused")
+	}
+	evidence, digest, err := capacityplan.ReadCampaignWithFileSHA256(filepath.Join(dir, "campaign.json"))
+	if err != nil || evidence.ExecutionState != "COMPLETED" || evidence.Budget != budget.String() {
+		return "", errors.New("completed campaign does not match the requested resume controls")
+	}
+	auditData, err := readCapacityFile(filepath.Join(dir, "audit.json"))
+	if err != nil {
+		return "", err
+	}
+	var assessment capacityplan.Assessment
+	if err := json.Unmarshal(auditData, &assessment); err != nil || assessment.State == "" ||
+		assessment.Audit.SourceFileSHA256 != digest {
+		return "", errors.New("saved audit does not match the completed campaign bytes")
+	}
+	return assessment.State, nil
 }
 
 func capacityPreflight(stdout io.Writer, v config.Validated, calibrationPath string) error {
