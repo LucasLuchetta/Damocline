@@ -385,10 +385,17 @@ func validateCampaignArtifactPresence(data []byte) error {
 			return errors.New("current campaign started_at must be a non-empty RFC3339 timestamp")
 		}
 	}
+	required := []string{}
+	if schemaVersion >= 9 {
+		required = append(required, "cooldown")
+	}
 	if schemaVersion >= 10 {
-		value, present := fields["execution_state"]
+		required = append(required, "execution_state")
+	}
+	for _, name := range required {
+		value, present := fields[name]
 		if !present || bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
-			return errors.New("campaign is missing required field \"execution_state\"")
+			return fmt.Errorf("campaign is missing required field %q", name)
 		}
 	}
 	var trials []json.RawMessage
@@ -396,12 +403,12 @@ func validateCampaignArtifactPresence(data []byte) error {
 		return errors.New("campaign trials must be a JSON array")
 	}
 	for index, rawTrial := range trials {
-		if err := validateCampaignTrialPresence(rawTrial); err != nil {
+		if err := validateCampaignTrialPresence(rawTrial, schemaVersion); err != nil {
 			return fmt.Errorf("campaign trial %d: %w", index+1, err)
 		}
 	}
 	if pending, ok := fields["pending_trial"]; ok && string(pending) != "null" {
-		if err := validateCampaignTrialPresence(pending); err != nil {
+		if err := validateCampaignTrialPresence(pending, schemaVersion); err != nil {
 			return fmt.Errorf("campaign pending_trial: %w", err)
 		}
 	}
@@ -416,12 +423,16 @@ func validateCampaignArtifactPresence(data []byte) error {
 	return nil
 }
 
-func validateCampaignTrialPresence(data []byte) error {
+func validateCampaignTrialPresence(data []byte, schemaVersion int) error {
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(data, &fields); err != nil || fields == nil {
 		return errors.New("trial must be a JSON object")
 	}
-	for _, name := range []string{"number", "phases", "outcome"} {
+	required := []string{"number", "phases", "outcome"}
+	if schemaVersion >= 9 {
+		required = append(required, "run_id")
+	}
+	for _, name := range required {
 		value, ok := fields[name]
 		if !ok || string(value) == "null" {
 			return fmt.Errorf("trial is missing required field %q; absence cannot be interpreted as zero", name)
