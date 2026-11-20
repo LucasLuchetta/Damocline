@@ -300,6 +300,9 @@ func runWithTransportAndIdentity(parent context.Context, v config.Validated, tra
 		OS: runtime.GOOS, Architecture: runtime.GOARCH, GoVersion: runtime.Version(),
 		RunnerIdentityMethod: runnerIdentityMethod, RunnerIdentity: runnerIdentity,
 	}
+	// The bounded network-path baseline (ADR 0153) runs sequentially before
+	// the load observation starts and is excluded from every load counter.
+	networkBaseline := runNetworkBaseline(parent, v.NetworkBaseline, transport)
 	started := time.Now()
 	scheduleDeadline := started.Add(v.Duration)
 	// Stop admitting new work at the configured boundary, then allow any
@@ -755,6 +758,10 @@ func runWithTransportAndIdentity(parent context.Context, v config.Validated, tra
 		}
 	}
 
+	result.NetworkBaseline = networkBaseline
+	if issue := report.NetworkBaselineIssue(result); issue != "" {
+		result.Warnings = append(result.Warnings, issue)
+	}
 	result.Quality = report.AssessQuality(result)
 	result.Signals = report.DetectSignals(result)
 	if result.Quality.State == report.QualityInvalid && result.Outcome == "PASS" {

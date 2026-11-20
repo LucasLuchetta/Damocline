@@ -184,6 +184,15 @@ func WithRunner(ctx context.Context, base config.Validated, opt Options, runner 
 				p.Reason = reason
 				break
 			}
+			// A failed, unstable, or objective-dominating network-path
+			// baseline (ADR 0153) prevents reporting an application limit.
+			if r.Outcome != "PASS" {
+				if issue := report.NetworkBaselineIssue(r); issue != "" {
+					p.Status = "INCONCLUSIVE"
+					p.Reason = issue
+					break
+				}
+			}
 			if r.Outcome == "FAIL" && (r.SchemaVersion >= 16 || r.Generator != nil) {
 				if reason := report.GeneratorEvidenceIssue(r); reason != "" {
 					p.Status = "INCONCLUSIVE"

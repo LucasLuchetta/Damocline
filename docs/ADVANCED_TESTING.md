@@ -85,6 +85,8 @@ An alternative is one shared session using the legacy `"Cookie": "${DAMOCLINE_SE
 .\damocline.exe run --config .\myapp.local.json --authorized --out reports\baseline.json
 ```
 
+Before load, every run sends a bounded network-path baseline: 20 sequential `GET`/`HEAD` requests (no cookies, headers or body) to the first literal `GET`/`HEAD` step, or to `"baseline_path": "/health"` when set. The output prints its p50/p95/max. If the baseline failed, is unstable, or its p95 exceeds half of `p95_limit_ms`, the run warns that the generator network path may dominate latency; do not read a FAIL as an application limit. Run the generator from a stable, low-latency path (wired, same network or region) and repeat. Scenarios with only write steps must set `baseline_path` or an explicit `"network_baseline_skip_reason": "label"`, which is recorded in the report (ADR 0153).
+
 When moving beyond 2 VUs, verify accounts, permissions and datasets. Keep traffic caps conservative on production. Failures, 302 redirects, dropped starts and insufficient step coverage must not be ignored.
 
 ## 5. Find repeatedly passing virtual-user levels
