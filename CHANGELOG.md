@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Reject campaign budgets without the bounded drain allowance before any
+  traffic, matching the offline audit rule, and state the required budget.
+
 - Allow one independent, logged retry of the extended calibration on
   hosted Windows CI after a late-arrival failure (ADR 0152).
 
