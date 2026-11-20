@@ -125,6 +125,7 @@ Usage:
 	  damocline protocol seal --file protocol-draft.json --out reports/protocol.json
 	  damocline protocol assess --file reports/protocol.json --confirmation-campaign reports/confirm-1.json --confirmation-campaign reports/confirm-2.json [--markdown reports/capacity.md --bundle reports/reproduction.json]
   damocline run --config scenario.json --authorized [--calibration reports/reference.json --require-calibration] [--app-metrics-endpoint https://app.example.com/metrics --app-metrics-interval 10s] [--out reports/run.json]
+  damocline run --config lab.json --authorized --extended-envelope --extended-load-authorized --target-class lab|staging --calibration reports/reference.json --require-calibration [--max-generator-cpu-percent 70]
   damocline run --config scenario.json --dry-run
   damocline calibrate --config scenario.json --users 2,4,8 --from-report reports/run.json --out reports/self-calibration.json
   damocline explore --config scenario.json --min-users 2 --max-users 20 --stage-duration 20s --repeats 2 --authorized
@@ -431,11 +432,17 @@ func run(args []string, stdout, stderr io.Writer) int {
 	requireCalibration := fs.Bool("require-calibration", false, "block traffic unless local calibration covers this exact generator workload")
 	applicationMetricsEndpoint := fs.String("app-metrics-endpoint", "", "optionally sample an authorized Prometheus-text endpoint during this run")
 	applicationMetricsInterval := fs.Duration("app-metrics-interval", 10*time.Second, "application-metrics sampling interval (1s-1m)")
+	extended := registerExtendedEnvelopeFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 	if len(fs.Args()) > 0 {
 		fmt.Fprintln(stderr, "unexpected positional arguments")
+		return 2
+	}
+	extendedRequest, err := extended.request(*requireCalibration, *calibrationFile)
+	if err != nil {
+		fmt.Fprintf(stderr, "extended envelope error: %v\n", err)
 		return 2
 	}
 	if err := validateApplicationMetrics(*applicationMetricsEndpoint, *applicationMetricsInterval); err != nil {
@@ -455,7 +462,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "configuration error: %v\n", err)
 		return 2
 	}
-	validated, err := config.Parse(raw, config.Options{Authorized: *authorized || *dry, AllowWrites: *writes, AllowInsecureHTTP: *insecure, NetworkBaseline: true})
+	validated, err := config.Parse(raw, config.Options{Authorized: *authorized || *dry, AllowWrites: *writes, AllowInsecureHTTP: *insecure, NetworkBaseline: true, ExtendedEnvelope: extendedRequest})
 	if err != nil {
 		fmt.Fprintf(stderr, "configuration error: %v\n", err)
 		return 2
@@ -474,7 +481,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 			}
 			if preflightErr := scenarioCalibrationPreflight(*loaded.scenario, validated, []int{level}, time.Now().UTC()); preflightErr != nil {
 				fmt.Fprintf(stdout, "Workload self-calibration: NOT APPLICABLE (%v).\n", preflightErr)
-				if *requireCalibration {
+				if *requireCalibration && extendedRequest == nil {
 					fmt.Fprintln(stderr, "RUN BLOCKED: self-calibration does not cover this workload; no traffic was sent.")
 					return 2
 				}
@@ -484,7 +491,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 			selfCalibration = loaded.scenario
 		}
 	}
-	if *requireCalibration && selfCalibration == nil {
+	if extendedRequest != nil {
+		if code := gateExtendedEnvelope(&validated, *calibrationFile, stdout, stderr); code != 0 {
+			return code
+		}
+	} else if *requireCalibration && selfCalibration == nil {
 		if validated.Scenario.Mode != "arrival" {
 			fmt.Fprintln(stderr, "--require-calibration currently supports only exact open-arrival workloads")
 			return 2

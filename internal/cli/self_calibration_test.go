@@ -202,3 +202,39 @@ func TestAuditConsumesSelfCalibratedCampaign(t *testing.T) {
 		t.Fatalf("audit did not consume the self-calibration: state=%s measurement=%s\n%s", audit.State, audit.Confidence.Measurement, stdout.String())
 	}
 }
+
+func TestExtendedRunAcceptsMatchingSelfCalibrationAndRefusesWithout(t *testing.T) {
+	base, hits := extendedTestTarget(t)
+	configPath := writeExtendedScenario(t, base, 60, "1s")
+	previous := selfcalibration.MinLevelDuration
+	selfcalibration.MinLevelDuration = time.Second
+	t.Cleanup(func() { selfcalibration.MinLevelDuration = previous })
+	dir := t.TempDir()
+	matching := filepath.Join(dir, "selfcal-60.json")
+	other := filepath.Join(dir, "selfcal-55.json")
+	for _, c := range []struct{ users, out string }{{"60", matching}, {"55", other}} {
+		var stdout, stderr bytes.Buffer
+		if code := Run([]string{"calibrate", "--config", configPath, "--users", c.users, "--level-duration", "1500ms", "--response-bytes", "2",
+			"--extended-envelope", "--out", c.out}, &stdout, &stderr); code != 0 {
+			t.Fatalf("calibrate %s VUs failed (%d): %s %s", c.users, code, stdout.String(), stderr.String())
+		}
+	}
+	var stdout, stderr bytes.Buffer
+	if code := Run(extendedArgs(configPath, other), &stdout, &stderr); code != 2 || hits.Load() != 0 || !strings.Contains(stderr.String(), "EXTENDED RUN BLOCKED") {
+		t.Fatalf("an artifact without the exact level must refuse the extended run (%d, hits %d): %s %s", code, hits.Load(), stdout.String(), stderr.String())
+	}
+	out := filepath.Join(dir, "run.json")
+	stdout.Reset()
+	stderr.Reset()
+	Run(extendedArgs(configPath, matching, "--out", out), &stdout, &stderr)
+	if hits.Load() == 0 || !strings.Contains(stdout.String(), "calibration coverage READY") {
+		t.Fatalf("matching self-calibration did not admit the extended run: %s %s", stdout.String(), stderr.String())
+	}
+	r, err := insights.ReadRun(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.ScenarioCalibration == nil || r.Envelope == nil || r.Envelope.CalibrationCoverage != "READY" {
+		t.Fatalf("extended run did not record the self-calibration: %+v", r.Envelope)
+	}
+}

@@ -759,6 +759,10 @@ func runWithTransportAndIdentity(parent context.Context, v config.Validated, tra
 	}
 
 	result.NetworkBaseline = networkBaseline
+	result.Envelope = reportEnvelope(v, generatorSnapshot.GuardrailTrigger != nil)
+	if note := report.EnvelopeNote(result); note != "" {
+		result.Warnings = append(result.Warnings, note)
+	}
 	if issue := report.NetworkBaselineIssue(result); issue != "" {
 		result.Warnings = append(result.Warnings, issue)
 	}
@@ -1421,3 +1425,22 @@ func safePath(p string) string {
 	return p
 }
 func round(v float64) float64 { return float64(int64(v*1000+0.5)) / 1000 }
+
+// reportEnvelope copies the validated load envelope into the report (ADR 0155).
+func reportEnvelope(v config.Validated, guardrailStopped bool) *report.Envelope {
+	e := v.Envelope
+	if e.Mode == "" {
+		e = config.EnvelopeRecord{Mode: config.EnvelopeStandard, Limits: config.StandardEnvelopeLimits}
+	}
+	out := &report.Envelope{Mode: e.Mode, MaxUsers: e.Limits.MaxUsers, MaxRPS: e.Limits.MaxRPS, MaxArrivalRate: e.Limits.MaxArrivalRate, MaxDurationSeconds: int(e.Limits.MaxDuration / time.Second)}
+	if e.Mode == config.EnvelopeExtended {
+		out.TargetClass = e.TargetClass
+		out.Acknowledged = e.Acknowledged
+		out.CalibrationCoverage = e.CalibrationCoverage
+		out.ExceedsStandard = v.ExceedsStandard()
+		if guardrailStopped {
+			out.StopReason = report.EnvelopeStopGeneratorLimited
+		}
+	}
+	return out
+}

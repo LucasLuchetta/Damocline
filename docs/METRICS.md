@@ -51,7 +51,7 @@ HTTP outcome diagnostics distinguish DNS-resolution failures and connection-esta
 
 `VALID_WITHIN_ENVELOPE` is reachable only for the calibrator-owned 30-second loopback soak after an independently observed server ledger, exact workload dimensions, executable identity, sufficient response samples and healthy generator evidence all recompute as matched. Two Windows runs and two Docker Desktop/WSL2 Linux runs have passed this controlled path. Ordinary `run` commands remain limited while controlled endpoint identity and workload headroom are absent. This state remains orthogonal to SLO `PASS`/`FAIL`; synthetic fixture qualification does not certify an external application. Data quality findings never embed requested URLs, secrets, step names, or response content. Previously recorded reports may lack the optional quality field; missing is **not** equivalent to validated.
 
-### Workload self-calibration (schema v38, ADR 0154)
+### Workload self-calibration (schema v39, ADR 0154)
 
 An embedded `workload_self_calibration` artifact removes the "No local generator preflight" limit only when it applies to the exact run: passed, at most 24 h old, same executable and CPU entitlement, same controls, known workload fingerprint, and a passed level equal to the run's users or arrival rate. When it applies and there is no other finding, quality is `VALID_WITHIN_ENVELOPE`. This is generator-side evidence. It is never evidence about the target.
 

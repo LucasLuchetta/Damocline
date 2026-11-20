@@ -31,7 +31,7 @@ Scenario fields:
 | `mode` | `closed` for concurrent virtual users or `arrival` for independent journey starts. |
 | `users` | Closed-loop VUs or maximum available journey workers in arrival mode. |
 | `arrival_rate` | Desired journey starts/second, only in arrival mode; capped at 100 and constrained by `max_rps` and longest journey length. |
-| `max_rps` | Hard global HTTP request-start rate ceiling, maximum 100. |
+| `max_rps` | Hard global HTTP request-start rate ceiling, maximum 100 (1000 for a single `run` under the opt-in extended envelope). |
 | `duration` | Run duration, maximum 3 minutes. |
 | `min_samples_per_step` | Minimum completed responses required per step for a passing result. |
 | `p95_limit_ms` | Latency p95 ceiling applied to aggregate and individual steps. Without `journey_p95_limit_ms`, it also applies to completed journeys. |
@@ -369,3 +369,30 @@ The export preserves aggregate and per-window measurements but aliases arbitrary
 - Synthetic sessions with shared cookies are not independent users.
 - Host CPU saturation correlating with response latency is a hypothesis, not an established bottleneck cause.
 - The engine still lacks browser measurement, automatic login/CSRF handling, synthetic-data lifecycle controls, continuous per-container metrics, and calibrated capacity or generator limits. Weights are a declared synthetic assumption until validated against sanitized usage evidence. Go runtime and supported Windows/Linux process health samples are available, but the error-rate confidence bound assumes independent, stationary outcomes and does not describe percentile or run-to-run uncertainty. Read the [scientific foundations and validation contract](SCIENTIFIC_FOUNDATIONS.md) before interpreting a capacity result.
+
+## Extended load envelope (opt-in, single run)
+
+When a target passes at the standard ceilings its limit is not observed. A
+single `damocline run` can opt in to higher ceilings (ADR 0155):
+
+```text
+damocline run --config lab.json --authorized   --extended-envelope --extended-load-authorized --target-class staging   --calibration reports/calibration.json --require-calibration --out reports/run.json
+```
+
+- Hard maximum: 500 closed-loop VUs or arrival workers, 1000 configured request
+  starts/s and arrival starts/s, 15 minutes per run. Nothing raises it further.
+- `--target-class` must be `lab` or `staging`; scenarios whose `environment`
+  label names production are refused.
+- The calibration must be fresh and cover the exact planned VU level or arrival
+  rate on the same generator runtime. Otherwise the run is refused before any
+  traffic. The current reference calibration covers only a few levels, so most
+  extended levels are refused until a workload-specific calibration covers them.
+- Generator guardrails are always on (CPU 85%, RSS 2 GiB, 3 consecutive
+  samples). `--max-generator-cpu-percent`, `--max-generator-rss-mb` and
+  `--guardrail-samples` may only tighten them. A trigger aborts the run and
+  records `load_envelope.stop_reason = GENERATOR_LIMITED`; such a run describes
+  the generator, not the target.
+- The report (schema v38) records `load_envelope`; `insights` states when results
+  above the standard ceiling were produced under the extended envelope.
+- `campaign`, `explore`, `explore-arrival` and `arrival-campaign` remain on the
+  standard envelope.

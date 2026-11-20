@@ -60,7 +60,7 @@ Add `damocline calibrate --config scenario.json --users 2,4,8 --out FILE`
   `--require-calibration`. The preflight checks status, the 24-hour age limit,
   runtime and CPU entitlement, the workload fingerprint and every planned level
   (the explore ladder; campaign base and spike levels) before traffic. Each run
-  then embeds the artifact as `workload_self_calibration` (run schema v38).
+  then embeds the artifact as `workload_self_calibration` (run schema v39).
 - `AssessQuality` recomputes applicability from the report alone: valid
   artifact, passed, age at most 24 h relative to the run start, identical
   executable identity and CPU entitlement, identical controls, a known
@@ -69,6 +69,14 @@ Add `damocline calibrate --config scenario.json --users 2,4,8 --out FILE`
   `VALID_WITHIN_ENVELOPE`. Otherwise the run stays `LIMITED` with the specific
   reason. Attaching both calibration kinds is invalid. `audit` recomputes
   quality per phase, so it consumes the artifact with no audit-specific code.
+
+- Extended envelope (ADR 0155): `calibration.AssessScenarioSelfCalibration`
+  is registered in `ExtendedCoverageAssessors`. It returns READY only when the
+  exact planned level is a passed level with a matching workload fingerprint,
+  the artifact is fresh, and the current executable identity and CPU
+  entitlement equal the calibrated ones. `damocline calibrate
+  --extended-envelope` can calibrate levels above the standard ceilings
+  against the loopback mirror only.
 
 ## What this proves and what it does not
 

@@ -57,6 +57,10 @@ type Options struct {
 	FromReportSHA256 string
 	Guardrails       generatorhealth.Guardrails
 	Runner           Runner
+	// ExtendedEnvelope parses the loopback mirror workload under the opt-in
+	// extended envelope (ADR 0155) so levels above the standard ceilings can
+	// be calibrated. Only the 127.0.0.1 mirror receives that load.
+	ExtendedEnvelope bool
 	Now              func() time.Time
 }
 
@@ -305,7 +309,11 @@ func Run(ctx context.Context, s config.Scenario, opt Options) (calibration.Scena
 		mirrorScenario.ArrivalRate = opt.Levels[0]
 	}
 	mirrorScenario.Duration = opt.LevelDuration.String()
-	baseValidated, err := config.Parse(mirrorScenario, config.Options{Authorized: true, AllowWrites: true})
+	parseOptions := config.Options{Authorized: true, AllowWrites: true}
+	if opt.ExtendedEnvelope {
+		parseOptions.ExtendedEnvelope = &config.ExtendedEnvelopeRequest{Acknowledged: true, TargetClass: config.TargetClassLab}
+	}
+	baseValidated, err := config.Parse(mirrorScenario, parseOptions)
 	if err != nil {
 		return calibration.ScenarioRecord{}, fmt.Errorf("mirror scenario: %w", err)
 	}

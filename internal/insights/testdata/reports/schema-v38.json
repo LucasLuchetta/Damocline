@@ -1,5 +1,6 @@
 {
   "schema_version": 38,
+  "load_envelope": {"mode":"standard","max_users":50,"max_rps":100,"max_arrival_rate":100,"max_duration_seconds":180,"exceeds_standard":false},
   "network_baseline": {"status":"MEASURED","phase":"before_load","source":"first_get_step","method":"GET","path":"/health","planned":20,"completed":20,"failures":0,"not_attempted":0,"unexpected_http_status":0,"interval_ms":100,"request_timeout_ms":5000,"min_ms":1.2,"p50_ms":2,"p95_ms":3.5,"max_ms":4,"max_to_p50_ratio":2},
   "generator": {"samples":4,"process_samples":4,"go_cpu_valid":false,"process_cpu_valid":true,"mean_process_cpu_utilization_ratio":0.25,"peak_process_cpu_utilization_ratio":0.25},
   "statistical_methods": {

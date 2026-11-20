@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"time"
 
+	"github.com/LucasLuchetta/Damocline/internal/config"
 	"github.com/LucasLuchetta/Damocline/internal/generatorhealth"
 	"github.com/LucasLuchetta/Damocline/internal/jsonartifact"
 )
@@ -395,4 +396,51 @@ func declaredMeanThinkMS(c ScenarioControls) (float64, bool) {
 		return ms(c.ThinkTime)
 	}
 	return 0, false
+}
+
+// AssessScenarioSelfCalibration is the ExtendedCoverageAssessor for workload
+// self-calibration artifacts (ADR 0154). It is READY only when the exact
+// planned level is a passed level whose workload fingerprint matches, the
+// artifact is fresh, and the current executable identity and CPU
+// entitlement equal the calibrated ones.
+func AssessScenarioSelfCalibration(s config.Scenario, rec Record, local Runtime, now time.Time) ExtendedCoverage {
+	blocked := func(reason string) ExtendedCoverage { return ExtendedCoverage{Status: "BLOCKED", Reason: reason} }
+	sc := rec.SelfCalibration
+	if sc == nil {
+		return ExtendedCoverage{Status: "BLOCKED"}
+	}
+	if ValidateScenarioRecord(*sc) != nil || sc.Status != ScenarioCalibrationPassed {
+		return blocked("Workload self-calibration is invalid or did not pass.")
+	}
+	finished, err := time.Parse(time.RFC3339Nano, sc.FinishedAt)
+	if err != nil || now.Before(finished.Add(-5*time.Minute)) || now.Sub(finished) > ScenarioCalibrationMaxAge {
+		return blocked("Workload self-calibration is future-dated or older than the 24-hour review threshold.")
+	}
+	g := sc.Generator
+	method, identity := SourceIdentity()
+	if method != g.RunnerIdentityMethod || identity != g.RunnerIdentity || local.OS != g.OS || local.Arch != g.Architecture ||
+		local.GoVersion != g.GoVersion {
+		return blocked("Workload self-calibration was produced by a different generator executable or runtime.")
+	}
+	if !local.CPUCapacityKnown || !g.CPUCapacityKnown || local.CPUCapacityCores != g.CPUCapacityCores || local.CPUCapacitySource != g.CPUCapacitySource ||
+		local.GOMAXPROCS != g.GOMAXPROCS || local.LogicalCPUs != g.LogicalCPUs {
+		return blocked("Workload self-calibration was produced under a different or unknown CPU entitlement.")
+	}
+	mode := s.Mode
+	if mode == "" {
+		mode = "closed"
+	}
+	if mode != sc.Controls.Mode {
+		return blocked("Workload self-calibration mode differs from the planned run.")
+	}
+	for _, level := range sc.Levels {
+		if level.Users != s.Users || (mode == "arrival" && level.ArrivalRate != s.ArrivalRate) {
+			continue
+		}
+		if level.Status != ScenarioCalibrationPassed || rec.SelfCalibrationFingerprint == "" || level.WorkloadFingerprint != rec.SelfCalibrationFingerprint {
+			return blocked("The self-calibrated level did not pass or its workload fingerprint differs.")
+		}
+		return ExtendedCoverage{Status: "READY", Reason: "Exact passed workload self-calibration level with matching fingerprint (generator-side evidence only)."}
+	}
+	return blocked("The exact planned level was not self-calibrated.")
 }

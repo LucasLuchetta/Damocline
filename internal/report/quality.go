@@ -105,6 +105,9 @@ func AssessQuality(r Result) *Quality {
 	if r.Metrics.RequestConstructionFailures > 0 {
 		invalidate("One or more generated requests were rejected locally before delivery.")
 	}
+	if !ValidEnvelope(r) {
+		invalidate("Load-envelope evidence is malformed, exceeds its ceilings or is not allowed by the report schema.")
+	}
 	if !ValidNetworkBaseline(r) {
 		invalidate("Network-path baseline evidence is malformed or not allowed by the report schema.")
 	} else if issue := NetworkBaselineIssue(r); issue != "" {

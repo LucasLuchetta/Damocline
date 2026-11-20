@@ -39,6 +39,7 @@ func calibrateCmd(args []string, stdout, stderr io.Writer) int {
 	fromReport := fs.String("from-report", "", "take per-step mirror sizes and median latency from a recorded run report of the real target")
 	maxCPU := fs.Float64("max-generator-cpu", selfcalibration.DefaultGuardrails.MaxProcessCPUPercent, "generator process CPU guardrail (percent of detected capacity)")
 	maxRSSMB := fs.Uint64("max-generator-rss-mb", selfcalibration.DefaultGuardrails.MaxProcessRSSBytes/(1024*1024), "generator process RSS guardrail (MiB)")
+	extended := fs.Bool("extended-envelope", false, "calibrate levels above the standard ceilings (loopback mirror only; up to the extended hard maximum)")
 	out := fs.String("out", "", "self-calibration artifact output path (required)")
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -71,7 +72,8 @@ func calibrateCmd(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	options := selfcalibration.Options{Levels: levels, LevelDuration: *levelDuration, ResponseBytes: *responseBytes, ServerDelay: *serverDelay,
-		Guardrails: generatorhealth.Guardrails{MaxProcessCPUPercent: *maxCPU, MaxProcessRSSBytes: *maxRSSMB * 1024 * 1024, ConsecutiveSamples: 3}}
+		Guardrails:       generatorhealth.Guardrails{MaxProcessCPUPercent: *maxCPU, MaxProcessRSSBytes: *maxRSSMB * 1024 * 1024, ConsecutiveSamples: 3},
+		ExtendedEnvelope: *extended}
 	if *fromReport != "" {
 		recorded, readErr := insights.ReadRun(*fromReport)
 		if readErr != nil {
