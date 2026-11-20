@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -24,6 +25,32 @@ type capacityMirror struct {
 	ServerDelay   time.Duration
 	LevelDuration time.Duration
 	Extended      bool
+	TargetClass   string
+}
+
+// capacityCalibrationLevels reserves the ladder before splitting the widest
+// remaining intervals. Only these predeclared levels can be probed.
+func capacityCalibrationLevels(opt explorer.Options, duration time.Duration) []int {
+	levels := explorer.PlannedLevels(opt)
+	for len(levels) < calibration.ScenarioCalibrationMaxLevels {
+		if _, err := capacityCalibrationWall(len(levels)+1, duration); err != nil {
+			break
+		}
+		widest := 0
+		midpoint := 0
+		for i := 1; i < len(levels); i++ {
+			if gap := levels[i] - levels[i-1]; gap > widest {
+				widest = gap
+				midpoint = levels[i-1] + gap/2
+			}
+		}
+		if widest < 2 {
+			break
+		}
+		levels = append(levels, midpoint)
+		slices.Sort(levels)
+	}
+	return levels
 }
 
 func (m capacityMirror) declared() bool {
@@ -129,4 +156,38 @@ func ensureCapacityCalibration(path, file string, v config.Validated, levels []i
 		return 2
 	}
 	return 0
+}
+
+// capacityExploreStage sizes the explore stage so the lowest level can reach
+// min_samples_per_step for every step, using the per-VU request rate of a
+// recorded run of the same target. Without a usable reference it reports
+// false and the caller keeps its default. The result stays within the
+// explorer's 10s-3m stage bounds and never goes below 20s.
+func capacityExploreStage(s config.Scenario, minUsers int, referencePath string) (time.Duration, bool) {
+	if referencePath == "" || minUsers <= 0 || len(s.Steps) == 0 {
+		return 0, false
+	}
+	recorded, err := insights.ReadRun(referencePath)
+	if err != nil || recorded.ElapsedSeconds <= 0 || recorded.Config.Users <= 0 || recorded.Metrics.Total <= 0 {
+		return 0, false
+	}
+	need := s.MinSamplesPerStep
+	if need <= 0 {
+		need = 1
+	}
+	perStep := float64(recorded.Metrics.Total) / recorded.ElapsedSeconds / float64(recorded.Config.Users) * float64(minUsers) / float64(len(s.Steps))
+	if perStep <= 0 {
+		return 0, false
+	}
+	ramp, _ := time.ParseDuration(s.RampUp)
+	// 25% headroom over the expected collection time, plus the ramp.
+	stage := time.Duration(float64(need)/perStep*1.25*float64(time.Second)) + ramp
+	stage = stage.Round(time.Second)
+	if stage < 20*time.Second {
+		stage = 20 * time.Second
+	}
+	if stage > 3*time.Minute {
+		stage = 3 * time.Minute
+	}
+	return stage, true
 }

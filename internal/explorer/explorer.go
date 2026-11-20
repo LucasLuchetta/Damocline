@@ -242,6 +242,9 @@ func WithRunner(ctx context.Context, base config.Validated, opt Options, runner 
 			}
 			if len(cookies) > 0 {
 				v.Cookies = cookies[:users]
+				if opt.Extended {
+					v.WorkloadFingerprint = config.WorkloadFingerprint(v)
+				}
 			}
 			r := runner(ctx, v)
 			reason := deliveryIssue(&r)
