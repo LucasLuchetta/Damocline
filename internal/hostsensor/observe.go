@@ -120,7 +120,7 @@ func ReassessCoverage(result Observation) (string, error) {
 		return "", fmt.Errorf("invalid host sensor collection counts")
 	}
 	for _, sample := range result.Samples {
-		if sample.Reading.ExperimentID != result.ExperimentID || sample.Reading.SchemaVersion != 1 || sample.Reading.Host.SchemaVersion != 1 || len(sample.Reading.Host.Samples) != 1 || sample.Reading.Host.Source != "linux:/proc" {
+		if sample.Reading.ExperimentID != result.ExperimentID || !SupportedReadingSchema(sample.Reading.SchemaVersion) || sample.Reading.Host.SchemaVersion != 1 || len(sample.Reading.Host.Samples) != 1 || sample.Reading.Host.Source != "linux:/proc" {
 			return "", fmt.Errorf("host sensor sample identity or schema changed")
 		}
 		sentAt, sentErr := time.Parse(time.RFC3339Nano, sample.SentAt)
@@ -146,6 +146,14 @@ func ReassessCoverage(result Observation) (string, error) {
 		}
 		if !validIO(host) {
 			return "", fmt.Errorf("invalid host sensor I/O counters")
+		}
+		if host.Attribution != nil {
+			if sample.Reading.SchemaVersion < 2 {
+				return "", fmt.Errorf("workload attribution is not supported by host sensor reading schema v1")
+			}
+			if err := hostmon.ValidateAttribution(host.Attribution); err != nil {
+				return "", fmt.Errorf("invalid host sensor workload attribution: %w", err)
+			}
 		}
 		if workload := host.Workload; workload != nil {
 			if workload.PID < 1 || workload.MemoryCurrentBytes != nil && workload.MemoryLimitBytes != nil && *workload.MemoryCurrentBytes > *workload.MemoryLimitBytes {

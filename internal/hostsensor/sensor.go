@@ -18,6 +18,16 @@ import (
 
 const Path = "/v1/host"
 
+// ReadingSchemaVersion is the sensor reading schema emitted by this build.
+// v1 readings carry host and selected-process evidence; v2 readings may also
+// carry bounded workload attribution (ADR 0172).
+const ReadingSchemaVersion = 2
+
+// SupportedReadingSchema reports whether a reader accepts the reading schema.
+func SupportedReadingSchema(version int) bool {
+	return version == 1 || version == ReadingSchemaVersion
+}
+
 type Reading struct {
 	SchemaVersion int            `json:"schema_version"`
 	ExperimentID  string         `json:"experiment_id"`
@@ -28,8 +38,14 @@ type Reading struct {
 type Collector func(context.Context) (hostmon.Result, error)
 
 func NativeCollector(pid int) Collector {
+	return NativeAttributionCollector(pid, hostmon.AttributionConfig{})
+}
+
+// NativeAttributionCollector additionally reports workload attribution for a
+// process tree rooted at pid and/or an explicit cgroup-v2 path.
+func NativeAttributionCollector(pid int, attribution hostmon.AttributionConfig) Collector {
 	return func(ctx context.Context) (hostmon.Result, error) {
-		return hostmon.CollectWithWorkload(ctx, 1100*time.Millisecond, time.Second, pid)
+		return hostmon.CollectWithAttribution(ctx, 1100*time.Millisecond, time.Second, pid, attribution)
 	}
 }
 
@@ -78,7 +94,7 @@ func NewHandler(token string, collect Collector) (http.Handler, error) {
 			http.Error(w, "host collection unavailable", http.StatusServiceUnavailable)
 			return
 		}
-		reading := Reading{SchemaVersion: 1, ExperimentID: id, ObservedAt: time.Now().UTC().Format(time.RFC3339Nano), Host: host}
+		reading := Reading{SchemaVersion: ReadingSchemaVersion, ExperimentID: id, ObservedAt: time.Now().UTC().Format(time.RFC3339Nano), Host: host}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(reading)
 	}), nil

@@ -100,3 +100,32 @@ func TestReassessValidatesProcessCPUFormula(t *testing.T) {
 }
 
 func ptrFloat(value float64) *float64 { return &value }
+
+func TestReassessGatesWorkloadAttributionBySchema(t *testing.T) {
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	cores, usage := 0.98, uint64(1000)
+	attribution := &hostmon.Attribution{SchemaVersion: hostmon.AttributionSchemaVersion, Scope: "cgroup", IntervalMS: 1000, TreeCoverage: hostmon.CoverageNotConfigured, CgroupCoverage: hostmon.CoverageComplete, CgroupCPUCores: &cores, CgroupCPUUsageUsec: &usage}
+	build := func(schema int, a *hostmon.Attribution) Observation {
+		var samples []RemoteSample
+		for i := 1; i <= 2; i++ {
+			at := start.Add(time.Duration(i) * time.Second)
+			host := hostmon.Sample{At: at.Add(-2 * time.Millisecond).Format(time.RFC3339Nano), CPUPercent: 1, MemoryTotalBytes: 1000, MemoryUsedBytes: 10, Attribution: a}
+			samples = append(samples, RemoteSample{SentAt: at.Add(-2 * time.Millisecond).Format(time.RFC3339Nano), ReceivedAt: at.Format(time.RFC3339Nano), OffsetMinMS: -1, OffsetMaxMS: 1, RoundTripMS: 2, Reading: Reading{ExperimentID: testExperiment, SchemaVersion: schema, ObservedAt: at.Add(-time.Millisecond).Format(time.RFC3339Nano), Host: hostmon.Result{SchemaVersion: 1, Source: "linux:/proc", StartedAt: start.Format(time.RFC3339Nano), Interval: "1s", Samples: []hostmon.Sample{host}}}})
+		}
+		return Observation{ExperimentID: testExperiment, StartedAt: start.Format(time.RFC3339Nano), EndedAt: start.Add(3 * time.Second).Format(time.RFC3339Nano), Interval: "1s", Attempts: 2, Samples: samples, Coverage: "COMPLETE"}
+	}
+	if state, err := ReassessCoverage(build(2, attribution)); err != nil || state != "COMPLETE" {
+		t.Fatalf("v2 attribution rejected: %s %v", state, err)
+	}
+	if _, err := ReassessCoverage(build(1, attribution)); err == nil {
+		t.Fatal("v1 reading with attribution was accepted")
+	}
+	if _, err := ReassessCoverage(build(3, nil)); err == nil {
+		t.Fatal("future reading schema was accepted")
+	}
+	broken := *attribution
+	broken.CgroupCPUCores = nil
+	if _, err := ReassessCoverage(build(2, &broken)); err == nil {
+		t.Fatal("complete cgroup evidence without cores was accepted")
+	}
+}
