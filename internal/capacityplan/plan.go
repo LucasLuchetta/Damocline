@@ -447,7 +447,11 @@ func validateCampaignTrialPresence(data []byte, schemaVersion int) error {
 		if err := json.Unmarshal(rawPhase, &phase); err != nil || phase == nil {
 			return fmt.Errorf("phase %d must be a JSON object", index+1)
 		}
-		for _, name := range []string{"name", "run"} {
+		required := []string{"name", "run"}
+		if schemaVersion >= 13 {
+			required = append(required, "evidence_state")
+		}
+		for _, name := range required {
 			value, ok := phase[name]
 			if !ok || string(value) == "null" {
 				return fmt.Errorf("phase %d is missing required field %q; absence cannot be interpreted as zero", index+1, name)

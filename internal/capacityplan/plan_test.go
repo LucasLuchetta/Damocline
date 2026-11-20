@@ -120,6 +120,12 @@ func TestReadCampaignRequiresPersistedNestedTrialAndPhaseEvidence(t *testing.T) 
 		{name: "phase_name", mutate: func(root map[string]json.RawMessage) error {
 			return mutateCampaignPhase(root, func(phase map[string]json.RawMessage) { delete(phase, "name") })
 		}},
+		{name: "phase_evidence_state", mutate: func(root map[string]json.RawMessage) error {
+			return mutateCampaignPhase(root, func(phase map[string]json.RawMessage) { delete(phase, "evidence_state") })
+		}},
+		{name: "phase_evidence_state_null", mutate: func(root map[string]json.RawMessage) error {
+			return mutateCampaignPhase(root, func(phase map[string]json.RawMessage) { phase["evidence_state"] = json.RawMessage("null") })
+		}},
 		{name: "phase_run", mutate: func(root map[string]json.RawMessage) error {
 			return mutateCampaignPhase(root, func(phase map[string]json.RawMessage) { delete(phase, "run") })
 		}},
