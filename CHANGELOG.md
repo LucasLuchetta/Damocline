@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Clamp the self-calibration mirror window to the level duration, and
+  report calibration setup errors separately from failed calibration in
+  `damocline capacity`.
+
 - Add `--allow-insecure-http` to `damocline capacity` and forward the
   explicit plaintext opt-in to every traffic stage.
 
