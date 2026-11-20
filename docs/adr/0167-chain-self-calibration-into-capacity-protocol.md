@@ -28,10 +28,16 @@ warns before traffic when `max_rps` would cap the requested level, and warns
 again after exploration when the campaign level delivered at least 90% of
 `max_rps`.
 
-Standard ceilings apply. `--extended-envelope` requires explicit
-authorization and a lab or staging target class and is forwarded to
-calibration only; exploration and campaign remain within the standard
-50 VU ceiling until those stages support the extended envelope.
+Standard ceilings apply by default. `--extended-envelope` requires
+explicit authorization and a lab or staging target class. Explore
+and campaign receive the same opt-in and require exact coverage.
+Extended capacity calibrates the geometric ladder and predeclared
+refinement candidates in a single bounded invocation. It splits the
+widest remaining gaps until it hits the calibration level or wall cap.
+The campaign reuses the record for the approved tested level. A search
+that exhausts calibrated candidates preserves the remaining gap as
+unresolved. Capacity can confirm its highest repeatedly passing tested
+level without interpolating the gap. No uncalibrated level is probed.
 
 ## Consequences
 
