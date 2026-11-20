@@ -26,10 +26,15 @@ func ValidateArtifactJSON(data []byte) error {
 	}
 	version, ok := fields["schema_version"]
 	var schema int
-	if !ok || json.Unmarshal(version, &schema) != nil || schema < 1 || schema > 2 {
+	if !ok || json.Unmarshal(version, &schema) != nil || schema < 1 || schema > CurrentSchemaVersion {
 		return errors.New("exploration has a missing or unsupported schema_version")
 	}
 	required := []string{"scenario", "target", "started_at", "stage_duration", "repeats", "min_users", "max_users", "outcome", "probes", "notes"}
+	if schema >= EnvelopeSchemaVersion {
+		required = append(required, "load_envelope")
+	} else if _, exists := fields["load_envelope"]; exists {
+		return errors.New("exploration load_envelope is unsupported by this schema")
+	}
 	for _, name := range required {
 		value, exists := fields[name]
 		if !exists || bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
@@ -68,6 +73,16 @@ func ValidateArtifactJSON(data []byte) error {
 	return nil
 }
 
+// CurrentSchemaVersion is the newest exploration schema readers accept.
+// Schema 3 records the load envelope and is written only by extended-envelope
+// explorations (ADR 0157); standard explorations keep writing schema 2.
+const CurrentSchemaVersion = 3
+
+// EnvelopeSchemaVersion is the first exploration schema with load_envelope.
+const EnvelopeSchemaVersion = 3
+
+const standardSchemaVersion = 2
+
 type Options struct {
 	MinUsers      int           `json:"min_users"`
 	MaxUsers      int           `json:"max_users"`
@@ -75,6 +90,15 @@ type Options struct {
 	Repeats       int           `json:"repeats"`
 	StageDuration time.Duration `json:"-"`
 	Budget        time.Duration `json:"-"`
+	// UserCeiling is the inclusive VU ceiling; zero means the standard 50
+	// VUs. Only the CLI extended-envelope gate raises it (ADR 0157).
+	UserCeiling int `json:"-"`
+	// Extended and TargetClass record the validated extended envelope.
+	Extended    bool   `json:"-"`
+	TargetClass string `json:"-"`
+	// LevelCovered, when set, is consulted before every bracket refinement
+	// level. A level it rejects is never probed (ADR 0157).
+	LevelCovered func(users int) bool `json:"-"`
 }
 type Probe struct {
 	Users  int             `json:"users"`
@@ -97,14 +121,53 @@ type Result struct {
 	Reason              string   `json:"reason,omitempty"`
 	Probes              []Probe  `json:"probes"`
 	Notes               []string `json:"notes"`
+	// LoadEnvelope records the ceilings that applied (schema 3+).
+	LoadEnvelope *report.Envelope `json:"load_envelope,omitempty"`
+}
+
+// ValidateEnvelope checks that saved evidence stays inside the envelope it
+// declares and that every embedded run agrees with it.
+func ValidateEnvelope(r Result) error {
+	if r.SchemaVersion < EnvelopeSchemaVersion {
+		if r.LoadEnvelope != nil {
+			return errors.New("load envelope is unsupported by this exploration schema")
+		}
+		if r.MaxUsers > report.StandardMaxUsers {
+			return errors.New("exploration exceeds the standard 50 VU ceiling without a recorded extended envelope")
+		}
+		return nil
+	}
+	if !report.ValidAggregateEnvelope(r.LoadEnvelope, r.MaxUsers) {
+		return errors.New("exploration load envelope is missing, inconsistent, or exceeded")
+	}
+	for _, p := range r.Probes {
+		for _, run := range p.Runs {
+			if !report.RunMatchesAggregateEnvelope(r.LoadEnvelope, run) {
+				return fmt.Errorf("probe %d VUs contains a run whose load envelope differs from the exploration", p.Users)
+			}
+		}
+	}
+	return nil
+}
+
+func userCeiling(o Options) int {
+	if o.UserCeiling == 0 {
+		return report.StandardMaxUsers
+	}
+	return o.UserCeiling
 }
 
 type Runner func(context.Context, config.Validated) report.Result
 
 func Validate(o Options) error {
-	if o.MinUsers < 1 || o.MaxUsers > 50 || o.MinUsers > o.MaxUsers {
-		return fmt.Errorf("min-users must be at least 1 and max-users at most 50, with min <= max")
+	ceiling := userCeiling(o)
+	if ceiling != report.StandardMaxUsers && (ceiling != report.ExtendedMaxUsers || !o.Extended) {
+		return fmt.Errorf("only the validated extended envelope may raise the exploration ceiling")
 	}
+	if o.MinUsers < 1 || o.MaxUsers > ceiling || o.MinUsers > o.MaxUsers {
+		return fmt.Errorf("min-users must be at least 1 and max-users at most %d, with min <= max", ceiling)
+	}
+
 	if o.TargetUsers < 0 {
 		return fmt.Errorf("target users cannot be negative")
 	}
@@ -134,6 +197,12 @@ func WithRunner(ctx context.Context, base config.Validated, opt Options, runner 
 	}
 	ctx, stop := context.WithTimeout(ctx, opt.Budget)
 	defer stop()
+	if opt.Extended && opt.LevelCovered == nil {
+		return Result{}, fmt.Errorf("extended exploration requires a calibration coverage check for refinement levels")
+	}
+	if opt.Extended != (base.Envelope.Mode == config.EnvelopeExtended) || opt.Extended && (opt.TargetClass != base.Envelope.TargetClass || base.Envelope.CalibrationCoverage != "READY") {
+		return Result{}, fmt.Errorf("exploration envelope options do not match the validated scenario envelope")
+	}
 	if base.Scenario.Mode != "closed" {
 		return Result{}, fmt.Errorf("explore requires closed-loop mode; arrival mode has a different capacity unit")
 	}
@@ -146,10 +215,15 @@ func WithRunner(ctx context.Context, base config.Validated, opt Options, runner 
 		}
 	}
 	started := time.Now()
-	result := Result{SchemaVersion: 2, Scenario: base.Scenario.Name, Target: base.Base.Scheme + "://" + base.Base.Host, StartedAt: started.UTC().Format(time.RFC3339), StageDuration: opt.StageDuration.String(), Repeats: opt.Repeats, MinUsers: opt.MinUsers, MaxUsers: opt.MaxUsers, Outcome: "INCONCLUSIVE", Notes: []string{
+	result := Result{SchemaVersion: standardSchemaVersion, Scenario: base.Scenario.Name, Target: base.Base.Scheme + "://" + base.Base.Host, StartedAt: started.UTC().Format(time.RFC3339), StageDuration: opt.StageDuration.String(), Repeats: opt.Repeats, MinUsers: opt.MinUsers, MaxUsers: opt.MaxUsers, Outcome: "INCONCLUSIVE", Notes: []string{
 		"The highest repeatedly passing tested level is not a universal server capacity. It applies only to this HTTP workload, traffic cap, deployment, and service-level objectives.",
 		"The generator reports Go runtime heap, goroutines, GC, and partial Go CPU activity per trial; full process metrics, server CPU/RAM, databases, and root causes remain unverified.",
 	}}
+	if opt.Extended {
+		result.SchemaVersion = EnvelopeSchemaVersion
+		result.LoadEnvelope = report.NewAggregateEnvelope(true, opt.TargetClass, opt.MaxUsers)
+		result.Notes = append(result.Notes, report.AggregateEnvelopeNote(result.LoadEnvelope))
+	}
 	probe := func(users int) string {
 		p := Probe{Users: users, Status: "PASS"}
 		for k := 0; k < opt.Repeats; k++ {
@@ -172,6 +246,13 @@ func WithRunner(ctx context.Context, base config.Validated, opt Options, runner 
 			r := runner(ctx, v)
 			reason := deliveryIssue(&r)
 			p.Runs = append(p.Runs, r)
+			// A generator guardrail stop describes the load generator, never
+			// the target, so the probe cannot pass or fail (ADR 0157).
+			if r.Envelope != nil && r.Envelope.StopReason == report.EnvelopeStopGeneratorLimited {
+				p.Status = "INCONCLUSIVE"
+				p.Reason = GeneratorLimitedReason
+				break
+			}
 			if r.Outcome == "ABORTED" {
 				p.Status = "ABORTED"
 				p.Reason = abortReason(ctx.Err())
@@ -274,7 +355,12 @@ func WithRunner(ctx context.Context, base config.Validated, opt Options, runner 
 			result.Reason = abortReason(ctx.Err())
 			return result, nil
 		}
-		mid := low + (high-low)/2
+		mid, ok := refinementLevel(low, high, opt.LevelCovered)
+		if !ok {
+			result.Outcome = "INCONCLUSIVE"
+			result.Reason = fmt.Sprintf("%s Bracket %d-%d VUs (highest passing tested %d, first failing tested %d) was not refined further.", UncalibratedRefinementReason, low, high, low, high)
+			return result, nil
+		}
 		status := probe(mid)
 		if status == "ABORTED" || status == "INCONCLUSIVE" {
 			result.Outcome = status
@@ -291,6 +377,32 @@ func WithRunner(ctx context.Context, base config.Validated, opt Options, runner 
 	result.FirstFailingUsers = &high
 	result.Outcome = "BRACKETED"
 	return result, nil
+}
+
+// GeneratorLimitedReason explains a probe stopped by a generator guardrail.
+const GeneratorLimitedReason = "GENERATOR_LIMITED: a generator CPU or RSS guardrail stopped the trial; this describes the load generator, not the target, and no application limit is concluded."
+
+// UncalibratedRefinementReason prefixes an extended exploration whose
+// remaining bracket has no calibrated level.
+const UncalibratedRefinementReason = "Bracket refinement stopped: no level strictly inside the failing bracket has READY extended-envelope calibration coverage, so no uncalibrated level was probed."
+
+// refinementLevel picks the calibrated level strictly inside (low, high)
+// closest to the midpoint, preferring the lower one on ties. Without a
+// coverage check every level is eligible and the midpoint is returned.
+func refinementLevel(low, high int, covered func(int) bool) (int, bool) {
+	mid := low + (high-low)/2
+	if covered == nil {
+		return mid, true
+	}
+	for d := 0; mid-d > low || mid+d < high; d++ {
+		if mid-d > low && covered(mid-d) {
+			return mid - d, true
+		}
+		if mid+d < high && covered(mid+d) {
+			return mid + d, true
+		}
+	}
+	return 0, false
 }
 
 func abortReason(err error) string {

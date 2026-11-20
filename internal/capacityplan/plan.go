@@ -515,7 +515,7 @@ func validateEvidence(evidence campaign.Result) error {
 	} else if evidence.ExecutionState != "" || evidence.PendingTrial != nil {
 		return errors.New("execution checkpoints are unsupported by this campaign schema")
 	}
-	if evidence.SchemaVersion < 1 || evidence.SchemaVersion > campaign.CurrentSchemaVersion || evidence.Scenario == "" || evidence.BaseUsers < 1 || evidence.Repeats < 2 || evidence.Repeats > 5 || len(evidence.Trials) == 0 || len(evidence.Trials) > evidence.Repeats {
+	if evidence.SchemaVersion < 1 || evidence.SchemaVersion > campaign.MaxSchemaVersion || evidence.Scenario == "" || evidence.BaseUsers < 1 || evidence.Repeats < 2 || evidence.Repeats > 5 || len(evidence.Trials) == 0 || len(evidence.Trials) > evidence.Repeats {
 		return errors.New("expected a complete supported repeated campaign")
 	}
 	if evidence.HostSensorConfigured && evidence.SchemaVersion < 5 {
@@ -564,6 +564,9 @@ func validateEvidence(evidence campaign.Result) error {
 		}
 	}
 	if err := validateWorkloadSource(evidence); err != nil {
+		return err
+	}
+	if err := ValidateCampaignEnvelope(evidence); err != nil {
 		return err
 	}
 	if err := validateApplicationMetrics(evidence); err != nil {
@@ -1038,7 +1041,7 @@ func validateStageEvidence(evidence campaign.Result) error {
 		return errors.New("invalid stabilization duration")
 	}
 	spike, err := parsePhaseDuration("spike", evidence.SpikeDuration)
-	if err != nil || spike > 3*time.Minute || (spike > 0 && spike < 10*time.Second) || (spike > 0) != (evidence.SpikeUsers > 0) || evidence.SpikeUsers > 50 {
+	if err != nil || spike > 3*time.Minute || (spike > 0 && spike < 10*time.Second) || (spike > 0) != (evidence.SpikeUsers > 0) || evidence.SpikeUsers > campaign.EvidenceUserCeiling(evidence) {
 		return errors.New("invalid spike stage")
 	}
 	recovery, err := parsePhaseDuration("recovery", evidence.Recovery)
@@ -1067,7 +1070,7 @@ func validateStageEvidence(evidence campaign.Result) error {
 	} else if evidence.SchemaVersion < 4 {
 		budget = campaign.PlannedBudget(campaign.Options{Warmup: warmup, Observation: observation, SpikeUsers: evidence.SpikeUsers, SpikeDuration: spike, Recovery: recovery, Repeats: evidence.Repeats})
 	}
-	if err != nil || budget == 0 || budget > wallTimeLimit || budget < time.Duration(evidence.Repeats)*(warmup+stabilization+observation+spike+recovery)+soak || evidence.Target == "" || evidence.BaseUsers > 50 {
+	if err != nil || budget == 0 || budget > wallTimeLimit || budget < time.Duration(evidence.Repeats)*(warmup+stabilization+observation+spike+recovery)+soak || evidence.Target == "" || evidence.BaseUsers > campaign.EvidenceUserCeiling(evidence) {
 		return errors.New("invalid campaign wall-time budget")
 	}
 	if spike > 0 {
@@ -1075,7 +1078,7 @@ func validateStageEvidence(evidence campaign.Result) error {
 			return errors.New("spike load does not exceed base load")
 		}
 	}
-	options := campaign.Options{Warmup: warmup, Stabilization: stabilization, Observation: observation, SpikeUsers: evidence.SpikeUsers, SpikeDuration: spike, Recovery: recovery, Soak: soak, Cooldown: cooldown, Repeats: evidence.Repeats, LongRun: longRun, StagingConfirmed: longRun}
+	options := campaign.Options{Warmup: warmup, Stabilization: stabilization, Observation: observation, SpikeUsers: evidence.SpikeUsers, SpikeDuration: spike, Recovery: recovery, Soak: soak, Cooldown: cooldown, Repeats: evidence.Repeats, LongRun: longRun, StagingConfirmed: longRun, UserCeiling: campaign.EvidenceUserCeiling(evidence)}
 	if evidence.SchemaVersion >= 7 && evidence.GeneratorGuardrails != nil {
 		options.Guardrails = *evidence.GeneratorGuardrails
 	}
@@ -1161,4 +1164,38 @@ func recoveredSpikeFailure(trial campaign.Trial) bool {
 		}
 	}
 	return false
+}
+
+// ValidateCampaignEnvelope recomputes the load-envelope contract of a saved
+// campaign (ADR 0157). Standard schemas cannot exceed 50 VUs; an extended
+// campaign must record a consistent envelope, enforced generator guardrails,
+// and the same envelope on every embedded phase run.
+func ValidateCampaignEnvelope(evidence campaign.Result) error {
+	maxLevel := campaign.PlannedMaxUsers(evidence.BaseUsers, evidence.SpikeUsers)
+	if evidence.SchemaVersion < campaign.EnvelopeSchemaVersion {
+		if evidence.LoadEnvelope != nil {
+			return errors.New("load envelope is unsupported by this campaign schema")
+		}
+		// Pre-envelope schemas keep their historical bounds checks in the
+		// stage-schedule validators (50 VUs for current schemas).
+		return nil
+	}
+	if evidence.LoadEnvelope == nil || evidence.LoadEnvelope.Mode != report.EnvelopeModeExtended || !report.ValidAggregateEnvelope(evidence.LoadEnvelope, maxLevel) {
+		return errors.New("campaign load envelope is missing, inconsistent, or exceeded")
+	}
+	if evidence.GeneratorGuardrails == nil || !evidence.GeneratorGuardrails.Enabled() {
+		return errors.New("extended-envelope campaign did not record enforced generator guardrails")
+	}
+	trials := evidence.Trials
+	if evidence.PendingTrial != nil {
+		trials = append(append([]campaign.Trial{}, trials...), *evidence.PendingTrial)
+	}
+	for _, trial := range trials {
+		for _, phase := range trial.Phases {
+			if !report.RunMatchesAggregateEnvelope(evidence.LoadEnvelope, phase.Run) {
+				return fmt.Errorf("trial %d %s phase load envelope differs from the campaign", trial.Number, phase.Name)
+			}
+		}
+	}
+	return nil
 }

@@ -576,7 +576,7 @@ func campaignLevelSchedule(e campaign.Result) (campaign.Options, []campaign.Plan
 	}
 	options := campaign.Options{Warmup: warmup, Stabilization: stabilization, Observation: observation, SpikeUsers: e.SpikeUsers,
 		SpikeDuration: spike, Recovery: recovery, Soak: soak, Cooldown: cooldown, Repeats: e.Repeats, Budget: budget,
-		Stability: e.EffectiveStabilityPolicy(), LongRun: e.LongRun, StagingConfirmed: e.LongRun}
+		Stability: e.EffectiveStabilityPolicy(), LongRun: e.LongRun, StagingConfirmed: e.LongRun, UserCeiling: campaign.EvidenceUserCeiling(e)}
 	if e.SchemaVersion >= 7 && e.GeneratorGuardrails != nil {
 		options.Guardrails = *e.GeneratorGuardrails
 	}

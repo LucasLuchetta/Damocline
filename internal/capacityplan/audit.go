@@ -293,6 +293,19 @@ func AuditCampaign(e campaign.Result) CampaignAudit {
 			"Ordinary external-target reports cannot certify generator/endpoint equivalence from loopback calibration alone.",
 		},
 	}
+	if e.SchemaVersion >= campaign.EnvelopeSchemaVersion {
+		// Recomputed from the saved levels, never copied from the producer.
+		if err := ValidateCampaignEnvelope(e); err == nil {
+			a.Findings = append(a.Findings, report.AggregateEnvelopeNote(report.NewAggregateEnvelope(true, e.LoadEnvelope.TargetClass, campaign.PlannedMaxUsers(e.BaseUsers, e.SpikeUsers))))
+		} else {
+			a.Findings = append(a.Findings, "Load envelope evidence is invalid: "+err.Error()+".")
+		}
+	}
+	for _, trial := range e.Trials {
+		if strings.HasPrefix(trial.AbortReason, "GENERATOR_LIMITED:") {
+			a.Findings = append(a.Findings, fmt.Sprintf("Trial %d was stopped as GENERATOR_LIMITED by a generator resource guardrail; it describes the load generator, not an application limit.", trial.Number))
+		}
+	}
 	a.GeneratorEnvironments, a.GeneratorRuntimeStatus, a.GeneratorCapacityStatus = summarizeGeneratorEnvironments(e)
 	a.ObservationTrials, a.ObservationSpread = recomputeObservationEvidence(e)
 	if a.ObservationSpread != nil && e.SchemaVersion >= 14 {
@@ -384,7 +397,7 @@ func AuditCampaign(e campaign.Result) CampaignAudit {
 		}
 	}
 	a.StartedAt = e.StartedAt
-	if e.SchemaVersion < 1 || e.SchemaVersion > campaign.CurrentSchemaVersion {
+	if e.SchemaVersion < 1 || e.SchemaVersion > campaign.MaxSchemaVersion {
 		a.State = "INVALID_EVIDENCE"
 		a.Findings = append(a.Findings, "Unsupported campaign evidence schema.")
 		clearWorkflowBreaches(&a)

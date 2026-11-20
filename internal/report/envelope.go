@@ -102,3 +102,59 @@ func EnvelopeNote(r Result) string {
 	}
 	return note + "."
 }
+
+// StandardMaxUsers is the standard closed-loop VU ceiling mirrored for
+// multi-level artifact readers (explore and campaign, ADR 0157).
+const StandardMaxUsers = standardMaxUsers
+
+// ExtendedMaxUsers is the extended-envelope hard VU maximum.
+const ExtendedMaxUsers = extendedMaxUsers
+
+// NewAggregateEnvelope builds the envelope recorded by a multi-level
+// artifact (explore or campaign). maxLevel is the highest planned VU level.
+func NewAggregateEnvelope(extended bool, targetClass string, maxLevel int) *Envelope {
+	if !extended {
+		return &Envelope{Mode: EnvelopeModeStandard, MaxUsers: standardMaxUsers, MaxRPS: standardMaxRPS, MaxArrivalRate: standardMaxArrivalRate, MaxDurationSeconds: standardMaxDurationSec}
+	}
+	return &Envelope{Mode: EnvelopeModeExtended, MaxUsers: extendedMaxUsers, MaxRPS: extendedMaxRPS, MaxArrivalRate: extendedMaxArrivalRate, MaxDurationSeconds: extendedMaxDurationSec,
+		TargetClass: targetClass, Acknowledged: true, CalibrationCoverage: "READY", ExceedsStandard: maxLevel > standardMaxUsers}
+}
+
+// ValidAggregateEnvelope checks a multi-level artifact envelope against the
+// highest planned VU level. Aggregate envelopes never carry a stop reason;
+// generator-limited stops are recorded on the affected run.
+func ValidAggregateEnvelope(e *Envelope, maxLevel int) bool {
+	if e == nil || e.StopReason != "" || maxLevel < 1 {
+		return false
+	}
+	switch e.Mode {
+	case EnvelopeModeStandard:
+		return *e == *NewAggregateEnvelope(false, "", maxLevel) && maxLevel <= standardMaxUsers
+	case EnvelopeModeExtended:
+		return (e.TargetClass == "lab" || e.TargetClass == "staging") && *e == *NewAggregateEnvelope(true, e.TargetClass, maxLevel) && maxLevel <= extendedMaxUsers
+	}
+	return false
+}
+
+// RunMatchesAggregateEnvelope reports whether an embedded run carries the
+// same envelope mode as its parent artifact. Runs that predate the envelope
+// schema are accepted only by standard parents.
+func RunMatchesAggregateEnvelope(parent *Envelope, run Result) bool {
+	if run.Envelope == nil {
+		return parent.Mode == EnvelopeModeStandard && run.SchemaVersion < EnvelopeSchemaVersion
+	}
+	return run.Envelope.Mode == parent.Mode && run.Envelope.TargetClass == parent.TargetClass && ValidEnvelope(run)
+}
+
+// AggregateEnvelopeNote is the reader-facing statement for an artifact that
+// used the extended envelope.
+func AggregateEnvelopeNote(e *Envelope) string {
+	if e == nil || e.Mode != EnvelopeModeExtended {
+		return ""
+	}
+	note := "This artifact used the opt-in extended load envelope (target class " + e.TargetClass + ", every planned level calibration coverage READY, generator guardrails enforced)"
+	if e.ExceedsStandard {
+		note += "; levels above the standard 50 VU ceiling were tested under the extended envelope and describe only this workload, generator and environment"
+	}
+	return note + "."
+}
