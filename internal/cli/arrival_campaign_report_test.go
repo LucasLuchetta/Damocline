@@ -76,7 +76,7 @@ func TestOpenArrivalLoopbackCampaignGoalReportReplaysWithoutTraffic(t *testing.T
 	}
 
 	campaignPath := filepath.Join(dir, "campaign.json")
-	code, stdout, stderr := runCLI("arrival-campaign", "--config", scenarioPath, "--warmup", "0s", "--observation", "30s", "--recovery", "10s", "--repeats", "2", "--peak-journeys-per-second", "10", "--stability-min-samples", "20", "--out", campaignPath, "--authorized")
+	code, stdout, stderr := runCLI("arrival-campaign", "--config", scenarioPath, "--warmup", "0s", "--observation", "30s", "--recovery", "10s", "--repeats", "2", "--peak-journeys-per-second", "10", "--stability-min-samples", "20", "--max-p95-increase-ms", "100", "--out", campaignPath, "--authorized")
 	if code != 0 && code != 1 {
 		t.Fatalf("bounded loopback campaign failed before producing a result: code=%d stdout=%s stderr=%s", code, stdout, stderr)
 	}
