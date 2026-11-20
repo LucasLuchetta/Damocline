@@ -677,7 +677,10 @@ func WithRunnerProgress(ctx context.Context, base config.Validated, options Opti
 				trial.AbortReason = abortReason(ctx.Err(), parent.Err())
 				break
 			}
-			if state == "INVALID_DELIVERY" {
+			// A guardrail stop can itself make phase delivery evidence invalid.
+			// Retain that evidence state and still record the cause of the abort.
+			guardrailAbort := run.Outcome == "ABORTED" && run.Generator != nil && run.Generator.GuardrailTrigger != nil
+			if state == "INVALID_DELIVERY" && !guardrailAbort {
 				trial.Outcome = "INCONCLUSIVE"
 				break
 			}
@@ -685,7 +688,7 @@ func WithRunnerProgress(ctx context.Context, base config.Validated, options Opti
 				trial.Outcome = run.Outcome
 				if run.Outcome == "ABORTED" {
 					trial.AbortReason = "The native phase run was aborted."
-					if run.Generator != nil && run.Generator.GuardrailTrigger != nil {
+					if guardrailAbort {
 						trigger := run.Generator.GuardrailTrigger
 						if trigger.Resource == "generator_process_cpu" {
 							trial.AbortReason = fmt.Sprintf("GENERATOR_LIMITED: Generator process CPU reached %.1f%% (limit %.1f%%) for %d consecutive samples.", trigger.ObservedCPUPercent, trigger.LimitCPUPercent, trigger.ConsecutiveSamples)

@@ -404,7 +404,7 @@ func TestCampaignPersistsGeneratorGuardrailsAndAbortReason(t *testing.T) {
 		if v.GeneratorGuardrails != policy {
 			t.Fatalf("guardrails were not attached to phase execution: %+v", v.GeneratorGuardrails)
 		}
-		return report.Result{Outcome: "ABORTED", Generator: &generatorhealth.Summary{
+		return report.Result{Outcome: "ABORTED", Quality: &report.Quality{State: report.QualityInvalid}, Generator: &generatorhealth.Summary{
 			Guardrails: &policy, GuardrailTrigger: &generatorhealth.GuardrailTrigger{
 				Resource: "generator_process_rss", ObservedRSSBytes: 2, LimitRSSBytes: 1,
 				ConsecutiveSamples: 2, SampleNumber: 3, ElapsedMS: 250,
@@ -415,7 +415,8 @@ func TestCampaignPersistsGeneratorGuardrailsAndAbortReason(t *testing.T) {
 		t.Fatal(err)
 	}
 	if result.SchemaVersion != CurrentSchemaVersion || result.Outcome != "ABORTED" || result.GeneratorGuardrails == nil || *result.GeneratorGuardrails != policy ||
-		len(result.Trials) != 1 || !strings.Contains(result.Trials[0].AbortReason, "RSS") {
+		len(result.Trials) != 1 || !strings.HasPrefix(result.Trials[0].AbortReason, "GENERATOR_LIMITED:") ||
+		!strings.Contains(result.Trials[0].AbortReason, "RSS") || result.Trials[0].Phases[0].EvidenceState != "INVALID_DELIVERY" {
 		t.Fatalf("campaign lost resource abort evidence: %+v", result)
 	}
 }
