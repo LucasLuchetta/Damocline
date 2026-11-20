@@ -185,7 +185,7 @@ func EvaluateJourneyCampaign(saved arrivalcampaign.Result, goal JourneyStartGoal
 					return JourneyStartAssessment{}, fmt.Errorf("campaign application-metrics timelines exceed %d bytes", appmetrics.MaxTimelineBytes)
 				}
 			}
-			if phase.Name != expected.Name || run.SchemaVersion != report.CurrentSchemaVersion || run.Name != saved.Scenario || run.Target != saved.Target || run.Config.Mode != "arrival" ||
+			if phase.Name != expected.Name || !assessableRunSchema(run.SchemaVersion) || run.Name != saved.Scenario || run.Target != saved.Target || run.Config.Mode != "arrival" ||
 				run.Config.ArrivalRate != expected.Rate || run.Config.Users != saved.WorkerLimit || run.Config.Duration != expected.Duration.String() ||
 				run.Config.WorkloadFingerprint != saved.WorkloadFingerprint || run.Config.MaxRPS != saved.RequestRateCeiling ||
 				run.Config.P95LimitMS != saved.P95LimitMS || run.Config.MaxErrorRate != saved.MaxErrorRate || run.Config.MinSamplesPerStep != saved.MinSamplesPerStep ||
@@ -591,7 +591,7 @@ func campaignSLOBreachForObjectives(run report.Result, objectives *campaign.Obje
 
 func campaignSLOBreach(run report.Result) bool {
 	breaches := func(m report.MetricSet) bool {
-		return m.P95MS > run.Config.P95LimitMS || m.Total > 0 && float64(m.Failures)/float64(m.Total) > run.Config.MaxErrorRate
+		return m.P95MS > run.Config.JourneyLatencyLimitMS() || m.Total > 0 && float64(m.Failures)/float64(m.Total) > run.Config.MaxErrorRate
 	}
 	if savedRunSLOBreach(run) {
 		return true

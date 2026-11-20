@@ -754,7 +754,7 @@ func ClassifyEvidence(run report.Result) (string, string) {
 	if run.Quality != nil && run.Quality.State == report.QualityInvalid {
 		return "INVALID_DELIVERY", "Report accounting or generator evidence is invalid."
 	}
-	if (run.Outcome == "PASS" || run.Outcome == "FAIL") && run.SchemaVersion >= report.CurrentSchemaVersion {
+	if (run.Outcome == "PASS" || run.Outcome == "FAIL") && run.SchemaVersion >= 34 {
 		if reason := report.GeneratorCapacityIssue(run); reason != "" {
 			return "INVALID_DELIVERY", reason
 		}
@@ -767,7 +767,7 @@ func ClassifyEvidence(run report.Result) (string, string) {
 			return "INSUFFICIENT_EVIDENCE", "Completed-journey SLO evidence is absent or not statistically assessable."
 		}
 		journeyErrorRate := float64(run.Journeys.Failures) / float64(run.Journeys.Total)
-		if run.Journeys.Success == 0 || journeyErrorRate > run.Config.MaxErrorRate || run.Journeys.P95MS > run.Config.P95LimitMS {
+		if run.Journeys.Success == 0 || journeyErrorRate > run.Config.MaxErrorRate || run.Journeys.P95MS > run.Config.JourneyLatencyLimitMS() {
 			return "FAIL_OBSERVED", "The completed-journey latency or error objective was not met."
 		}
 		for _, window := range run.Windows {
@@ -775,7 +775,7 @@ func ClassifyEvidence(run report.Result) (string, string) {
 				return "INSUFFICIENT_EVIDENCE", "One or more observation windows have no completed-journey SLO evidence."
 			}
 			windowErrorRate := float64(window.Journeys.Failures) / float64(window.Journeys.Total)
-			if window.Journeys.Success == 0 || windowErrorRate > run.Config.MaxErrorRate || window.Journeys.P95MS > run.Config.P95LimitMS {
+			if window.Journeys.Success == 0 || windowErrorRate > run.Config.MaxErrorRate || window.Journeys.P95MS > run.Config.JourneyLatencyLimitMS() {
 				return "FAIL_OBSERVED", "A completed-journey observation-window objective was not met."
 			}
 		}

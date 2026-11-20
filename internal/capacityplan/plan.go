@@ -166,7 +166,7 @@ func statisticalBlocker(evidence campaign.Result) string {
 			if run.SchemaVersion < 22 {
 				return "A required phase lacks schema-v22 completed-journey evidence; demand remains INSUFFICIENT_EVIDENCE."
 			}
-			if blocker := metricSetBlocker(run.Journeys, run.Config.P95LimitMS, run.Config.MaxErrorRate); blocker != "" {
+			if blocker := metricSetBlocker(run.Journeys, run.Config.JourneyLatencyLimitMS(), run.Config.MaxErrorRate); blocker != "" {
 				return "A required phase completed journeys " + blocker
 			}
 			if len(run.Steps) == 0 {
@@ -192,7 +192,7 @@ func statisticalBlocker(evidence campaign.Result) string {
 				if blocker := metricSetBlocker(window.Metrics, run.Config.P95LimitMS, run.Config.MaxErrorRate); blocker != "" {
 					return "A required phase window " + blocker
 				}
-				if blocker := metricSetBlocker(window.Journeys, run.Config.P95LimitMS, run.Config.MaxErrorRate); blocker != "" {
+				if blocker := metricSetBlocker(window.Journeys, run.Config.JourneyLatencyLimitMS(), run.Config.MaxErrorRate); blocker != "" {
 					return "A required phase completed-journey window " + blocker
 				}
 				if run.SchemaVersion < 13 || len(window.Steps) != len(run.Steps) {
@@ -226,7 +226,7 @@ func statisticalBlocker(evidence campaign.Result) string {
 						return "A required phase has duplicate or unknown per-profile journey-window evidence; demand remains INSUFFICIENT_EVIDENCE."
 					}
 					delete(expectedProfiles, windowProfile.Name)
-					if blocker := metricSetBlocker(windowProfile.Metrics, run.Config.P95LimitMS, run.Config.MaxErrorRate); blocker != "" {
+					if blocker := metricSetBlocker(windowProfile.Metrics, run.Config.JourneyLatencyLimitMS(), run.Config.MaxErrorRate); blocker != "" {
 						return "A required phase per-profile journey window " + blocker
 					}
 				}
