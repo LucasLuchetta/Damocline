@@ -1454,3 +1454,9 @@ func reportEnvelope(v config.Validated, guardrailStopped bool) *report.Envelope 
 	}
 	return out
 }
+
+// DrainAllowance is the bounded post-schedule drain time a run of v may use
+// beyond its duration. Planners use it to size wall budgets.
+func DrainAllowance(v config.Validated) time.Duration {
+	return drainDuration(v)
+}

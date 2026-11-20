@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Forward `damocline capacity --extended-envelope` to explore and campaign
+  (up to 500 VUs), self-calibrate bisection fill-in levels for extended
+  refinement, and size explore budgets from the network baseline cap, drain
+  allowance and setup time instead of a flat 5s per stage (ADR 0170). Add an
+  end-to-end loopback test against a server with a known capacity.
+
 - Size the `damocline capacity` explore budget from the planned stages,
   refuse an undersized explicit budget before traffic, and continue from the
   highest repeatedly passing level when explore stops early.

@@ -65,7 +65,11 @@ func capacityObservation(
 	}
 	required = max(required, p95Samples)
 	fmt.Fprintf(w, "Minimum samples per series and window: %d (conditional zero-error and p95-rank bounds).\n", required)
-	if result.HighestPassingUsers != nil && result.Outcome == "ABORTED" {
+	coarse, coarseOK := capacityCoarseBracket(result)
+	if coarseOK {
+		fmt.Fprintf(w, "Explore stopped INCONCLUSIVE because no calibrated level remained inside the failing bracket; continuing conservatively with the highest repeatedly passing tested level %d VUs. The bracket was not refined.\n", coarse)
+		result.HighestPassingUsers = &coarse
+	} else if result.HighestPassingUsers != nil && result.Outcome == "ABORTED" {
 		fmt.Fprintf(w, "Explore stopped early (ABORTED); continuing with the highest repeatedly passing level %d VUs. Levels above it were not explored.\n", *result.HighestPassingUsers)
 	} else if result.HighestPassingUsers == nil || (result.Outcome != "BRACKETED" && result.Outcome != "PASSED_TO_CONFIGURED_CEILING") {
 		return 0, 0, errors.New("explore recorded no reproducible passing capacity bracket")
@@ -185,8 +189,14 @@ func capacityCmd(args []string, stdout, stderr io.Writer) int {
 	if !*extended && (*extendedAck || *targetClass != "") {
 		return fail(errors.New("extended-envelope options require --extended-envelope"))
 	}
-	if *extended && *maxUsers > 50 {
-		return fail(errors.New("explore and campaign stages run within the standard 50 VU ceiling; --extended-envelope only extends the calibration gate in this release"))
+	userCeiling := 0
+	var extendedRequest *config.ExtendedEnvelopeRequest
+	if *extended {
+		userCeiling = config.ExtendedEnvelopeHardLimits.MaxUsers
+		extendedRequest = &config.ExtendedEnvelopeRequest{Acknowledged: true, TargetClass: *targetClass}
+		if *calibration != "" {
+			return fail(errors.New("--extended-envelope self-calibrates every planned level; omit --calibration"))
+		}
 	}
 	if *calibration != "" {
 		if loaded, err := loadAnyCalibration(*calibration); err != nil || loaded.scenario == nil {
@@ -221,13 +231,13 @@ func capacityCmd(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return fail(err)
 	}
-	opt := explorer.Options{MinUsers: min(2, *maxUsers), MaxUsers: *maxUsers, Repeats: 2, StageDuration: 20 * time.Second, Budget: *exploreBudget}
+	opt := explorer.Options{MinUsers: min(2, *maxUsers), MaxUsers: *maxUsers, Repeats: 2, StageDuration: capacityTiming.ExploreStage, Budget: *exploreBudget, UserCeiling: userCeiling, Extended: *extended, TargetClass: *targetClass}
 	if stage, ok := capacityExploreStage(scenario, opt.MinUsers, *referenceReport); ok {
 		opt.StageDuration = stage
 	}
 	campaignOptions := campaign.Options{
-		Warmup: 10 * time.Second, Recovery: 15 * time.Second, Observation: 45 * time.Second,
-		Repeats: 2, Budget: *budget, LongRun: *long, StagingConfirmed: *staging,
+		Warmup: capacityTiming.Warmup, Recovery: capacityTiming.Recovery, Observation: 45 * time.Second,
+		Repeats: 2, Budget: *budget, LongRun: *long, StagingConfirmed: *staging, UserCeiling: userCeiling, Guardrails: capacityGuardrails(*extended),
 	}
 	if err := explorer.Validate(opt); err != nil {
 		return fail(err)
@@ -256,7 +266,20 @@ func capacityCmd(args []string, stdout, stderr io.Writer) int {
 	// opt.Repeats stages plus a bounded network preflight. A default budget
 	// grows to fit (within the 15m explorer cap); an explicit budget that is
 	// too small is refused before any traffic instead of aborting mid-ladder.
-	exploreNeed := time.Duration(len(ladder)*opt.Repeats) * (opt.StageDuration + 5*time.Second)
+	// In the extended envelope, refinement probes only calibrated levels
+	// (ADR 0157), so the protocol also calibrates bisection fill-in levels
+	// and reserves stage time for each refinement probe (ADR 0170).
+	calibrationLevels := ladder
+	refinementProbes := 0
+	if *extended {
+		calibrationLevels, refinementProbes = capacityExtendedCalibrationLevels(ladder, *calLevel)
+	}
+	overhead, err := capacityStageOverhead(scenario, opt.MinUsers, extendedRequest, *insecureHTTP)
+	if err != nil {
+		return fail(err)
+	}
+	stages := (len(ladder) + refinementProbes) * opt.Repeats
+	exploreNeed := time.Duration(stages) * (opt.StageDuration + overhead)
 	explicitExploreBudget := false
 	fs.Visit(func(f *flag.Flag) {
 		if f.Name == "explore-budget" {
@@ -264,7 +287,7 @@ func capacityCmd(args []string, stdout, stderr io.Writer) int {
 		}
 	})
 	if exploreNeed > 15*time.Minute {
-		return fail(fmt.Errorf("explore needs about %s for %d levels x %d repeats of %s stages, above the 15m explore cap; lower --max-users", exploreNeed.Round(time.Second), len(ladder), opt.Repeats, opt.StageDuration))
+		return fail(fmt.Errorf("explore needs about %s for %d stages (%d levels + %d refinement probes, x %d repeats) of %s plus %s per-stage overhead, above the 15m explore cap; lower --max-users for a shorter ladder, or shorten the stages", exploreNeed.Round(time.Second), stages, len(ladder), refinementProbes, opt.Repeats, opt.StageDuration, overhead))
 	}
 	if *exploreBudget < exploreNeed {
 		if explicitExploreBudget {
@@ -275,7 +298,7 @@ func capacityCmd(args []string, stdout, stderr io.Writer) int {
 	}
 	calWall := time.Duration(0)
 	if *calibration == "" {
-		ladderWall, err := capacityCalibrationWall(len(ladder), *calLevel)
+		ladderWall, err := capacityCalibrationWall(len(calibrationLevels), *calLevel)
 		if err != nil {
 			return fail(err)
 		}
@@ -293,11 +316,15 @@ func capacityCmd(args []string, stdout, stderr io.Writer) int {
 		if *extended {
 			envelope = "extended-envelope gate (target class " + *targetClass + ")"
 		}
-		fmt.Fprintf(stdout, "  2. damocline calibrate for levels %v, then for the campaign level (%s, loopback mirror only, %s; up to %s).\n", ladder, source, envelope, calWall)
+		fmt.Fprintf(stdout, "  2. damocline calibrate for levels %v, then for the campaign level (%s, loopback mirror only, %s; up to %s).\n", calibrationLevels, source, envelope, calWall)
 	} else {
 		fmt.Fprintf(stdout, "  2. Existing calibration artifact %s (no new calibration).\n", *calibration)
 	}
 	fmt.Fprintf(stdout, "  3. Explore levels %v with --calibration and --require-calibration (%s cap).\n", ladder, *exploreBudget)
+	fmt.Fprintf(stdout, "     Explore sizing: %d stages x (%s stage + %s overhead: network baseline cap, bounded drain, setup) = %s.\n", stages, opt.StageDuration, overhead, exploreNeed.Round(time.Second))
+	if *extended {
+		fmt.Fprintf(stdout, "     Extended envelope (target class %s): explore and campaign run with --extended-envelope; bracket refinement probes only calibrated levels %v (%d refinement probes reserved in the explore cap).\n", *targetClass, calibrationLevels, refinementProbes)
+	}
 	fmt.Fprintf(stdout, "  4. Campaign at the highest passing level with sample-sized observation (%s cap, including six network preflights and drains).\n", *budget)
 	fmt.Fprintln(stdout, "  5. Offline audit and executive report.")
 	fmt.Fprintf(stdout, "Total planned wall time at most %s.\n", config.NetworkBaselineWallBudget+calWall+*exploreBudget+*budget)
@@ -351,7 +378,7 @@ func capacityCmd(args []string, stdout, stderr io.Writer) int {
 	// Explore judges each stage on its aggregate; observation windows are a
 	// campaign control and would split short stages below the sample floor.
 	exploreScenario.WindowDuration = ""
-	v, err := config.Parse(exploreScenario, config.Options{Authorized: true, NetworkBaseline: true, AllowInsecureHTTP: *insecureHTTP})
+	v, err := config.Parse(exploreScenario, config.Options{Authorized: true, NetworkBaseline: true, AllowInsecureHTTP: *insecureHTTP, ExtendedEnvelope: extendedRequest})
 	if err != nil {
 		return fail(err)
 	}
@@ -378,7 +405,7 @@ func capacityCmd(args []string, stdout, stderr io.Writer) int {
 			exploreCalibration := *calibration
 			if exploreCalibration == "" {
 				exploreCalibration = filepath.Join(*dir, "selfcal-explore.json")
-				if code := ensureCapacityCalibration(exploreCalibration, exploreFile, v, ladder, mirror, stdout, stderr); code != 0 {
+				if code := ensureCapacityCalibration(exploreCalibration, exploreFile, v, calibrationLevels, mirror, stdout, stderr); code != 0 {
 					return code
 				}
 			}
@@ -386,7 +413,7 @@ func capacityCmd(args []string, stdout, stderr io.Writer) int {
 				"--config", exploreFile, "--min-users", strconv.Itoa(opt.MinUsers), "--max-users", strconv.Itoa(*maxUsers),
 				"--budget", exploreBudget.String(), "--stage-duration", opt.StageDuration.String(), "--authorized", "--out", explorePath,
 				"--calibration", exploreCalibration, "--require-calibration",
-			}, capacityTransportArgs(*insecureHTTP)...), stdout, stderr)
+			}, append(capacityTransportArgs(*insecureHTTP), capacityEnvelopeArgs(*extended, *targetClass)...)...), stdout, stderr)
 			if code == 2 {
 				return code
 			}
@@ -402,7 +429,7 @@ func capacityCmd(args []string, stdout, stderr io.Writer) int {
 	}
 	capacityObservedRateWarning(stdout, result, users, scenario.MaxRPS)
 	campaignOptions.Observation = max(10*time.Second, 3*window)
-	campaignOptions.Recovery = max(15*time.Second, window)
+	campaignOptions.Recovery = max(capacityTiming.Recovery, window)
 	baselineAllowance := 6 * config.NetworkBaselineWallBudget
 	schedule := campaignOptions
 	schedule.Budget = 0
@@ -424,7 +451,7 @@ func capacityCmd(args []string, stdout, stderr io.Writer) int {
 	if v.Duration < window {
 		scenario.Duration = window.String()
 	}
-	campaignScenario, err := config.Parse(scenario, config.Options{Authorized: true, NetworkBaseline: true, AllowInsecureHTTP: *insecureHTTP})
+	campaignScenario, err := config.Parse(scenario, config.Options{Authorized: true, NetworkBaseline: true, AllowInsecureHTTP: *insecureHTTP, ExtendedEnvelope: extendedRequest})
 	if err != nil {
 		return fail(err)
 	}
@@ -450,6 +477,7 @@ func capacityCmd(args []string, stdout, stderr io.Writer) int {
 		}
 		campaignArgs = append(campaignArgs, "--calibration", campaignCalibration, "--require-calibration")
 		campaignArgs = append(campaignArgs, capacityTransportArgs(*insecureHTTP)...)
+		campaignArgs = append(campaignArgs, capacityEnvelopeArgs(*extended, *targetClass)...)
 		if *long {
 			campaignArgs = append(campaignArgs, "--allow-long-run", "--staging-confirmed")
 		}

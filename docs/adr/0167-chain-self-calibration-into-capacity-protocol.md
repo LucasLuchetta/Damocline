@@ -31,7 +31,8 @@ again after exploration when the campaign level delivered at least 90% of
 Standard ceilings apply. `--extended-envelope` requires explicit
 authorization and a lab or staging target class and is forwarded to
 calibration only; exploration and campaign remain within the standard
-50 VU ceiling until those stages support the extended envelope.
+50 VU ceiling until those stages support the extended envelope. ADR 0170
+supersedes this paragraph: the opt-in now reaches explore and campaign.
 
 ## Consequences
 
