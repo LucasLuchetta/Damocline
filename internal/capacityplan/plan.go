@@ -92,6 +92,7 @@ func evaluateWithQuality(evidence campaign.Result, goal capacitygoal.Goal, asses
 		}
 	}
 	collectQualityBlockers(evidence, assess, result.block)
+	collectCalibrationBlockers(evidence, assess, &result)
 	collectStatisticalBlockers(evidence, result.block)
 	if !validObservationVariability(evidence.ObservationVariability, evidence.Repeats) {
 		result.block("Observation variability is not recorded for every independent trial; demand remains INSUFFICIENT_EVIDENCE.")

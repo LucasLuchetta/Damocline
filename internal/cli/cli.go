@@ -79,6 +79,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return protocolCmd(args[1:], stdout, stderr)
 	case "run":
 		return run(args[1:], stdout, stderr)
+	case "calibrate":
+		return calibrateCmd(args[1:], stdout, stderr)
 	case "explore":
 		return explore(args[1:], stdout, stderr)
 	case "explore-arrival":
@@ -125,6 +127,7 @@ Usage:
   damocline run --config scenario.json --authorized [--calibration reports/reference.json --require-calibration] [--app-metrics-endpoint https://app.example.com/metrics --app-metrics-interval 10s] [--out reports/run.json]
   damocline run --config lab.json --authorized --extended-envelope --extended-load-authorized --target-class lab|staging --calibration reports/reference.json --require-calibration [--max-generator-cpu-percent 70]
   damocline run --config scenario.json --dry-run
+  damocline calibrate --config scenario.json --users 2,4,8 --from-report reports/run.json --out reports/self-calibration.json
   damocline explore --config scenario.json --min-users 2 --max-users 20 --stage-duration 20s --repeats 2 --authorized
   damocline explore-arrival --config arrival.json --min-journeys-per-second 2 --max-journeys-per-second 20 [--calibration reference.json --require-calibration] --authorized
 	  damocline campaign --config scenario.json --warmup 30s --observation 2m --recovery 30s --repeats 2 --calibration reports/reference.json --require-calibration --app-metrics-endpoint https://app.example.com/metrics --authorized
@@ -464,11 +467,35 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "configuration error: %v\n", err)
 		return 2
 	}
+	var selfCalibration *calibration.ScenarioRecord
+	if *calibrationFile != "" {
+		if data, readErr := calibration.ReadCalibrationBytes(*calibrationFile); readErr == nil && calibration.IsScenarioCalibrationArtifact(data) {
+			loaded, loadErr := loadAnyCalibration(*calibrationFile)
+			if loadErr != nil {
+				fmt.Fprintf(stderr, "calibration error: %v\n", loadErr)
+				return 2
+			}
+			level := validated.Scenario.Users
+			if validated.Scenario.Mode == "arrival" {
+				level = validated.Scenario.ArrivalRate
+			}
+			if preflightErr := scenarioCalibrationPreflight(*loaded.scenario, validated, []int{level}, time.Now().UTC()); preflightErr != nil {
+				fmt.Fprintf(stdout, "Workload self-calibration: NOT APPLICABLE (%v).\n", preflightErr)
+				if *requireCalibration && extendedRequest == nil {
+					fmt.Fprintln(stderr, "RUN BLOCKED: self-calibration does not cover this workload; no traffic was sent.")
+					return 2
+				}
+			} else {
+				fmt.Fprintln(stdout, "Workload self-calibration: READY for this workload level. Generator-side evidence only; target identity and representativeness remain unverified.")
+			}
+			selfCalibration = loaded.scenario
+		}
+	}
 	if extendedRequest != nil {
 		if code := gateExtendedEnvelope(&validated, *calibrationFile, stdout, stderr); code != 0 {
 			return code
 		}
-	} else if *requireCalibration {
+	} else if *requireCalibration && selfCalibration == nil {
 		if validated.Scenario.Mode != "arrival" {
 			fmt.Fprintln(stderr, "--require-calibration currently supports only exact open-arrival workloads")
 			return 2
@@ -532,8 +559,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "Sampling application metrics from the explicitly configured endpoint every %s; scrapes are additional traffic outside max_rps.\n", *applicationMetricsInterval)
 		runner = withApplicationMetrics(*applicationMetricsEndpoint, *applicationMetricsInterval, appmetrics.NewBudget(appmetrics.MaxTimelineSamples), runner)
 	}
+	if selfCalibration != nil {
+		runner = withScenarioCalibration(*selfCalibration, runner)
+	}
 	result := runner(ctx, validated)
-	if *calibrationFile != "" {
+	if *calibrationFile != "" && selfCalibration == nil {
 		if calibrationErr := attachCalibration(&result, validated.Scenario, *calibrationFile, time.Now().UTC()); calibrationErr != nil {
 			result.Warnings = append(result.Warnings, "The requested local generator calibration could not be validated and was not attached.")
 		}
@@ -744,7 +774,32 @@ func campaignCmdWithWorkloadSource(args []string, source *campaign.WorkloadSourc
 		fmt.Fprintln(stderr, "--require-calibration requires --calibration")
 		return 2
 	}
+	var selfCalibration *calibration.ScenarioRecord
 	if *calibrationFile != "" {
+		if data, readErr := calibration.ReadCalibrationBytes(*calibrationFile); readErr == nil && calibration.IsScenarioCalibrationArtifact(data) {
+			loaded, loadErr := loadAnyCalibration(*calibrationFile)
+			if loadErr != nil {
+				fmt.Fprintf(stderr, "calibration error: %v\n", loadErr)
+				return 2
+			}
+			selfCalibration = loaded.scenario
+		}
+	}
+	if selfCalibration != nil {
+		levels := []int{validated.Scenario.Users}
+		if options.SpikeUsers > 0 {
+			levels = append(levels, options.SpikeUsers)
+		}
+		if preflightErr := scenarioCalibrationPreflight(*selfCalibration, validated, levels, time.Now().UTC()); preflightErr != nil {
+			fmt.Fprintf(stdout, "Workload self-calibration: NOT APPLICABLE (%v).\n", preflightErr)
+			if *requireCalibration {
+				fmt.Fprintln(stderr, "required self-calibration does not cover every planned campaign level; no traffic was sent")
+				return 2
+			}
+		} else {
+			fmt.Fprintf(stdout, "Workload self-calibration: READY for %d planned VU levels. Generator-side evidence only; it does not establish target identity, longer campaign headroom, or application capacity.\n", len(levels))
+		}
+	} else if *calibrationFile != "" {
 		record, calibrationErr := loadCalibration(*calibrationFile)
 		if calibrationErr != nil {
 			fmt.Fprintf(stderr, "calibration error: %v\n", calibrationErr)
@@ -798,6 +853,9 @@ func campaignCmdWithWorkloadSource(args []string, source *campaign.WorkloadSourc
 		runner = withApplicationMetrics(*applicationMetricsEndpoint, *applicationMetricsInterval, appmetrics.NewBudget(appmetrics.MaxTimelineSamples), runner)
 	}
 	runner, setTrial := rotateCampaignCookies(runner, trialCookies)
+	if selfCalibration != nil {
+		runner = withScenarioCalibration(*selfCalibration, runner)
+	}
 	result, err := campaign.WithRunnerProgress(ctx, validated, options, campaign.Runner(runner), func(snapshot campaign.Result) error {
 		if snapshot.PendingTrial != nil {
 			setTrial(snapshot.PendingTrial.Number)
@@ -895,11 +953,17 @@ func explore(args []string, stdout, stderr io.Writer) int {
 	peak := fs.Int("peak-users", 0, "planned peak active-equivalent virtual-user demand")
 	growth := fs.Float64("growth-percent", 0, "projected demand growth, percent")
 	reserve := fs.Float64("reserve-percent", 0, "reserve on grown demand, percent")
+	calibrationFile := fs.String("calibration", "", "attach a workload self-calibration artifact to every stage")
+	requireCalibration := fs.Bool("require-calibration", false, "block traffic unless the self-calibration covers every planned ladder level")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 	if *filename == "" || len(fs.Args()) != 0 {
 		fmt.Fprintln(stderr, "--config is required and positional arguments are not accepted")
+		return 2
+	}
+	if *requireCalibration && *calibrationFile == "" {
+		fmt.Fprintln(stderr, "--require-calibration requires --calibration")
 		return 2
 	}
 	options := explorer.Options{MinUsers: *min, MaxUsers: *max, Repeats: *repeats, StageDuration: *stage, Budget: *budget}
@@ -952,13 +1016,36 @@ func explore(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stdout, "The explorer will attempt the exact target as a separate stage if its normal bounded search reaches that workload.")
 		}
 	}
+	var selfCalibration *calibration.ScenarioRecord
+	if *calibrationFile != "" {
+		loaded, loadErr := loadAnyCalibration(*calibrationFile)
+		if loadErr != nil || loaded.scenario == nil {
+			fmt.Fprintln(stderr, "calibration error: explore accepts only a passing workload self-calibration artifact")
+			return 2
+		}
+		selfCalibration = loaded.scenario
+		ladder := explorer.PlannedLevels(options)
+		if preflightErr := scenarioCalibrationPreflight(*selfCalibration, validated, ladder, time.Now().UTC()); preflightErr != nil {
+			fmt.Fprintf(stdout, "Workload self-calibration: NOT APPLICABLE (%v).\n", preflightErr)
+			if *requireCalibration {
+				fmt.Fprintln(stderr, "EXPLORATION BLOCKED: self-calibration does not cover every planned ladder level; no traffic was sent.")
+				return 2
+			}
+		} else {
+			fmt.Fprintf(stdout, "Workload self-calibration: READY for ladder %v. Bracket refinement levels outside it stay LIMITED. Generator-side evidence only.\n", ladder)
+		}
+	}
 	if *dry {
 		fmt.Fprintln(stdout, "DRY RUN: no traffic generated. Tests will increase geometrically and refine a failing bracket if found.")
 		return 0
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	result, err := explorer.Run(ctx, validated, options)
+	exploreRunner := phaseRunner(engine.Run)
+	if selfCalibration != nil {
+		exploreRunner = withScenarioCalibration(*selfCalibration, exploreRunner)
+	}
+	result, err := explorer.WithRunner(ctx, validated, options, explorer.Runner(exploreRunner))
 	if err != nil {
 		fmt.Fprintf(stderr, "exploration error: %v\n", err)
 		return 2

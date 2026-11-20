@@ -130,6 +130,12 @@ type Record struct {
 	WorkloadObservations            []WorkloadObservation `json:"workload_observations,omitempty"`
 	HighestPassingTestedArrivalRate int                   `json:"highest_passing_tested_arrival_rate"`
 	Interpretation                  string                `json:"interpretation"`
+	// SelfCalibration and SelfCalibrationFingerprint carry a workload
+	// self-calibration artifact (ADR 0154) and the planned run's workload
+	// fingerprint to ExtendedCoverageAssessors in memory. They are never
+	// serialized as part of a reference record.
+	SelfCalibration            *ScenarioRecord `json:"-"`
+	SelfCalibrationFingerprint string          `json:"-"`
 }
 
 const WorkloadMatrixArrivalRate = 10
