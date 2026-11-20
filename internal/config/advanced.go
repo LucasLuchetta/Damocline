@@ -13,6 +13,30 @@ var envPrefixPattern = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*_$`)
 // ResolveSessions loads distinct test sessions into memory without serializing them.
 // One environment variable per virtual user: PREFIX1, PREFIX2, ... PREFIXN.
 func ResolveSessions(prefix string, users int) ([]string, error) {
+	return resolveSessions(prefix, users, make(map[string]bool, users))
+}
+
+// ResolveTrialSessions loads all cookie sets before a campaign can send traffic.
+func ResolveTrialSessions(prefix string, users, repeats int) ([][]string, error) {
+	if users < 1 || users > 50 || repeats < 2 || repeats > 5 {
+		return nil, fmt.Errorf("trial sessions require 1-50 users and 2-5 repetitions")
+	}
+	if !envPrefixPattern.MatchString(prefix) {
+		return nil, fmt.Errorf("trial cookie prefix must be uppercase and end with an underscore")
+	}
+	seen := make(map[string]bool)
+	trials := make([][]string, repeats)
+	for i := range trials {
+		cookies, err := resolveSessions(fmt.Sprintf("%s%d_", prefix, i+1), users, seen)
+		if err != nil {
+			return nil, fmt.Errorf("resolve trial %d sessions: %w", i+1, err)
+		}
+		trials[i] = cookies
+	}
+	return trials, nil
+}
+
+func resolveSessions(prefix string, users int, seen map[string]bool) ([]string, error) {
 	if prefix == "" {
 		return nil, nil
 	}
@@ -20,7 +44,6 @@ func ResolveSessions(prefix string, users int) ([]string, error) {
 		return nil, fmt.Errorf("per_vu_cookie_env_prefix must be uppercase and end with an underscore")
 	}
 	sessions := make([]string, users)
-	seen := make(map[string]bool, users)
 	for i := range sessions {
 		name := fmt.Sprintf("%s%d", prefix, i+1)
 		v, ok := os.LookupEnv(name)

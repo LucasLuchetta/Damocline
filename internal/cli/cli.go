@@ -654,9 +654,11 @@ func campaignCmdWithWorkloadSource(args []string, source *campaign.WorkloadSourc
 	minWindows := fs.Int("stability-min-windows", 3, "minimum complete observation windows for the drift screen (3-20)")
 	minSamples := fs.Int("stability-min-samples", 20, "minimum completed samples in each aggregate and named window (20-100000)")
 	maxP95IncreasePercent := fs.Float64("stability-max-p95-increase-percent", 20, "maximum p95 increase from the first window before drift is reported (>0-100)")
-	maxP95IncreaseMS := fs.Float64("stability-max-p95-increase-ms", 5, "minimum absolute p95 increase in milliseconds before drift is reported (0-10000)")
+	const driftFloorFlag = "stability-max-p95-increase-ms"
+	maxP95IncreaseMS := fs.Float64(driftFloorFlag, 5, "absolute p95 increase required for drift (0-10000 ms; defaults to max(5 ms, 1% of request p95 SLO))")
 	maxThroughputDropPercent := fs.Float64("stability-max-throughput-drop-percent", 20, "maximum throughput decrease from the first window before drift is reported (>0-100)")
 	repeats := fs.Int("repeats", 2, "independent trials (2-5)")
+	rotateVUCookies := fs.Bool("rotate-vu-cookies", false, "use distinct per-VU cookies for each closed-loop trial")
 	budget := fs.Duration("budget", 0, "maximum campaign wall time (15m; long-run mode allows up to 2h)")
 	authorized := fs.Bool("authorized", false, "confirm authorization to benchmark the target")
 	dry := fs.Bool("dry-run", false, "validate campaign settings without sending traffic")
@@ -726,6 +728,19 @@ func campaignCmdWithWorkloadSource(args []string, source *campaign.WorkloadSourc
 			return 2
 		}
 	}
+	var trialCookies [][]string
+	if *rotateVUCookies {
+		trialCookies, err = config.ResolveTrialSessions(
+			scenario.PerVUCookieEnvPrefix,
+			max(scenario.Users, options.SpikeUsers),
+			options.Repeats,
+		)
+		if err != nil {
+			fmt.Fprintf(stderr, "configuration error: %v\n", err)
+			return 2
+		}
+		scenario.PerVUCookieEnvPrefix += "1_"
+	}
 	validated, err := config.Parse(scenario, config.Options{Authorized: *authorized || *dry, AllowWrites: *writes, AllowInsecureHTTP: *insecure, NetworkBaseline: true})
 	if err != nil {
 		fmt.Fprintf(stderr, "configuration error: %v\n", err)
@@ -733,6 +748,13 @@ func campaignCmdWithWorkloadSource(args []string, source *campaign.WorkloadSourc
 	}
 	source.SemanticFingerprint = validated.WorkloadFingerprint
 	options.WorkloadSource = source
+	explicitDriftFloor := false
+	fs.Visit(func(f *flag.Flag) {
+		explicitDriftFloor = explicitDriftFloor || f.Name == driftFloorFlag
+	})
+	if !explicitDriftFloor {
+		options.Stability.MaxP95IncreaseMS = campaign.DefaultStabilityPolicyForSLO(validated.Scenario.P95LimitMS).MaxP95IncreaseMS
+	}
 	if err := campaign.ValidateForScenario(validated, options); err != nil {
 		fmt.Fprintf(stderr, "invalid campaign: %v\n", err)
 		return 2
@@ -819,10 +841,14 @@ func campaignCmdWithWorkloadSource(args []string, source *campaign.WorkloadSourc
 		fmt.Fprintf(stdout, "Sampling application metrics from the explicitly configured endpoint every %s; scrapes are additional traffic outside max_rps.\n", *applicationMetricsInterval)
 		runner = withApplicationMetrics(*applicationMetricsEndpoint, *applicationMetricsInterval, appmetrics.NewBudget(appmetrics.MaxTimelineSamples), runner)
 	}
+	runner, setTrial := rotateCampaignCookies(runner, trialCookies)
 	if selfCalibration != nil {
 		runner = withScenarioCalibration(*selfCalibration, runner)
 	}
 	result, err := campaign.WithRunnerProgress(ctx, validated, options, campaign.Runner(runner), func(snapshot campaign.Result) error {
+		if snapshot.PendingTrial != nil {
+			setTrial(snapshot.PendingTrial.Number)
+		}
 		return report.WriteAnyJSON(*out, snapshot)
 	})
 	if err != nil {
@@ -1021,6 +1047,13 @@ func explore(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout)
 		if p.Reason != "" {
 			fmt.Fprintf(stdout, "  %s\n", p.Reason)
+		}
+		for i, r := range p.Runs {
+			if r.Quality != nil && r.Quality.State == report.QualityInvalid {
+				for _, finding := range r.Quality.Findings {
+					fmt.Fprintf(stdout, "  Trial %d (%s): %s\n", i+1, r.Quality.State, finding)
+				}
+			}
 		}
 	}
 	fmt.Fprintf(stdout, "Outcome: %s\n", result.Outcome)

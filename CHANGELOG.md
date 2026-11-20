@@ -10,15 +10,23 @@
 - Allow one independent, logged retry of the extended calibration on
   hosted Windows CI after a late-arrival failure (ADR 0152).
 
+- Add opt-in per-trial VU cookie sets for closed-loop campaigns (ADR 0161).
+
 - Record transparent HTTP transport retries as per-step `http_trace.transport_retry_count` (run report schema v36, ADR 0151). When a server closed an idle keep-alive connection and Go retried the request on a new connection, the extra write and acquisition callbacks previously marked the whole run INVALID. Trace invariants now account for exactly these retries, pre-v36 reports keep their original checks, and `insights` reports retries as a CAUTION finding.
 
 - Add a bounded loopback lab for comparing Damocline and k6 under identical
   closed-loop workloads at three VU levels (ADR 0160).
 
+- Scale the default closed-loop campaign p95 drift floor to the request SLO
+  while preserving explicit and saved thresholds (ADR 0162).
+
 - Add optional scenario field `journey_p95_limit_ms` (run report schema v35, ADR 0150). When set, completed-journey latency checks for the run, each window and each profile use it instead of `p95_limit_ms`, so workloads with think time can pass. Offline campaign, goal, plan and audit readers apply the saved value. Without it, behavior is unchanged, and runs with think time now warn that the journey objective includes think time.
 
 - Stop reporting a false INVALID scheduler-admission mismatch for
   closed-loop runs, whose admission count is zero by design.
+
+- Retain and print accounting findings for invalid closed-loop exploration
+  trials (ADR 0163).
 
 - Close G0 on the roadmap exit test within the local reference scope
   (ADR 0149). Per-gate remaining gaps move to post-G0 hardening.
