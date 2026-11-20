@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Treat a run whose named step has fewer samples than
+  `min_samples_per_step` as INCONCLUSIVE instead of FAIL, as documented, and
+  size `damocline capacity` explore stages from the recorded per-VU rate so
+  the lowest level reaches the sample floor.
+
 - Clamp the self-calibration mirror window to the level duration, and
   report calibration setup errors separately from failed calibration in
   `damocline capacity`.
