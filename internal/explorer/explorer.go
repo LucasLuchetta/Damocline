@@ -318,3 +318,26 @@ func deliveryIssue(run *report.Result) string {
 	}
 	return ""
 }
+
+// PlannedLevels returns the geometric VU ladder the explorer probes before
+// any bracket refinement, including an in-range exact target. Refinement
+// levels inside a failing bracket are data-dependent and not included.
+func PlannedLevels(opt Options) []int {
+	levels := []int{}
+	candidate := opt.MinUsers
+	for candidate > 0 {
+		levels = append(levels, candidate)
+		if candidate >= opt.MaxUsers {
+			break
+		}
+		next := candidate * 2
+		if next > opt.MaxUsers {
+			next = opt.MaxUsers
+		}
+		if opt.TargetUsers > candidate && opt.TargetUsers < next && opt.TargetUsers <= opt.MaxUsers {
+			next = opt.TargetUsers
+		}
+		candidate = next
+	}
+	return levels
+}

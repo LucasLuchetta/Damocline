@@ -640,7 +640,18 @@ func AssessQuality(r Result) *Quality {
 	} else if r.SchemaVersion >= 26 && len(r.Config.Profiles) > 0 {
 		invalidate("Schema-v26 report omits per-workflow journey evidence.")
 	}
-	if r.Calibration == nil {
+	scenarioCalibrated := false
+	if r.Calibration != nil && r.ScenarioCalibration != nil {
+		invalidate("A run cannot carry both a fixed reference calibration and a workload self-calibration.")
+	} else if r.Calibration == nil && r.ScenarioCalibration != nil {
+		if issue, invalid := ScenarioCalibrationIssue(r); invalid {
+			invalidate(issue)
+		} else if issue != "" {
+			limit(issue)
+		} else {
+			scenarioCalibrated = true
+		}
+	} else if r.Calibration == nil {
 		limit("No local generator preflight is attached; workload-specific generator equivalence is unverified.")
 	} else if err := calibration.ValidateRecord(r.Calibration.Record); err != nil {
 		invalidate("Attached generator calibration record is malformed or inconsistent.")
@@ -785,7 +796,7 @@ func AssessQuality(r Result) *Quality {
 			}
 		}
 	}
-	if controlledReference && q.State != QualityInvalid && len(q.Findings) == 0 {
+	if (controlledReference || scenarioCalibrated) && q.State != QualityInvalid && len(q.Findings) == 0 {
 		q.State = QualityValid
 	}
 	return q

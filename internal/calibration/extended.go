@@ -24,7 +24,7 @@ type ExtendedCoverageAssessor func(s config.Scenario, rec Record, local Runtime,
 // envelopes. A future workload-specific calibration artifact registers an
 // additional assessor here; the first READY verdict wins, and an empty or
 // all-blocked list refuses the run.
-var ExtendedCoverageAssessors = []ExtendedCoverageAssessor{assessExactEnvelope}
+var ExtendedCoverageAssessors = []ExtendedCoverageAssessor{assessExactEnvelope, AssessScenarioSelfCalibration}
 
 // AssessExtendedEnvelope runs every registered assessor for the exact level.
 func AssessExtendedEnvelope(s config.Scenario, rec Record, local Runtime, now time.Time) ExtendedCoverage {

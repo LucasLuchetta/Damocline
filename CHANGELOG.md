@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add workload-specific generator self-calibration (ADR 0154, run report schema v39). `damocline calibrate --config scenario.json --users 2,4,8 [--from-report run.json | --response-bytes N --server-delay D] --out selfcal.json` replays the exact scenario shape against a bounded `127.0.0.1` mirror with an independent server ledger. It never contacts the target or sends real secrets. It checks ledger reconciliation, arrival conservation and scheduler lag, closed-loop delivery, generator overhead, think-time accuracy and CPU/RSS guardrails. `run`, `explore` and `campaign` accept the artifact through `--calibration`/`--require-calibration`. A matched, clean run can then reach `VALID_WITHIN_ENVELOPE`, and `audit` consumes this through recomputed quality. This is generator-side evidence only: it does not establish target identity, application behavior or representativeness.
+
 - Add an explicit, calibration-gated extended load envelope for `damocline run` (run report schema v38, ADR 0155). `--extended-envelope` requires `--extended-load-authorized`, `--target-class lab|staging`, `--calibration` and `--require-calibration`, raises per-run ceilings to a fixed hard maximum of 500 VUs/workers, 1000 request starts/s and 15 minutes, refuses before traffic unless a fresh calibration covers the exact level, and always enforces generator CPU/RSS guardrails (a trigger stops the run as `GENERATOR_LIMITED`). Every run report now records `load_envelope`; `insights` states when results above the standard ceiling were produced under the extended envelope. Standard ceilings and defaults are unchanged.
 
 - Reject campaign budgets without the bounded drain allowance before any

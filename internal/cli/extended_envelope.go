@@ -61,7 +61,13 @@ func (f extendedEnvelopeFlags) request(requireCalibration bool, calibrationFile 
 // gateExtendedEnvelope refuses before any traffic unless a fresh, matching
 // calibration covers the exact planned level (ADR 0155).
 func gateExtendedEnvelope(v *config.Validated, calibrationFile string, stdout, stderr io.Writer) int {
-	record, err := loadCalibration(calibrationFile)
+	loaded, err := loadAnyCalibration(calibrationFile)
+	var record calibration.Record
+	if err == nil && loaded.scenario != nil {
+		record = calibration.Record{SelfCalibration: loaded.scenario, SelfCalibrationFingerprint: v.WorkloadFingerprint}
+	} else if err == nil {
+		record = *loaded.reference
+	}
 	if err != nil {
 		fmt.Fprintf(stderr, "calibration error: %v\n", err)
 		fmt.Fprintln(stderr, "EXTENDED RUN BLOCKED: no valid calibration artifact; no traffic was sent.")
