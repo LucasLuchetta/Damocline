@@ -4,6 +4,10 @@
 
 - Report actionable decision blockers together in campaign audit output (ADR 0164).
 
+- Add a bounded closed-loop capacity protocol with sample-driven windows,
+  local HAR and session onboarding, and an optional usage hypothesis
+  (ADRs 0165 and 0166).
+
 - Reject campaign budgets without the bounded drain allowance before any
   traffic, matching the offline audit rule, and state the required budget.
 
