@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Record transparent HTTP transport retries as per-step `http_trace.transport_retry_count` (run report schema v36, ADR 0151). When a server closed an idle keep-alive connection and Go retried the request on a new connection, the extra write and acquisition callbacks previously marked the whole run INVALID. Trace invariants now account for exactly these retries, pre-v36 reports keep their original checks, and `insights` reports retries as a CAUTION finding.
+
 - Add optional scenario field `journey_p95_limit_ms` (run report schema v35, ADR 0150). When set, completed-journey latency checks for the run, each window and each profile use it instead of `p95_limit_ms`, so workloads with think time can pass. Offline campaign, goal, plan and audit readers apply the saved value. Without it, behavior is unchanged, and runs with think time now warn that the journey objective includes think time.
 
 - Stop reporting a false INVALID scheduler-admission mismatch for

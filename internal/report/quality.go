@@ -407,7 +407,7 @@ func AssessQuality(r Result) *Quality {
 			continue
 		}
 		t := s.HTTPTrace
-		if !validHTTPTrace(t) {
+		if !validHTTPTrace(t, r.SchemaVersion) {
 			invalidate("HTTP client phase timing counters or totals are invalid.")
 			break
 		}
@@ -419,7 +419,7 @@ func AssessQuality(r Result) *Quality {
 			invalidate("HTTP client full-duration observations do not reconcile with started step requests.")
 			break
 		}
-		if t.RequestAttemptCount > s.Metrics.Total && t.RequestAttemptCount-s.Metrics.Total > s.Metrics.Cancelled || t.FirstByteCount > t.CompleteCount || t.BodyCount > t.FirstByteCount || t.BodyIncompleteCount != t.FirstByteCount-t.BodyCount || t.WriteCount > t.CompleteCount || t.WriteFailedCount > t.CompleteCount-t.WriteCount || t.DNSCount > t.DNSStartCount || t.ConnectCount > t.ConnectStartCount || t.TLSCount > t.TLSStartCount {
+		if t.RequestAttemptCount > s.Metrics.Total && t.RequestAttemptCount-s.Metrics.Total > s.Metrics.Cancelled || t.FirstByteCount > t.CompleteCount || t.BodyCount > t.FirstByteCount || t.BodyIncompleteCount != t.FirstByteCount-t.BodyCount || t.WriteCount > t.CompleteCount+t.TransportRetryCount || t.WriteFailedCount > t.CompleteCount+t.TransportRetryCount-t.WriteCount || t.DNSCount > t.DNSStartCount || t.ConnectCount > t.ConnectStartCount || t.TLSCount > t.TLSStartCount {
 			invalidate("HTTP client phase callback counts are inconsistent.")
 			break
 		}
@@ -1108,8 +1108,15 @@ func validWindowProfileTotals(r Result) bool {
 	return true
 }
 
-func validHTTPTrace(t HTTPTrace) bool {
-	counts := []int{t.RequestAttemptCount, t.WriteCount, t.WriteFailedCount, t.DNSStartCount, t.RateWaitCount, t.RateWaitCancelledCount, t.DNSCount, t.ConnectCount, t.ConnectStartCount, t.ConnectionAcquireCount, t.ConnectionReusedCount, t.ConnectionWaitCount, t.TLSCount, t.TLSStartCount, t.FirstByteCount, t.BodyCount, t.BodyIncompleteCount, t.CompleteCount}
+// validHTTPTrace checks phase-callback invariants. Before schema v36 a
+// request attempt has at most one acquisition and write. From v36 each
+// transparent transport retry (ADR 0151) may add exactly one acquisition and
+// one write outcome, so those bounds are relaxed by TransportRetryCount only.
+func validHTTPTrace(t HTTPTrace, schemaVersion int) bool {
+	if schemaVersion < 36 && t.TransportRetryCount != 0 {
+		return false
+	}
+	counts := []int{t.TransportRetryCount, t.RequestAttemptCount, t.WriteCount, t.WriteFailedCount, t.DNSStartCount, t.RateWaitCount, t.RateWaitCancelledCount, t.DNSCount, t.ConnectCount, t.ConnectStartCount, t.ConnectionAcquireCount, t.ConnectionReusedCount, t.ConnectionWaitCount, t.TLSCount, t.TLSStartCount, t.FirstByteCount, t.BodyCount, t.BodyIncompleteCount, t.CompleteCount}
 	for _, count := range counts {
 		if count < 0 {
 			return false
@@ -1121,7 +1128,11 @@ func validHTTPTrace(t HTTPTrace) bool {
 			return false
 		}
 	}
-	return t.RequestAttemptCount == t.CompleteCount && t.WriteCount <= t.CompleteCount && t.WriteFailedCount <= t.CompleteCount-t.WriteCount && t.FirstByteCount <= t.CompleteCount && t.BodyCount <= t.FirstByteCount && t.BodyIncompleteCount == t.FirstByteCount-t.BodyCount && t.DNSCount <= t.DNSStartCount && t.ConnectCount <= t.ConnectStartCount && t.ConnectionReusedCount <= t.ConnectionAcquireCount && t.ConnectionWaitCount <= t.ConnectionReusedCount && t.TLSCount <= t.TLSStartCount
+	retries := t.TransportRetryCount
+	if schemaVersion >= 36 && (retries > t.ConnectionReusedCount || t.ConnectionAcquireCount > t.RequestAttemptCount+retries || retries > t.ConnectionAcquireCount) {
+		return false
+	}
+	return t.RequestAttemptCount == t.CompleteCount && t.WriteCount <= t.CompleteCount+retries && t.WriteFailedCount <= t.CompleteCount+retries-t.WriteCount && t.FirstByteCount <= t.CompleteCount && t.BodyCount <= t.FirstByteCount && t.BodyIncompleteCount == t.FirstByteCount-t.BodyCount && t.DNSCount <= t.DNSStartCount && t.ConnectCount <= t.ConnectStartCount && t.ConnectionReusedCount <= t.ConnectionAcquireCount && t.ConnectionWaitCount <= t.ConnectionReusedCount && t.TLSCount <= t.TLSStartCount
 }
 
 func validHTTPDiagnostics(d HTTPDiagnostics, completed, cancelled int) bool {

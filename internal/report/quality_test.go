@@ -1014,3 +1014,32 @@ func TestHTTPDiagnosticsClassifiesBodyReadFailureAsTransportFailure(t *testing.T
 		t.Fatalf("truncated successful-status response was not categorized consistently: %+v", diagnostics)
 	}
 }
+
+func TestHTTPTraceTransportRetryInvariants(t *testing.T) {
+	// One attempt whose reused connection failed and was retried once.
+	retried := HTTPTrace{RequestAttemptCount: 1, RateWaitCount: 1, CompleteCount: 1, WriteCount: 2, FirstByteCount: 1, BodyCount: 1,
+		ConnectionAcquireCount: 2, ConnectionReusedCount: 1, ConnectStartCount: 1, ConnectCount: 1, TransportRetryCount: 1}
+	if !validHTTPTrace(retried, 36) {
+		t.Fatal("v36 trace with one transparent retry must be valid")
+	}
+	unexplained := retried
+	unexplained.TransportRetryCount = 0
+	if validHTTPTrace(unexplained, 36) || validHTTPTrace(unexplained, 35) {
+		t.Fatal("extra write without a recorded retry must stay invalid")
+	}
+	if validHTTPTrace(retried, 35) {
+		t.Fatal("pre-v36 reports must not carry transport_retry_count")
+	}
+	for name, mutate := range map[string]func(*HTTPTrace){
+		"retry without reused connection": func(t *HTTPTrace) { t.ConnectionReusedCount = 0 },
+		"acquisitions beyond retries":     func(t *HTTPTrace) { t.ConnectionAcquireCount = 3; t.ConnectionReusedCount = 2 },
+		"writes beyond retries":           func(t *HTTPTrace) { t.WriteCount = 3 },
+		"negative retries":                func(t *HTTPTrace) { t.TransportRetryCount = -1 },
+	} {
+		trace := retried
+		mutate(&trace)
+		if validHTTPTrace(trace, 36) {
+			t.Errorf("%s: expected invalid trace", name)
+		}
+	}
+}

@@ -899,6 +899,12 @@ func execute(parent context.Context, client *http.Client, base *url.URL, timeout
 			traceMu.Lock()
 			if !getConnStart.IsZero() {
 				elapsed := time.Since(getConnStart)
+				if trace.ConnectionAcquireCount > 0 {
+					// A second acquisition within one attempt means the
+					// transport transparently retried after a reused
+					// connection failed before any response byte (ADR 0151).
+					trace.TransportRetryCount++
+				}
 				trace.ConnectionAcquireCount++
 				trace.ConnectionAcquireMS += ms(elapsed)
 				if info.Reused {

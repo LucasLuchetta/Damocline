@@ -37,7 +37,7 @@ import (
 // exactly with the DNS and TLS failure totals in every HTTP ledger.
 // Version 35 may record an optional journey_p95_limit_ms that replaces
 // p95_limit_ms for completed-journey latency objectives only (ADR 0150).
-const CurrentSchemaVersion = 35
+const CurrentSchemaVersion = 36
 
 // JourneyP95LimitSchemaVersion is the first run schema that may carry
 // RunConfig.JourneyP95LimitMS.
@@ -349,16 +349,23 @@ type HTTPTrace struct {
 	ConnectionReusedCount  int     `json:"connection_reused_count,omitempty"`
 	ConnectionWaitCount    int     `json:"connection_wait_count,omitempty"`
 	ConnectionWaitMS       float64 `json:"connection_wait_ms,omitempty"`
-	TLSCount               int     `json:"tls_count"`
-	TLSStartCount          int     `json:"tls_start_count"`
-	TLSMS                  float64 `json:"tls_ms,omitempty"`
-	FirstByteCount         int     `json:"first_byte_count"`
-	FirstByteMS            float64 `json:"first_byte_ms,omitempty"`
-	BodyCount              int     `json:"body_count"`
-	BodyMS                 float64 `json:"body_ms,omitempty"`
-	BodyIncompleteCount    int     `json:"body_incomplete_count,omitempty"`
-	CompleteCount          int     `json:"complete_count"`
-	CompleteMS             float64 `json:"complete_ms,omitempty"`
+	// TransportRetryCount (schema v36, ADR 0151) counts connection
+	// acquisitions after the first within one request attempt: Go's
+	// transport transparently retried the request on another connection
+	// after a reused connection failed before any response byte. Phase
+	// callback counters remain raw event counts, so a retried attempt may
+	// contribute more than one acquisition, write or connect.
+	TransportRetryCount int     `json:"transport_retry_count,omitempty"`
+	TLSCount            int     `json:"tls_count"`
+	TLSStartCount       int     `json:"tls_start_count"`
+	TLSMS               float64 `json:"tls_ms,omitempty"`
+	FirstByteCount      int     `json:"first_byte_count"`
+	FirstByteMS         float64 `json:"first_byte_ms,omitempty"`
+	BodyCount           int     `json:"body_count"`
+	BodyMS              float64 `json:"body_ms,omitempty"`
+	BodyIncompleteCount int     `json:"body_incomplete_count,omitempty"`
+	CompleteCount       int     `json:"complete_count"`
+	CompleteMS          float64 `json:"complete_ms,omitempty"`
 }
 
 func (t *HTTPTrace) Record(o HTTPTrace) {
@@ -378,6 +385,7 @@ func (t *HTTPTrace) Record(o HTTPTrace) {
 	t.ConnectionAcquireCount += o.ConnectionAcquireCount
 	t.ConnectionAcquireMS += o.ConnectionAcquireMS
 	t.ConnectionReusedCount += o.ConnectionReusedCount
+	t.TransportRetryCount += o.TransportRetryCount
 	t.ConnectionWaitCount += o.ConnectionWaitCount
 	t.ConnectionWaitMS += o.ConnectionWaitMS
 	t.TLSCount += o.TLSCount
