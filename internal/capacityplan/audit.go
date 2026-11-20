@@ -182,8 +182,7 @@ func BuildAssessment(e campaign.Result, goal *capacitygoal.Goal) (Assessment, er
 		assessment.DemandInputs = &goalCopy
 		assessment.Audit.DemandTargetUsers = plan.TargetUsers
 		if audit.State == "INVALID_EVIDENCE" {
-			assessment.Demand.State = "INSUFFICIENT_EVIDENCE"
-			assessment.Demand.block("Campaign replay found invalid measurement evidence.")
+			assessment.Demand.invalidateDecision("Campaign replay found invalid measurement evidence.")
 			assessment.State = "INVALID_EVIDENCE"
 		} else {
 			assessment.State = plan.State
