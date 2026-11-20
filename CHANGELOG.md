@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Require a recorded execution state in closed-loop campaign reports from
+  schema v10 onward before dashboard, export or assessment decoding.
+
 - Require all five recorded stability thresholds in campaign artifacts with
   predeclared objectives. Explicit zero thresholds remain readable.
 

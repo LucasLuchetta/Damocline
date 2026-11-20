@@ -385,6 +385,12 @@ func validateCampaignArtifactPresence(data []byte) error {
 			return errors.New("current campaign started_at must be a non-empty RFC3339 timestamp")
 		}
 	}
+	if schemaVersion >= 10 {
+		value, present := fields["execution_state"]
+		if !present || bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+			return errors.New("campaign is missing required field \"execution_state\"")
+		}
+	}
 	var trials []json.RawMessage
 	if err := json.Unmarshal(fields["trials"], &trials); err != nil || trials == nil || !bytes.HasPrefix(bytes.TrimSpace(fields["trials"]), []byte("[")) {
 		return errors.New("campaign trials must be a JSON array")

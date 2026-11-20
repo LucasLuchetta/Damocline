@@ -24,6 +24,9 @@ func campaignObject(t *testing.T, arrival bool, schema int, objectives map[strin
 		}
 	}
 	root["stability_policy"] = campaign.DefaultStabilityPolicy()
+	if !arrival && schema >= 10 {
+		root["execution_state"] = "COMPLETED"
+	}
 	data, err := json.Marshal(root)
 	if err != nil {
 		t.Fatal(err)
