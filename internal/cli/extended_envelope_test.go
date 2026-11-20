@@ -126,7 +126,7 @@ func TestExtendedRunAcceptedWithCoverageRecordsEnvelope(t *testing.T) {
 		t.Fatalf("extended report rejected by reader: %v", err)
 	}
 	e := r.Envelope
-	if r.SchemaVersion != report.EnvelopeSchemaVersion || e == nil || e.Mode != report.EnvelopeModeExtended || !e.ExceedsStandard || e.TargetClass != "lab" || !e.Acknowledged || e.CalibrationCoverage != "READY" || e.MaxUsers != 500 {
+	if r.SchemaVersion != report.CurrentSchemaVersion || e == nil || e.Mode != report.EnvelopeModeExtended || !e.ExceedsStandard || e.TargetClass != "lab" || !e.Acknowledged || e.CalibrationCoverage != "READY" || e.MaxUsers != 500 {
 		t.Fatalf("extended envelope not recorded: %+v", e)
 	}
 	if r.Generator == nil || r.Generator.Guardrails == nil || !r.Generator.Guardrails.Enabled() {

@@ -97,6 +97,16 @@ Before load, every run sends a bounded network-path baseline: 20 sequential `GET
 
 When moving beyond 2 VUs, verify accounts, permissions and datasets. Keep traffic caps conservative on production. Failures, 302 redirects, dropped starts and insufficient step coverage must not be ignored.
 
+### Self-calibrate the generator for this workload
+
+Before relying on a run's measurement quality, calibrate the exact workload on the same generator host. Use the levels you plan to test; for explore, use the geometric ladder (for example `--users 2,4,8,16,20`):
+
+```sh
+damocline calibrate --config scenario.json --users 2,4,8 --from-report reports/run.json --out reports/selfcal.json
+```
+
+Then pass `--calibration reports/selfcal.json --require-calibration` to `run`, `explore` or `campaign`. Only the loopback mirror receives traffic. See `docs/REFERENCE_VALIDATION.md` for what this does and does not prove.
+
 ## 5. Find repeatedly passing virtual-user levels
 
 **Staging-first example:**

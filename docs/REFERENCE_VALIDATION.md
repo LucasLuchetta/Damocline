@@ -104,6 +104,19 @@ CI runs this same two-repeat acceptance lab on Windows and in a Linux container 
 
 The command requires two independent process runs (three at most for the baseline matrix, two for extended), compares fixture fingerprints and calibrator runner identity, reports descriptive per-profile p95 spread, and includes the transport fixture result. A failed process, gate, timeout, or interruption prevents a pass. Its fresh evidence directory contains incremental state JSON, each produced calibration/transport report, hashes, and process logs streamed to disk with a 1 MiB per-stream bound. A missing report stays explicitly inconclusive; a failed report remains available with the gate observations. The p95 range is not a confidence interval, and sequential runs on one host do not establish statistical independence or a hardware-class tolerance. A pass applies only to the specific local binary, runtime, fixture, workload tuples, and observation windows recorded in that manifest.
 
+## Workload-specific self-calibration (ADR 0154)
+
+Fixed reference profiles cannot match an ordinary scenario. To get generator evidence for the exact workload, run this on the same generator host with the same `damocline` executable:
+
+```sh
+damocline calibrate --config scenario.json --users 2,4,8 --from-report reports/run.json --out reports/selfcal.json
+damocline run --config scenario.json --authorized --calibration reports/selfcal.json --require-calibration
+```
+
+The mirror listens only on `127.0.0.1`. It answers each declared route with the recorded (or declared) status, size and median delay, and it keeps its own ledger. Environment-backed cookies, headers and bodies are replaced by synthetic values of equal length. Levels fail on any ledger mismatch, dropped or late starts, scheduler lag above 50 ms p95 or 100 ms max, closed-loop delivery below 85% of the modeled bound, generator overhead above 25 ms p50 or 50 ms p95, think-time inflation, or CPU/RSS guardrail breach. The artifact expires after 24 hours and binds to the executable identity and CPU entitlement.
+
+A matched clean run can become `VALID_WITHIN_ENVELOPE`. That proves only generator-side delivery for this workload on this host. It does not prove target identity, network-path equivalence, application behavior, representativeness, or headroom for durations longer than the calibrated level. Scenarios with response extraction or JSON assertions cannot be self-calibrated.
+
 ## Offline evidence freshness and provenance (G0-08 partial)
 
 The `--check-scenario` command also emits `calibration_age`, `runtime_compatibility` and `host_identity` dimensions. A future-dated artifact (beyond five minutes), a calibration older than a **conservative operational 24-hour review threshold**, or a mismatch in OS/architecture/Go version/CPU configuration/known source revision makes the declared shape `NOT_ESTABLISHED`. This 24-hour threshold is a warning policy, **not** a validated statistical expiry.
