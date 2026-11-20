@@ -627,6 +627,7 @@ func campaignCmdWithWorkloadSource(args []string, source *campaign.WorkloadSourc
 	maxP95IncreaseMS := fs.Float64("stability-max-p95-increase-ms", 5, "minimum absolute p95 increase in milliseconds before drift is reported (0-10000)")
 	maxThroughputDropPercent := fs.Float64("stability-max-throughput-drop-percent", 20, "maximum throughput decrease from the first window before drift is reported (>0-100)")
 	repeats := fs.Int("repeats", 2, "independent trials (2-5)")
+	rotateVUCookies := fs.Bool("rotate-vu-cookies", false, "use distinct per-VU cookies for each closed-loop trial")
 	budget := fs.Duration("budget", 0, "maximum campaign wall time (15m; long-run mode allows up to 2h)")
 	authorized := fs.Bool("authorized", false, "confirm authorization to benchmark the target")
 	dry := fs.Bool("dry-run", false, "validate campaign settings without sending traffic")
@@ -696,6 +697,19 @@ func campaignCmdWithWorkloadSource(args []string, source *campaign.WorkloadSourc
 			return 2
 		}
 	}
+	var trialCookies [][]string
+	if *rotateVUCookies {
+		trialCookies, err = config.ResolveTrialSessions(
+			scenario.PerVUCookieEnvPrefix,
+			max(scenario.Users, options.SpikeUsers),
+			options.Repeats,
+		)
+		if err != nil {
+			fmt.Fprintf(stderr, "configuration error: %v\n", err)
+			return 2
+		}
+		scenario.PerVUCookieEnvPrefix += "1_"
+	}
 	validated, err := config.Parse(scenario, config.Options{Authorized: *authorized || *dry, AllowWrites: *writes, AllowInsecureHTTP: *insecure, NetworkBaseline: true})
 	if err != nil {
 		fmt.Fprintf(stderr, "configuration error: %v\n", err)
@@ -764,7 +778,11 @@ func campaignCmdWithWorkloadSource(args []string, source *campaign.WorkloadSourc
 		fmt.Fprintf(stdout, "Sampling application metrics from the explicitly configured endpoint every %s; scrapes are additional traffic outside max_rps.\n", *applicationMetricsInterval)
 		runner = withApplicationMetrics(*applicationMetricsEndpoint, *applicationMetricsInterval, appmetrics.NewBudget(appmetrics.MaxTimelineSamples), runner)
 	}
+	runner, setTrial := rotateCampaignCookies(runner, trialCookies)
 	result, err := campaign.WithRunnerProgress(ctx, validated, options, campaign.Runner(runner), func(snapshot campaign.Result) error {
+		if snapshot.PendingTrial != nil {
+			setTrial(snapshot.PendingTrial.Number)
+		}
 		return report.WriteAnyJSON(*out, snapshot)
 	})
 	if err != nil {

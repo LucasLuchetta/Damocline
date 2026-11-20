@@ -78,6 +78,14 @@ For a staged exploration up to 20 VUs, provide 20 **different** account cookies 
 
 An alternative is one shared session using the legacy `"Cookie": "${DAMOCLINE_SESSION_COOKIE}"` header in steps. This is useful for preliminary performance inspection, **not** for testing independent users. The report warns when identities may be shared.
 
+To seed fresh cookie sets for each trial of a closed-loop `campaign`, pass
+`--rotate-vu-cookies` and add the trial number and underscore before the
+VU number. For example, `DAMOCLINE_VU_COOKIE_2_1` seeds VU 1 in trial 2.
+Provide all trial sets through the highest scheduled VU level. Damocline
+validates the sets before sending traffic and rejects canonical duplicates
+across trials. Each phase starts with its trial's set. Provisioning or
+refreshing those sessions remains an external step.
+
 ## 4. First run: one fixed load level
 
 ```powershell
