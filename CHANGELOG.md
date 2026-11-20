@@ -11,6 +11,18 @@
   (schema v2) adds a `workload_saturation` finding that is always labeled as a
   hypothesis and is `UNKNOWN` when attribution is absent (ADR 0172).
 
+- Add an offline executive HTML capacity report (ADR 0173):
+  `damocline audit --html-out` (single campaign, optional `--explore-file`
+  and `--actions-per-user-minute`) and `capacity.html` by default in the
+  `damocline capacity` output directory. It shows requested demand against
+  the highest approved level, p95, throughput and error-rate charts against
+  the objectives, separated facts, hypotheses and unknowns, decision
+  blockers and the replay command with digests. No scripts or external
+  resources; created with mode 0600 without overwriting.
+
+- Forward the extended envelope through closed-loop capacity and reuse one
+  bounded calibration across ladder, refinement and confirmation (ADR 0167).
+
 - Size the `damocline capacity` explore budget from the planned stages,
   refuse an undersized explicit budget before traffic, and continue from the
   highest repeatedly passing level when explore stops early.
@@ -27,7 +39,10 @@
 - Add `--allow-insecure-http` to `damocline capacity` and forward the
   explicit plaintext opt-in to every traffic stage.
 
-- Extend the opt-in extended load envelope to closed-loop `explore` and `campaign` (exploration schema v3, closed-loop campaign schema v18, ADR 0157). Both commands take the same `--extended-envelope --extended-load-authorized --target-class lab|staging --calibration --require-calibration` contract as `run`, with the 500 VU hard maximum. Before traffic, every planned level must be covered `READY`: the explore ladder including an exact goal stage, or the campaign base and spike levels. Explore bracket refinement probes only calibrated levels; if none is left inside a failing bracket, it stops `INCONCLUSIVE` with an explicit reason. Generator guardrails are always enforced, and a guardrail stop is a non-passing `GENERATOR_LIMITED` result, never an application limit. Extended artifacts record `load_envelope`. `goal` and `audit` recompute it offline and state when levels above the standard 50 VU ceiling were tested. Standard explorations and campaigns, their ceilings and their schemas (v2, v17) are unchanged. Arrival explore and arrival campaigns remain at the standard ceilings.
+- Extend the opt-in extended load envelope to closed-loop `explore` and `campaign` (exploration schema v3, closed-loop campaign schema v18, ADR 0157). Both commands take the same `--extended-envelope --extended-load-authorized --target-class lab|staging --calibration --require-calibration` contract as `run`, with the 500 VU hard maximum. Before traffic, every planned level must be covered `READY`: the explore ladder including an exact goal stage, or the campaign base and spike levels. Explore bracket refinement probes only calibrated levels; if none is left inside a failing bracket, it stops `INCONCLUSIVE` with an explicit reason. Generator guardrails are always enforced, and a guardrail stop is a non-passing `GENERATOR_LIMITED` result, never an application limit. Extended artifacts record `load_envelope`. `goal` and `audit` recompute it offline and state when levels above the standard 50 VU ceiling were tested. Standard explorations and campaigns, their ceilings and their schemas (v2, v17) are unchanged.
+
+- Add the exact calibration-gated extended envelope to open-arrival
+  exploration and campaigns, with offline envelope validation (ADR 0168).
 
 - Report actionable decision blockers together in campaign audit output (ADR 0164). Required phases with limited quality now also name missing, failed, stale, mismatched or uncovered generator calibration and invalid or GENERATOR_LIMITED extended-envelope states with their affected levels, and point to `damocline calibrate` for those levels.
 

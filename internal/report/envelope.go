@@ -146,6 +146,23 @@ func RunMatchesAggregateEnvelope(parent *Envelope, run Result) bool {
 	return run.Envelope.Mode == parent.Mode && run.Envelope.TargetClass == parent.TargetClass && ValidEnvelope(run)
 }
 
+// ArrivalAggregateEnvelope records workers and scheduled rates separately.
+func ArrivalAggregateEnvelope(targetClass string, workers, starts, requestCeiling int) *Envelope {
+	level := workers
+	if starts > standardMaxRPS || requestCeiling > standardMaxRPS {
+		level = max(level, standardMaxUsers+1)
+	}
+	return NewAggregateEnvelope(true, targetClass, level)
+}
+
+func ValidArrivalAggregateEnvelope(e *Envelope, workers, starts, requestCeiling int) bool {
+	return e != nil && e.Mode == EnvelopeModeExtended &&
+		(e.TargetClass == "lab" || e.TargetClass == "staging") &&
+		workers >= 1 && workers <= extendedMaxUsers &&
+		starts >= 1 && starts <= extendedMaxRPS && requestCeiling >= starts && requestCeiling <= extendedMaxRPS &&
+		*e == *ArrivalAggregateEnvelope(e.TargetClass, workers, starts, requestCeiling)
+}
+
 // AggregateEnvelopeNote is the reader-facing statement for an artifact that
 // used the extended envelope.
 func AggregateEnvelopeNote(e *Envelope) string {

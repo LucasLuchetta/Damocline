@@ -27,12 +27,15 @@ func ValidateArtifactJSON(data []byte) error {
 	}
 	version, ok := fields["schema_version"]
 	var schema int
-	if !ok || json.Unmarshal(version, &schema) != nil || schema < 1 || schema > 2 {
+	if !ok || json.Unmarshal(version, &schema) != nil || schema < 1 || schema > EnvelopeSchemaVersion {
 		return errors.New("arrival exploration has a missing or unsupported schema_version")
 	}
 	required := []string{"scenario", "target", "started_at", "stage_duration", "repeats", "journey_worker_limit", "min_scheduled_journey_starts_per_second", "max_scheduled_journey_starts_per_second", "outcome", "probes", "notes"}
 	if schema >= 2 {
 		required = append(required, "requested_min_scheduled_starts_per_second", "requested_max_scheduled_starts_per_second", "calibrated_probe_rates")
+	}
+	if schema == EnvelopeSchemaVersion {
+		required = append(required, "load_envelope", "max_rps")
 	}
 	for _, name := range required {
 		value, exists := fields[name]
@@ -73,8 +76,10 @@ func ValidateArtifactJSON(data []byte) error {
 }
 
 const generatorUtilizationGuard = 0.90
+const EnvelopeSchemaVersion = 3
 
 type Options struct {
+	Extended                      bool
 	MinJourneysPerSecond          int
 	MaxJourneysPerSecond          int
 	TargetJourneysPerSecond       int
@@ -94,26 +99,28 @@ type Probe struct {
 }
 
 type Result struct {
-	SchemaVersion                   int      `json:"schema_version"`
-	Scenario                        string   `json:"scenario"`
-	Target                          string   `json:"target"`
-	StartedAt                       string   `json:"started_at"`
-	StageDuration                   string   `json:"stage_duration"`
-	Repeats                         int      `json:"repeats"`
-	WorkerLimit                     int      `json:"journey_worker_limit"`
-	MinJourneysPerSecond            int      `json:"min_scheduled_journey_starts_per_second"`
-	MaxJourneysPerSecond            int      `json:"max_scheduled_journey_starts_per_second"`
-	TargetJourneysPerSecond         int      `json:"exact_target_scheduled_starts_per_second,omitempty"`
-	TargetTested                    bool     `json:"exact_target_tested,omitempty"`
-	HighestPassingJourneysPerSecond *int     `json:"highest_repeatedly_passing_tested_starts_per_second,omitempty"`
-	FirstFailingJourneysPerSecond   *int     `json:"first_observed_failing_tested_starts_per_second,omitempty"`
-	Outcome                         string   `json:"outcome"`
-	Reason                          string   `json:"reason,omitempty"`
-	Probes                          []Probe  `json:"probes"`
-	Notes                           []string `json:"notes"`
-	RequestedMinJourneysPerSecond   int      `json:"requested_min_scheduled_starts_per_second,omitempty"`
-	RequestedMaxJourneysPerSecond   int      `json:"requested_max_scheduled_starts_per_second,omitempty"`
-	CalibratedProbeRates            []int    `json:"calibrated_probe_rates,omitempty"`
+	LoadEnvelope                    *report.Envelope `json:"load_envelope,omitempty"`
+	RequestRateCeiling              int              `json:"max_rps,omitempty"`
+	SchemaVersion                   int              `json:"schema_version"`
+	Scenario                        string           `json:"scenario"`
+	Target                          string           `json:"target"`
+	StartedAt                       string           `json:"started_at"`
+	StageDuration                   string           `json:"stage_duration"`
+	Repeats                         int              `json:"repeats"`
+	WorkerLimit                     int              `json:"journey_worker_limit"`
+	MinJourneysPerSecond            int              `json:"min_scheduled_journey_starts_per_second"`
+	MaxJourneysPerSecond            int              `json:"max_scheduled_journey_starts_per_second"`
+	TargetJourneysPerSecond         int              `json:"exact_target_scheduled_starts_per_second,omitempty"`
+	TargetTested                    bool             `json:"exact_target_tested,omitempty"`
+	HighestPassingJourneysPerSecond *int             `json:"highest_repeatedly_passing_tested_starts_per_second,omitempty"`
+	FirstFailingJourneysPerSecond   *int             `json:"first_observed_failing_tested_starts_per_second,omitempty"`
+	Outcome                         string           `json:"outcome"`
+	Reason                          string           `json:"reason,omitempty"`
+	Probes                          []Probe          `json:"probes"`
+	Notes                           []string         `json:"notes"`
+	RequestedMinJourneysPerSecond   int              `json:"requested_min_scheduled_starts_per_second,omitempty"`
+	RequestedMaxJourneysPerSecond   int              `json:"requested_max_scheduled_starts_per_second,omitempty"`
+	CalibratedProbeRates            []int            `json:"calibrated_probe_rates,omitempty"`
 }
 
 type Runner func(context.Context, config.Validated) report.Result
@@ -122,8 +129,12 @@ func Validate(o Options, s config.Scenario) error {
 	if s.Mode != "arrival" {
 		return fmt.Errorf("arrival exploration requires mode=arrival; closed-loop VUs use damocline explore")
 	}
-	if o.MinJourneysPerSecond < 1 || o.MaxJourneysPerSecond > 100 || o.MinJourneysPerSecond > o.MaxJourneysPerSecond {
-		return fmt.Errorf("journey-start rate bounds must be 1..100 starts/s with min <= max")
+	ceiling := config.StandardEnvelopeLimits.MaxArrivalRate
+	if o.Extended {
+		ceiling = config.ExtendedEnvelopeHardLimits.MaxArrivalRate
+	}
+	if o.MinJourneysPerSecond < 1 || o.MaxJourneysPerSecond > ceiling || o.MinJourneysPerSecond > o.MaxJourneysPerSecond {
+		return fmt.Errorf("journey-start rate bounds must be 1..%d starts/s with min <= max", ceiling)
 	}
 	if o.TargetJourneysPerSecond < 0 {
 		return fmt.Errorf("target journey-start rate cannot be negative")
@@ -139,7 +150,7 @@ func Validate(o Options, s config.Scenario) error {
 	}
 	if len(o.ProbeRates) > 0 {
 		if o.RequestedMinJourneysPerSecond < 1 || o.RequestedMaxJourneysPerSecond < o.RequestedMinJourneysPerSecond ||
-			o.RequestedMaxJourneysPerSecond > 100 || o.ProbeRates[0] < o.RequestedMinJourneysPerSecond ||
+			o.RequestedMaxJourneysPerSecond > ceiling || o.ProbeRates[0] < o.RequestedMinJourneysPerSecond ||
 			o.ProbeRates[len(o.ProbeRates)-1] > o.RequestedMaxJourneysPerSecond ||
 			o.ProbeRates[0] != o.MinJourneysPerSecond || o.ProbeRates[len(o.ProbeRates)-1] != o.MaxJourneysPerSecond {
 			return fmt.Errorf("calibrated probe rates must include both effective exploration bounds")
@@ -176,6 +187,10 @@ func Run(ctx context.Context, base config.Validated, opt Options) (Result, error
 
 // WithRunner keeps search behavior testable without making network requests.
 func WithRunner(parent context.Context, base config.Validated, opt Options, runner Runner) (Result, error) {
+	if opt.Extended != (base.Envelope.Mode == config.EnvelopeExtended) ||
+		opt.Extended && (base.Envelope.CalibrationCoverage != "READY" || len(opt.ProbeRates) == 0 || !base.GeneratorGuardrails.Enabled()) {
+		return Result{}, errors.New("extended arrival exploration requires exact calibrated rates and generator guardrails")
+	}
 	if err := Validate(opt, base.Scenario); err != nil {
 		return Result{}, err
 	}
@@ -204,6 +219,13 @@ func WithRunner(parent context.Context, base config.Validated, opt Options, runn
 		result.RequestedMaxJourneysPerSecond = opt.RequestedMaxJourneysPerSecond
 		result.CalibratedProbeRates = append([]int(nil), opt.ProbeRates...)
 		result.Notes = append(result.Notes, "This search probes only exact local generator calibration profiles. The recorded effective ceiling may be below the requested maximum; passing the calibrated ceiling does not establish the uncalibrated remainder.")
+	}
+	if opt.Extended {
+		result.SchemaVersion = EnvelopeSchemaVersion
+		result.RequestRateCeiling = base.Scenario.MaxRPS
+		result.LoadEnvelope = report.ArrivalAggregateEnvelope(
+			base.Envelope.TargetClass, base.Scenario.Users, opt.MaxJourneysPerSecond, base.Scenario.MaxRPS,
+		)
 	}
 
 	probe := func(rate int) string {

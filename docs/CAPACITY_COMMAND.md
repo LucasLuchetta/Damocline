@@ -74,3 +74,13 @@ executable and repeated `--session-hook-arg` literal arguments. It reads
 `DAMOCLINE_SESSION_COUNT` and prints exactly that many distinct Cookie header
 strings in a JSON array. No hook is executed during dry-run. Its stdout is
 bounded, and its diagnostics and cookies are excluded from artifacts.
+
+## Executive HTML report
+
+After the offline audit, the protocol writes `capacity.html` next to
+`capacity.md` in the output directory (ADR 0173). It is generated from the
+saved campaign and exploration only, with no extra traffic, and plots the
+exploration probes and campaign phases against the objectives. A declared
+`--actions-per-user-minute` or `--access-log` intensity appears only as a
+labeled assumption. The file is created with mode 0600 and never overwritten;
+directories completed by an earlier release keep only the Markdown report.

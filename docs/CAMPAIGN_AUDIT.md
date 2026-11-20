@@ -83,6 +83,28 @@ byte-identical Markdown. The source path remains in the offline replay command;
 reports may contain private paths, target origins, or scenario labels and should
 remain with the local evidence.
 
+### Executive HTML report
+
+`--html-out FILE.html` (single campaign) writes a self-contained, offline HTML
+page from the same assessment for non-specialist readers (ADR 0173). It shows
+requested demand against the highest approved level in modeled active users,
+inline SVG charts of request p95, successful requests/s and error rate against
+load and the predeclared objectives, a plain-language conclusion, the next
+decision, separately labeled measured facts, hypotheses and unknowns, evidence
+quality, decision blockers with remediation, limitations and the replay command
+with digests. A level is shown as approved only for
+`GOAL_MET_UNDER_TESTED_CONDITIONS`; INSUFFICIENT_EVIDENCE and INVALID_EVIDENCE
+are shown prominently with no approved level. `--explore-file explore.json`
+(optionally pinned with `--expect-explore-file-sha256`) adds exploration probes
+of the same scenario and target, labeled exploratory. `--actions-per-user-minute`
+adds a declared people estimate labeled as an assumption. The page has no
+scripts or external resources, supports light, dark and print, is deterministic,
+and is created with mode 0600 without overwriting an existing file.
+
+```powershell
+damocline audit --campaign .damocline/campaign.json --peak-users 8 --html-out .damocline/capacity.html --explore-file .damocline/explore.json
+```
+
 Each assessment includes a SHA-256 digest of the normalized, schema-decoded
 campaign evidence, a separate SHA-256 digest of the exact source file bytes,
 and a digest of each reviewed phase report, the workload fingerprint

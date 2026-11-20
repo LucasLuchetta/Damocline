@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -24,6 +25,32 @@ type capacityMirror struct {
 	ServerDelay   time.Duration
 	LevelDuration time.Duration
 	Extended      bool
+	TargetClass   string
+}
+
+// capacityCalibrationLevels reserves the ladder before splitting the widest
+// remaining intervals. Only these predeclared levels can be probed.
+func capacityCalibrationLevels(opt explorer.Options, duration time.Duration) []int {
+	levels := explorer.PlannedLevels(opt)
+	for len(levels) < calibration.ScenarioCalibrationMaxLevels {
+		if _, err := capacityCalibrationWall(len(levels)+1, duration); err != nil {
+			break
+		}
+		widest := 0
+		midpoint := 0
+		for i := 1; i < len(levels); i++ {
+			if gap := levels[i] - levels[i-1]; gap > widest {
+				widest = gap
+				midpoint = levels[i-1] + gap/2
+			}
+		}
+		if widest < 2 {
+			break
+		}
+		levels = append(levels, midpoint)
+		slices.Sort(levels)
+	}
+	return levels
 }
 
 func (m capacityMirror) declared() bool {
