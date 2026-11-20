@@ -17,6 +17,9 @@
 - Add a bounded loopback lab for comparing Damocline and k6 under identical
   closed-loop workloads at three VU levels (ADR 0160).
 
+- Scale the default closed-loop campaign p95 drift floor to the request SLO
+  while preserving explicit and saved thresholds (ADR 0162).
+
 - Add optional scenario field `journey_p95_limit_ms` (run report schema v35, ADR 0150). When set, completed-journey latency checks for the run, each window and each profile use it instead of `p95_limit_ms`, so workloads with think time can pass. Offline campaign, goal, plan and audit readers apply the saved value. Without it, behavior is unchanged, and runs with think time now warn that the journey objective includes think time.
 
 - Stop reporting a false INVALID scheduler-admission mismatch for

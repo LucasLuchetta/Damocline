@@ -452,15 +452,38 @@ func TestDefaultCampaignBudgetIncludesBoundedDrain(t *testing.T) {
 	if got := PlannedBudget(options); got != 4*time.Minute+20*time.Second {
 		t.Fatalf("default wall-time cap omitted phase drains: %s", got)
 	}
-	result, err := WithRunner(context.Background(), scenario(t), options, func(_ context.Context, v config.Validated) report.Result {
+	base := scenario(t)
+	result, err := WithRunner(context.Background(), base, options, func(_ context.Context, v config.Validated) report.Result {
 		return stableResult(v)
 	})
-	if err != nil || result.Budget != "4m20s" || result.SchemaVersion != CurrentSchemaVersion || result.StabilityPolicy == nil || *result.StabilityPolicy != DefaultStabilityPolicy() {
+	if err != nil || result.Budget != "4m20s" || result.SchemaVersion != CurrentSchemaVersion || result.StabilityPolicy == nil || *result.StabilityPolicy != DefaultStabilityPolicyForSLO(base.Scenario.P95LimitMS) {
 		t.Fatalf("effective cap or schema missing: %+v %v", result, err)
 	}
 	options.Observation = 7 * time.Minute
 	if err := Validate(options); err == nil {
 		t.Fatal("default cap above 15m accepted")
+	}
+}
+
+func TestSLOScaledStabilityFloor(t *testing.T) {
+	run := stableResult(scenario(t))
+	for i := range run.Windows {
+		run.Windows[i].Metrics.P95MS = 35
+	}
+	run.Windows[3].Metrics.P95MS = 43
+	if got := AssessStabilityWithPolicy(run, DefaultStabilityPolicy()); got != "NON_STATIONARY" {
+		t.Fatalf("historical floor: %s", got)
+	}
+	policy := DefaultStabilityPolicyForSLO(1000)
+	if got := AssessStabilityWithPolicy(run, policy); got != "NO_LARGE_DRIFT_DETECTED" {
+		t.Fatalf("8 ms below scaled floor: %s", got)
+	}
+	run.Windows[3].Metrics.P95MS = 47
+	if got := AssessStabilityWithPolicy(run, policy); got != "NON_STATIONARY" {
+		t.Fatalf("12 ms above scaled floor: %s", got)
+	}
+	if got := DefaultStabilityPolicyForSLO(100).MaxP95IncreaseMS; got != 5 {
+		t.Fatalf("minimum floor: %g ms", got)
 	}
 }
 

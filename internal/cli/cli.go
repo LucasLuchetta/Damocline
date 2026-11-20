@@ -624,7 +624,8 @@ func campaignCmdWithWorkloadSource(args []string, source *campaign.WorkloadSourc
 	minWindows := fs.Int("stability-min-windows", 3, "minimum complete observation windows for the drift screen (3-20)")
 	minSamples := fs.Int("stability-min-samples", 20, "minimum completed samples in each aggregate and named window (20-100000)")
 	maxP95IncreasePercent := fs.Float64("stability-max-p95-increase-percent", 20, "maximum p95 increase from the first window before drift is reported (>0-100)")
-	maxP95IncreaseMS := fs.Float64("stability-max-p95-increase-ms", 5, "minimum absolute p95 increase in milliseconds before drift is reported (0-10000)")
+	const driftFloorFlag = "stability-max-p95-increase-ms"
+	maxP95IncreaseMS := fs.Float64(driftFloorFlag, 5, "absolute p95 increase required for drift (0-10000 ms; defaults to max(5 ms, 1% of request p95 SLO))")
 	maxThroughputDropPercent := fs.Float64("stability-max-throughput-drop-percent", 20, "maximum throughput decrease from the first window before drift is reported (>0-100)")
 	repeats := fs.Int("repeats", 2, "independent trials (2-5)")
 	rotateVUCookies := fs.Bool("rotate-vu-cookies", false, "use distinct per-VU cookies for each closed-loop trial")
@@ -717,6 +718,13 @@ func campaignCmdWithWorkloadSource(args []string, source *campaign.WorkloadSourc
 	}
 	source.SemanticFingerprint = validated.WorkloadFingerprint
 	options.WorkloadSource = source
+	explicitDriftFloor := false
+	fs.Visit(func(f *flag.Flag) {
+		explicitDriftFloor = explicitDriftFloor || f.Name == driftFloorFlag
+	})
+	if !explicitDriftFloor {
+		options.Stability.MaxP95IncreaseMS = campaign.DefaultStabilityPolicyForSLO(validated.Scenario.P95LimitMS).MaxP95IncreaseMS
+	}
 	if err := campaign.ValidateForScenario(validated, options); err != nil {
 		fmt.Fprintf(stderr, "invalid campaign: %v\n", err)
 		return 2
