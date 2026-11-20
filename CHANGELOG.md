@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Add an offline executive HTML capacity report (ADR 0173):
+  `damocline audit --html-out` (single campaign, optional `--explore-file`
+  and `--actions-per-user-minute`) and `capacity.html` by default in the
+  `damocline capacity` output directory. It shows requested demand against
+  the highest approved level, p95, throughput and error-rate charts against
+  the objectives, separated facts, hypotheses and unknowns, decision
+  blockers and the replay command with digests. No scripts or external
+  resources; created with mode 0600 without overwriting.
+
 - Size the `damocline capacity` explore budget from the planned stages,
   refuse an undersized explicit budget before traffic, and continue from the
   highest repeatedly passing level when explore stops early.

@@ -2,6 +2,8 @@ package cli
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -41,6 +43,11 @@ func readCapacityFile(path string) ([]byte, error) {
 }
 
 func readCapacityExplore(path string) (explorer.Result, error) {
+	result, _, err := readCapacityExploreWithSHA256(path)
+	return result, err
+}
+
+func readCapacityExploreWithSHA256(path string) (explorer.Result, string, error) {
 	var result explorer.Result
 	data, err := readCapacityFile(path)
 	if err == nil {
@@ -49,7 +56,11 @@ func readCapacityExplore(path string) (explorer.Result, error) {
 	if err == nil {
 		err = json.Unmarshal(data, &result)
 	}
-	return result, err
+	if err != nil {
+		return explorer.Result{}, "", err
+	}
+	sum := sha256.Sum256(data)
+	return result, "sha256:" + hex.EncodeToString(sum[:]), nil
 }
 
 func capacityObservation(
@@ -489,10 +500,14 @@ func capacityCmd(args []string, stdout, stderr io.Writer) int {
 		auditReportPath = filepath.Join(*dir, "capacity-audit.md")
 	}
 	if _, err := os.Stat(auditReportPath); os.IsNotExist(err) {
-		code := auditCmd([]string{
+		auditArgs := []string{
 			"--campaign", campaignPath, "--peak-users", strconv.Itoa(users), "--out", auditJSON,
-			"--report-out", auditReportPath,
-		}, stdout, stderr)
+			"--report-out", auditReportPath, "--html-out", filepath.Join(*dir, "capacity.html"), "--explore-file", explorePath,
+		}
+		if *intensity > 0 {
+			auditArgs = append(auditArgs, "--actions-per-user-minute", strconv.FormatFloat(*intensity, 'f', -1, 64))
+		}
+		code := auditCmd(auditArgs, stdout, stderr)
 		if code != 0 {
 			return code
 		}
