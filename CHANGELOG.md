@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Add a bounded loopback lab for comparing Damocline and k6 under identical
+  closed-loop workloads at three VU levels (ADR 0160).
+
 - Stop reporting a false INVALID scheduler-admission mismatch for
   closed-loop runs, whose admission count is zero by design.
 
