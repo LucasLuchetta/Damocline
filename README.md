@@ -112,6 +112,10 @@ See [Source installation and browser login](docs/SOURCE_INSTALL.md) and [Guided 
 
 ## Understand what your result means
 
+The bounded [capacity command](docs/CAPACITY_COMMAND.md) can run the
+closed-loop protocol with measurement-based observation windows and
+write the offline assessment and executive report.
+
 Damocline prints a human-readable **assessment** after every `run` and can explain previously saved reports offline:
 
 ```powershell

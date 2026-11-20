@@ -75,6 +75,10 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return planCmd(args[1:], stdout, stderr)
 	case "audit":
 		return auditCmd(args[1:], stdout, stderr)
+	case "capacity":
+		return capacityCmd(args[1:], stdout, stderr)
+	case "import-har":
+		return importHARCmd(args[1:], stdout, stderr)
 	case "protocol":
 		return protocolCmd(args[1:], stdout, stderr)
 	case "run":
@@ -108,6 +112,8 @@ func help(w io.Writer) {
 	fmt.Fprint(w, `Damocline — find the limit before it finds you.
 
 Usage:
+  damocline capacity --config scenario.json --authorized --output-dir DIR (--reference-report run.json | --response-bytes N --server-delay D) [--dry-run] [--resume]
+  damocline import-har --file capture.har --origin https://app.example.com --out proposal.json
   damocline          # branded welcome screen with guided menu
   damocline /start   # create a new saved scenario (archives the previous one)
   damocline /history # select and repeat a previous saved scenario
