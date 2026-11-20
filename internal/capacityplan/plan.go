@@ -515,7 +515,7 @@ func validateEvidence(evidence campaign.Result) error {
 	} else if evidence.ExecutionState != "" || evidence.PendingTrial != nil {
 		return errors.New("execution checkpoints are unsupported by this campaign schema")
 	}
-	if evidence.SchemaVersion < 1 || evidence.SchemaVersion > campaign.CurrentSchemaVersion || evidence.Scenario == "" || evidence.BaseUsers < 1 || evidence.Repeats < 2 || evidence.Repeats > 5 || len(evidence.Trials) == 0 || len(evidence.Trials) > evidence.Repeats {
+	if evidence.SchemaVersion < 1 || evidence.SchemaVersion > campaign.MaxSchemaVersion || evidence.Scenario == "" || evidence.BaseUsers < 1 || evidence.Repeats < 2 || evidence.Repeats > 5 || len(evidence.Trials) == 0 || len(evidence.Trials) > evidence.Repeats {
 		return errors.New("expected a complete supported repeated campaign")
 	}
 	if evidence.HostSensorConfigured && evidence.SchemaVersion < 5 {
@@ -566,8 +566,15 @@ func validateEvidence(evidence campaign.Result) error {
 	if err := validateWorkloadSource(evidence); err != nil {
 		return err
 	}
+	if err := ValidateCampaignEnvelope(evidence); err != nil {
+		return err
+	}
 	if err := validateApplicationMetrics(evidence); err != nil {
 		return err
+	}
+	if evidence.SchemaVersion >= 17 && evidence.DriftBaseline != campaign.DriftBaselineSkipLightLeadingWindow ||
+		evidence.SchemaVersion < 17 && evidence.DriftBaseline != "" {
+		return errors.New("campaign drift baseline rule does not match its schema")
 	}
 	if evidence.SchemaVersion >= 5 {
 		if err := campaign.ValidateStabilityPolicy(evidence.EffectiveStabilityPolicy()); err != nil {
@@ -835,7 +842,13 @@ func validatePartialStageEvidence(evidence campaign.Result) error {
 					return fmt.Errorf("trial %d has unsupported historical %s stability classification", trial.Number, phase.Name)
 				}
 			} else if phase.Name == "stabilization" || phase.Name == "observation" || phase.Name == "soak" {
-				stability = campaign.AssessStabilityWithPolicy(phase.Run, evidence.EffectiveStabilityPolicy())
+				stability = campaignStability(evidence, phase.Run)
+			}
+			if err := validatePhaseBaselineWindow(evidence, trial.Number, phase); err != nil {
+				return err
+			}
+			if err := validatePhaseRampUp(evidence, trial, phaseIndex); err != nil {
+				return err
 			}
 			if phase.EvidenceState != state || (phase.Name == "stabilization" || phase.Name == "observation" || phase.Name == "soak") && phase.Stability != stability {
 				return fmt.Errorf("trial %d has stale or altered %s phase evidence", trial.Number, phase.Name)
@@ -893,6 +906,54 @@ func historicalCampaignPhaseState(run report.Result) string {
 	default:
 		return "INSUFFICIENT_EVIDENCE"
 	}
+}
+
+// campaignStability recomputes the drift label with the reference rule the
+// campaign schema used when it ran.
+func campaignStability(evidence campaign.Result, run report.Result) string {
+	label, _ := campaign.AssessStabilityWithBaseline(run, evidence.EffectiveStabilityPolicy(), evidence.ExpectedDriftBaseline())
+	return label
+}
+
+// validatePhaseBaselineWindow recomputes the recorded drift reference window.
+// Historical schemas and phases without a drift screen record none.
+func validatePhaseBaselineWindow(evidence campaign.Result, trial int, phase campaign.Phase) error {
+	want := 0
+	if evidence.SchemaVersion >= 17 && (phase.Name == "stabilization" || phase.Name == "observation" || phase.Name == "soak") {
+		_, want = campaign.AssessStabilityWithBaseline(phase.Run, evidence.EffectiveStabilityPolicy(), evidence.ExpectedDriftBaseline())
+	}
+	if phase.StabilityBaselineWindow != want {
+		return fmt.Errorf("trial %d has a stale or altered %s drift baseline window", trial, phase.Name)
+	}
+	return nil
+}
+
+// validatePhaseRampUp requires schema v17+ evidence to record the effective
+// per-phase ramp, to match the native run configuration, and to follow the
+// campaign rule: only the first phase of a trial and a spike ramp.
+func validatePhaseRampUp(evidence campaign.Result, trial campaign.Trial, index int) error {
+	phase := trial.Phases[index]
+	if evidence.SchemaVersion < 17 {
+		if phase.RampUp != "" {
+			return fmt.Errorf("trial %d %s phase records a ramp unsupported by this campaign schema", trial.Number, phase.Name)
+		}
+		return nil
+	}
+	parse := func(value string) (time.Duration, bool) {
+		if value == "" {
+			return 0, true
+		}
+		d, err := time.ParseDuration(value)
+		return d, err == nil && d >= 0
+	}
+	recorded, ok := parse(phase.RampUp)
+	configured, configuredOK := parse(phase.Run.Config.RampUp)
+	scenarioRamp, scenarioOK := parse(trial.Phases[0].RampUp)
+	if phase.RampUp == "" || !ok || !configuredOK || !scenarioOK || recorded != configured ||
+		recorded != campaign.EffectivePhaseRampUp(index, phase.Name, scenarioRamp) {
+		return fmt.Errorf("trial %d %s phase ramp evidence is missing or inconsistent", trial.Number, phase.Name)
+	}
+	return nil
 }
 
 func validHistoricalStability(value string) bool {
@@ -980,7 +1041,7 @@ func validateStageEvidence(evidence campaign.Result) error {
 		return errors.New("invalid stabilization duration")
 	}
 	spike, err := parsePhaseDuration("spike", evidence.SpikeDuration)
-	if err != nil || spike > 3*time.Minute || (spike > 0 && spike < 10*time.Second) || (spike > 0) != (evidence.SpikeUsers > 0) || evidence.SpikeUsers > 50 {
+	if err != nil || spike > 3*time.Minute || (spike > 0 && spike < 10*time.Second) || (spike > 0) != (evidence.SpikeUsers > 0) || evidence.SpikeUsers > campaign.EvidenceUserCeiling(evidence) {
 		return errors.New("invalid spike stage")
 	}
 	recovery, err := parsePhaseDuration("recovery", evidence.Recovery)
@@ -1009,7 +1070,7 @@ func validateStageEvidence(evidence campaign.Result) error {
 	} else if evidence.SchemaVersion < 4 {
 		budget = campaign.PlannedBudget(campaign.Options{Warmup: warmup, Observation: observation, SpikeUsers: evidence.SpikeUsers, SpikeDuration: spike, Recovery: recovery, Repeats: evidence.Repeats})
 	}
-	if err != nil || budget == 0 || budget > wallTimeLimit || budget < time.Duration(evidence.Repeats)*(warmup+stabilization+observation+spike+recovery)+soak || evidence.Target == "" || evidence.BaseUsers > 50 {
+	if err != nil || budget == 0 || budget > wallTimeLimit || budget < time.Duration(evidence.Repeats)*(warmup+stabilization+observation+spike+recovery)+soak || evidence.Target == "" || evidence.BaseUsers > campaign.EvidenceUserCeiling(evidence) {
 		return errors.New("invalid campaign wall-time budget")
 	}
 	if spike > 0 {
@@ -1017,7 +1078,7 @@ func validateStageEvidence(evidence campaign.Result) error {
 			return errors.New("spike load does not exceed base load")
 		}
 	}
-	options := campaign.Options{Warmup: warmup, Stabilization: stabilization, Observation: observation, SpikeUsers: evidence.SpikeUsers, SpikeDuration: spike, Recovery: recovery, Soak: soak, Cooldown: cooldown, Repeats: evidence.Repeats, LongRun: longRun, StagingConfirmed: longRun}
+	options := campaign.Options{Warmup: warmup, Stabilization: stabilization, Observation: observation, SpikeUsers: evidence.SpikeUsers, SpikeDuration: spike, Recovery: recovery, Soak: soak, Cooldown: cooldown, Repeats: evidence.Repeats, LongRun: longRun, StagingConfirmed: longRun, UserCeiling: campaign.EvidenceUserCeiling(evidence)}
 	if evidence.SchemaVersion >= 7 && evidence.GeneratorGuardrails != nil {
 		options.Guardrails = *evidence.GeneratorGuardrails
 	}
@@ -1043,6 +1104,12 @@ func validateStageEvidence(evidence campaign.Result) error {
 			if !campaignRunGuardrailsMatch(evidence, phase.Run) {
 				return fmt.Errorf("trial %d has mismatched %s generator guardrails", i+1, want.Name)
 			}
+			if err := validatePhaseRampUp(evidence, trial, j); err != nil {
+				return err
+			}
+			if err := validatePhaseBaselineWindow(evidence, trial.Number, phase); err != nil {
+				return err
+			}
 			if evidence.SchemaVersion == 2 || evidence.SchemaVersion == 4 {
 				// Historical campaign schemas recorded phase classifications but
 				// their embedded run reports predate several fields used by today's
@@ -1060,7 +1127,7 @@ func validateStageEvidence(evidence campaign.Result) error {
 			if phase.EvidenceState != state || phase.EvidenceState == "INVALID_DELIVERY" || (phase.Name != "warmup" && phase.EvidenceState != "PASS_OBSERVED") {
 				return fmt.Errorf("trial %d has inconsistent %s phase classification", i+1, want.Name)
 			}
-			if (phase.Name == "stabilization" || phase.Name == "observation" || phase.Name == "soak") && (phase.Stability != "NO_LARGE_DRIFT_DETECTED" || phase.Stability != campaign.AssessStabilityWithPolicy(phase.Run, evidence.EffectiveStabilityPolicy())) {
+			if (phase.Name == "stabilization" || phase.Name == "observation" || phase.Name == "soak") && (phase.Stability != "NO_LARGE_DRIFT_DETECTED" || phase.Stability != campaignStability(evidence, phase.Run)) {
 				return fmt.Errorf("trial %d lacks reproducible stable-window evidence", i+1)
 			}
 		}
@@ -1097,4 +1164,38 @@ func recoveredSpikeFailure(trial campaign.Trial) bool {
 		}
 	}
 	return false
+}
+
+// ValidateCampaignEnvelope recomputes the load-envelope contract of a saved
+// campaign (ADR 0157). Standard schemas cannot exceed 50 VUs; an extended
+// campaign must record a consistent envelope, enforced generator guardrails,
+// and the same envelope on every embedded phase run.
+func ValidateCampaignEnvelope(evidence campaign.Result) error {
+	maxLevel := campaign.PlannedMaxUsers(evidence.BaseUsers, evidence.SpikeUsers)
+	if evidence.SchemaVersion < campaign.EnvelopeSchemaVersion {
+		if evidence.LoadEnvelope != nil {
+			return errors.New("load envelope is unsupported by this campaign schema")
+		}
+		// Pre-envelope schemas keep their historical bounds checks in the
+		// stage-schedule validators (50 VUs for current schemas).
+		return nil
+	}
+	if evidence.LoadEnvelope == nil || evidence.LoadEnvelope.Mode != report.EnvelopeModeExtended || !report.ValidAggregateEnvelope(evidence.LoadEnvelope, maxLevel) {
+		return errors.New("campaign load envelope is missing, inconsistent, or exceeded")
+	}
+	if evidence.GeneratorGuardrails == nil || !evidence.GeneratorGuardrails.Enabled() {
+		return errors.New("extended-envelope campaign did not record enforced generator guardrails")
+	}
+	trials := evidence.Trials
+	if evidence.PendingTrial != nil {
+		trials = append(append([]campaign.Trial{}, trials...), *evidence.PendingTrial)
+	}
+	for _, trial := range trials {
+		for _, phase := range trial.Phases {
+			if !report.RunMatchesAggregateEnvelope(evidence.LoadEnvelope, phase.Run) {
+				return fmt.Errorf("trial %d %s phase load envelope differs from the campaign", trial.Number, phase.Name)
+			}
+		}
+	}
+	return nil
 }

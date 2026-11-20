@@ -45,7 +45,7 @@ func TestCampaignCapacityReportSnapshotAndVerdictSeparation(t *testing.T) {
 	assessment.Audit.SpreadConsistency = "MATCHED"
 	phase := report.Result{Target: "http://127.0.0.1:18080", Metrics: report.MetricSet{Total: 100, P95MS: 125, P99MS: 300}, Journeys: report.MetricSet{Total: 50, P95MS: 250, P99MS: 450}, Config: report.RunConfig{Users: 2, Duration: "10s", WindowDuration: "2.5s", Mode: "closed", MaxRPS: 20, P95LimitMS: 500, MaxErrorRate: .01, MinSamplesPerStep: 1, RequestTimeout: "2s", ConnectionPolicy: "reuse", WorkloadFingerprint: "sha256:workload-fixture"}}
 	evidence := campaign.Result{
-		SchemaVersion: campaign.CurrentSchemaVersion, ExecutionState: "COMPLETED", Scenario: assessment.Audit.Scenario, Target: assessment.Audit.Target,
+		SchemaVersion: campaign.CurrentSchemaVersion, DriftBaseline: campaign.DriftBaselineSkipLightLeadingWindow, ExecutionState: "COMPLETED", Scenario: assessment.Audit.Scenario, Target: assessment.Audit.Target,
 		BaseUsers: 2, Warmup: "0s", Stabilization: "0s", Observation: "10s", SpikeUsers: 0, SpikeDuration: "0s", Recovery: "10s", Soak: "0s", Cooldown: "0s",
 		Budget: "3m20s", Repeats: 2, Outcome: "PASS", DeclaredEnvironment: "development", StabilityPolicy: &policy, GeneratorGuardrails: &guardrails,
 		Objectives: &campaign.ObjectiveContract{Version: 1, JourneyScope: "AGGREGATE_AND_EACH_WORKFLOW", JourneyP95LimitMS: 500, MaxJourneyErrorRate: .01, MinSamplesPerStep: 1, MinCompletedWorkRatio: 1, MinimumObservationWindows: 3, MinimumSamplesPerWindow: 20, WindowDuration: "2.5s"},

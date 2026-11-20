@@ -689,7 +689,13 @@ func campaignCmdWithWorkloadSource(args []string, source *campaign.WorkloadSourc
 	hostSensorInterval := fs.Duration("host-sensor-interval", 5*time.Second, "host sensor sampling interval (1s-30s)")
 	calibrationFile := fs.String("calibration", "", "optional local generator calibration record for closed-loop preflight evidence")
 	requireCalibration := fs.Bool("require-calibration", false, "require exact closed-loop VU calibration coverage before execution")
+	extended := registerExtendedEnvelopeOptInFlags(fs)
 	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	extendedRequest, err := extended.request(*requireCalibration, *calibrationFile)
+	if err != nil {
+		fmt.Fprintf(stderr, "extended envelope error: %v\n", err)
 		return 2
 	}
 	if *filename == "" || len(fs.Args()) != 0 {
@@ -727,6 +733,18 @@ func campaignCmdWithWorkloadSource(args []string, source *campaign.WorkloadSourc
 		LongRun:    *longRun, StagingConfirmed: *stagingConfirmed,
 		Stability:          campaign.StabilityPolicy{MinimumWindows: *minWindows, MinimumSamplesPerWindow: *minSamples, MaxP95IncreasePercent: *maxP95IncreasePercent, MaxP95IncreaseMS: *maxP95IncreaseMS, MaxThroughputDropPercent: *maxThroughputDropPercent},
 		HostSensorEndpoint: *hostSensorEndpoint, HostSensorToken: hostSensorToken, HostSensorInterval: configuredHostSensorInterval}
+	if extendedRequest != nil {
+		// Campaign guardrail flags may only tighten the extended defaults,
+		// which are always enforced (ADR 0155, ADR 0157).
+		extendedRequest.Guardrails = guardrails
+		resolved, guardrailErr := config.ExtendedGuardrails(guardrails)
+		if guardrailErr != nil {
+			fmt.Fprintf(stderr, "extended envelope error: %v\n", guardrailErr)
+			return 2
+		}
+		options.Guardrails = resolved
+		options.UserCeiling = config.ExtendedEnvelopeHardLimits.MaxUsers
+	}
 	if err := campaign.Validate(options); err != nil {
 		fmt.Fprintf(stderr, "invalid campaign: %v\n", err)
 		return 2
@@ -758,10 +776,13 @@ func campaignCmdWithWorkloadSource(args []string, source *campaign.WorkloadSourc
 		}
 		scenario.PerVUCookieEnvPrefix += "1_"
 	}
-	validated, err := config.Parse(scenario, config.Options{Authorized: *authorized || *dry, AllowWrites: *writes, AllowInsecureHTTP: *insecure, NetworkBaseline: true})
+	validated, err := config.Parse(scenario, config.Options{Authorized: *authorized || *dry, AllowWrites: *writes, AllowInsecureHTTP: *insecure, NetworkBaseline: true, ExtendedEnvelope: extendedRequest})
 	if err != nil {
 		fmt.Fprintf(stderr, "configuration error: %v\n", err)
 		return 2
+	}
+	if extendedRequest != nil {
+		options.Guardrails = validated.GeneratorGuardrails
 	}
 	source.SemanticFingerprint = validated.WorkloadFingerprint
 	options.WorkloadSource = source
@@ -791,7 +812,19 @@ func campaignCmdWithWorkloadSource(args []string, source *campaign.WorkloadSourc
 			selfCalibration = loaded.scenario
 		}
 	}
-	if selfCalibration != nil {
+	if extendedRequest != nil {
+		// Base and spike levels must both be READY before traffic (ADR 0157).
+		levels := []int{validated.Scenario.Users}
+		if options.SpikeUsers > 0 {
+			levels = append(levels, options.SpikeUsers)
+		}
+		if _, code := gateExtendedLevels(&validated, *calibrationFile, levels, stdout, stderr); code != 0 {
+			return code
+		}
+		if campaign.PlannedMaxUsers(validated.Scenario.Users, options.SpikeUsers) > config.StandardEnvelopeLimits.MaxUsers {
+			fmt.Fprintf(stdout, "Levels above the standard %d VU ceiling will be tested under the extended envelope.\n", config.StandardEnvelopeLimits.MaxUsers)
+		}
+	} else if selfCalibration != nil {
 		levels := []int{validated.Scenario.Users}
 		if options.SpikeUsers > 0 {
 			levels = append(levels, options.SpikeUsers)
@@ -831,7 +864,7 @@ func campaignCmdWithWorkloadSource(args []string, source *campaign.WorkloadSourc
 		fmt.Fprintln(stdout, "LONG-RUN MODE: explicit opt-in; environment declared staging (user-provided, not independently verified).")
 	}
 	if options.Guardrails.Enabled() {
-		fmt.Fprintf(stdout, "Generator abort guardrails: CPU %.1f%% | RSS %.1f MiB | %d consecutive samples. These limits apply to the local generator, not the target application.\n", guardrails.MaxProcessCPUPercent, float64(guardrails.MaxProcessRSSBytes)/(1024*1024), guardrails.ConsecutiveSamples)
+		fmt.Fprintf(stdout, "Generator abort guardrails: CPU %.1f%% | RSS %.1f MiB | %d consecutive samples. These limits apply to the local generator, not the target application.\n", options.Guardrails.MaxProcessCPUPercent, float64(options.Guardrails.MaxProcessRSSBytes)/(1024*1024), options.Guardrails.ConsecutiveSamples)
 	}
 	if options.HostSensorEndpoint != "" {
 		fmt.Fprintf(stdout, "Sampling authorized Linux host sensor every %s; incomplete coverage is preserved as limited evidence.\n", options.HostSensorInterval)
@@ -961,7 +994,13 @@ func explore(args []string, stdout, stderr io.Writer) int {
 	reserve := fs.Float64("reserve-percent", 0, "reserve on grown demand, percent")
 	calibrationFile := fs.String("calibration", "", "attach a workload self-calibration artifact to every stage")
 	requireCalibration := fs.Bool("require-calibration", false, "block traffic unless the self-calibration covers every planned ladder level")
+	extended := registerExtendedEnvelopeFlags(fs)
 	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	extendedRequest, err := extended.request(*requireCalibration, *calibrationFile)
+	if err != nil {
+		fmt.Fprintf(stderr, "extended envelope error: %v\n", err)
 		return 2
 	}
 	if *filename == "" || len(fs.Args()) != 0 {
@@ -973,6 +1012,11 @@ func explore(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	options := explorer.Options{MinUsers: *min, MaxUsers: *max, Repeats: *repeats, StageDuration: *stage, Budget: *budget}
+	if extendedRequest != nil {
+		options.UserCeiling = config.ExtendedEnvelopeHardLimits.MaxUsers
+		options.Extended = true
+		options.TargetClass = extendedRequest.TargetClass
+	}
 	goalRequested := *peak != 0 || *growth != 0 || *reserve != 0
 	var goal capacitygoal.Goal
 	var requiredUsers int
@@ -998,7 +1042,7 @@ func explore(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	scenario.Users = *min
-	validated, err := config.Parse(scenario, config.Options{Authorized: *authorized || *dry, AllowWrites: *writes, AllowInsecureHTTP: *insecure, NetworkBaseline: true})
+	validated, err := config.Parse(scenario, config.Options{Authorized: *authorized || *dry, AllowWrites: *writes, AllowInsecureHTTP: *insecure, NetworkBaseline: true, ExtendedEnvelope: extendedRequest})
 	if err != nil {
 		fmt.Fprintf(stderr, "configuration error: %v\n", err)
 		return 2
@@ -1023,7 +1067,24 @@ func explore(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	var selfCalibration *calibration.ScenarioRecord
-	if *calibrationFile != "" {
+	if extendedRequest != nil {
+		// Every planned ladder level, including an exact demand-goal stage,
+		// must be READY before traffic. Refinement levels are rechecked by the
+		// explorer and never probed when uncovered (ADR 0157).
+		ladder := explorer.PlannedLevels(options)
+		covered, code := gateExtendedLevels(&validated, *calibrationFile, ladder, stdout, stderr)
+		if code != 0 {
+			return code
+		}
+		options.LevelCovered = covered
+		if loaded, loadErr := loadAnyCalibration(*calibrationFile); loadErr == nil && loaded.scenario != nil {
+			selfCalibration = loaded.scenario
+		}
+		fmt.Fprintf(stdout, "Extended envelope READY for ladder %v. Bracket refinement probes only calibrated levels; if none remain inside a failing bracket the exploration stops INCONCLUSIVE.\n", ladder)
+		if *max > config.StandardEnvelopeLimits.MaxUsers {
+			fmt.Fprintf(stdout, "Levels above the standard %d VU ceiling will be tested under the extended envelope.\n", config.StandardEnvelopeLimits.MaxUsers)
+		}
+	} else if *calibrationFile != "" {
 		loaded, loadErr := loadAnyCalibration(*calibrationFile)
 		if loadErr != nil || loaded.scenario == nil {
 			fmt.Fprintln(stderr, "calibration error: explore accepts only a passing workload self-calibration artifact")

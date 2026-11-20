@@ -17,7 +17,11 @@ import (
 	"github.com/LucasLuchetta/Damocline/internal/report"
 )
 
-const CurrentSchemaVersion = 8
+const CurrentSchemaVersion = 9
+
+// FirstRobustDriftBaselineSchema is the first open-arrival campaign schema
+// whose drift screen excludes a light leading window as its reference.
+const FirstRobustDriftBaselineSchema = 9
 const maximumCampaignDuration = 15 * time.Minute
 const LongRunWallTimeLimit = 2 * time.Hour
 const LongRunPhaseLimit = 30 * time.Minute
@@ -77,6 +81,9 @@ type Phase struct {
 	Reason        string        `json:"reason,omitempty"`
 	Stability     string        `json:"stability,omitempty"`
 	Run           report.Result `json:"run"`
+	// StabilityBaselineWindow is the zero-based drift reference window
+	// (schema v9+); 0 is the first window.
+	StabilityBaselineWindow int `json:"stability_baseline_window,omitempty"`
 }
 
 type Trial struct {
@@ -441,11 +448,11 @@ func WithRunnerProgress(parent context.Context, base config.Validated, options O
 			}
 			run := runner(ctx, validated)
 			state, reason := ClassifyCampaignPhase(result, run, phase.Name)
-			stability := ""
+			stability, baselineWindow := "", 0
 			if phase.Name == "stabilization" || phase.Name == "observation" || phase.Name == "soak" {
-				stability = campaign.AssessStabilityWithPolicy(run, *result.StabilityPolicy)
+				stability, baselineWindow = campaign.AssessStabilityWithBaseline(run, *result.StabilityPolicy, campaign.DriftBaselineSkipLightLeadingWindow)
 			}
-			trial.Phases = append(trial.Phases, Phase{Name: phase.Name, EvidenceState: state, Reason: reason, Stability: stability, Run: run})
+			trial.Phases = append(trial.Phases, Phase{Name: phase.Name, EvidenceState: state, Reason: reason, Stability: stability, Run: run, StabilityBaselineWindow: baselineWindow})
 			if err := checkpoint(trial); err != nil {
 				return result, err
 			}
