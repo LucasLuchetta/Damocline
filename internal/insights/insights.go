@@ -65,6 +65,13 @@ func ValidateRunReport(r report.Result) error {
 	if r.SchemaVersion < 1 || r.SchemaVersion > report.CurrentSchemaVersion || r.Name == "" || r.Metrics.Total < 0 || r.Metrics.Success < 0 || r.Metrics.Failures < 0 || r.Metrics.Success+r.Metrics.Failures != r.Metrics.Total || r.Config.Users < 1 || r.ElapsedSeconds <= 0 || (r.SchemaVersion >= 4 && r.ObservationSeconds <= 0) || (r.SchemaVersion >= 11 && !validFingerprint(r.Config.WorkloadFingerprint)) || (r.SchemaVersion >= 14 && r.Config.ConnectionPolicy != "reuse" && r.Config.ConnectionPolicy != "new_per_request") || !report.ValidJourneyP95Limit(r) {
 		return errors.New("not a valid Damocline HTTP run report")
 	}
+	if r.SchemaVersion < 36 {
+		for _, step := range r.Steps {
+			if step.HTTPTrace.TransportRetryCount != 0 {
+				return errors.New("pre-v36 run reports must not carry transport_retry_count")
+			}
+		}
+	}
 	if (r.SchemaVersion >= 16 && (r.ArrivalsCancelledBeforeAdmission == nil || *r.ArrivalsCancelledBeforeAdmission < 0)) ||
 		(r.SchemaVersion < 16 && r.ArrivalsCancelledBeforeAdmission != nil) {
 		return errors.New("report arrival-cancellation evidence does not match its schema")
@@ -257,6 +264,9 @@ func Evaluate(r report.Result, host *hostmon.Result) Assessment {
 	}
 	if r.Metrics.Total >= 1 && r.Metrics.P95MS > 0 && r.Metrics.P99MS > 3*r.Metrics.P95MS && r.Metrics.P99MS-r.Metrics.P95MS > 1000 {
 		a.Findings = append(a.Findings, Finding{"CAUTION", fmt.Sprintf("Long-tail latency: request p99 reached %.0f ms versus p95 of %.0f ms. Investigate intermittent slow requests.", r.Metrics.P99MS, r.Metrics.P95MS)})
+	}
+	if retries, attempts := transportRetries(r); retries > 0 {
+		a.Findings = append(a.Findings, Finding{"CAUTION", fmt.Sprintf("Transparent transport retries: %d of %d request attempts were retried by the HTTP client on a new connection after a reused keep-alive connection was closed before any response byte. The server or an intermediary likely closed idle connections (for example a keep-alive idle timeout shorter than client think time); this is not an application failure by itself, but retried requests paid extra connection setup and the server may have received the request twice.", retries, attempts)})
 	}
 	if r.Journeys.Total > 0 {
 		if r.Config.JourneyP95LimitMS > 0 {
@@ -571,4 +581,14 @@ func sameProfiles(a, b []report.ProfileConfig) bool {
 		}
 	}
 	return true
+}
+
+// transportRetries sums schema-v36 transparent transport retries (ADR 0151)
+// and request attempts across named steps.
+func transportRetries(r report.Result) (retries, attempts int) {
+	for _, step := range r.Steps {
+		retries += step.HTTPTrace.TransportRetryCount
+		attempts += step.HTTPTrace.RequestAttemptCount
+	}
+	return retries, attempts
 }

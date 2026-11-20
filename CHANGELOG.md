@@ -5,6 +5,8 @@
 - Allow one independent, logged retry of the extended calibration on
   hosted Windows CI after a late-arrival failure (ADR 0152).
 
+- Record transparent HTTP transport retries as per-step `http_trace.transport_retry_count` (run report schema v36, ADR 0151). When a server closed an idle keep-alive connection and Go retried the request on a new connection, the extra write and acquisition callbacks previously marked the whole run INVALID. Trace invariants now account for exactly these retries, pre-v36 reports keep their original checks, and `insights` reports retries as a CAUTION finding.
+
 - Add a bounded loopback lab for comparing Damocline and k6 under identical
   closed-loop workloads at three VU levels (ADR 0160).
 
