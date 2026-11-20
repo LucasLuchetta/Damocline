@@ -52,18 +52,29 @@ func TestDriveAccountsForSchedulerStall(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	calls := 0
+	var pauseElapsed time.Duration
+	const rate = 20
 	const injectedPause = 130 * time.Millisecond
-	s := Drive(ctx, 500*time.Millisecond, 20, func() bool {
+	s := Drive(ctx, 500*time.Millisecond, rate, func() bool {
 		calls++
 		if calls == 1 {
 			// Fault-inject a delayed callback to verify that late arrivals are
 			// counted rather than silently erased after a scheduler stall.
+			start := time.Now()
 			time.Sleep(injectedPause)
+			pauseElapsed = time.Since(start)
 		}
 		return true
 	})
-	if !s.Consistent() || s.Planned != 10 || s.DroppedLate == 0 || s.LagSamples != s.Planned || s.P95Lag <= 0 || s.MaxLag < injectedPause/3 {
+	if !s.Consistent() || s.Planned != 10 || s.DroppedLate == 0 || s.LagSamples != s.Planned || s.P95Lag <= 0 {
 		t.Fatalf("scheduler stall was not reconciled as late arrivals: %+v", s)
+	}
+	// The next slot is at most one period after the callback starts.
+	// Its processing cannot happen until after the measured pause.
+	minimumLag := pauseElapsed - time.Second/rate
+	if s.MaxLag < minimumLag {
+		t.Fatalf("maximum lag %v falls below the callback timing lower bound %v (measured pause %v)",
+			s.MaxLag, minimumLag, pauseElapsed)
 	}
 }
 
