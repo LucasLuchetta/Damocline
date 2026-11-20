@@ -131,6 +131,8 @@ func renderCampaignCapacityReport(assessment capacityplan.Assessment, source str
 	fmt.Fprintf(&b, "Confidence dimensions: measurement **%s**, workload representativeness **%s**, decision **%s**.\n", markdownText(assessment.Confidence.Measurement), markdownText(assessment.Confidence.WorkloadRepresentativeness), markdownText(assessment.Confidence.Decision))
 	writeMarkdownList(&b, "Observed workflow breaches", breachDescriptions(a.WorkflowBreaches))
 	writeMarkdownList(&b, "Audit findings", a.Findings)
+	writeDecisionBlockers(&b, assessment.Demand)
+	writeDecisionBlockerGroups(&b, assessment.DecisionBlockers)
 	writeMarkdownList(&b, "Confidence limits", assessment.Confidence.Findings)
 	writeMarkdownList(&b, "Known unknowns", a.Unknowns)
 	fmt.Fprintln(&b)
@@ -251,6 +253,7 @@ func renderCampaignCollectionCapacityReport(assessment capacityplan.CampaignColl
 	}
 	writeMarkdownList(&b, "Collection findings", assessment.Findings)
 	writeMarkdownList(&b, "Demand findings", demandFindings(assessment.Demand))
+	writeDecisionBlockers(&b, assessment.Demand)
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "### Offline replay")
 	fmt.Fprintln(&b)
@@ -336,7 +339,17 @@ func demandFindings(result *capacityplan.Result) []string {
 	if result == nil {
 		return nil
 	}
-	return result.Findings
+	findings := make([]string, 0, len(result.Findings))
+	blocked := make(map[string]bool, len(result.Blockers))
+	for _, blocker := range result.Blockers {
+		blocked[blocker.Finding] = true
+	}
+	for _, finding := range result.Findings {
+		if !blocked[finding] {
+			findings = append(findings, finding)
+		}
+	}
+	return findings
 }
 
 func generatorGuardrailSummary(policy *generatorhealth.Guardrails) string {
