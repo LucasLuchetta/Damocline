@@ -29,7 +29,7 @@ func defaultCampaignObjectives() *campaign.ObjectiveContract {
 func TestAuditCommandIsOfflineAndProducesMachineReadableEvidence(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "campaign.json")
 	out := filepath.Join(t.TempDir(), "audit.json")
-	evidence := campaign.Result{SchemaVersion: campaign.CurrentSchemaVersion, ExecutionState: "COMPLETED", Stabilization: "0s", Cooldown: "0s", StabilityPolicy: defaultCampaignStabilityPolicy(), Objectives: defaultCampaignObjectives(),
+	evidence := campaign.Result{SchemaVersion: campaign.CurrentSchemaVersion, DriftBaseline: campaign.DriftBaselineSkipLightLeadingWindow, ExecutionState: "COMPLETED", Stabilization: "0s", Cooldown: "0s", StabilityPolicy: defaultCampaignStabilityPolicy(), Objectives: defaultCampaignObjectives(),
 		Scenario: "offline", BaseUsers: 2, Target: "http://127.0.0.1:18080", StartedAt: "2026-01-02T03:04:05Z", Warmup: "0s", Observation: "10s", Recovery: "10s", Repeats: 2, Outcome: "INCONCLUSIVE",
 		Trials: []campaign.Trial{{RunID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Number: 1, Phases: []campaign.Phase{}, Outcome: "INCONCLUSIVE"}, {RunID: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", Number: 2, Phases: []campaign.Phase{}, Outcome: "INCONCLUSIVE"}},
 	}
@@ -93,7 +93,7 @@ func TestAuditReportOutContainsExecutiveTechnicalReplayWithoutConflictingVerdict
 	reportPath := filepath.Join(directory, "capacity.md")
 	assessmentPath := filepath.Join(directory, "assessment.json")
 	evidence := campaign.Result{
-		SchemaVersion: campaign.CurrentSchemaVersion, ExecutionState: "COMPLETED", Stabilization: "0s", Cooldown: "0s", StabilityPolicy: defaultCampaignStabilityPolicy(), Objectives: defaultCampaignObjectives(),
+		SchemaVersion: campaign.CurrentSchemaVersion, DriftBaseline: campaign.DriftBaselineSkipLightLeadingWindow, ExecutionState: "COMPLETED", Stabilization: "0s", Cooldown: "0s", StabilityPolicy: defaultCampaignStabilityPolicy(), Objectives: defaultCampaignObjectives(),
 		Scenario: "synthetic local fixture", BaseUsers: 2, Target: "http://127.0.0.1:18080", StartedAt: "2026-01-02T03:04:05Z", Warmup: "0s", Observation: "10s", Recovery: "10s", Repeats: 2, Outcome: "INCONCLUSIVE",
 		Trials: []campaign.Trial{{RunID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Number: 1, Phases: []campaign.Phase{}, Outcome: "INCONCLUSIVE"}, {RunID: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", Number: 2, Phases: []campaign.Phase{}, Outcome: "INCONCLUSIVE"}},
 	}
@@ -153,7 +153,7 @@ func TestAuditCommandRejectsChangedCampaignBeforeWritingAssessment(t *testing.T)
 	directory := t.TempDir()
 	campaignPath := filepath.Join(directory, "campaign.json")
 	evidence := campaign.Result{
-		SchemaVersion: campaign.CurrentSchemaVersion, ExecutionState: "COMPLETED", Scenario: "synthetic local fixture", BaseUsers: 2, Target: "http://127.0.0.1:18080", StartedAt: "2026-01-02T03:04:05Z", Warmup: "0s", Observation: "10s", Recovery: "10s", Repeats: 2,
+		SchemaVersion: campaign.CurrentSchemaVersion, DriftBaseline: campaign.DriftBaselineSkipLightLeadingWindow, ExecutionState: "COMPLETED", Scenario: "synthetic local fixture", BaseUsers: 2, Target: "http://127.0.0.1:18080", StartedAt: "2026-01-02T03:04:05Z", Warmup: "0s", Observation: "10s", Recovery: "10s", Repeats: 2,
 		Outcome: "INCONCLUSIVE", Stabilization: "0s", Cooldown: "0s", StabilityPolicy: defaultCampaignStabilityPolicy(), Objectives: defaultCampaignObjectives(),
 		Trials: []campaign.Trial{{RunID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Number: 1, Phases: []campaign.Phase{}, Outcome: "INCONCLUSIVE"}, {RunID: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", Number: 2, Phases: []campaign.Phase{}, Outcome: "INCONCLUSIVE"}},
 	}
@@ -195,7 +195,7 @@ func TestAuditCommandRejectsChangedCampaignBeforeWritingAssessment(t *testing.T)
 func TestAuditCommandRejectsChangedSourceBytesBeforeWritingAssessment(t *testing.T) {
 	directory := t.TempDir()
 	campaignPath := filepath.Join(directory, "campaign.json")
-	evidence := campaign.Result{SchemaVersion: campaign.CurrentSchemaVersion, ExecutionState: "COMPLETED", Stabilization: "0s", Cooldown: "0s", StabilityPolicy: defaultCampaignStabilityPolicy(), Objectives: defaultCampaignObjectives(),
+	evidence := campaign.Result{SchemaVersion: campaign.CurrentSchemaVersion, DriftBaseline: campaign.DriftBaselineSkipLightLeadingWindow, ExecutionState: "COMPLETED", Stabilization: "0s", Cooldown: "0s", StabilityPolicy: defaultCampaignStabilityPolicy(), Objectives: defaultCampaignObjectives(),
 		Scenario: "synthetic local fixture", BaseUsers: 2, Target: "http://127.0.0.1:18080", StartedAt: "2026-01-02T03:04:05Z", Warmup: "0s", Observation: "10s", Recovery: "10s", Repeats: 2, Outcome: "INCONCLUSIVE",
 		Trials: []campaign.Trial{{RunID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Number: 1, Phases: []campaign.Phase{}, Outcome: "INCONCLUSIVE"}, {RunID: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", Number: 2, Phases: []campaign.Phase{}, Outcome: "INCONCLUSIVE"}},
 	}
@@ -332,7 +332,7 @@ func floatPointer(value float64) *float64 { return &value }
 
 func TestAuditCommandRequiresPeakWhenDemandOptionsAreSupplied(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "campaign.json")
-	evidence := campaign.Result{SchemaVersion: campaign.CurrentSchemaVersion, ExecutionState: "COMPLETED", Scenario: "offline", BaseUsers: 2, Repeats: 2, Outcome: "INCONCLUSIVE", Stabilization: "0s", Cooldown: "0s", StabilityPolicy: defaultCampaignStabilityPolicy(), Objectives: defaultCampaignObjectives()}
+	evidence := campaign.Result{SchemaVersion: campaign.CurrentSchemaVersion, DriftBaseline: campaign.DriftBaselineSkipLightLeadingWindow, ExecutionState: "COMPLETED", Scenario: "offline", BaseUsers: 2, Repeats: 2, Outcome: "INCONCLUSIVE", Stabilization: "0s", Cooldown: "0s", StabilityPolicy: defaultCampaignStabilityPolicy(), Objectives: defaultCampaignObjectives()}
 	if err := report.WriteAnyJSON(path, evidence); err != nil {
 		t.Fatal(err)
 	}
@@ -352,7 +352,7 @@ func TestAuditCommandAcceptsMultipleCampaignsAndKeepsExactDemandUnknown(t *testi
 	for i, path := range []string{firstPath, secondPath} {
 		budget := campaign.PlannedBudget(campaign.Options{Warmup: 0, Observation: 10 * time.Second, Recovery: 10 * time.Second, Repeats: 2})
 		evidence := campaign.Result{
-			SchemaVersion: campaign.CurrentSchemaVersion, ExecutionState: "COMPLETED", Scenario: "offline", BaseUsers: []int{2, 4}[i], StartedAt: "2026-01-02T03:04:05Z", Stabilization: "0s", Cooldown: "0s", StabilityPolicy: defaultCampaignStabilityPolicy(), Objectives: defaultCampaignObjectives(),
+			SchemaVersion: campaign.CurrentSchemaVersion, DriftBaseline: campaign.DriftBaselineSkipLightLeadingWindow, ExecutionState: "COMPLETED", Scenario: "offline", BaseUsers: []int{2, 4}[i], StartedAt: "2026-01-02T03:04:05Z", Stabilization: "0s", Cooldown: "0s", StabilityPolicy: defaultCampaignStabilityPolicy(), Objectives: defaultCampaignObjectives(),
 			Target: "http://127.0.0.1:18080", Warmup: "0s", Observation: "10s", SpikeDuration: "0s", Recovery: "10s", Budget: budget.String(),
 			Repeats: 2, Outcome: "ABORTED", Trials: []campaign.Trial{
 				{RunID: []string{"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "cccccccccccccccccccccccccccccccc"}[i], Number: 1, Phases: []campaign.Phase{}, Outcome: "ABORTED", AbortReason: "The campaign was interrupted by its caller."},

@@ -63,18 +63,18 @@ func auditFixtureAtUsers(users int) campaign.Result {
 	e := campaign.Result{
 		SchemaVersion: campaign.CurrentSchemaVersion, ExecutionState: "COMPLETED", Scenario: "synthetic", Target: a.Target, StartedAt: time.Date(2026, time.January, 2, 3, 4, 5, 0, time.UTC).Format(time.RFC3339Nano),
 		BaseUsers: users, Warmup: "0s", Stabilization: "0s", Observation: "10s", SpikeDuration: "0s", Recovery: "10s", Cooldown: "0s",
-		Budget: "3m20s", Repeats: 2, Outcome: "PASS", Soak: "10s", StabilityPolicy: &stabilityPolicy,
+		Budget: "3m20s", Repeats: 2, Outcome: "PASS", Soak: "10s", StabilityPolicy: &stabilityPolicy, DriftBaseline: campaign.DriftBaselineSkipLightLeadingWindow,
 		Objectives: &campaign.ObjectiveContract{Version: 1, JourneyScope: "AGGREGATE_AND_EACH_WORKFLOW", JourneyP95LimitMS: 1000, MaxJourneyErrorRate: 0.1,
 			MinSamplesPerStep: 1, MinCompletedWorkRatio: 1, MaxDroppedArrivals: 0, MinimumObservationWindows: stabilityPolicy.MinimumWindows,
 			MinimumSamplesPerWindow: stabilityPolicy.MinimumSamplesPerWindow, WindowDuration: "2.5s"},
 	}
 	for n := 1; n <= 2; n++ {
 		phases := []campaign.Phase{
-			{Name: "observation", EvidenceState: "PASS_OBSERVED", Stability: campaign.AssessStability(a), Run: a},
-			{Name: "recovery", EvidenceState: "PASS_OBSERVED", Run: b},
+			{Name: "observation", EvidenceState: "PASS_OBSERVED", Stability: campaign.AssessStability(a), Run: a, RampUp: "0s"},
+			{Name: "recovery", EvidenceState: "PASS_OBSERVED", Run: b, RampUp: "0s"},
 		}
 		if n == 2 {
-			phases = append(phases, campaign.Phase{Name: "soak", EvidenceState: "PASS_OBSERVED", Stability: campaign.AssessStability(a), Run: a})
+			phases = append(phases, campaign.Phase{Name: "soak", EvidenceState: "PASS_OBSERVED", Stability: campaign.AssessStability(a), Run: a, RampUp: "0s"})
 		}
 		runID := strings.Repeat("a", 32)
 		if n == 2 {
@@ -160,6 +160,7 @@ func TestAuditRejectsUnsupportedEmbeddedRunReportSchemas(t *testing.T) {
 func TestHistoricalPassCannotOverrideRecomputedJourneySLOFailure(t *testing.T) {
 	evidence := auditFixture()
 	evidence.SchemaVersion = 2
+	evidence.DriftBaseline = ""
 	evidence.ExecutionState = ""
 	evidence.Stabilization = ""
 	evidence.Soak = ""
@@ -173,6 +174,9 @@ func TestHistoricalPassCannotOverrideRecomputedJourneySLOFailure(t *testing.T) {
 		trial := &evidence.Trials[trialIndex]
 		trial.RunID = ""
 		trial.Phases = append([]campaign.Phase(nil), trial.Phases...)
+		for phaseIndex := range trial.Phases {
+			trial.Phases[phaseIndex].RampUp = ""
+		}
 		if trialIndex == 1 {
 			trial.Phases = trial.Phases[:2]
 		}
