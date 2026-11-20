@@ -52,6 +52,22 @@ spread data for every independent observation trial. These bounds assume
 independent, stationary observations, which Damocline does not establish, so
 they are not a dependence-aware confidence guarantee.
 
+## Share a decision-ready page
+
+For a reader who is not a performance specialist, write the offline HTML page
+from a saved campaign; it generates no traffic:
+
+```powershell
+damocline audit --campaign .damocline/campaign.json --peak-users 8 --html-out .damocline/capacity.html
+```
+
+Read the decision banner first. Only "DEMAND MET UNDER TESTED CONDITIONS"
+approves a level, and only for the stated scenario, environment and duration.
+"INSUFFICIENT EVIDENCE" means no number on the page may be used for sizing.
+Blue "measured fact" blocks are observations; purple "hypothesis" blocks are
+unvalidated explanations or declared assumptions; amber "unknown" blocks list
+what the evidence cannot establish.
+
 ## Understand the four answers
 
 ```text

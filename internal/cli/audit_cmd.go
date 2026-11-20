@@ -4,10 +4,12 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"strings"
 
 	"github.com/LucasLuchetta/Damocline/internal/capacitygoal"
 	"github.com/LucasLuchetta/Damocline/internal/capacityplan"
+	"github.com/LucasLuchetta/Damocline/internal/explorer"
 	"github.com/LucasLuchetta/Damocline/internal/report"
 )
 
@@ -25,6 +27,10 @@ func auditCmd(args []string, stdout, stderr io.Writer) int {
 	expectedAuditorSHA256 := fs.String("expect-auditor-sha256", "", "require this exact auditor executable SHA-256 before replay")
 	out := fs.String("out", "", "optional combined assessment JSON output path")
 	reportOut := fs.String("report-out", "", "optional executive and technical Markdown report path")
+	htmlOut := fs.String("html-out", "", "optional self-contained offline executive HTML report path (single campaign)")
+	exploreFile := fs.String("explore-file", "", "optional saved exploration of the same scenario and target, plotted in the HTML report")
+	expectedExploreSHA256 := fs.String("expect-explore-file-sha256", "", "require this exact exploration file SHA-256")
+	actionsPerUserMinute := fs.Float64("actions-per-user-minute", 0, "optional declared actions per person per minute, shown in the HTML report as a labeled assumption")
 	peak := fs.Int("peak-users", 0, "optional expected simultaneous active workload-equivalent users")
 	growth := fs.Float64("growth-percent", 0, "optional estimated growth of active demand (percent)")
 	reserve := fs.Float64("reserve-percent", 0, "optional additional safety reserve (percent)")
@@ -32,7 +38,7 @@ func auditCmd(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	if len(paths) == 0 || len(fs.Args()) != 0 {
-		fmt.Fprintln(stderr, "usage: damocline audit --campaign campaign.json [--campaign higher-level.json] [--expect-evidence-id sha256:<64-hex>]... [--expect-campaign-file-sha256 sha256:<64-hex>]... [--expect-auditor-sha256 sha256:<64-hex>] [--peak-users 20] [--growth-percent 25] [--reserve-percent 20] [--out assessment.json] [--report-out capacity-report.md]")
+		fmt.Fprintln(stderr, "usage: damocline audit --campaign campaign.json [--campaign higher-level.json] [--expect-evidence-id sha256:<64-hex>]... [--expect-campaign-file-sha256 sha256:<64-hex>]... [--expect-auditor-sha256 sha256:<64-hex>] [--peak-users 20] [--growth-percent 25] [--reserve-percent 20] [--out assessment.json] [--report-out capacity-report.md] [--html-out capacity-report.html [--explore-file explore.json] [--actions-per-user-minute 2]]")
 		return 2
 	}
 	if len(paths) > capacityplan.MaxCampaignCollectionSize {
@@ -74,6 +80,23 @@ func auditCmd(args []string, stdout, stderr io.Writer) int {
 		}
 		goal = &capacitygoal.Goal{PeakUsers: *peak, GrowthPercent: *growth, ReservePercent: *reserve}
 	}
+	htmlOptionsUsed := *exploreFile != "" || *expectedExploreSHA256 != "" || *actionsPerUserMinute != 0
+	if htmlOptionsUsed && *htmlOut == "" {
+		fmt.Fprintln(stderr, "--explore-file, --expect-explore-file-sha256 and --actions-per-user-minute require --html-out")
+		return 2
+	}
+	if *expectedExploreSHA256 != "" && (*exploreFile == "" || !validSHA256EvidenceID(*expectedExploreSHA256)) {
+		fmt.Fprintln(stderr, "--expect-explore-file-sha256 requires --explore-file and sha256:<64 lowercase hexadecimal characters>")
+		return 2
+	}
+	if math.IsNaN(*actionsPerUserMinute) || math.IsInf(*actionsPerUserMinute, 0) || *actionsPerUserMinute < 0 {
+		fmt.Fprintln(stderr, "--actions-per-user-minute must be a finite non-negative number")
+		return 2
+	}
+	if *htmlOut != "" && len(paths) > 1 {
+		fmt.Fprintln(stderr, "--html-out currently supports a single --campaign")
+		return 2
+	}
 	if len(paths) > 1 {
 		return auditCampaignCollection(paths, expectedEvidenceIDs, expectedCampaignFileSHA256s, auditor, goal, *out, *reportOut, stdout, stderr)
 	}
@@ -89,6 +112,24 @@ func auditCmd(args []string, stdout, stderr io.Writer) int {
 	if err := verifyExpectedCampaignFileSHA256s(expectedCampaignFileSHA256s, []string{sourceFileSHA256}); err != nil {
 		fmt.Fprintf(stderr, "campaign file SHA-256 check failed: %v\n", err)
 		return 2
+	}
+	var explore *explorer.Result
+	exploreSHA256 := ""
+	if *exploreFile != "" {
+		loaded, digest, err := readCapacityExploreWithSHA256(*exploreFile)
+		if err != nil {
+			fmt.Fprintf(stderr, "cannot read exploration: %v\n", err)
+			return 2
+		}
+		if *expectedExploreSHA256 != "" && digest != *expectedExploreSHA256 {
+			fmt.Fprintf(stderr, "exploration file SHA-256 is %s; expected %s\n", digest, *expectedExploreSHA256)
+			return 2
+		}
+		if loaded.Scenario != evidence.Scenario || loaded.Target != evidence.Target {
+			fmt.Fprintln(stderr, "exploration scenario or target does not match the campaign")
+			return 2
+		}
+		explore, exploreSHA256 = &loaded, digest
 	}
 	assessment, err := capacityplan.BuildAssessment(evidence, goal)
 	if err != nil {
@@ -158,6 +199,14 @@ func auditCmd(args []string, stdout, stderr io.Writer) int {
 			return 2
 		}
 		fmt.Fprintf(stdout, "Executive and technical report: %s\n", *reportOut)
+	}
+	if *htmlOut != "" {
+		content := renderCampaignCapacityHTML(htmlReportInput{Assessment: assessment, Source: paths[0], Evidence: evidence, Explore: explore, ExploreSource: *exploreFile, ExploreFileSHA256: exploreSHA256, ActionsPerUserMinute: *actionsPerUserMinute})
+		if err := writeCapacityMarkdown(*htmlOut, content); err != nil {
+			fmt.Fprintf(stderr, "cannot write HTML capacity report: %v\n", err)
+			return 2
+		}
+		fmt.Fprintf(stdout, "Executive HTML report: %s\n", *htmlOut)
 	}
 	fmt.Fprintln(stdout, "No traffic was generated; the artifact links this verdict to its saved campaign evidence.")
 	return 0
