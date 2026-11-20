@@ -140,7 +140,16 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Source CLI did not start successfully' }
       - name: Reconcile extended local reference workload
         shell: pwsh
-        run: go run ./cmd/damocline-calibrate --extended --out .damocline/calibration/ci-reference.json
+        # Hosted Windows runners occasionally miss arrival deadlines at the
+        # 50-100/s stages. Damocline reports those late drops correctly, so
+        # allow one independent retry, keep both artifacts and log the first
+        # failure (ADR 0152).
+        run: |
+          go run ./cmd/damocline-calibrate --extended --out .damocline/calibration/ci-reference-attempt1.json
+          if ($LASTEXITCODE -eq 0) { exit 0 }
+          Write-Host '::warning::Extended calibration attempt 1 failed on the hosted Windows runner; running one independent retry.'
+          go run ./cmd/damocline-calibrate --extended --out .damocline/calibration/ci-reference-attempt2.json
+          if ($LASTEXITCODE -ne 0) { throw 'Extended calibration failed on both attempts' }
       - name: Validate bounded transport fixtures
         run: go run ./cmd/damocline-calibrate --transport-matrix --out .damocline/calibration/ci-transport.json
       - name: Run repeated G0 acceptance
