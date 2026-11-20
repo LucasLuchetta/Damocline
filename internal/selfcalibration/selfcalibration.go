@@ -309,6 +309,14 @@ func Run(ctx context.Context, s config.Scenario, opt Options) (calibration.Scena
 		mirrorScenario.ArrivalRate = opt.Levels[0]
 	}
 	mirrorScenario.Duration = opt.LevelDuration.String()
+	// Observation windows are an SLO-reporting control of the target run.
+	// A calibration level may be shorter than the scenario's window, and
+	// generator delivery checks do not depend on windows, so clamp the
+	// mirror's window to the level instead of refusing to calibrate. The
+	// workload fingerprint is still computed from the original scenario.
+	if window, err := time.ParseDuration(mirrorScenario.WindowDuration); err == nil && window > opt.LevelDuration {
+		mirrorScenario.WindowDuration = opt.LevelDuration.String()
+	}
 	parseOptions := config.Options{Authorized: true, AllowWrites: true}
 	if opt.ExtendedEnvelope {
 		parseOptions.ExtendedEnvelope = &config.ExtendedEnvelopeRequest{Acknowledged: true, TargetClass: config.TargetClassLab}
