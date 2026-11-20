@@ -105,6 +105,8 @@ See the [G0 acceptance matrix](G0_STATUS.md) for the implementation, test, valid
 
 Record signing, physical host attestation, validated calibration lifetime and default gate enforcement are deferred past G0 ([ADR 0148](adr/0148-defer-signing-attestation-and-default-enforcement-past-g0.md)). They remain documented limitations, not G0 exit blockers.
 
+**G0 status: closed on the exit test within the local reference scope** ([ADR 0149](adr/0149-close-g0-on-the-exit-test.md)). Unchecked items above keep their remaining gaps as post-G0 hardening.
+
 **G0 exit test:** calibration is repeatable on the actual generator class; the proposed workload lies within its validated local envelope; scheduling/cancellation/timing/counts reconcile; process health is present or explicitly unavailable. A skipped, failed, stale or non-equivalent preflight must **never** be described as a scientifically validated capacity result.
 
 ## 3. G1 / P1 â€” Model realistic HTTP workload without a browser recorder
