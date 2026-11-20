@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Defer record signing, host attestation, validated calibration lifetime
+  and default gate enforcement past G0 (ADR 0148), and record the G0-11
+  safety ceiling recheck.
+
 - Require a recorded phase evidence state in closed-loop campaign reports
   with predeclared objectives.
 
