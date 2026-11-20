@@ -11,6 +11,9 @@
   (schema v2) adds a `workload_saturation` finding that is always labeled as a
   hypothesis and is `UNKNOWN` when attribution is absent (ADR 0172).
 
+- Preserve generator guardrail abort reasons in campaign summaries even
+  when the interrupted phase also has invalid delivery evidence.
+
 - Add an offline executive HTML capacity report (ADR 0173):
   `damocline audit --html-out` (single campaign, optional `--explore-file`
   and `--actions-per-user-minute`) and `capacity.html` by default in the
