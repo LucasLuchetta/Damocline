@@ -141,13 +141,14 @@ type PhaseAudit struct {
 // are validated for the workload; repeatability evidence is a separate conditional
 // interval and does not establish decision confidence.
 type Assessment struct {
-	SchemaVersion int                  `json:"schema_version"`
-	Auditor       AuditorIdentity      `json:"auditor"`
-	Audit         CampaignAudit        `json:"audit"`
-	Confidence    ConfidenceDimensions `json:"confidence_dimensions"`
-	DemandInputs  *capacitygoal.Goal   `json:"demand_inputs,omitempty"`
-	Demand        *Result              `json:"demand,omitempty"`
-	State         string               `json:"state"`
+	SchemaVersion    int                  `json:"schema_version"`
+	Auditor          AuditorIdentity      `json:"auditor"`
+	Audit            CampaignAudit        `json:"audit"`
+	Confidence       ConfidenceDimensions `json:"confidence_dimensions"`
+	DemandInputs     *capacitygoal.Goal   `json:"demand_inputs,omitempty"`
+	Demand           *Result              `json:"demand,omitempty"`
+	DecisionBlockers []DecisionBlocker    `json:"decision_blockers,omitempty"`
+	State            string               `json:"state"`
 }
 
 // AuditorIdentity identifies the tool build that interpreted the campaign.
@@ -181,9 +182,16 @@ func BuildAssessment(e campaign.Result, goal *capacitygoal.Goal) (Assessment, er
 		assessment.DemandInputs = &goalCopy
 		assessment.Audit.DemandTargetUsers = plan.TargetUsers
 		if audit.State == "INVALID_EVIDENCE" {
+			assessment.Demand.State = "INSUFFICIENT_EVIDENCE"
+			assessment.Demand.block("Campaign replay found invalid measurement evidence.")
 			assessment.State = "INVALID_EVIDENCE"
 		} else {
 			assessment.State = plan.State
+		}
+	} else if e.BaseUsers > 0 {
+		plan, err := Evaluate(e, capacitygoal.Goal{PeakUsers: e.BaseUsers})
+		if err == nil {
+			assessment.DecisionBlockers = plan.Blockers
 		}
 	}
 	return assessment, nil

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Report actionable decision blockers together in campaign audit output (ADR 0164).
+
 - Reject campaign budgets without the bounded drain allowance before any
   traffic, matching the offline audit rule, and state the required budget.
 
