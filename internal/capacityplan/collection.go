@@ -344,8 +344,7 @@ func BuildCampaignCollectionAssessment(evidence []campaign.Result, goal *capacit
 			result.Demand.block("A demand decision requires a campaign at the exact calculated workload level; nearby levels are not interpolated.")
 		}
 		if result.State == "INVALID_EVIDENCE" {
-			result.Demand.State = "INSUFFICIENT_EVIDENCE"
-			result.Demand.block("At least one campaign in the collection has invalid evidence; no combined demand conclusion is reported.")
+			result.Demand.invalidateDecision("At least one campaign in the collection has invalid evidence; no combined demand conclusion is reported.")
 		}
 	}
 	return result, nil

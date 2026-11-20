@@ -17,6 +17,14 @@ const (
 	BlockerDamocline     = "damocline_limitation"
 )
 
+func (r *Result) invalidateDecision(finding string) {
+	if r.State == "GOAL_MET_UNDER_TESTED_CONDITIONS" {
+		r.Findings = nil
+	}
+	r.State = "INSUFFICIENT_EVIDENCE"
+	r.block(finding)
+}
+
 func (r *Result) block(finding string) {
 	if slices.Contains(r.Findings, finding) {
 		return
