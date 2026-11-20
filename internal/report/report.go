@@ -38,7 +38,12 @@ import (
 // Version 35 may record an optional journey_p95_limit_ms that replaces
 // p95_limit_ms for completed-journey latency objectives only (ADR 0150).
 // Version 37 may record a bounded pre-load network-path baseline (ADR 0153).
-const CurrentSchemaVersion = 37
+// Version 38 may embed a workload self-calibration artifact (ADR 0154).
+const CurrentSchemaVersion = 38
+
+// ScenarioCalibrationSchemaVersion is the first run schema that may embed a
+// workload self-calibration artifact.
+const ScenarioCalibrationSchemaVersion = 38
 
 // JourneyP95LimitSchemaVersion is the first run schema that may carry
 // RunConfig.JourneyP95LimitMS.
@@ -653,6 +658,7 @@ type Result struct {
 	Generator                        *generatorhealth.Summary     `json:"generator,omitempty"`
 	ApplicationMetrics               *appmetrics.Timeline         `json:"application_metrics,omitempty"`
 	Calibration                      *CalibrationEvidence         `json:"calibration,omitempty"`
+	ScenarioCalibration              *calibration.ScenarioRecord  `json:"workload_self_calibration,omitempty"`
 	ReferenceEvidence                *ControlledReferenceEvidence `json:"controlled_reference_evidence,omitempty"`
 	NetworkBaseline                  *NetworkBaseline             `json:"network_baseline,omitempty"`
 	Quality                          *Quality                     `json:"data_quality,omitempty"`
