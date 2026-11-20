@@ -9,6 +9,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -106,7 +107,7 @@ func readLinuxCPUQuota(root, cgroupFile, mountInfoFile string) (cores float64, s
 	if err != nil {
 		return 0, "", true, false
 	}
-	rootQuotaCores, rootErr := readHierarchicalCPUQuota(root, mount.point, directory, version)
+	rootQuotaCores, rootErr := readHierarchicalCPUQuota(root, mount, directory, version)
 	quotaSource := cgroupV1QuotaSource
 	if version == 2 {
 		quotaSource = cgroupV2QuotaSource
@@ -120,8 +121,8 @@ func readLinuxCPUQuota(root, cgroupFile, mountInfoFile string) (cores float64, s
 // readHierarchicalCPUQuota walks from the process cgroup to the mounted
 // hierarchy root and returns the tightest finite quota. Any missing or
 // malformed ancestor evidence leaves the result unknown.
-func readHierarchicalCPUQuota(root, mountPoint, processDirectory string, version int) (float64, error) {
-	mountDirectory := filepath.Clean(filepath.Join(root, strings.TrimPrefix(mountPoint, "/")))
+func readHierarchicalCPUQuota(root string, mount cgroupMount, processDirectory string, version int) (float64, error) {
+	mountDirectory := filepath.Clean(filepath.Join(root, strings.TrimPrefix(mount.point, "/")))
 	directory := filepath.Clean(processDirectory)
 	if !isWithinDirectory(mountDirectory, directory) {
 		return 0, errors.New("process cgroup directory is outside the mounted hierarchy")
@@ -133,6 +134,16 @@ func readHierarchicalCPUQuota(root, mountPoint, processDirectory string, version
 		var err error
 		if version == 2 {
 			quota, period, unlimited, err = readV2CPUQuota(filepath.Join(directory, "cpu.max"))
+			atHierarchyRoot := directory == mountDirectory && mount.root == "/"
+			if atHierarchyRoot && errors.Is(err, os.ErrNotExist) {
+				// A non-root cgroup must have cpu.max if it distributes the
+				// CPU controller to children. A namespace can expose a
+				// subtree as "/", so require that controller evidence.
+				controllers, readErr := os.ReadFile(filepath.Join(directory, "cgroup.subtree_control"))
+				if readErr == nil && slices.Contains(strings.Fields(string(controllers)), "cpu") {
+					return minimum, nil
+				}
+			}
 		} else {
 			quota, period, unlimited, err = readV1CPUQuota(directory)
 		}

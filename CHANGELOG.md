@@ -5,6 +5,9 @@
 - Require a recorded phase evidence state in closed-loop campaign reports
   with predeclared objectives.
 
+- Detect effective CPU capacity on Linux hosts where the cgroup v2
+  hierarchy root exposes CPU subtree controls without a `cpu.max` file.
+
 - Require recorded cooldown and trial IDs in closed-loop campaign artifacts
   from schema v9 onward, including the trial ID in pending checkpoints.
 

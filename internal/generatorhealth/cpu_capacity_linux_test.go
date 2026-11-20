@@ -39,6 +39,41 @@ func TestReadLinuxCPUQuotaFromCgroupV2(t *testing.T) {
 	}
 }
 
+func TestReadLinuxCPUQuotaAtCgroupV2MountRoot(t *testing.T) {
+	for _, test := range []struct {
+		name, mountRoot, controllers, childQuota string
+		cores                                    float64
+		known                                    bool
+	}{
+		{name: "host root", mountRoot: "/", controllers: "cpu memory", childQuota: "max 100000", known: true},
+		{name: "finite descendant", mountRoot: "/", controllers: "cpu", childQuota: "200000 100000", cores: 2, known: true},
+		{name: "missing descendant", mountRoot: "/", controllers: "cpu"},
+		{name: "missing controller evidence", mountRoot: "/", childQuota: "max 100000"},
+		{name: "subtree mount", mountRoot: "/container", controllers: "cpu", childQuota: "max 100000"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			files := map[string]string{"sys/fs/cgroup/job/cgroup.controllers": "cpu"}
+			if test.controllers != "" {
+				files["sys/fs/cgroup/cgroup.subtree_control"] = test.controllers
+			}
+			if test.childQuota != "" {
+				files["sys/fs/cgroup/job/cpu.max"] = test.childQuota
+			}
+			writeCgroupFixture(t, root,
+				"0::"+filepath.Join(test.mountRoot, "job")+"\n",
+				"29 23 0:26 "+test.mountRoot+" /sys/fs/cgroup rw - cgroup2 cgroup rw\n",
+				files,
+			)
+			cores, source, found, known := readLinuxCPUQuota(root, "/proc/self/cgroup", "/proc/self/mountinfo")
+			if !found || source != cgroupV2QuotaSource || cores != test.cores || known != test.known {
+				t.Fatalf("readLinuxCPUQuota() = (%v, %q, %t, %t)", cores, source, found, known)
+			}
+		})
+	}
+}
+
 func TestReadLinuxCPUQuotaFromCgroupV1(t *testing.T) {
 	root := t.TempDir()
 	writeCgroupFixture(t, root, "2:cpu,cpuacct:/workers/limited\n",
