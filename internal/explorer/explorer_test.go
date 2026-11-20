@@ -3,12 +3,52 @@ package explorer
 import (
 	"context"
 	"encoding/json"
+	"slices"
+	"testing"
+	"time"
+
 	"github.com/LucasLuchetta/Damocline/internal/config"
 	"github.com/LucasLuchetta/Damocline/internal/generatorhealth"
 	"github.com/LucasLuchetta/Damocline/internal/report"
-	"testing"
-	"time"
 )
+
+func TestExplorePersistsRecomputedTrialFindings(t *testing.T) {
+	v, err := config.Parse(config.Scenario{
+		Name: "local", BaseURL: "http://127.0.0.1:18080",
+		Users: 1, Duration: "10s", MaxRPS: 20, P95LimitMS: 1000,
+		Steps: []config.Step{{Name: "local", Path: "/"}},
+	}, config.Options{Authorized: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := WithRunner(context.Background(), v, Options{
+		MinUsers: 1, MaxUsers: 2, Repeats: 2, StageDuration: 10 * time.Second,
+	}, func(context.Context, config.Validated) report.Result {
+		return report.Result{
+			SchemaVersion: 16, Outcome: "PASS",
+			Metrics: report.MetricSet{RequestConstructionFailures: 1},
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var restored Result
+	if err := json.Unmarshal(data, &restored); err != nil {
+		t.Fatal(err)
+	}
+	if restored.Outcome != "INCONCLUSIVE" || len(restored.Probes) != 1 || len(restored.Probes[0].Runs) != 1 {
+		t.Fatalf("expected one inconclusive trial, got %+v", restored)
+	}
+	quality := restored.Probes[0].Runs[0].Quality
+	const finding = "One or more generated requests were rejected locally before delivery."
+	if quality == nil || quality.State != report.QualityInvalid || !slices.Contains(quality.Findings, finding) {
+		t.Fatalf("trial finding did not round-trip: %+v", quality)
+	}
+}
 
 func TestSchemaTwoPersistsProbeAndAbortReasons(t *testing.T) {
 	result := Result{SchemaVersion: 2, Outcome: "INCONCLUSIVE", Reason: "wall-time cap reached", Probes: []Probe{{Users: 7, Status: "INCONCLUSIVE", Reason: "arrivals were dropped"}}}

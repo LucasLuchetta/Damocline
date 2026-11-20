@@ -170,6 +170,7 @@ func WithRunner(ctx context.Context, base config.Validated, opt Options, runner 
 				v.Cookies = cookies[:users]
 			}
 			r := runner(ctx, v)
+			reason := deliveryIssue(&r)
 			p.Runs = append(p.Runs, r)
 			if r.Outcome == "ABORTED" {
 				p.Status = "ABORTED"
@@ -179,7 +180,7 @@ func WithRunner(ctx context.Context, base config.Validated, opt Options, runner 
 				}
 				break
 			}
-			if reason := deliveryIssue(r); reason != "" {
+			if reason != "" {
 				p.Status = "INCONCLUSIVE"
 				p.Reason = reason
 				break
@@ -299,19 +300,21 @@ func abortReason(err error) string {
 	return "Exploration was interrupted by its caller."
 }
 
-func deliveryIssue(run report.Result) string {
-	if run.Quality != nil && run.Quality.State == report.QualityInvalid {
+func deliveryIssue(run *report.Result) string {
+	reportedInvalid := run.Quality != nil && run.Quality.State == report.QualityInvalid
+	if run.SchemaVersion >= 16 && (!reportedInvalid || len(run.Quality.Findings) == 0) {
+		if assessment := report.AssessQuality(*run); assessment.State == report.QualityInvalid {
+			run.Quality = assessment
+			return "Current-schema report fails recomputed delivery or generator-accounting checks."
+		}
+	}
+	if reportedInvalid {
 		return "Generator or report accounting is invalid; this probe cannot be treated as an application failure or pass."
 	}
 	if run.ArrivalsDropped > 0 || run.ArrivalsDroppedLate > 0 || run.ArrivalsDroppedBusy > 0 ||
 		run.ArrivalsCancelledBeforeAdmission != nil && *run.ArrivalsCancelledBeforeAdmission > 0 ||
 		run.Metrics.Cancelled > 0 || run.Journeys.Cancelled > 0 {
 		return "Planned arrivals or configured journeys were dropped or cancelled; delivered workload is incomplete."
-	}
-	if run.SchemaVersion >= 16 {
-		if assessment := report.AssessQuality(run); assessment.State == report.QualityInvalid {
-			return "Current-schema report fails recomputed delivery or generator-accounting checks."
-		}
 	}
 	return ""
 }

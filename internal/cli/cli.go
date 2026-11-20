@@ -935,6 +935,13 @@ func explore(args []string, stdout, stderr io.Writer) int {
 		if p.Reason != "" {
 			fmt.Fprintf(stdout, "  %s\n", p.Reason)
 		}
+		for i, r := range p.Runs {
+			if r.Quality != nil && r.Quality.State == report.QualityInvalid {
+				for _, finding := range r.Quality.Findings {
+					fmt.Fprintf(stdout, "  Trial %d (%s): %s\n", i+1, r.Quality.State, finding)
+				}
+			}
+		}
 	}
 	fmt.Fprintf(stdout, "Outcome: %s\n", result.Outcome)
 	if result.Reason != "" {
