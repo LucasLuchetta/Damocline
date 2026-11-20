@@ -5,6 +5,22 @@
 - Persist DNS and TLS failure subtypes in run report schema v34 (`http_diagnostics.failure_subtypes`); readers require them to partition DNS/TLS totals exactly and reject them in older schemas. A plaintext server behind an `https://` URL is now counted as a TLS failure (ADR 0147).
 - Reconcile a mixed GET/POST/GET journey with think time, cancelled mid-journey, against a loopback server ledger with exact per-step, journey, iteration and think-time conservation.
 - Add exhaustive missing/null-field presence tests for exploration, arrival-exploration, campaign-profile and offline audit campaign readers.
+
+- Add G0 fault and stress fixtures: an isolated client connection-cap
+  fixture compared against an uncapped control on the same loopback server,
+  a repeated-run goroutine and retained-heap screen, report-writer
+  filesystem-failure and interrupted-replacement tests, and further server
+  ledger stage-by-termination combinations for external abort and forced
+  kill. These are test-only and do not change runtime behavior.
+
+- Add a bounded loopback fixture that compares engine scheduler lag,
+  first-byte timing and arrival ledgers with server-side monotonic
+  references, with and without in-process CPU pressure (ADR 0145).
+
+- Defer record signing, host attestation, validated calibration lifetime
+  and default gate enforcement past G0 (ADR 0148), and record the G0-11
+  safety ceiling recheck.
+
 - Require a recorded phase evidence state in closed-loop campaign reports
   with predeclared objectives.
 
