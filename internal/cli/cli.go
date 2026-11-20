@@ -112,7 +112,7 @@ func help(w io.Writer) {
 	fmt.Fprint(w, `Damocline — find the limit before it finds you.
 
 Usage:
-  damocline capacity --config scenario.json --authorized --output-dir DIR
+  damocline capacity --config scenario.json --authorized --output-dir DIR (--reference-report run.json | --response-bytes N --server-delay D) [--dry-run] [--resume]
   damocline import-har --file capture.har --origin https://app.example.com --out proposal.json
   damocline          # branded welcome screen with guided menu
   damocline /start   # create a new saved scenario (archives the previous one)

@@ -21,6 +21,7 @@ import (
 	"github.com/LucasLuchetta/Damocline/internal/engine"
 	"github.com/LucasLuchetta/Damocline/internal/explorer"
 	"github.com/LucasLuchetta/Damocline/internal/report"
+	"github.com/LucasLuchetta/Damocline/internal/selfcalibration"
 	"github.com/LucasLuchetta/Damocline/internal/statistics"
 )
 
@@ -129,6 +130,7 @@ type capacityManifest struct {
 	ExploreBudget time.Duration
 	LongRun       bool
 	Calibration   string
+	Mirror        capacityMirror
 }
 
 func capacityCmd(args []string, stdout, stderr io.Writer) int {
@@ -151,6 +153,13 @@ func capacityCmd(args []string, stdout, stderr io.Writer) int {
 	hook := fs.String("session-hook", "", "explicit executable returning a JSON array of cookies")
 	var hookArgs stringList
 	fs.Var(&hookArgs, "session-hook-arg", "literal hook argument; repeat as needed")
+	referenceReport := fs.String("reference-report", "", "recorded run report of the target used to size the self-calibration mirror")
+	responseBytes := fs.Int("response-bytes", 0, "declared self-calibration mirror response size when no reference report is given")
+	serverDelay := fs.Duration("server-delay", 0, "declared self-calibration mirror server delay when no reference report is given")
+	calLevel := fs.Duration("calibration-level-duration", selfcalibration.DefaultLevelDuration, "duration of each self-calibrated level")
+	extended := fs.Bool("extended-envelope", false, "calibrate with the opt-in extended envelope gate; requires --extended-load-authorized and --target-class")
+	extendedAck := fs.Bool("extended-load-authorized", false, "confirm the target owner authorized load above the standard ceilings")
+	targetClass := fs.String("target-class", "", "target class for the extended envelope: lab or staging")
 	if err := fs.Parse(args); err != nil || fs.NArg() != 0 {
 		return 2
 	}
@@ -162,6 +171,27 @@ func capacityCmd(args []string, stdout, stderr io.Writer) int {
 		(*existing != "" && !*dry) || *long != *staging ||
 		math.IsNaN(*intensity) || math.IsInf(*intensity, 0) || *intensity < 0 {
 		return fail(errors.New("require --config and, for execution, --authorized and --output-dir; --explore-file is for dry-run; long runs require both staging flags"))
+	}
+	mirror := capacityMirror{FromReport: *referenceReport, ResponseBytes: *responseBytes, ServerDelay: *serverDelay, LevelDuration: *calLevel, Extended: *extended}
+	if *referenceReport != "" && (*responseBytes != 0 || *serverDelay != 0) {
+		return fail(errors.New("use either --reference-report or --response-bytes/--server-delay to size the calibration mirror"))
+	}
+	if *extended && (!*extendedAck || (*targetClass != "lab" && *targetClass != "staging")) {
+		return fail(errors.New("--extended-envelope requires --extended-load-authorized and --target-class lab or staging"))
+	}
+	if !*extended && (*extendedAck || *targetClass != "") {
+		return fail(errors.New("extended-envelope options require --extended-envelope"))
+	}
+	if *extended && *maxUsers > 50 {
+		return fail(errors.New("explore and campaign stages run within the standard 50 VU ceiling; --extended-envelope only extends the calibration gate in this release"))
+	}
+	if *calibration != "" {
+		if loaded, err := loadAnyCalibration(*calibration); err != nil || loaded.scenario == nil {
+			return fail(errors.New("--calibration must be a workload self-calibration artifact from `damocline calibrate` covering the planned levels"))
+		}
+	}
+	if !*dry && *calibration == "" && !mirror.declared() {
+		return fail(errors.New("automatic self-calibration needs --reference-report (a recorded run of the target) or --response-bytes and --server-delay; or pass an existing --calibration"))
 	}
 	if *accessLog != "" {
 		if *intensity != 0 {
@@ -215,10 +245,37 @@ func capacityCmd(args []string, stdout, stderr io.Writer) int {
 	if float64(sampleFloor)*float64(max(1, stepCount)) > 60*float64(scenario.MaxRPS) {
 		return fail(errors.New("even the configured request ceiling cannot supply the minimum samples in a 60s window; use fewer steps or raise the request ceiling within supported limits"))
 	}
-	fmt.Fprintf(stdout, "Plan: network preflight (%s cap), calibration, explore (%s cap), campaign (%s cap), offline audit and executive report. Traffic-stage wall caps total %s.\n",
-		config.NetworkBaselineWallBudget, *exploreBudget, *budget, config.NetworkBaselineWallBudget+*exploreBudget+*budget)
+	ladder := explorer.PlannedLevels(opt)
+	calWall := time.Duration(0)
 	if *calibration == "" {
-		fmt.Fprintln(stdout, "Calibration is pending automatic integration; no calibration artifact supplied.")
+		ladderWall, err := capacityCalibrationWall(len(ladder), *calLevel)
+		if err != nil {
+			return fail(err)
+		}
+		campaignWall, _ := capacityCalibrationWall(1, *calLevel)
+		calWall = ladderWall + campaignWall
+	}
+	fmt.Fprintln(stdout, "Plan:")
+	fmt.Fprintf(stdout, "  1. Network baseline check (%s cap).\n", config.NetworkBaselineWallBudget)
+	if *calibration == "" {
+		source := "declared mirror sizes"
+		if *referenceReport != "" {
+			source = "mirror sizes from the recorded reference run"
+		}
+		envelope := "standard ceilings"
+		if *extended {
+			envelope = "extended-envelope gate (target class " + *targetClass + ")"
+		}
+		fmt.Fprintf(stdout, "  2. damocline calibrate for levels %v, then for the campaign level (%s, loopback mirror only, %s; up to %s).\n", ladder, source, envelope, calWall)
+	} else {
+		fmt.Fprintf(stdout, "  2. Existing calibration artifact %s (no new calibration).\n", *calibration)
+	}
+	fmt.Fprintf(stdout, "  3. Explore levels %v with --calibration and --require-calibration (%s cap).\n", ladder, *exploreBudget)
+	fmt.Fprintf(stdout, "  4. Campaign at the highest passing level with sample-sized observation (%s cap, including six network preflights and drains).\n", *budget)
+	fmt.Fprintln(stdout, "  5. Offline audit and executive report.")
+	fmt.Fprintf(stdout, "Total planned wall time at most %s.\n", config.NetworkBaselineWallBudget+calWall+*exploreBudget+*budget)
+	if err := capacityRateWarning(stdout, *referenceReport, *maxUsers, scenario.MaxRPS); err != nil {
+		return fail(err)
 	}
 	if *dry && *existing == "" {
 		if *hook != "" {
@@ -233,7 +290,7 @@ func capacityCmd(args []string, stdout, stderr io.Writer) int {
 	if !*dry {
 		if err := prepareCapacityDirectory(*dir, *resume, capacityManifest{
 			ScenarioSHA: digest, MaxUsers: *maxUsers, Budget: *budget,
-			ExploreBudget: *exploreBudget, LongRun: *long, Calibration: *calibration,
+			ExploreBudget: *exploreBudget, LongRun: *long, Calibration: *calibration, Mirror: mirror,
 		}); err != nil {
 			return fail(err)
 		}
@@ -283,9 +340,17 @@ func capacityCmd(args []string, stdout, stderr io.Writer) int {
 			if err := capacityPreflight(stdout, v, *calibration); err != nil {
 				return fail(err)
 			}
+			exploreCalibration := *calibration
+			if exploreCalibration == "" {
+				exploreCalibration = filepath.Join(*dir, "selfcal-explore.json")
+				if code := ensureCapacityCalibration(exploreCalibration, *file, v, ladder, mirror, stdout, stderr); code != 0 {
+					return code
+				}
+			}
 			code := explore([]string{
 				"--config", *file, "--min-users", strconv.Itoa(opt.MinUsers), "--max-users", strconv.Itoa(*maxUsers),
 				"--budget", exploreBudget.String(), "--authorized", "--out", explorePath,
+				"--calibration", exploreCalibration, "--require-calibration",
 			}, stdout, stderr)
 			if code == 2 {
 				return code
@@ -300,6 +365,7 @@ func capacityCmd(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return fail(err)
 	}
+	capacityObservedRateWarning(stdout, result, users, scenario.MaxRPS)
 	campaignOptions.Observation = max(10*time.Second, 3*window)
 	campaignOptions.Recovery = max(15*time.Second, window)
 	baselineAllowance := 6 * config.NetworkBaselineWallBudget
@@ -340,9 +406,14 @@ func capacityCmd(args []string, stdout, stderr io.Writer) int {
 			"--warmup", campaignOptions.Warmup.String(), "--observation", campaignOptions.Observation.String(),
 			"--recovery", campaignOptions.Recovery.String(), "--budget", budget.String(),
 		}
-		if *calibration != "" {
-			campaignArgs = append(campaignArgs, "--calibration", *calibration)
+		campaignCalibration := *calibration
+		if campaignCalibration == "" {
+			campaignCalibration = filepath.Join(*dir, "selfcal-campaign.json")
+			if code := ensureCapacityCalibration(campaignCalibration, derived, campaignScenario, []int{users}, mirror, stdout, stderr); code != 0 {
+				return code
+			}
 		}
+		campaignArgs = append(campaignArgs, "--calibration", campaignCalibration, "--require-calibration")
 		if *long {
 			campaignArgs = append(campaignArgs, "--allow-long-run", "--staging-confirmed")
 		}
@@ -439,9 +510,8 @@ func capacityPreflight(stdout io.Writer, v config.Validated, calibrationPath str
 	if issue := report.NetworkBaselineIssue(result); issue != "" {
 		return errors.New(issue)
 	}
-	// The scenario-specific automatic calibrator can replace this adapter.
 	if calibrationPath != "" {
-		_, err := loadCalibration(calibrationPath)
+		_, err := loadAnyCalibration(calibrationPath)
 		return err
 	}
 	return nil

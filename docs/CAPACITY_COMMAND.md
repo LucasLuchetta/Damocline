@@ -2,17 +2,38 @@
 
 ```powershell
 damocline capacity --config scenario.json --dry-run
-damocline capacity --config scenario.json --authorized --output-dir .damocline/capacity-run
+damocline capacity --config scenario.json --authorized --output-dir .damocline/capacity-run --reference-report .damocline/reference-run.json
 damocline capacity --config scenario.json --dry-run --explore-file .damocline/capacity-run/explore.json
 ```
 
 Use a local private scenario and artifact directory. The command uses a
 read-only closed-loop workload, an explicit authorized network baseline,
-optional existing `--calibration` evidence, exploration, a repeated campaign
-at the highest passing explored level, and offline audit. Network placement
-guidance reflects the measured baseline. Automatic scenario calibration is
-pending. A forecast requires a matching exploration artifact. Without that
-artifact, dry-run shows the formula and wall-time limits and sends no traffic.
+workload self-calibration (`damocline calibrate`, ADR 0154) of every planned
+exploration level and later of the chosen campaign level, exploration with
+`--calibration --require-calibration`, a repeated campaign at the highest
+passing explored level with the same gate, and offline audit. Network
+placement guidance reflects the measured baseline.
+
+Self-calibration replays the scenario shape against a loopback mirror only;
+it never contacts the target. Size the mirror with `--reference-report` (a
+recorded run of the target supplies per-step sizes and median latency) or
+with `--response-bytes` and `--server-delay`. An existing passing
+`--calibration` self-calibration artifact may replace the automatic step.
+A failed calibration stops the protocol before target workload traffic.
+
+Dry-run prints every stage, its wall cap, the sizing formula and the total
+planned wall time. It warns when the scenario `max_rps` would cap
+throughput below the requested level, estimated from the per-VU request rate
+of the reference report, and proposes a lower `--max-users`. After
+exploration it warns again when the campaign level ran at 90% or more of
+`max_rps`. Calibration sizing that exceeds the self-calibration level or
+wall ceilings is refused with a proposed adjustment. A numeric observation
+forecast requires a matching exploration artifact.
+
+Standard ceilings apply. `--extended-envelope` (with
+`--extended-load-authorized` and `--target-class lab|staging`) passes the
+ADR 0155 extended gate to calibration only; exploration and campaign stages
+still run within the standard 50 VU ceiling in this release.
 
 The protocol uses the weakest measured delivery rate across all relevant
 series and repeats. For a 1% error budget, the zero-failure conditional
