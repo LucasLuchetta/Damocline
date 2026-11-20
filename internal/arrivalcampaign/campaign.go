@@ -18,6 +18,7 @@ import (
 )
 
 const CurrentSchemaVersion = 9
+const EnvelopeSchemaVersion = 10
 
 // FirstRobustDriftBaselineSchema is the first open-arrival campaign schema
 // whose drift screen excludes a light leading window as its reference.
@@ -99,6 +100,7 @@ type Trial struct {
 type ProgressFunc func(Result) error
 
 type Result struct {
+	LoadEnvelope         *report.Envelope            `json:"load_envelope,omitempty"`
 	SchemaVersion        int                         `json:"arrival_campaign_schema_version"`
 	Objectives           *campaign.ObjectiveContract `json:"objectives,omitempty"`
 	StabilityPolicy      *campaign.StabilityPolicy   `json:"stability_policy,omitempty"`
@@ -181,8 +183,14 @@ func Validate(base config.Validated, options Options) error {
 	if scenario.Mode != "arrival" {
 		return fmt.Errorf("arrival campaign requires mode=arrival; closed-loop workloads use campaign")
 	}
-	if scenario.ArrivalRate < 1 || scenario.ArrivalRate > 100 || scenario.Users < 1 || scenario.Users > 50 {
-		return fmt.Errorf("arrival campaign base rate must be 1-100 starts/s and worker limit 1-50")
+	limits := config.StandardEnvelopeLimits
+	if base.Envelope.Mode == config.EnvelopeExtended {
+		limits = config.ExtendedEnvelopeHardLimits
+		phaseLimit = min(phaseLimit, limits.MaxDuration)
+		soakLimit = min(soakLimit, limits.MaxDuration)
+	}
+	if scenario.ArrivalRate < 1 || scenario.ArrivalRate > limits.MaxArrivalRate || scenario.Users < 1 || scenario.Users > limits.MaxUsers {
+		return fmt.Errorf("arrival campaign base rate must be 1-%d starts/s and worker limit 1-%d", limits.MaxArrivalRate, limits.MaxUsers)
 	}
 	if options.PeakRate > 0 {
 		target, err := RequiredStartsPerSecond(options.PeakRate, options.GrowthPercent, options.ReservePercent)
@@ -202,15 +210,18 @@ func Validate(base config.Validated, options Options) error {
 	if options.LongRun {
 		stabilizationLimit = LongRunPhaseLimit
 	}
+	if base.Envelope.Mode == config.EnvelopeExtended {
+		stabilizationLimit = min(stabilizationLimit, limits.MaxDuration)
+	}
 	if options.Stabilization < 0 || options.Stabilization > stabilizationLimit || options.Stabilization > 0 && options.Stabilization < 10*time.Second {
 		return fmt.Errorf("stabilization must be between 10s and %s when enabled", stabilizationLimit)
 	}
 	if options.Observation < 10*time.Second || options.Observation > phaseLimit {
 		return fmt.Errorf("observation must be 10s-%s", phaseLimit)
 	}
-	if (options.SpikeRate == 0) != (options.SpikeDuration == 0) || options.SpikeRate < 0 || options.SpikeRate > 100 ||
+	if (options.SpikeRate == 0) != (options.SpikeDuration == 0) || options.SpikeRate < 0 || options.SpikeRate > limits.MaxArrivalRate ||
 		(options.SpikeDuration > 0 && (options.SpikeDuration < 10*time.Second || options.SpikeDuration > 3*time.Minute)) {
-		return fmt.Errorf("spike starts/s and spike-duration must be set together; rate is 1-100 and duration is 10s-3m")
+		return fmt.Errorf("spike starts/s and spike-duration must be set together; rate is 1-%d and duration is 10s-3m", limits.MaxArrivalRate)
 	}
 	if options.SpikeRate > 0 && options.SpikeRate <= scenario.ArrivalRate {
 		return fmt.Errorf("spike journey-start rate must exceed the base rate")
@@ -335,6 +346,13 @@ func RunWithProgress(ctx context.Context, base config.Validated, options Options
 // WithRunnerProgress is WithRunner with an optional synchronous checkpoint
 // callback. A callback error stops execution before another phase starts.
 func WithRunnerProgress(parent context.Context, base config.Validated, options Options, runner Runner, progress ProgressFunc) (Result, error) {
+	extended := base.Envelope.Mode == config.EnvelopeExtended
+	if extended && (base.Envelope.CalibrationCoverage != "READY" || !base.GeneratorGuardrails.Enabled()) {
+		return Result{}, fmt.Errorf("extended arrival campaign requires exact calibration and generator guardrails")
+	}
+	if extended {
+		options.Guardrails = base.GeneratorGuardrails
+	}
 	if err := Validate(base, options); err != nil {
 		return Result{}, err
 	}
@@ -376,6 +394,11 @@ func WithRunnerProgress(parent context.Context, base config.Validated, options O
 	}
 	if options.LongRun {
 		result.Notes = append(result.Notes, "Long-run mode was explicitly enabled for a user-declared staging environment with a bounded wall-time budget; Damocline does not verify the environment designation.")
+	}
+	if extended {
+		result.SchemaVersion = EnvelopeSchemaVersion
+		result.LoadEnvelope = report.ArrivalAggregateEnvelope(base.Envelope.TargetClass, base.Scenario.Users,
+			max(base.Scenario.ArrivalRate, options.SpikeRate), base.Scenario.MaxRPS)
 	}
 	checkpoint := func(trial Trial) error {
 		if progress == nil {
