@@ -40,7 +40,7 @@ func writeSelfCalibrationScenario(t *testing.T, dir, baseURL string, users int) 
 	}
 	scenario := map[string]any{"name": "Synthetic loopback workload", "base_url": baseURL, "users": users, "duration": "2s",
 		"request_timeout": "2s", "max_rps": 100, "think_time": "50ms", "p95_limit_ms": 500, "max_error_rate": 0.05,
-		"network_baseline_skip_reason": "loopback_test_fixture", "steps": steps}
+		"network_baseline_skip_reason": "loopback_test_fixture", "workload_revision": "w1", "application_revision": "a1", "environment": "loopback", "steps": steps}
 	path := filepath.Join(dir, "scenario.json")
 	b, _ := json.Marshal(scenario)
 	if err := os.WriteFile(path, b, 0o600); err != nil {
@@ -194,7 +194,11 @@ func TestAuditConsumesSelfCalibratedCampaign(t *testing.T) {
 	if err := json.Unmarshal(raw, &audit); err != nil {
 		t.Fatal(err)
 	}
-	if audit.Confidence.Measurement != report.QualityValid || audit.State == "INSUFFICIENT_EVIDENCE" {
+	// Every phase recomputes to VALID_WITHIN_ENVELOPE from the embedded
+	// artifact, so the audit's measurement dimension is the controlled
+	// envelope instead of LIMITED. The demand verdict still depends on its
+	// separate statistical gates, which generator calibration does not touch.
+	if audit.Confidence.Measurement != "CONTROLLED_ENVELOPE_ONLY" || strings.Contains(stdout.String(), "measurement LIMITED") {
 		t.Fatalf("audit did not consume the self-calibration: state=%s measurement=%s\n%s", audit.State, audit.Confidence.Measurement, stdout.String())
 	}
 }

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add workload-specific generator self-calibration (ADR 0154, run report schema v38). `damocline calibrate --config scenario.json --users 2,4,8 [--from-report run.json | --response-bytes N --server-delay D] --out selfcal.json` replays the exact scenario shape against a bounded `127.0.0.1` mirror with an independent server ledger. It never contacts the target or sends real secrets. It checks ledger reconciliation, arrival conservation and scheduler lag, closed-loop delivery, generator overhead, think-time accuracy and CPU/RSS guardrails. `run`, `explore` and `campaign` accept the artifact through `--calibration`/`--require-calibration`. A matched, clean run can then reach `VALID_WITHIN_ENVELOPE`, and `audit` consumes this through recomputed quality. This is generator-side evidence only: it does not establish target identity, application behavior or representativeness.
+
 - Reject campaign budgets without the bounded drain allowance before any
   traffic, matching the offline audit rule, and state the required budget.
 
