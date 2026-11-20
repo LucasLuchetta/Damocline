@@ -11,6 +11,7 @@ import (
 
 	"github.com/LucasLuchetta/Damocline/internal/arrivalexplorer"
 	"github.com/LucasLuchetta/Damocline/internal/campaign"
+	"github.com/LucasLuchetta/Damocline/internal/config"
 	"github.com/LucasLuchetta/Damocline/internal/report"
 )
 
@@ -75,14 +76,23 @@ func EvaluateJourneyStarts(ex arrivalexplorer.Result, g JourneyStartGoal) (Journ
 		return JourneyStartAssessment{}, err
 	}
 	stage, err := time.ParseDuration(ex.StageDuration)
-	if (ex.SchemaVersion != 1 && ex.SchemaVersion != 2) || ex.Scenario == "" || ex.WorkerLimit < 1 || ex.WorkerLimit > 50 ||
-		ex.MinJourneysPerSecond < 1 || ex.MaxJourneysPerSecond < ex.MinJourneysPerSecond || ex.MaxJourneysPerSecond > 100 ||
+	limits := config.StandardEnvelopeLimits
+	if ex.SchemaVersion == arrivalexplorer.EnvelopeSchemaVersion {
+		if !report.ValidArrivalAggregateEnvelope(ex.LoadEnvelope, ex.WorkerLimit, ex.MaxJourneysPerSecond, ex.RequestRateCeiling) {
+			return JourneyStartAssessment{}, errors.New("invalid extended arrival exploration envelope")
+		}
+		limits = config.ExtendedEnvelopeHardLimits
+	} else if ex.LoadEnvelope != nil || ex.RequestRateCeiling != 0 {
+		return JourneyStartAssessment{}, errors.New("extended arrival controls require a supported exploration schema")
+	}
+	if ex.SchemaVersion < 1 || ex.SchemaVersion > arrivalexplorer.EnvelopeSchemaVersion || ex.Scenario == "" || ex.WorkerLimit < 1 || ex.WorkerLimit > limits.MaxUsers ||
+		ex.MinJourneysPerSecond < 1 || ex.MaxJourneysPerSecond < ex.MinJourneysPerSecond || ex.MaxJourneysPerSecond > limits.MaxArrivalRate ||
 		ex.Repeats < 2 || ex.Repeats > 4 || len(ex.Probes) == 0 || err != nil || stage < 10*time.Second || stage > 3*time.Minute {
 		return JourneyStartAssessment{}, errors.New("invalid or empty arrival exploration: expected bounded repeated schema-v1 probes")
 	}
-	if ex.SchemaVersion == 2 {
+	if ex.SchemaVersion >= 2 {
 		if ex.RequestedMinJourneysPerSecond < 1 || ex.RequestedMaxJourneysPerSecond < ex.RequestedMinJourneysPerSecond ||
-			ex.RequestedMaxJourneysPerSecond > 100 || len(ex.CalibratedProbeRates) < 1 ||
+			ex.RequestedMaxJourneysPerSecond > limits.MaxArrivalRate || len(ex.CalibratedProbeRates) < 1 ||
 			ex.MinJourneysPerSecond < ex.RequestedMinJourneysPerSecond || ex.MaxJourneysPerSecond > ex.RequestedMaxJourneysPerSecond ||
 			ex.CalibratedProbeRates[0] != ex.MinJourneysPerSecond || ex.CalibratedProbeRates[len(ex.CalibratedProbeRates)-1] != ex.MaxJourneysPerSecond {
 			return JourneyStartAssessment{}, errors.New("invalid calibrated arrival exploration rate envelope")
@@ -121,8 +131,15 @@ func EvaluateJourneyStarts(ex arrivalexplorer.Result, g JourneyStartGoal) (Journ
 		if p.JourneysPerSecond < ex.MinJourneysPerSecond || p.JourneysPerSecond > ex.MaxJourneysPerSecond || seenRates[p.JourneysPerSecond] {
 			return JourneyStartAssessment{}, errors.New("arrival report contains duplicate or out-of-bounds probe rates")
 		}
-		if ex.SchemaVersion == 2 && !containsCalibratedRate(ex.CalibratedProbeRates, p.JourneysPerSecond) {
+		if ex.SchemaVersion >= 2 && !containsCalibratedRate(ex.CalibratedProbeRates, p.JourneysPerSecond) {
 			return JourneyStartAssessment{}, errors.New("arrival report contains a probe outside its calibrated rate envelope")
+		}
+		for _, run := range p.Runs {
+			if ex.LoadEnvelope != nil && (!report.RunMatchesAggregateEnvelope(ex.LoadEnvelope, run) ||
+				run.Config.MaxRPS != ex.RequestRateCeiling) ||
+				ex.LoadEnvelope == nil && run.Envelope != nil && run.Envelope.Mode == report.EnvelopeModeExtended {
+				return JourneyStartAssessment{}, errors.New("arrival probe envelope disagrees with its exploration")
+			}
 		}
 		seenRates[p.JourneysPerSecond] = true
 		if ex.TargetJourneysPerSecond > 0 && p.JourneysPerSecond == ex.TargetJourneysPerSecond {
