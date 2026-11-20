@@ -146,8 +146,13 @@ func ensureCapacityCalibration(path, file string, v config.Validated, levels []i
 		}
 	}
 	code := calibrateCmd(mirror.args(file, path, levels), stdout, stderr)
-	if code != 0 {
+	switch code {
+	case 0:
+	case 1:
 		fmt.Fprintf(stderr, "capacity: self-calibration did not pass for levels %v; no target traffic was sent for these levels. Use a less loaded or larger generator host, or lower --max-users.\n", levels)
+		return 2
+	default:
+		fmt.Fprintf(stderr, "capacity: self-calibration could not start for levels %v (see the error above); no target traffic was sent. Fix the scenario or calibration options and rerun.\n", levels)
 		return 2
 	}
 	return 0

@@ -165,6 +165,7 @@ func capacityCmd(args []string, stdout, stderr io.Writer) int {
 	staging := fs.Bool("staging-confirmed", false, "confirm this is staging")
 	dry := fs.Bool("dry-run", false, "plan without traffic or hook execution")
 	authorized := fs.Bool("authorized", false, "confirm authorization to benchmark")
+	insecureHTTP := fs.Bool("allow-insecure-http", false, "allow plaintext HTTP outside loopback for every protocol stage")
 	resume := fs.Bool("resume", false, "reuse completed stages from the private directory")
 	intensity := fs.Float64("actions-per-user-minute", 0, "declared actions per person per minute")
 	accessLog := fs.String("access-log", "", "local pseudonymous JSON-lines action log")
@@ -325,7 +326,7 @@ func capacityCmd(args []string, stdout, stderr io.Writer) int {
 		if *hook != "" {
 			scenario.PerVUCookieEnvPrefix = ""
 		}
-		if _, err := config.Parse(scenario, config.Options{Authorized: true, NetworkBaseline: true, ExtendedEnvelope: extendedRequest}); err != nil {
+		if _, err := config.Parse(scenario, config.Options{Authorized: true, NetworkBaseline: true, ExtendedEnvelope: extendedRequest, AllowInsecureHTTP: *insecureHTTP}); err != nil {
 			return fail(err)
 		}
 		fmt.Fprintf(stdout, "Zero-error sample floor: %d per series. Window = ceil(samples / slowest measured series rate); observation = three full windows. Supply --explore-file for the numeric estimate.\n", sampleFloor)
@@ -365,7 +366,7 @@ func capacityCmd(args []string, stdout, stderr io.Writer) int {
 	}
 	exploreScenario := scenario
 	exploreScenario.Users = opt.MinUsers
-	v, err := config.Parse(exploreScenario, config.Options{Authorized: true, NetworkBaseline: true, ExtendedEnvelope: extendedRequest})
+	v, err := config.Parse(exploreScenario, config.Options{Authorized: true, NetworkBaseline: true, ExtendedEnvelope: extendedRequest, AllowInsecureHTTP: *insecureHTTP})
 	if err != nil {
 		return fail(err)
 	}
@@ -403,6 +404,7 @@ func capacityCmd(args []string, stdout, stderr io.Writer) int {
 				"--budget", exploreBudget.String(), "--authorized", "--out", explorePath,
 				"--calibration", exploreCalibration, "--require-calibration",
 			}
+			exploreArgs = append(exploreArgs, capacityTransportArgs(*insecureHTTP)...)
 			code := explore(append(exploreArgs, envelopeArgs...), stdout, stderr)
 			if code == 2 {
 				return code
@@ -441,7 +443,7 @@ func capacityCmd(args []string, stdout, stderr io.Writer) int {
 	if v.Duration < window {
 		scenario.Duration = window.String()
 	}
-	campaignScenario, err := config.Parse(scenario, config.Options{Authorized: true, NetworkBaseline: true, ExtendedEnvelope: extendedRequest})
+	campaignScenario, err := config.Parse(scenario, config.Options{Authorized: true, NetworkBaseline: true, ExtendedEnvelope: extendedRequest, AllowInsecureHTTP: *insecureHTTP})
 	if err != nil {
 		return fail(err)
 	}
@@ -469,6 +471,7 @@ func capacityCmd(args []string, stdout, stderr io.Writer) int {
 			}
 		}
 		campaignArgs = append(campaignArgs, "--calibration", campaignCalibration, "--require-calibration")
+		campaignArgs = append(campaignArgs, capacityTransportArgs(*insecureHTTP)...)
 		campaignArgs = append(campaignArgs, envelopeArgs...)
 		if *long {
 			campaignArgs = append(campaignArgs, "--allow-long-run", "--staging-confirmed")
@@ -622,6 +625,15 @@ func prepareCapacityDirectory(dir string, resume bool, manifest capacityManifest
 	saved.LongRun = manifest.LongRun
 	if saved != manifest {
 		return errors.New("resume settings or scenario contents differ from the saved protocol")
+	}
+	return nil
+}
+
+// capacityTransportArgs forwards the explicit plaintext HTTP opt-in to every
+// traffic stage so the protocol never silently differs from its plan.
+func capacityTransportArgs(allowInsecureHTTP bool) []string {
+	if allowInsecureHTTP {
+		return []string{"--allow-insecure-http"}
 	}
 	return nil
 }

@@ -5,6 +5,13 @@
 - Forward the extended envelope through closed-loop capacity and reuse one
   bounded calibration across ladder, refinement and confirmation (ADR 0167).
 
+- Clamp the self-calibration mirror window to the level duration, and
+  report calibration setup errors separately from failed calibration in
+  `damocline capacity`.
+
+- Add `--allow-insecure-http` to `damocline capacity` and forward the
+  explicit plaintext opt-in to every traffic stage.
+
 - Extend the opt-in extended load envelope to closed-loop `explore` and `campaign` (exploration schema v3, closed-loop campaign schema v18, ADR 0157). Both commands take the same `--extended-envelope --extended-load-authorized --target-class lab|staging --calibration --require-calibration` contract as `run`, with the 500 VU hard maximum. Before traffic, every planned level must be covered `READY`: the explore ladder including an exact goal stage, or the campaign base and spike levels. Explore bracket refinement probes only calibrated levels; if none is left inside a failing bracket, it stops `INCONCLUSIVE` with an explicit reason. Generator guardrails are always enforced, and a guardrail stop is a non-passing `GENERATOR_LIMITED` result, never an application limit. Extended artifacts record `load_envelope`. `goal` and `audit` recompute it offline and state when levels above the standard 50 VU ceiling were tested. Standard explorations and campaigns, their ceilings and their schemas (v2, v17) are unchanged. Arrival explore and arrival campaigns remain at the standard ceilings.
 
 - Report actionable decision blockers together in campaign audit output (ADR 0164). Required phases with limited quality now also name missing, failed, stale, mismatched or uncovered generator calibration and invalid or GENERATOR_LIMITED extended-envelope states with their affected levels, and point to `damocline calibrate` for those levels.
