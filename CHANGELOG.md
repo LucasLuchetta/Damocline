@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Add G0 fault and stress fixtures: an isolated client connection-cap
+  fixture compared against an uncapped control on the same loopback server,
+  a repeated-run goroutine and retained-heap screen, report-writer
+  filesystem-failure and interrupted-replacement tests, and further server
+  ledger stage-by-termination combinations for external abort and forced
+  kill. These are test-only and do not change runtime behavior.
+
 - Add a bounded loopback fixture that compares engine scheduler lag,
   first-byte timing and arrival ledgers with server-side monotonic
   references, with and without in-process CPU pressure (ADR 0145).
