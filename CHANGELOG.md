@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Preserve generator guardrail abort reasons in campaign summaries even
+  when the interrupted phase also has invalid delivery evidence.
+
 - Forward the extended envelope through closed-loop capacity and reuse one
   bounded calibration across ladder, refinement and confirmation (ADR 0167).
 
