@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Report actionable decision blockers together in campaign audit output (ADR 0164).
+- Report actionable decision blockers together in campaign audit output (ADR 0164). Required phases with limited quality now also name missing, failed, stale, mismatched or uncovered generator calibration and invalid or GENERATOR_LIMITED extended-envelope states with their affected levels, and point to `damocline calibrate` for those levels.
 
 - Add a bounded closed-loop capacity protocol with sample-driven windows,
   local HAR and session onboarding, and an optional usage hypothesis
