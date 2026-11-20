@@ -35,7 +35,13 @@ import (
 // runtime CPU-class estimates as unknown rather than measured idle CPU.
 // Version 34 requires DNS and TLS failure subtype counters that reconcile
 // exactly with the DNS and TLS failure totals in every HTTP ledger.
-const CurrentSchemaVersion = 34
+// Version 35 may record an optional journey_p95_limit_ms that replaces
+// p95_limit_ms for completed-journey latency objectives only (ADR 0150).
+const CurrentSchemaVersion = 35
+
+// JourneyP95LimitSchemaVersion is the first run schema that may carry
+// RunConfig.JourneyP95LimitMS.
+const JourneyP95LimitSchemaVersion = 35
 
 // GeneratorIdentity records path-free runtime and executable provenance.
 // It identifies the generator process, not the physical host or target.
@@ -495,6 +501,7 @@ type RunConfig struct {
 	MaxConnectionsPerHost int             `json:"max_connections_per_host,omitempty"`
 	MaxRPS                int             `json:"max_rps"`
 	P95LimitMS            float64         `json:"p95_limit_ms"`
+	JourneyP95LimitMS     float64         `json:"journey_p95_limit_ms,omitempty"`
 	MaxErrorRate          float64         `json:"max_error_rate"`
 	Mode                  string          `json:"mode"`
 	ArrivalRate           int             `json:"arrival_rate,omitempty"`
@@ -503,6 +510,48 @@ type RunConfig struct {
 	Profiles              []ProfileConfig `json:"profiles,omitempty"`
 	WindowDuration        string          `json:"window_duration,omitempty"`
 }
+
+// JourneyLatencyLimitMS returns the p95 limit applied to completed-journey
+// latency. An absent journey_p95_limit_ms keeps the historical behavior of
+// comparing completed journeys with p95_limit_ms.
+func (c RunConfig) JourneyLatencyLimitMS() float64 {
+	if c.JourneyP95LimitMS > 0 {
+		return c.JourneyP95LimitMS
+	}
+	return c.P95LimitMS
+}
+
+// ConfiguresThinkTime reports whether the recorded workload declares any
+// nonzero pause between steps, globally or for a workflow profile.
+func (c RunConfig) ConfiguresThinkTime() bool {
+	positive := func(value string) bool {
+		d, err := time.ParseDuration(value)
+		return err == nil && d > 0
+	}
+	if positive(c.ThinkTime) || c.ThinkTimeRange != nil && positive(c.ThinkTimeRange.Max) {
+		return true
+	}
+	for _, sample := range c.ThinkTimeSamples {
+		if positive(sample) {
+			return true
+		}
+	}
+	for _, profile := range c.Profiles {
+		if positive(profile.ThinkTime) || profile.ThinkTimeRange != nil && positive(profile.ThinkTimeRange.Max) {
+			return true
+		}
+		for _, sample := range profile.ThinkTimeSamples {
+			if positive(sample) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// JourneyLimitIncludesThinkTimeWarning is emitted when completed journeys
+// with configured think time are judged against the request p95 limit.
+const JourneyLimitIncludesThinkTimeWarning = "Completed-journey latency includes configured think time but is judged against the HTTP request p95_limit_ms; set journey_p95_limit_ms to declare a separate journey objective."
 
 // ProfileConfig records the intended workflow mix used for a run.
 type ProfileConfig struct {

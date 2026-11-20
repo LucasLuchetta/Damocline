@@ -34,7 +34,8 @@ Scenario fields:
 | `max_rps` | Hard global HTTP request-start rate ceiling, maximum 100. |
 | `duration` | Run duration, maximum 3 minutes. |
 | `min_samples_per_step` | Minimum completed responses required per step for a passing result. |
-| `p95_limit_ms` | Latency p95 ceiling applied to aggregate and individual steps. |
+| `p95_limit_ms` | Latency p95 ceiling applied to aggregate and individual steps. Without `journey_p95_limit_ms`, it also applies to completed journeys. |
+| `journey_p95_limit_ms` | Optional completed-journey p95 ceiling in (0,120000] ms (schema v35). When set, it replaces `p95_limit_ms` for aggregate, per-window and per-profile completed-journey latency checks; journey error-rate checks and all HTTP request and step checks are unchanged. Completed journeys include configured think time, so set this for human-like workloads. |
 | `max_error_rate` | Maximum completed-request error fraction. |
 | `think_time` | Delay between steps in a VU journey. |
 | `think_time_range` | Optional `{ "min": "10ms", "max": "40ms" }` uniform between-step pause; maximum 30s. Use instead of `think_time` at the same level. |

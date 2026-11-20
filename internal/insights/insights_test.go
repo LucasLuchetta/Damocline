@@ -799,6 +799,10 @@ func TestSupportedReportSchemaGoldensRoundTrip(t *testing.T) {
 				if got.Metrics.HTTP.FailureSubtypes == nil || got.Steps[0].Metrics.HTTP.FailureSubtypes == nil || *got.Metrics.HTTP.FailureSubtypes != (report.FailureSubtypes{}) {
 					t.Fatal("schema-v34 explicit zero failure subtypes were not preserved")
 				}
+			case 35:
+				if got.Config.JourneyP95LimitMS != 8000 || got.Config.JourneyLatencyLimitMS() != 8000 {
+					t.Fatal("schema-v35 journey p95 limit was not preserved")
+				}
 			}
 		})
 	}

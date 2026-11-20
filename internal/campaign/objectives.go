@@ -29,7 +29,7 @@ type ObjectiveContract struct {
 // before execution. Automatic window sizing is resolved per phase, so its
 // recorded duration must still be valid and bounded.
 func (o ObjectiveContract) MatchesRun(run report.Result) bool {
-	if run.SchemaVersion < 22 || run.Config.P95LimitMS != o.JourneyP95LimitMS || run.Config.MaxErrorRate != o.MaxJourneyErrorRate ||
+	if run.SchemaVersion < 22 || run.Config.JourneyLatencyLimitMS() != o.JourneyP95LimitMS || run.Config.MaxErrorRate != o.MaxJourneyErrorRate ||
 		run.Config.MinSamplesPerStep != o.MinSamplesPerStep {
 		return false
 	}
@@ -63,7 +63,7 @@ func NewObjectiveContract(base config.Validated, stability StabilityPolicy) Obje
 	}
 	return ObjectiveContract{
 		Version: 1, JourneyScope: "AGGREGATE_AND_EACH_WORKFLOW",
-		JourneyP95LimitMS: base.Scenario.P95LimitMS, MaxJourneyErrorRate: base.Scenario.MaxErrorRate,
+		JourneyP95LimitMS: scenarioJourneyLimitMS(base), MaxJourneyErrorRate: base.Scenario.MaxErrorRate,
 		MinSamplesPerStep: base.Scenario.MinSamplesPerStep, MinCompletedWorkRatio: 1,
 		MaxDroppedArrivals: 0, MinimumObservationWindows: stability.MinimumWindows,
 		MinimumSamplesPerWindow: stability.MinimumSamplesPerWindow, WindowDuration: windowDuration,
@@ -97,4 +97,13 @@ func (o ObjectiveContract) Validate() error {
 		}
 	}
 	return nil
+}
+
+// scenarioJourneyLimitMS mirrors report.RunConfig.JourneyLatencyLimitMS for
+// a validated scenario before any phase report exists.
+func scenarioJourneyLimitMS(base config.Validated) float64 {
+	if base.Scenario.JourneyP95LimitMS > 0 {
+		return base.Scenario.JourneyP95LimitMS
+	}
+	return base.Scenario.P95LimitMS
 }

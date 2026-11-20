@@ -335,7 +335,7 @@ func AuditCampaign(e campaign.Result) CampaignAudit {
 			if d, err := time.ParseDuration(phase.Run.Config.Duration); err == nil {
 				duration += d
 			}
-			for _, breach := range workflowBreaches(trial.Number, phase.Name, phase.Run.Config.Users, phase.Run.Profiles, phase.Run.Journeys, phase.Run.Config.P95LimitMS, phase.Run.Config.MaxErrorRate) {
+			for _, breach := range workflowBreaches(trial.Number, phase.Name, phase.Run.Config.Users, phase.Run.Profiles, phase.Run.Journeys, phase.Run.Config.JourneyLatencyLimitMS(), phase.Run.Config.MaxErrorRate) {
 				a.WorkflowBreaches = append(a.WorkflowBreaches, breach)
 				profiles[breach.Workflow] = true
 			}

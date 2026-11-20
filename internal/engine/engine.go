@@ -271,7 +271,7 @@ func RunConfigFor(v config.Validated) report.RunConfig {
 		Duration: v.Scenario.Duration, RampUp: v.Scenario.RampUp, ThinkTime: v.Scenario.ThinkTime,
 		WorkloadSeed: v.Scenario.WorkloadSeed, RequestTimeout: v.Timeout.String(),
 		ConnectionPolicy: v.Scenario.ConnectionPolicy, MaxConnectionsPerHost: v.Scenario.MaxConnectionsPerHost,
-		MaxRPS: v.Scenario.MaxRPS, P95LimitMS: v.Scenario.P95LimitMS, MaxErrorRate: v.Scenario.MaxErrorRate,
+		MaxRPS: v.Scenario.MaxRPS, P95LimitMS: v.Scenario.P95LimitMS, JourneyP95LimitMS: v.Scenario.JourneyP95LimitMS, MaxErrorRate: v.Scenario.MaxErrorRate,
 		Mode: v.Scenario.Mode, ArrivalRate: v.Scenario.ArrivalRate,
 		SeparateSessions:  len(v.Cookies) > 0 || len(v.ProfileCookies) > 0,
 		MinSamplesPerStep: v.Scenario.MinSamplesPerStep, Profiles: profileConfig,
@@ -628,6 +628,10 @@ func runWithTransportAndIdentity(parent context.Context, v config.Validated, tra
 	if agg.Total == 0 || agg.Success == 0 || errorsRate > v.Scenario.MaxErrorRate || agg.P95MS > v.Scenario.P95LimitMS || result.ArrivalsDropped > 0 {
 		result.Outcome = "FAIL"
 	}
+	journeyLimitMS := result.Config.JourneyLatencyLimitMS()
+	if v.Scenario.JourneyP95LimitMS <= 0 && result.Config.ConfiguresThinkTime() {
+		result.Warnings = append(result.Warnings, report.JourneyLimitIncludesThinkTimeWarning)
+	}
 	if journeyMetrics.Total == 0 {
 		if result.Outcome == "PASS" {
 			result.Outcome = "INCONCLUSIVE"
@@ -635,7 +639,7 @@ func runWithTransportAndIdentity(parent context.Context, v config.Validated, tra
 		result.Warnings = append(result.Warnings, "No completed journeys were observed; full-journey SLO evidence is unavailable.")
 	} else {
 		journeyErrorRate := float64(journeyMetrics.Failures) / float64(journeyMetrics.Total)
-		if journeyErrorRate > v.Scenario.MaxErrorRate || journeyMetrics.P95MS > v.Scenario.P95LimitMS {
+		if journeyErrorRate > v.Scenario.MaxErrorRate || journeyMetrics.P95MS > journeyLimitMS {
 			result.Outcome = "FAIL"
 			result.Warnings = append(result.Warnings, "Completed journeys breached the configured latency or error objective.")
 		}
@@ -653,7 +657,7 @@ func runWithTransportAndIdentity(parent context.Context, v config.Validated, tra
 			result.Warnings = append(result.Warnings, fmt.Sprintf("Observation window %.1f-%.1fs has no completed journeys; full-journey evidence is insufficient.", window.StartSeconds, window.EndSeconds))
 		} else {
 			journeyErrorRate := float64(window.Journeys.Failures) / float64(window.Journeys.Total)
-			if window.Journeys.P95MS > v.Scenario.P95LimitMS || journeyErrorRate > v.Scenario.MaxErrorRate {
+			if window.Journeys.P95MS > journeyLimitMS || journeyErrorRate > v.Scenario.MaxErrorRate {
 				result.Outcome = "FAIL"
 				result.Warnings = append(result.Warnings, fmt.Sprintf("Completed journeys in observation window %.1f-%.1fs breached an SLO.", window.StartSeconds, window.EndSeconds))
 			}
@@ -693,7 +697,7 @@ func runWithTransportAndIdentity(parent context.Context, v config.Validated, tra
 				continue
 			}
 			profileErrorRate := float64(profile.Metrics.Failures) / float64(profile.Metrics.Total)
-			if profile.Metrics.P95MS > v.Scenario.P95LimitMS || profileErrorRate > v.Scenario.MaxErrorRate {
+			if profile.Metrics.P95MS > journeyLimitMS || profileErrorRate > v.Scenario.MaxErrorRate {
 				result.Outcome = "FAIL"
 				result.Warnings = append(result.Warnings, fmt.Sprintf("A workflow profile in observation window %.1f-%.1fs breached an SLO.", window.StartSeconds, window.EndSeconds))
 			}
