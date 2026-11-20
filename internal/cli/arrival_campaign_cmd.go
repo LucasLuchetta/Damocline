@@ -115,7 +115,7 @@ func arrivalCampaignCmd(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "invalid arrival campaign: %v\n", err)
 		return 2
 	}
-	validated, err := config.Parse(scenario, config.Options{Authorized: *authorized || *dry, AllowWrites: *writes, AllowInsecureHTTP: *insecure})
+	validated, err := config.Parse(scenario, config.Options{Authorized: *authorized || *dry, AllowWrites: *writes, AllowInsecureHTTP: *insecure, NetworkBaseline: true})
 	if err != nil {
 		fmt.Fprintf(stderr, "configuration error: %v\n", err)
 		return 2

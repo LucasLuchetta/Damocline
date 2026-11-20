@@ -336,6 +336,11 @@ func classify(r report.Result, scenario config.Validated) (string, string) {
 	if r.Outcome == "ABORTED" {
 		return "ABORTED", "The native run was interrupted or exhausted its wall-time budget."
 	}
+	// A failed, unstable, or objective-dominating network-path baseline
+	// (ADR 0153) means an observed failure is not attributable to the target.
+	if issue := report.NetworkBaselineIssue(r); issue != "" {
+		return "INSUFFICIENT_EVIDENCE", issue
+	}
 	if r.Quality != nil && r.Quality.State == report.QualityInvalid || r.SchemaVersion >= 16 && report.AssessQuality(r).State == report.QualityInvalid {
 		return "INVALID_DELIVERY", "Report accounting or generator evidence is invalid."
 	}

@@ -82,7 +82,7 @@ func TestTransparentTransportRetryKeepsTraceValid(t *testing.T) {
 	r := Run(context.Background(), v)
 	server.listener.Close()
 	server.wg.Wait()
-	if r.SchemaVersion != 36 || len(r.Steps) != 1 {
+	if r.SchemaVersion != report.CurrentSchemaVersion || len(r.Steps) != 1 {
 		t.Fatalf("unexpected report: schema=%d steps=%d", r.SchemaVersion, len(r.Steps))
 	}
 	trace := r.Steps[0].HTTPTrace

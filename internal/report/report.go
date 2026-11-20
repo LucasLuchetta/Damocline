@@ -37,7 +37,8 @@ import (
 // exactly with the DNS and TLS failure totals in every HTTP ledger.
 // Version 35 may record an optional journey_p95_limit_ms that replaces
 // p95_limit_ms for completed-journey latency objectives only (ADR 0150).
-const CurrentSchemaVersion = 36
+// Version 37 may record a bounded pre-load network-path baseline (ADR 0153).
+const CurrentSchemaVersion = 37
 
 // JourneyP95LimitSchemaVersion is the first run schema that may carry
 // RunConfig.JourneyP95LimitMS.
@@ -653,6 +654,7 @@ type Result struct {
 	ApplicationMetrics               *appmetrics.Timeline         `json:"application_metrics,omitempty"`
 	Calibration                      *CalibrationEvidence         `json:"calibration,omitempty"`
 	ReferenceEvidence                *ControlledReferenceEvidence `json:"controlled_reference_evidence,omitempty"`
+	NetworkBaseline                  *NetworkBaseline             `json:"network_baseline,omitempty"`
 	Quality                          *Quality                     `json:"data_quality,omitempty"`
 	Signals                          []Signal                     `json:"diagnostic_signals,omitempty"`
 }

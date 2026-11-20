@@ -72,6 +72,9 @@ func TestForcedTerminationStageMatrixReconcilesServerLedger(t *testing.T) {
 			reportPath := filepath.Join(dir, "run.json")
 			s := tc.scenario
 			s.Name, s.BaseURL, s.P95LimitMS = "forced stage fixture", server.URL, 1000
+			// The server ledger counts only load requests; the network baseline is
+			// covered by dedicated engine tests (ADR 0153).
+			s.NetworkBaselineSkipReason = "server-ledger-fixture"
 			configJSON, err := json.Marshal(s)
 			if err != nil {
 				t.Fatal(err)
