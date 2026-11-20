@@ -81,11 +81,18 @@ func GeneratorCapacityIssue(r Result) string {
 	if float64(r.Metrics.Total)/r.WindowSeconds() >= GeneratorUtilizationGuard*float64(r.Config.MaxRPS) {
 		return "Observed request rate reached the configured client rate ceiling guardrail."
 	}
+	// A failed, unstable, or objective-dominating network-path baseline
+	// (ADR 0153) means measured latency cannot be attributed to the target.
+	if issue := NetworkBaselineIssue(r); issue != "" {
+		return issue
+	}
 	return ""
 }
 
 // AssessQuality uses only aggregate invariants and reported generator
-// observations. It does NOT infer network quality or target saturation.
+// observations. It does NOT infer network quality or target saturation; a
+// recorded network-path baseline (ADR 0153) is screened only as measurement
+// path evidence.
 // No secrets, hostnames, routes or individual response content are reported.
 func AssessQuality(r Result) *Quality {
 	q := &Quality{State: QualityLimited}
@@ -97,6 +104,15 @@ func AssessQuality(r Result) *Quality {
 	limit := func(reason string) { q.Findings = append(q.Findings, reason) }
 	if r.Metrics.RequestConstructionFailures > 0 {
 		invalidate("One or more generated requests were rejected locally before delivery.")
+	}
+	if !ValidNetworkBaseline(r) {
+		invalidate("Network-path baseline evidence is malformed or not allowed by the report schema.")
+	} else if issue := NetworkBaselineIssue(r); issue != "" {
+		if NetworkBaselineInvalid(r) {
+			invalidate(issue)
+		} else {
+			limit(issue)
+		}
 	}
 	if r.SchemaVersion >= 30 && !HasValidStatisticalMethods(r) {
 		invalidate("Statistical method metadata is missing or inconsistent with the report schema.")

@@ -14,8 +14,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/LucasLuchetta/Damocline/internal/config"
 	"github.com/LucasLuchetta/Damocline/internal/browserauth"
+	"github.com/LucasLuchetta/Damocline/internal/config"
 )
 
 const (
@@ -98,6 +98,7 @@ func (w *wizard) choose(question, def string, answers ...string) (string, error)
 		fmt.Fprintf(w.out, "Choose %s.\n", strings.Join(answers, ", "))
 	}
 }
+
 // normalizeApplicationOrigin accepts a domain, a full HTTP(S) origin, or an origin
 // with a trailing slash. The underlying load engine requires the canonical origin.
 func normalizeApplicationOrigin(input string) (string, error) {
@@ -195,11 +196,13 @@ func (w *wizard) configure() (config.Scenario, startPreferences, error) {
 	case "4":
 		p.AuthMode = "browser"
 		p.LoginPath, err = w.ask("Login page path", "/login")
-		if err != nil { return s,p,err }
-		for i := range s.Steps {
-			s.Steps[i].Headers = map[string]string{"Cookie":"${DAMOCLINE_SESSION_COOKIE}"}
+		if err != nil {
+			return s, p, err
 		}
-		fmt.Fprintln(w.out,"An isolated Edge/Chrome browser will open. You sign in manually. No password is captured or saved.")
+		for i := range s.Steps {
+			s.Steps[i].Headers = map[string]string{"Cookie": "${DAMOCLINE_SESSION_COOKIE}"}
+		}
+		fmt.Fprintln(w.out, "An isolated Edge/Chrome browser will open. You sign in manually. No password is captured or saved.")
 	case "2":
 		for i := range s.Steps {
 			s.Steps[i].Headers = map[string]string{"Cookie": "${DAMOCLINE_SESSION_COOKIE}"}
@@ -400,22 +403,43 @@ func startWithModeAndHeader(input io.Reader, output, errOutput io.Writer, mode s
 			return 2
 		}
 		known := make(map[string]bool)
-		for _, step := range s.Steps { known[step.Path]=true }
+		for _, step := range s.Steps {
+			known[step.Path] = true
+		}
 		for _, path := range captured.Paths {
-			if known[path] || len(s.Steps) >= 20 || !strings.HasPrefix(path,"/") || strings.HasPrefix(path,"//") || strings.ContainsAny(path,"?\\r\\n") { continue }
-			choice, err := w.choose("Add visited page "+path+" as an explicitly approved GET? (y/n)","n","y","n")
-			if err != nil {fmt.Fprintf(errOutput,"Page review interrupted: %v\n",err);return 2}
-			if choice=="y" {
-				s.Steps=append(s.Steps,config.Step{Name:fmt.Sprintf("Page %d",len(s.Steps)+1),Method:"GET",Path:path,ExpectedStatus:[]int{200}})
-				known[path]=true
+			if known[path] || len(s.Steps) >= 20 || !strings.HasPrefix(path, "/") || strings.HasPrefix(path, "//") || strings.ContainsAny(path, "?\\r\\n") {
+				continue
+			}
+			choice, err := w.choose("Add visited page "+path+" as an explicitly approved GET? (y/n)", "n", "y", "n")
+			if err != nil {
+				fmt.Fprintf(errOutput, "Page review interrupted: %v\n", err)
+				return 2
+			}
+			if choice == "y" {
+				s.Steps = append(s.Steps, config.Step{Name: fmt.Sprintf("Page %d", len(s.Steps)+1), Method: "GET", Path: path, ExpectedStatus: []int{200}})
+				known[path] = true
 			}
 		}
-		if err:=saveActiveProfile(s,p);err!=nil {fmt.Fprintf(errOutput,"Could not save routes: %v\n",err);return 2}
+		if err := saveActiveProfile(s, p); err != nil {
+			fmt.Fprintf(errOutput, "Could not save routes: %v\n", err)
+			return 2
+		}
 		previous, wasSet := os.LookupEnv("DAMOCLINE_SESSION_COOKIE")
-		if err:=os.Setenv("DAMOCLINE_SESSION_COOKIE",captured.CookieHeader);err!=nil {fmt.Fprintln(errOutput,"Could not store temporary session in process memory");return 2}
-		defer func(){if wasSet {_=os.Setenv("DAMOCLINE_SESSION_COOKIE",previous)} else {_=os.Unsetenv("DAMOCLINE_SESSION_COOKIE")}}()
-		fmt.Fprintln(output,"Session loaded in memory only. Browser closed. No credentials were saved in the scenario.")
-		if p.MaxUsers>1 {fmt.Fprintln(output,"WARNING: All virtual users will SHARE this one login; they are not separate user identities.")}
+		if err := os.Setenv("DAMOCLINE_SESSION_COOKIE", captured.CookieHeader); err != nil {
+			fmt.Fprintln(errOutput, "Could not store temporary session in process memory")
+			return 2
+		}
+		defer func() {
+			if wasSet {
+				_ = os.Setenv("DAMOCLINE_SESSION_COOKIE", previous)
+			} else {
+				_ = os.Unsetenv("DAMOCLINE_SESSION_COOKIE")
+			}
+		}()
+		fmt.Fprintln(output, "Session loaded in memory only. Browser closed. No credentials were saved in the scenario.")
+		if p.MaxUsers > 1 {
+			fmt.Fprintln(output, "WARNING: All virtual users will SHARE this one login; they are not separate user identities.")
+		}
 	}
 	if p.Kind == "explore" && (p.MinUsers < 1 || p.MaxUsers < p.MinUsers || p.MaxUsers > 50) {
 		fmt.Fprintln(errOutput, "Invalid capacity exploration bounds")
@@ -424,7 +448,7 @@ func startWithModeAndHeader(input io.Reader, output, errOutput io.Writer, mode s
 	if p.Kind == "explore" {
 		s.Users = p.MinUsers
 	}
-	v, err := config.Parse(s, config.Options{Authorized: true})
+	v, err := config.Parse(s, config.Options{Authorized: true, NetworkBaseline: true})
 	if err != nil {
 		fmt.Fprintf(errOutput, "Preflight failed: %v\nCheck required environment variables, then run 'damocline start' again.\n", err)
 		return 2

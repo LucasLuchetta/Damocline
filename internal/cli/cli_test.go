@@ -491,6 +491,7 @@ func TestWriteWorkflowDryRunClearlyMarksMutatingRoutes(t *testing.T) {
 		Name: "synthetic-write-preview", BaseURL: "https://app.example.com", Users: 1, Duration: "10s",
 		Timeout: "2s", MaxRPS: 5, P95LimitMS: 1000,
 		SyntheticDataPrefixEnv: "DAMOCLINE_PREVIEW_PREFIX",
+		BaselinePath:           "/health",
 		Steps: []config.Step{
 			{Name: "create", Method: "POST", Path: "/records/{{synthetic_id}}?mode=test"},
 			{Name: "cleanup", Method: "DELETE", Path: "/records/{{synthetic_id}}"},

@@ -52,8 +52,13 @@ type Scenario struct {
 	SyntheticDataPrefixEnv   string            `json:"synthetic_data_prefix_env,omitempty"`
 	MinSamplesPerStep        int               `json:"min_samples_per_step,omitempty"`
 	WindowDuration           string            `json:"window_duration,omitempty"`
-	Steps                    []Step            `json:"steps,omitempty"`
-	Profiles                 []Profile         `json:"profiles,omitempty"`
+	// BaselinePath optionally selects the same-origin GET path used by the
+	// bounded pre-load network-path baseline (ADR 0153).
+	BaselinePath string `json:"baseline_path,omitempty"`
+	// NetworkBaselineSkipReason is an explicit, recorded opt-out label.
+	NetworkBaselineSkipReason string    `json:"network_baseline_skip_reason,omitempty"`
+	Steps                     []Step    `json:"steps,omitempty"`
+	Profiles                  []Profile `json:"profiles,omitempty"`
 }
 
 // Profile is a weighted, named workflow. Its weight expresses the intended
@@ -97,6 +102,10 @@ type Options struct {
 	Authorized        bool
 	AllowWrites       bool
 	AllowInsecureHTTP bool
+	// NetworkBaseline requests a bounded pre-load network-path baseline
+	// (ADR 0153). Traffic-generating CLI commands set it; library callers such
+	// as the calibrator-owned loopback fixture leave it unset.
+	NetworkBaseline bool
 }
 
 type Validated struct {
@@ -114,6 +123,8 @@ type Validated struct {
 	ProfileCookies      map[string][]string
 	SyntheticDataPrefix string
 	GeneratorGuardrails generatorhealth.Guardrails
+	// NetworkBaseline is nil when no baseline was requested.
+	NetworkBaseline *NetworkBaselinePlan
 }
 
 // PreparedProfile contains the safe, resolved workflow selected by the
@@ -646,6 +657,15 @@ func Parse(s Scenario, o Options) (Validated, error) {
 	}
 	v = Validated{Scenario: s, Base: u, Duration: duration, RampUp: ramp, ThinkTime: think, Timeout: timeout, Window: window, Steps: prepared, Profiles: preparedProfiles, Cookies: cookies, ProfileCookies: profileCookies, SyntheticDataPrefix: dataPrefix}
 	v.WorkloadFingerprint = WorkloadFingerprint(v)
+	if o.NetworkBaseline {
+		plan, err := planNetworkBaseline(s, u, prepared, timeout)
+		if err != nil {
+			return Validated{}, err
+		}
+		v.NetworkBaseline = plan
+	} else if err := validateNetworkBaselineFields(s); err != nil {
+		return Validated{}, err
+	}
 	return v, nil
 }
 

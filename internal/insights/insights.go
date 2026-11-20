@@ -65,6 +65,9 @@ func ValidateRunReport(r report.Result) error {
 	if r.SchemaVersion < 1 || r.SchemaVersion > report.CurrentSchemaVersion || r.Name == "" || r.Metrics.Total < 0 || r.Metrics.Success < 0 || r.Metrics.Failures < 0 || r.Metrics.Success+r.Metrics.Failures != r.Metrics.Total || r.Config.Users < 1 || r.ElapsedSeconds <= 0 || (r.SchemaVersion >= 4 && r.ObservationSeconds <= 0) || (r.SchemaVersion >= 11 && !validFingerprint(r.Config.WorkloadFingerprint)) || (r.SchemaVersion >= 14 && r.Config.ConnectionPolicy != "reuse" && r.Config.ConnectionPolicy != "new_per_request") || !report.ValidJourneyP95Limit(r) {
 		return errors.New("not a valid Damocline HTTP run report")
 	}
+	if !report.ValidNetworkBaseline(r) {
+		return errors.New("network_baseline evidence is malformed or not allowed before schema v37")
+	}
 	if r.SchemaVersion < 36 {
 		for _, step := range r.Steps {
 			if step.HTTPTrace.TransportRetryCount != 0 {
@@ -264,6 +267,22 @@ func Evaluate(r report.Result, host *hostmon.Result) Assessment {
 	}
 	if r.Metrics.Total >= 1 && r.Metrics.P95MS > 0 && r.Metrics.P99MS > 3*r.Metrics.P95MS && r.Metrics.P99MS-r.Metrics.P95MS > 1000 {
 		a.Findings = append(a.Findings, Finding{"CAUTION", fmt.Sprintf("Long-tail latency: request p99 reached %.0f ms versus p95 of %.0f ms. Investigate intermittent slow requests.", r.Metrics.P99MS, r.Metrics.P95MS)})
+	}
+	if b := r.NetworkBaseline; b != nil {
+		if b.Status == report.NetworkBaselineSkipped {
+			a.Findings = append(a.Findings, Finding{"CAUTION", fmt.Sprintf("Network-path baseline was explicitly skipped (reason: %s); the generator network path was not screened before load.", b.SkipReason)})
+		} else {
+			a.Findings = append(a.Findings, Finding{"INFO", fmt.Sprintf("Network-path baseline before load: %d of %d sequential %s requests completed; p50 %.1f ms, p95 %.1f ms, max %.1f ms (max/p50 %.1fx). This includes the generator network path and is not application capacity.", b.Completed, b.Planned, b.Method, b.P50MS, b.P95MS, b.MaxMS, b.MaxToP50Ratio)})
+			if b.UnexpectedHTTPStatus > 0 {
+				a.Findings = append(a.Findings, Finding{"CAUTION", fmt.Sprintf("%d network-path baseline responses had a status outside 2xx/3xx; latency was still recorded as a round trip.", b.UnexpectedHTTPStatus)})
+			}
+		}
+		if issue := report.NetworkBaselineIssue(r); issue != "" {
+			a.Findings = append(a.Findings, Finding{"LIMIT", issue + " Do not conclude that the application cannot handle this load; rerun from a generator with a stable, low-latency path to the target (for example wired, same network or same region)."})
+			if r.Outcome == "FAIL" {
+				a.Performance = "OBJECTIVES NOT MET (NETWORK PATH MAY DOMINATE)"
+			}
+		}
 	}
 	if retries, attempts := transportRetries(r); retries > 0 {
 		a.Findings = append(a.Findings, Finding{"CAUTION", fmt.Sprintf("Transparent transport retries: %d of %d request attempts were retried by the HTTP client on a new connection after a reused keep-alive connection was closed before any response byte. The server or an intermediary likely closed idle connections (for example a keep-alive idle timeout shorter than client think time); this is not an application failure by itself, but retried requests paid extra connection setup and the server may have received the request twice.", retries, attempts)})

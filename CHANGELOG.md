@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add a bounded network-path baseline before load (run report schema v37, ADR 0153). CLI runs and every explore/campaign trial send 20 sequential low-rate `GET`/`HEAD` requests (no cookies, headers or body) to the first literal `GET`/`HEAD` step or an explicit same-origin `baseline_path`, and record p50/p95/max, counts and dispersion in `network_baseline`. A failed baseline makes quality INVALID; an incomplete, unstable, or objective-dominating baseline (p95 above 50% of `p95_limit_ms`, or max/p50 above 10 with max above 25% of it) makes it LIMITED with a finding that the generator network path may dominate latency. Explore no longer reports `NO_PASSING_LEVEL`/`NO_PASSING_RATE` as an application limit in that case, and `insights` warns not to conclude the application cannot handle the load. Opt out only with an explicit, recorded `network_baseline_skip_reason`. Write-only scenarios must now set `baseline_path` or that skip reason.
+
 - Allow one independent, logged retry of the extended calibration on
   hosted Windows CI after a late-arrival failure (ADR 0152).
 
