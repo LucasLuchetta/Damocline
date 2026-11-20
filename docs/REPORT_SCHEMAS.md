@@ -62,6 +62,12 @@ now retain explicit `go_cpu_valid` and `process_cpu_valid` flags so an unavailab
 zero estimate is distinguishable from measured zero CPU. The v33 golden fixture
 preserves measured process CPU alongside an unavailable Go estimate.
 
+## Host sensor reading and protocol report versions
+
+Host sensor readings (`host_telemetry.samples[].reading`) have their own schema. Reading v1 carries host-wide counters and optional selected-process (`workload`) evidence. Reading v2 can also carry `workload_attribution` (ADR 0172): process-tree CPU cores, summed RSS, up to eight top processes, the busiest comparable thread, and cgroup-v2 CPU cores, quota cores, throttling deltas, `memory.current` and memory-event deltas. Each has explicit `COMPLETE`, `INCOMPLETE`, `TRUNCATED`, `UNAVAILABLE` or `NOT_CONFIGURED` coverage. Readers accept v1 and v2, reject unknown future versions, and reject attribution in a v1 reading. Totals appear only with `COMPLETE` coverage. Missing attribution is unknown, not idle.
+
+The capacity protocol JSON report advances to v2 with `workload_saturation`. This finding is always labeled `HYPOTHESIS` and has the state `HYPOTHESIS_SUPPORTED_BY_MEASURED_FACTS`, `HYPOTHESIS_NOT_SUPPORTED_BY_MEASURED_FACTS`, `UNKNOWN` or `NO_PLATEAU_OBSERVED`. It lists the measured facts it relied on and never states a root cause.
+
 ## Reader and fixture policy
 
 Golden JSON fixtures in `internal/insights/testdata/reports/` cover every currently supported version. Tests verify reader acceptance, JSON round-trip stability, and preservation of a version-specific field at each schema milestone. Separate tests verify that unknown future versions are rejected, schema-v11 absence of body fields is not reinterpreted as an observed zero-byte body, schema-v20 failure-classification metadata is required, schema-v22 window journey evidence round-trips, schema-v27 workflow session scopes remain bounded, schema-v28 transport limits are retained, schema-v30 p95 method metadata remains compatible, schema-v31 generator identity is required and path-free, and schema-v32 p99 method metadata plus low-sample behavior are preserved.

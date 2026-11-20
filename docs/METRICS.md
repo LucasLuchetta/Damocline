@@ -43,6 +43,18 @@ A **partly open session model**—independent session arrivals followed by depen
 
 `diagnostic_signals` identifies observable symptoms separately from causal conclusions. A client-side `max_rps` ceiling, missed journey starts, exhausted synthetic workers, high sampled generator CPU, or delayed reused-connection acquisition are not evidence of server saturation. Schema-v28 scenarios can set `max_connections_per_host` (1–100) to bound generator connections to the target host; omission or zero keeps a worker-scaled default. The explicit limit is recorded in reports and included in the workload fingerprint. Connection acquisition is timed from `GetConn` to `GotConn`; a reused connection acquired after at least 10 ms emits a client transport wait symptom. It may indicate client-side queueing, but does not prove pool exhaustion. The existing fixed calibration matrix exercises only the worker-scaled default; exact calibration gates reject explicit connection caps as outside that reference. `HTTP_ERROR_RESPONSE` means an observed 4xx/5xx status, not proof that CPU, a database or connection pool caused the failure. Missing telemetry is flagged explicitly; where no supported signal exists, `BOTTLENECK_NOT_ESTABLISHED` indicates that root cause is unknown. Full infrastructure-level attribution remains unimplemented.
 
+### Workload attribution and the saturation hypothesis (ADR 0172)
+
+A container's init PID can be idle while a child process does the work. With `damocline-sensor --workload-pid <pid> --workload-descendants` and/or `--workload-cgroup <path>`, the sensor reports the following read-only values:
+
+- process-tree CPU in cores
+- the busiest thread in cores
+- cgroup-v2 CPU usage in cores
+- throttled CFS periods
+- memory events
+
+Coverage is explicit. The protocol report flags a throughput plateau when VUs rise at least 10%, requests/s rise less than 5% and p95 rises at least 20% between consecutive tested levels. It then labels single-core or quota saturation as a **hypothesis**, together with the measured facts. In this rule, single-core saturation means the busiest thread reached at least 0.9 cores. Quota saturation means cgroup CPU reached at least 90% of quota or at least 5% of periods were throttled. Without attribution, the result is `UNKNOWN`. Complete attribution without these signals does not support the hypothesis, and the cause remains unknown.
+
 ## Measurement data quality (G0-16)
 
 New run reports include `data_quality.state` and a bounded `data_quality.findings` list. The state is distinct from `outcome` (observed request/step SLO PASS/FAIL/INCONCLUSIVE). Arithmetic contradictions between scheduled/started/dropped work, negative counts, impossible request or journey totals, or invalid durations are `INVALID`. Missing generator process samples, dropped/cancelled work, client-rate saturation and the absence of workload-equivalent preflight evidence are described as `LIMITED`. Invalid accounting cannot remain an observed PASS. `damocline run --calibration <file>` reads a bounded local calibration artifact, validates its preflight, stage ledgers and scheduler-lag observations, and records which declared scenario dimensions match the fixed reference. The report omits the artifact path and scenario URL. Ordinary target runs lack controlled endpoint identity and remain `LIMITED`; the calibrator-owned loopback soak is the only positive path.

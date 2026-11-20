@@ -90,6 +90,9 @@ type processStat struct {
 	RSSPages       int64
 	CPUUserTicks   uint64
 	CPUSystemTicks uint64
+	PPID           int
+	Threads        int64
+	Comm           string
 }
 
 func parseProcessStat(value string) (processStat, error) {
@@ -119,7 +122,13 @@ func parseProcessStat(value string) (processStat, error) {
 	if parseErr != nil || rss < 0 {
 		return processStat{}, fmt.Errorf("invalid process resident pages")
 	}
-	return processStat{StartTimeTicks: start, RSSPages: rss, CPUUserTicks: userTicks, CPUSystemTicks: systemTicks}, nil
+	ppid, _ := strconv.Atoi(fields[1])
+	threads, _ := strconv.ParseInt(fields[17], 10, 64)
+	comm := ""
+	if openComm := strings.Index(value, "("); openComm >= 0 && openComm < closeComm {
+		comm = value[openComm+1 : closeComm]
+	}
+	return processStat{StartTimeTicks: start, RSSPages: rss, CPUUserTicks: userTicks, CPUSystemTicks: systemTicks, PPID: ppid, Threads: threads, Comm: comm}, nil
 }
 
 // readClockTicks obtains AT_CLKTCK from the Linux auxiliary vector (the

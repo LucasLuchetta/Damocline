@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Add opt-in, read-only workload attribution to `damocline-sensor`:
+  `--workload-descendants` measures the bounded process tree under
+  `--workload-pid` (tree CPU cores, summed RSS, top processes, busiest
+  thread), and `--workload-cgroup` (or the PID's own cgroup) reports cgroup-v2
+  CPU cores, quota, throttling and memory-event deltas with explicit coverage
+  states. The sensor reading schema advances to v2. The capacity protocol report
+  (schema v2) adds a `workload_saturation` finding that is always labeled as a
+  hypothesis and is `UNKNOWN` when attribution is absent (ADR 0172).
+
 - Preserve generator guardrail abort reasons in campaign summaries even
   when the interrupted phase also has invalid delivery evidence.
 
