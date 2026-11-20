@@ -298,8 +298,10 @@ func Validate(options Options) error {
 	if options.Budget != 0 && (options.Budget < minimum || options.Budget > budgetLimit) {
 		return fmt.Errorf("budget must cover every phase and be at most %s", budgetLimit)
 	}
-	if options.Budget != 0 && (options.Soak > 0 || options.Stabilization > 0) && options.Budget < defaultBudget(options) {
-		return fmt.Errorf("budget must reserve bounded drain allowance for every phase")
+	// Offline audit rejects any explicit budget below the bounded default,
+	// so enforce the same rule before traffic instead of after the campaign.
+	if options.Budget != 0 && options.Budget < defaultBudget(options) {
+		return fmt.Errorf("budget must reserve bounded drain allowance for every phase: at least %s for this schedule", defaultBudget(options))
 	}
 	if options.LongRun && options.Budget < defaultBudget(options) {
 		return fmt.Errorf("long-run budget must reserve bounded drain allowance for every phase")
