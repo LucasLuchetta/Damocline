@@ -106,6 +106,9 @@ type Options struct {
 	// (ADR 0153). Traffic-generating CLI commands set it; library callers such
 	// as the calibrator-owned loopback fixture leave it unset.
 	NetworkBaseline bool
+	// ExtendedEnvelope is nil for the standard G0-11 ceilings. A non-nil
+	// request raises them at most to ExtendedEnvelopeHardLimits (ADR 0155).
+	ExtendedEnvelope *ExtendedEnvelopeRequest
 }
 
 type Validated struct {
@@ -125,6 +128,8 @@ type Validated struct {
 	GeneratorGuardrails generatorhealth.Guardrails
 	// NetworkBaseline is nil when no baseline was requested.
 	NetworkBaseline *NetworkBaselinePlan
+	// Envelope records the ceilings this plan was validated against.
+	Envelope EnvelopeRecord
 }
 
 // PreparedProfile contains the safe, resolved workflow selected by the
@@ -260,6 +265,10 @@ func Parse(s Scenario, o Options) (Validated, error) {
 	if !o.Authorized {
 		return v, errors.New("explicit --authorized confirmation is required before generating traffic")
 	}
+	limits, envelope, err := envelopeLimits(o)
+	if err != nil {
+		return v, err
+	}
 	if strings.TrimSpace(s.Name) == "" {
 		return v, errors.New("name is required")
 	}
@@ -283,11 +292,11 @@ func Parse(s Scenario, o Options) (Validated, error) {
 	if s.ProfileMixBasis != "assumption" && s.ProfileMixReference == "" {
 		return v, errors.New("profile_mix_reference is required for a non-assumption profile_mix_basis")
 	}
-	if s.Users < 1 || s.Users > 50 {
-		return v, errors.New("users must be between 1 and 50 for this initial release")
+	if s.Users < 1 || s.Users > limits.MaxUsers {
+		return v, fmt.Errorf("users must be between 1 and %d for the %s envelope", limits.MaxUsers, envelope.Mode)
 	}
-	if s.MaxRPS < 1 || s.MaxRPS > 100 {
-		return v, errors.New("max_rps must be between 1 and 100; use conservative limits on production")
+	if s.MaxRPS < 1 || s.MaxRPS > limits.MaxRPS {
+		return v, fmt.Errorf("max_rps must be between 1 and %d for the %s envelope; use conservative limits on production", limits.MaxRPS, envelope.Mode)
 	}
 	profiles, err := workloadProfiles(s, versionedWorkflows)
 	if err != nil {
@@ -317,8 +326,8 @@ func Parse(s Scenario, o Options) (Validated, error) {
 		return v, errors.New("max_connections_per_host must be 0 (default) or 1..100")
 	}
 	if s.Mode == "arrival" {
-		if s.ArrivalRate < 1 || s.ArrivalRate > 100 {
-			return v, errors.New("arrival_rate must be between 1 and 100 iterations/second")
+		if s.ArrivalRate < 1 || s.ArrivalRate > limits.MaxArrivalRate {
+			return v, fmt.Errorf("arrival_rate must be between 1 and %d iterations/second for the %s envelope", limits.MaxArrivalRate, envelope.Mode)
 		}
 		if s.ArrivalRate*maxSteps > s.MaxRPS {
 			return v, errors.New("arrival_rate multiplied by the longest profile exceeds max_rps; increase max_rps or reduce arrival_rate")
@@ -367,7 +376,7 @@ func Parse(s Scenario, o Options) (Validated, error) {
 	if strings.ContainsAny(u.Host, " \t\r\n") {
 		return v, errors.New("invalid host")
 	}
-	duration, err := requiredDuration("duration", s.Duration, time.Second, 3*time.Minute)
+	duration, err := requiredDuration("duration", s.Duration, time.Second, limits.MaxDuration)
 	if err != nil {
 		return v, err
 	}
@@ -655,8 +664,18 @@ func Parse(s Scenario, o Options) (Validated, error) {
 	for i := range preparedProfiles {
 		preparedProfiles[i].Cookies = profileCookies[preparedProfiles[i].Name]
 	}
-	v = Validated{Scenario: s, Base: u, Duration: duration, RampUp: ramp, ThinkTime: think, Timeout: timeout, Window: window, Steps: prepared, Profiles: preparedProfiles, Cookies: cookies, ProfileCookies: profileCookies, SyntheticDataPrefix: dataPrefix}
+	v = Validated{Scenario: s, Base: u, Duration: duration, RampUp: ramp, ThinkTime: think, Timeout: timeout, Window: window, Steps: prepared, Profiles: preparedProfiles, Cookies: cookies, ProfileCookies: profileCookies, SyntheticDataPrefix: dataPrefix, Envelope: envelope}
 	v.WorkloadFingerprint = WorkloadFingerprint(v)
+	if o.ExtendedEnvelope != nil {
+		if strings.Contains(strings.ToLower(s.Environment), "prod") {
+			return Validated{}, errors.New("extended envelope refuses scenarios whose environment label names production")
+		}
+		guardrails, err := ExtendedGuardrails(o.ExtendedEnvelope.Guardrails)
+		if err != nil {
+			return Validated{}, err
+		}
+		v.GeneratorGuardrails = guardrails
+	}
 	if o.NetworkBaseline {
 		plan, err := planNetworkBaseline(s, u, prepared, timeout)
 		if err != nil {

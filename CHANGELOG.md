@@ -4,6 +4,8 @@
 
 - Report actionable decision blockers together in campaign audit output (ADR 0164).
 
+- Add an explicit, calibration-gated extended load envelope for `damocline run` (run report schema v38, ADR 0155). `--extended-envelope` requires `--extended-load-authorized`, `--target-class lab|staging`, `--calibration` and `--require-calibration`, raises per-run ceilings to a fixed hard maximum of 500 VUs/workers, 1000 request starts/s and 15 minutes, refuses before traffic unless a fresh calibration covers the exact level, and always enforces generator CPU/RSS guardrails (a trigger stops the run as `GENERATOR_LIMITED`). Every run report now records `load_envelope`; `insights` states when results above the standard ceiling were produced under the extended envelope. Standard ceilings and defaults are unchanged.
+
 - Reject campaign budgets without the bounded drain allowance before any
   traffic, matching the offline audit rule, and state the required budget.
 
