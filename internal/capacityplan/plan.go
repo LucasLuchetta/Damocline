@@ -569,6 +569,10 @@ func validateEvidence(evidence campaign.Result) error {
 	if err := validateApplicationMetrics(evidence); err != nil {
 		return err
 	}
+	if evidence.SchemaVersion >= 17 && evidence.DriftBaseline != campaign.DriftBaselineSkipLightLeadingWindow ||
+		evidence.SchemaVersion < 17 && evidence.DriftBaseline != "" {
+		return errors.New("campaign drift baseline rule does not match its schema")
+	}
 	if evidence.SchemaVersion >= 5 {
 		if err := campaign.ValidateStabilityPolicy(evidence.EffectiveStabilityPolicy()); err != nil {
 			return fmt.Errorf("invalid persisted stability policy: %w", err)
@@ -835,7 +839,13 @@ func validatePartialStageEvidence(evidence campaign.Result) error {
 					return fmt.Errorf("trial %d has unsupported historical %s stability classification", trial.Number, phase.Name)
 				}
 			} else if phase.Name == "stabilization" || phase.Name == "observation" || phase.Name == "soak" {
-				stability = campaign.AssessStabilityWithPolicy(phase.Run, evidence.EffectiveStabilityPolicy())
+				stability = campaignStability(evidence, phase.Run)
+			}
+			if err := validatePhaseBaselineWindow(evidence, trial.Number, phase); err != nil {
+				return err
+			}
+			if err := validatePhaseRampUp(evidence, trial, phaseIndex); err != nil {
+				return err
 			}
 			if phase.EvidenceState != state || (phase.Name == "stabilization" || phase.Name == "observation" || phase.Name == "soak") && phase.Stability != stability {
 				return fmt.Errorf("trial %d has stale or altered %s phase evidence", trial.Number, phase.Name)
@@ -893,6 +903,54 @@ func historicalCampaignPhaseState(run report.Result) string {
 	default:
 		return "INSUFFICIENT_EVIDENCE"
 	}
+}
+
+// campaignStability recomputes the drift label with the reference rule the
+// campaign schema used when it ran.
+func campaignStability(evidence campaign.Result, run report.Result) string {
+	label, _ := campaign.AssessStabilityWithBaseline(run, evidence.EffectiveStabilityPolicy(), evidence.ExpectedDriftBaseline())
+	return label
+}
+
+// validatePhaseBaselineWindow recomputes the recorded drift reference window.
+// Historical schemas and phases without a drift screen record none.
+func validatePhaseBaselineWindow(evidence campaign.Result, trial int, phase campaign.Phase) error {
+	want := 0
+	if evidence.SchemaVersion >= 17 && (phase.Name == "stabilization" || phase.Name == "observation" || phase.Name == "soak") {
+		_, want = campaign.AssessStabilityWithBaseline(phase.Run, evidence.EffectiveStabilityPolicy(), evidence.ExpectedDriftBaseline())
+	}
+	if phase.StabilityBaselineWindow != want {
+		return fmt.Errorf("trial %d has a stale or altered %s drift baseline window", trial, phase.Name)
+	}
+	return nil
+}
+
+// validatePhaseRampUp requires schema v17+ evidence to record the effective
+// per-phase ramp, to match the native run configuration, and to follow the
+// campaign rule: only the first phase of a trial and a spike ramp.
+func validatePhaseRampUp(evidence campaign.Result, trial campaign.Trial, index int) error {
+	phase := trial.Phases[index]
+	if evidence.SchemaVersion < 17 {
+		if phase.RampUp != "" {
+			return fmt.Errorf("trial %d %s phase records a ramp unsupported by this campaign schema", trial.Number, phase.Name)
+		}
+		return nil
+	}
+	parse := func(value string) (time.Duration, bool) {
+		if value == "" {
+			return 0, true
+		}
+		d, err := time.ParseDuration(value)
+		return d, err == nil && d >= 0
+	}
+	recorded, ok := parse(phase.RampUp)
+	configured, configuredOK := parse(phase.Run.Config.RampUp)
+	scenarioRamp, scenarioOK := parse(trial.Phases[0].RampUp)
+	if phase.RampUp == "" || !ok || !configuredOK || !scenarioOK || recorded != configured ||
+		recorded != campaign.EffectivePhaseRampUp(index, phase.Name, scenarioRamp) {
+		return fmt.Errorf("trial %d %s phase ramp evidence is missing or inconsistent", trial.Number, phase.Name)
+	}
+	return nil
 }
 
 func validHistoricalStability(value string) bool {
@@ -1043,6 +1101,12 @@ func validateStageEvidence(evidence campaign.Result) error {
 			if !campaignRunGuardrailsMatch(evidence, phase.Run) {
 				return fmt.Errorf("trial %d has mismatched %s generator guardrails", i+1, want.Name)
 			}
+			if err := validatePhaseRampUp(evidence, trial, j); err != nil {
+				return err
+			}
+			if err := validatePhaseBaselineWindow(evidence, trial.Number, phase); err != nil {
+				return err
+			}
 			if evidence.SchemaVersion == 2 || evidence.SchemaVersion == 4 {
 				// Historical campaign schemas recorded phase classifications but
 				// their embedded run reports predate several fields used by today's
@@ -1060,7 +1124,7 @@ func validateStageEvidence(evidence campaign.Result) error {
 			if phase.EvidenceState != state || phase.EvidenceState == "INVALID_DELIVERY" || (phase.Name != "warmup" && phase.EvidenceState != "PASS_OBSERVED") {
 				return fmt.Errorf("trial %d has inconsistent %s phase classification", i+1, want.Name)
 			}
-			if (phase.Name == "stabilization" || phase.Name == "observation" || phase.Name == "soak") && (phase.Stability != "NO_LARGE_DRIFT_DETECTED" || phase.Stability != campaign.AssessStabilityWithPolicy(phase.Run, evidence.EffectiveStabilityPolicy())) {
+			if (phase.Name == "stabilization" || phase.Name == "observation" || phase.Name == "soak") && (phase.Stability != "NO_LARGE_DRIFT_DETECTED" || phase.Stability != campaignStability(evidence, phase.Run)) {
 				return fmt.Errorf("trial %d lacks reproducible stable-window evidence", i+1)
 			}
 		}

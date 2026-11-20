@@ -220,13 +220,16 @@ func EvaluateJourneyCampaign(saved arrivalcampaign.Result, goal JourneyStartGoal
 			if run.Config.WindowDuration != phaseWindow.String() {
 				return JourneyStartAssessment{}, errors.New("native phase window configuration disagrees with campaign manifest")
 			}
-			stability := ""
+			stability, baselineWindow := "", 0
 			if expected.Name == "stabilization" || expected.Name == "observation" || expected.Name == "soak" {
 				policy := campaign.DefaultStabilityPolicy()
 				if saved.SchemaVersion >= 8 {
 					policy = *saved.StabilityPolicy
 				}
-				stability = campaign.AssessStabilityWithPolicy(run, policy)
+				stability, baselineWindow = campaign.AssessStabilityWithBaseline(run, policy, campaign.DriftBaselineForSchema(saved.SchemaVersion, arrivalcampaign.FirstRobustDriftBaselineSchema))
+			}
+			if phase.StabilityBaselineWindow != baselineWindow {
+				return JourneyStartAssessment{}, errors.New("saved phase drift baseline window disagrees with native report data")
 			}
 			if phase.EvidenceState != state || phase.Stability != stability {
 				return JourneyStartAssessment{}, errors.New("saved phase evidence labels disagree with native report data")
