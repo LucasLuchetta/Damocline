@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -12,6 +13,68 @@ import (
 	"github.com/LucasLuchetta/Damocline/internal/reference"
 	"github.com/LucasLuchetta/Damocline/internal/report"
 )
+
+func TestNativeEngineReconcilesVariableStreamingBodies(t *testing.T) {
+	const (
+		small = 1024
+		large = 4096
+	)
+	smallChunk, largeChunk := strings.Repeat("a", small/2), strings.Repeat("b", large/2)
+	var received, sentBytes, completed atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		request := received.Add(1)
+		if request > 4 {
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		chunk := smallChunk
+		if request%2 == 0 {
+			chunk = largeChunk
+		}
+		controller := http.NewResponseController(w)
+		n, err := w.Write([]byte(chunk))
+		sentBytes.Add(int64(n))
+		if err != nil || controller.Flush() != nil {
+			return
+		}
+		select {
+		case <-time.After(40 * time.Millisecond):
+		case <-r.Context().Done():
+			return
+		}
+		n, err = w.Write([]byte(chunk))
+		if err != nil {
+			return
+		}
+		sentBytes.Add(int64(n))
+		completed.Add(1)
+	}))
+	defer server.Close()
+	v, err := config.Parse(config.Scenario{
+		Name: "bounded variable stream", BaseURL: server.URL, Mode: "arrival",
+		Users: 1, ArrivalRate: 2, MaxRPS: 10, Duration: "2s", Timeout: "1s",
+		P95LimitMS: 500, Steps: []config.Step{{Name: "stream", Path: "/"}},
+	}, config.Options{Authorized: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	run := Run(ctx, v)
+	body := run.Metrics.ResponseBody
+	if run.ArrivalsScheduled != 4 || run.ArrivalsDropped != 0 || run.IterationsCompleted != 4 ||
+		run.Metrics.Total != 4 || run.Metrics.Success != 4 || received.Load() != 4 ||
+		completed.Load() != 4 || sentBytes.Load() != 2*(small+large) ||
+		body.CompleteObservations != 4 || body.IncompleteObservations != 0 || body.OversizedObservations != 0 ||
+		body.TotalBytes != sentBytes.Load() || body.MinBytes != small || body.MaxBytes != large {
+		t.Fatalf("streaming ledgers disagree: client=%+v server_received=%d completed=%d bytes=%d",
+			run.Metrics, received.Load(), completed.Load(), sentBytes.Load())
+	}
+	if len(run.Steps) != 1 || run.Steps[0].HTTPTrace.FirstByteCount != 4 ||
+		run.Steps[0].HTTPTrace.BodyCount != 4 || run.Steps[0].HTTPTrace.BodyIncompleteCount != 0 {
+		t.Fatalf("streaming trace did not reconcile first bytes and completed bodies: %+v", run.Steps)
+	}
+}
 
 // TestNativeEngineReferencePayloadMatrix exercises the ACTUAL load scheduler
 // against a local controlled fixture, unlike protocolcheck's Go-transport-only
