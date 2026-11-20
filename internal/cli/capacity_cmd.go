@@ -67,10 +67,13 @@ func capacityObservation(
 	required = max(required, p95Samples)
 	fmt.Fprintf(w, "Minimum samples per series and window: %d (conditional zero-error and p95-rank bounds).\n", required)
 	users := capacityPassingLevel(result, v.Envelope.Mode == config.EnvelopeExtended)
-	if result.HighestPassingUsers != nil && result.Outcome == "ABORTED" {
+	if users < 1 {
+		return 0, 0, errors.New("explore recorded no reproducible passing capacity bracket")
+	}
+	if result.Outcome == "ABORTED" {
 		fmt.Fprintf(w, "Explore stopped early (ABORTED); continuing with the highest repeatedly passing level %d VUs. Levels above it were not explored.\n", *result.HighestPassingUsers)
 	}
-	if users < 1 || users > maxUsers || result.Repeats < 2 || result.Repeats > 4 {
+	if users > maxUsers || result.Repeats < 2 || result.Repeats > 4 {
 		return 0, 0, errors.New("explore evidence is outside the declared capacity controls")
 	}
 	slowest := math.Inf(1)
@@ -125,7 +128,7 @@ func capacityObservation(
 }
 
 func capacityPassingLevel(result explorer.Result, extended bool) int {
-	if result.HighestPassingUsers != nil && (result.Outcome == "BRACKETED" || result.Outcome == "PASSED_TO_CONFIGURED_CEILING") {
+	if result.HighestPassingUsers != nil && (result.Outcome == "BRACKETED" || result.Outcome == "PASSED_TO_CONFIGURED_CEILING" || result.Outcome == "ABORTED") {
 		return *result.HighestPassingUsers
 	}
 	if extended && result.Outcome == "INCONCLUSIVE" && strings.HasPrefix(result.Reason, explorer.UncalibratedRefinementReason) {
