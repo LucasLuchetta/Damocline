@@ -412,7 +412,7 @@ func AuditCampaign(e campaign.Result) CampaignAudit {
 			quality := report.AssessQuality(phase.Run)
 			stability := ""
 			if phase.Name == "observation" || phase.Name == "soak" {
-				stability = campaign.AssessStabilityWithPolicy(phase.Run, e.EffectiveStabilityPolicy())
+				stability = campaignStability(e, phase.Run)
 			}
 			a.Phases = append(a.Phases, PhaseAudit{
 				Trial: trial.Number, Name: phase.Name, EvidenceState: state,

@@ -19,7 +19,7 @@ import (
 	"github.com/LucasLuchetta/Damocline/internal/report"
 )
 
-const CurrentSchemaVersion = 16
+const CurrentSchemaVersion = 17
 
 // WorkloadSource identifies the exact bounded configuration bytes used to
 // construct a campaign. Digests identify bytes but do not authenticate origin.
@@ -158,6 +158,12 @@ type Phase struct {
 	Run           report.Result           `json:"run"`
 	Telemetry     *appmetrics.Observation `json:"telemetry,omitempty"`
 	HostTelemetry *hostsensor.Observation `json:"host_telemetry,omitempty"`
+	// RampUp is the effective scenario ramp applied by this phase's engine
+	// run (schema v17+). Only the first phase of a trial and a spike ramp.
+	RampUp string `json:"ramp_up,omitempty"`
+	// StabilityBaselineWindow is the zero-based observation window used as
+	// the drift-screen reference (schema v17+); 0 is the first window.
+	StabilityBaselineWindow int `json:"stability_baseline_window,omitempty"`
 }
 
 type Trial struct {
@@ -203,7 +209,43 @@ type Result struct {
 	PendingTrial           *Trial                          `json:"pending_trial,omitempty"`
 	ObservationVariability *Variability                    `json:"observation_variability,omitempty"`
 	Outcome                string                          `json:"outcome"`
+	DriftBaseline          string                          `json:"drift_baseline,omitempty"`
 	Notes                  []string                        `json:"notes"`
+}
+
+// ExpectedDriftBaseline returns the drift-screen reference rule implied by
+// the campaign schema. Historical schemas always used the first window.
+func (r Result) ExpectedDriftBaseline() string {
+	return DriftBaselineForSchema(r.SchemaVersion, 17)
+}
+
+// DriftBaselineForSchema returns the robust rule for schemas at or above
+// firstRobust and the historical first-window rule otherwise.
+func DriftBaselineForSchema(schema, firstRobust int) string {
+	if schema >= firstRobust {
+		return DriftBaselineSkipLightLeadingWindow
+	}
+	return DriftBaselineFirstWindow
+}
+
+const (
+	// DriftBaselineFirstWindow compares every window to the first window.
+	DriftBaselineFirstWindow = "first_window"
+	// DriftBaselineSkipLightLeadingWindow uses the second window as the
+	// reference when the first window's request throughput is below the
+	// policy throughput floor relative to the median of the later windows.
+	DriftBaselineSkipLightLeadingWindow = "first_window_unless_light_leading_window"
+)
+
+// EffectivePhaseRampUp returns the scenario ramp a campaign phase applies.
+// The first phase of a trial ramps from zero; a spike starts a fresh
+// higher-VU run and keeps the scenario ramp. Later phases start at their
+// target VU count because an earlier phase already ramped the workload.
+func EffectivePhaseRampUp(index int, name string, scenarioRamp time.Duration) time.Duration {
+	if index == 0 || name == "spike" {
+		return scenarioRamp
+	}
+	return 0
 }
 
 // EffectiveStabilityPolicy returns the policy recorded in current campaign
@@ -477,8 +519,10 @@ func WithRunnerProgress(ctx context.Context, base config.Validated, options Opti
 		Repeats:              options.Repeats,
 		Trials:               []Trial{},
 		Outcome:              "INCONCLUSIVE",
+		DriftBaseline:        DriftBaselineSkipLightLeadingWindow,
 		Notes: []string{
 			"Warm-up runs establish workload state but are excluded from capacity conclusions.",
+			"Only the first phase of each trial and a configured spike apply the scenario ramp; later phases start at their target VU count so their windows measure steady load.",
 			"Active stabilization, observation, configured spike, recovery, and the optional final soak require complete bounded evidence; passing phases do not establish universal capacity certification.",
 		},
 	}
@@ -527,7 +571,7 @@ func WithRunnerProgress(ctx context.Context, base config.Validated, options Opti
 			return result, err
 		}
 		spikeFailed := false
-		for _, phase := range PlannedTrialPhases(options, base.Scenario.Users, number) {
+		for phaseIndex, phase := range PlannedTrialPhases(options, base.Scenario.Users, number) {
 			if ctx.Err() != nil {
 				trial.Outcome = "ABORTED"
 				trial.AbortReason = abortReason(ctx.Err(), parent.Err())
@@ -538,6 +582,10 @@ func WithRunnerProgress(ctx context.Context, base config.Validated, options Opti
 			v.Duration = phase.Duration
 			v.Scenario.Duration = phase.Duration.String()
 			v.Scenario.Users = phase.Users
+			v.RampUp = EffectivePhaseRampUp(phaseIndex, phase.Name, base.RampUp)
+			if v.RampUp != base.RampUp {
+				v.Scenario.RampUp = v.RampUp.String()
+			}
 			if phase.Name != "warmup" && v.Window == 0 && phase.Duration >= 4*time.Second {
 				v.Window = min(30*time.Second, phase.Duration/4)
 				v.Scenario.WindowDuration = v.Window.String()
@@ -557,11 +605,11 @@ func WithRunnerProgress(ctx context.Context, base config.Validated, options Opti
 				work()
 			}
 			state, reason := ClassifyPhase(result, run, phase.Name)
-			stability := ""
+			stability, baselineWindow := "", 0
 			if phase.Name == "stabilization" || phase.Name == "observation" || phase.Name == "soak" {
-				stability = AssessStabilityWithPolicy(run, options.Stability)
+				stability, baselineWindow = AssessStabilityWithBaseline(run, options.Stability, DriftBaselineSkipLightLeadingWindow)
 			}
-			trial.Phases = append(trial.Phases, Phase{Name: phase.Name, EvidenceState: state, Reason: reason, Stability: stability, Run: run, HostTelemetry: hostTelemetry})
+			trial.Phases = append(trial.Phases, Phase{Name: phase.Name, EvidenceState: state, Reason: reason, Stability: stability, Run: run, HostTelemetry: hostTelemetry, RampUp: v.RampUp.String(), StabilityBaselineWindow: baselineWindow})
 			if err := checkpoint(trial); err != nil {
 				return result, err
 			}
@@ -674,10 +722,24 @@ func AssessStability(run report.Result) string {
 }
 
 // AssessStabilityWithPolicy applies the saved, bounded policy to every
-// observation window and named series in a run.
+// observation window and named series in a run, using the historical
+// first-window reference.
 func AssessStabilityWithPolicy(run report.Result, policy StabilityPolicy) string {
+	label, _ := AssessStabilityWithBaseline(run, policy, DriftBaselineFirstWindow)
+	return label
+}
+
+// AssessStabilityWithBaseline applies the policy with the named reference
+// rule and returns the label and the zero-based reference window. Every
+// window, including an excluded light leading window, must still be complete
+// and contiguous. A light leading window is excluded only as a reference: a
+// degrading target has a heavy, not light, first window and is still flagged.
+func AssessStabilityWithBaseline(run report.Result, policy StabilityPolicy, baseline string) (string, int) {
+	if baseline != DriftBaselineFirstWindow && baseline != DriftBaselineSkipLightLeadingWindow {
+		return "INSUFFICIENT_WINDOWS", 0
+	}
 	if ValidateStabilityPolicy(policy) != nil || len(run.Windows) < policy.MinimumWindows || run.ObservationSeconds <= 0 || math.IsNaN(run.ObservationSeconds) || math.IsInf(run.ObservationSeconds, 0) {
-		return "INSUFFICIENT_WINDOWS"
+		return "INSUFFICIENT_WINDOWS", 0
 	}
 	expectedStart := 0.0
 	first := run.Windows[0]
@@ -685,43 +747,67 @@ func AssessStabilityWithPolicy(run report.Result, policy StabilityPolicy) string
 		if math.IsNaN(window.StartSeconds) || math.IsInf(window.StartSeconds, 0) || math.IsNaN(window.EndSeconds) || math.IsInf(window.EndSeconds, 0) ||
 			math.Abs(window.StartSeconds-expectedStart) > 0.001 || window.EndSeconds <= window.StartSeconds ||
 			window.EndSeconds > run.ObservationSeconds+0.001 || !stableScreenMetric(window.Metrics, policy.MinimumSamplesPerWindow) || !stableScreenMetric(window.Journeys, policy.MinimumSamplesPerWindow) {
-			return "INSUFFICIENT_WINDOWS"
+			return "INSUFFICIENT_WINDOWS", 0
 		}
 		if len(window.Steps) != len(first.Steps) || len(window.Profiles) != len(first.Profiles) {
-			return "INSUFFICIENT_WINDOWS"
+			return "INSUFFICIENT_WINDOWS", 0
 		}
 		if !stableNamedWindows(first.Steps, window.Steps, first.EndSeconds-first.StartSeconds, window.EndSeconds-window.StartSeconds, policy.MinimumSamplesPerWindow) ||
 			!stableNamedWindows(first.Profiles, window.Profiles, first.EndSeconds-first.StartSeconds, window.EndSeconds-window.StartSeconds, policy.MinimumSamplesPerWindow) {
-			return "INSUFFICIENT_WINDOWS"
+			return "INSUFFICIENT_WINDOWS", 0
 		}
 		expectedStart = window.EndSeconds
 	}
 	if math.Abs(expectedStart-run.ObservationSeconds) > 0.001 {
-		return "INSUFFICIENT_WINDOWS"
+		return "INSUFFICIENT_WINDOWS", 0
 	}
-	firstDuration := first.EndSeconds - first.StartSeconds
-	for _, window := range run.Windows[1:] {
+	reference := 0
+	if baseline == DriftBaselineSkipLightLeadingWindow && lightLeadingWindow(run.Windows, policy) {
+		reference = 1
+		if len(run.Windows)-reference < policy.MinimumWindows {
+			return "INSUFFICIENT_WINDOWS", reference
+		}
+	}
+	ref := run.Windows[reference]
+	refDuration := ref.EndSeconds - ref.StartSeconds
+	for _, window := range run.Windows[reference+1:] {
 		duration := window.EndSeconds - window.StartSeconds
-		if largeWindowDrift(first.Metrics, window.Metrics, firstDuration, duration, policy) ||
-			largeWindowDrift(first.Journeys, window.Journeys, firstDuration, duration, policy) {
-			return "NON_STATIONARY"
+		if largeWindowDrift(ref.Metrics, window.Metrics, refDuration, duration, policy) ||
+			largeWindowDrift(ref.Journeys, window.Journeys, refDuration, duration, policy) {
+			return "NON_STATIONARY", reference
 		}
 		for _, pair := range []struct{ baseline, observed []report.WindowMetric }{
-			{first.Steps, window.Steps},
-			{first.Profiles, window.Profiles},
+			{ref.Steps, window.Steps},
+			{ref.Profiles, window.Profiles},
 		} {
 			byName := make(map[string]report.MetricSet, len(pair.baseline))
 			for _, entry := range pair.baseline {
 				byName[entry.Name] = entry.Metrics
 			}
 			for _, entry := range pair.observed {
-				if largeWindowDrift(byName[entry.Name], entry.Metrics, firstDuration, duration, policy) {
-					return "NON_STATIONARY"
+				if largeWindowDrift(byName[entry.Name], entry.Metrics, refDuration, duration, policy) {
+					return "NON_STATIONARY", reference
 				}
 			}
 		}
 	}
-	return "NO_LARGE_DRIFT_DETECTED"
+	return "NO_LARGE_DRIFT_DETECTED", reference
+}
+
+// lightLeadingWindow reports whether the first window's request rate is
+// below the policy throughput floor relative to the median rate of the later
+// windows. Callers have already validated window bounds and samples.
+func lightLeadingWindow(windows []report.WindowResult, policy StabilityPolicy) bool {
+	if len(windows) < 3 {
+		return false
+	}
+	rates := make([]float64, 0, len(windows)-1)
+	for _, window := range windows[1:] {
+		rates = append(rates, float64(window.Metrics.Total)/(window.EndSeconds-window.StartSeconds))
+	}
+	sort.Float64s(rates)
+	firstRate := float64(windows[0].Metrics.Total) / (windows[0].EndSeconds - windows[0].StartSeconds)
+	return firstRate < medianOfSorted(rates)*(1-policy.MaxThroughputDropPercent/100)
 }
 
 func stableScreenMetric(m report.MetricSet, minimumSamples int) bool {
