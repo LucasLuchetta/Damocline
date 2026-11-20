@@ -68,6 +68,9 @@ func ValidateRunReport(r report.Result) error {
 	if !report.ValidNetworkBaseline(r) {
 		return errors.New("network_baseline evidence is malformed or not allowed before schema v37")
 	}
+	if !report.ValidEnvelope(r) {
+		return errors.New("load_envelope evidence is malformed, exceeds its ceilings or is not allowed before schema v38")
+	}
 	if r.SchemaVersion < 36 {
 		for _, step := range r.Steps {
 			if step.HTTPTrace.TransportRetryCount != 0 {
@@ -267,6 +270,13 @@ func Evaluate(r report.Result, host *hostmon.Result) Assessment {
 	}
 	if r.Metrics.Total >= 1 && r.Metrics.P95MS > 0 && r.Metrics.P99MS > 3*r.Metrics.P95MS && r.Metrics.P99MS-r.Metrics.P95MS > 1000 {
 		a.Findings = append(a.Findings, Finding{"CAUTION", fmt.Sprintf("Long-tail latency: request p99 reached %.0f ms versus p95 of %.0f ms. Investigate intermittent slow requests.", r.Metrics.P99MS, r.Metrics.P95MS)})
+	}
+	if note := report.EnvelopeNote(r); note != "" {
+		severity := "INFO"
+		if r.Envelope.StopReason == report.EnvelopeStopGeneratorLimited {
+			severity = "CAUTION"
+		}
+		a.Findings = append(a.Findings, Finding{severity, note})
 	}
 	if b := r.NetworkBaseline; b != nil {
 		if b.Status == report.NetworkBaselineSkipped {

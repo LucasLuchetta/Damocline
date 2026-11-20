@@ -38,7 +38,9 @@ import (
 // Version 35 may record an optional journey_p95_limit_ms that replaces
 // p95_limit_ms for completed-journey latency objectives only (ADR 0150).
 // Version 37 may record a bounded pre-load network-path baseline (ADR 0153).
-const CurrentSchemaVersion = 37
+// Version 38 records the load envelope (standard or opt-in extended) that
+// bounded the run (ADR 0155).
+const CurrentSchemaVersion = 38
 
 // JourneyP95LimitSchemaVersion is the first run schema that may carry
 // RunConfig.JourneyP95LimitMS.
@@ -655,6 +657,7 @@ type Result struct {
 	Calibration                      *CalibrationEvidence         `json:"calibration,omitempty"`
 	ReferenceEvidence                *ControlledReferenceEvidence `json:"controlled_reference_evidence,omitempty"`
 	NetworkBaseline                  *NetworkBaseline             `json:"network_baseline,omitempty"`
+	Envelope                         *Envelope                    `json:"load_envelope,omitempty"`
 	Quality                          *Quality                     `json:"data_quality,omitempty"`
 	Signals                          []Signal                     `json:"diagnostic_signals,omitempty"`
 }
