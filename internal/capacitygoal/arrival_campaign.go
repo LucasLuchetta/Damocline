@@ -12,6 +12,7 @@ import (
 	"github.com/LucasLuchetta/Damocline/internal/appmetrics"
 	"github.com/LucasLuchetta/Damocline/internal/arrivalcampaign"
 	"github.com/LucasLuchetta/Damocline/internal/campaign"
+	"github.com/LucasLuchetta/Damocline/internal/config"
 	"github.com/LucasLuchetta/Damocline/internal/generatorhealth"
 	"github.com/LucasLuchetta/Damocline/internal/report"
 )
@@ -58,8 +59,19 @@ func EvaluateJourneyCampaign(saved arrivalcampaign.Result, goal JourneyStartGoal
 	if err != nil {
 		return JourneyStartAssessment{}, err
 	}
-	if saved.SchemaVersion < 1 || saved.SchemaVersion > arrivalcampaign.CurrentSchemaVersion || saved.Scenario == "" || saved.Target == "" || saved.WorkloadFingerprint == "" ||
-		saved.WorkerLimit < 1 || saved.WorkerLimit > 50 || saved.BaseStartsPerSecond < 1 || saved.BaseStartsPerSecond > 100 ||
+	limits := config.StandardEnvelopeLimits
+	if saved.SchemaVersion == arrivalcampaign.EnvelopeSchemaVersion {
+		if !report.ValidArrivalAggregateEnvelope(saved.LoadEnvelope, saved.WorkerLimit,
+			max(saved.BaseStartsPerSecond, saved.SpikeStartsPerSecond), saved.RequestRateCeiling) ||
+			saved.GeneratorGuardrails == nil || !saved.GeneratorGuardrails.Enabled() {
+			return JourneyStartAssessment{}, errors.New("invalid extended arrival campaign envelope")
+		}
+		limits = config.ExtendedEnvelopeHardLimits
+	} else if saved.LoadEnvelope != nil {
+		return JourneyStartAssessment{}, errors.New("extended arrival controls require a supported campaign schema")
+	}
+	if saved.SchemaVersion < 1 || saved.SchemaVersion > arrivalcampaign.EnvelopeSchemaVersion || saved.Scenario == "" || saved.Target == "" || saved.WorkloadFingerprint == "" ||
+		saved.WorkerLimit < 1 || saved.WorkerLimit > limits.MaxUsers || saved.BaseStartsPerSecond < 1 || saved.BaseStartsPerSecond > limits.MaxArrivalRate ||
 		saved.RequestRateCeiling < 1 || saved.RequestTimeout == "" || saved.P95LimitMS <= 0 || saved.MaxErrorRate < 0 || saved.MaxErrorRate >= 1 ||
 		saved.MinSamplesPerStep < 1 || saved.Repeats < 2 || saved.Repeats > 5 || len(saved.Trials) == 0 {
 		return JourneyStartAssessment{}, errors.New("invalid or empty arrival campaign artifact")
@@ -166,6 +178,10 @@ func EvaluateJourneyCampaign(saved arrivalcampaign.Result, goal JourneyStartGoal
 		for phaseIndex, phase := range trial.Phases {
 			expected := planned[phaseIndex]
 			run := phase.Run
+			if saved.LoadEnvelope != nil && !report.RunMatchesAggregateEnvelope(saved.LoadEnvelope, run) ||
+				saved.LoadEnvelope == nil && run.Envelope != nil && run.Envelope.Mode == report.EnvelopeModeExtended {
+				return JourneyStartAssessment{}, errors.New("native phase envelope disagrees with the arrival campaign")
+			}
 			if saved.SchemaVersion >= 8 && phase.Name != "warmup" && !saved.Objectives.MatchesRun(run) {
 				return JourneyStartAssessment{}, errors.New("native arrival phase controls disagree with the predeclared objective contract")
 			}
@@ -452,9 +468,15 @@ func validateSavedOptions(saved arrivalcampaign.Result, options arrivalcampaign.
 			return errors.New("long-run campaign is missing its declared staging environment")
 		}
 	}
+	rateLimit := config.StandardEnvelopeLimits.MaxArrivalRate
+	if saved.LoadEnvelope != nil {
+		limits := config.ExtendedEnvelopeHardLimits
+		rateLimit = limits.MaxArrivalRate
+		phaseLimit, stabilizationLimit, soakLimit = min(phaseLimit, limits.MaxDuration), min(stabilizationLimit, limits.MaxDuration), min(soakLimit, limits.MaxDuration)
+	}
 	if options.Warmup < 0 || options.Warmup > 3*time.Minute || options.Stabilization < 0 || options.Stabilization > stabilizationLimit || options.Stabilization > 0 && options.Stabilization < 10*time.Second || options.Recovery < 10*time.Second || options.Recovery > 3*time.Minute ||
 		options.Observation < 10*time.Second || options.Observation > phaseLimit || options.Repeats < 2 || options.Repeats > 5 ||
-		options.SpikeRate < 0 || options.SpikeRate > 100 || (options.SpikeRate == 0) != (options.SpikeDuration == 0) ||
+		options.SpikeRate < 0 || options.SpikeRate > rateLimit || (options.SpikeRate == 0) != (options.SpikeDuration == 0) ||
 		options.SpikeRate > 0 && (options.SpikeRate <= saved.BaseStartsPerSecond || options.SpikeDuration < 10*time.Second || options.SpikeDuration > 3*time.Minute) ||
 		options.Soak < 0 || options.Soak > soakLimit || options.Soak > 0 && options.Soak < 10*time.Second || options.Cooldown < 0 || options.Cooldown > 5*time.Minute {
 		return errors.New("saved campaign phase schedule is invalid")

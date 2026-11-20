@@ -54,6 +54,8 @@ func arrivalCampaignCmd(args []string, stdout, stderr io.Writer) int {
 	insecure := fs.Bool("allow-insecure-http", false, "permit intentional plaintext HTTP to a non-loopback host")
 	out := fs.String("out", "", "JSON campaign report output path")
 	calibrationFile := fs.String("calibration", "", "require exact local generator coverage for every planned arrival rate")
+	requireCalibration := fs.Bool("require-calibration", false, "require an exact calibration artifact before load")
+	extended := registerExtendedEnvelopeOptInFlags(fs)
 	applicationMetricsEndpoint := fs.String("app-metrics-endpoint", "", "optionally sample an authorized Prometheus-text endpoint during every phase")
 	applicationMetricsInterval := fs.Duration("app-metrics-interval", 10*time.Second, "application-metrics sampling interval (1s-1m)")
 	if err := fs.Parse(args); err != nil {
@@ -61,6 +63,14 @@ func arrivalCampaignCmd(args []string, stdout, stderr io.Writer) int {
 	}
 	if *filename == "" || len(fs.Args()) != 0 {
 		fmt.Fprintln(stderr, "--config is required and positional arguments are not accepted")
+		return 2
+	}
+	extendedRequest, err := extended.request(*requireCalibration, *calibrationFile)
+	if err != nil || *requireCalibration && *calibrationFile == "" {
+		if err == nil {
+			err = fmt.Errorf("--require-calibration requires --calibration")
+		}
+		fmt.Fprintln(stderr, err)
 		return 2
 	}
 	if err := validateApplicationMetrics(*applicationMetricsEndpoint, *applicationMetricsInterval); err != nil {
@@ -111,11 +121,15 @@ func arrivalCampaignCmd(args []string, stdout, stderr io.Writer) int {
 		Stability:  campaign.StabilityPolicy{MinimumWindows: *minWindows, MinimumSamplesPerWindow: *minSamples, MaxP95IncreasePercent: *maxP95IncreasePercent, MaxP95IncreaseMS: *maxP95IncreaseMS, MaxThroughputDropPercent: *maxThroughputDropPercent},
 		Guardrails: guardrails,
 		LongRun:    *longRun, StagingConfirmed: *stagingConfirmed}
-	if err := arrivalcampaign.Validate(config.Validated{Scenario: scenario}, options); err != nil {
-		fmt.Fprintf(stderr, "invalid arrival campaign: %v\n", err)
-		return 2
+	if extendedRequest != nil {
+		extendedRequest.Guardrails = guardrails
+	} else {
+		if err := arrivalcampaign.Validate(config.Validated{Scenario: scenario}, options); err != nil {
+			fmt.Fprintf(stderr, "invalid arrival campaign: %v\n", err)
+			return 2
+		}
 	}
-	validated, err := config.Parse(scenario, config.Options{Authorized: *authorized || *dry, AllowWrites: *writes, AllowInsecureHTTP: *insecure, NetworkBaseline: true})
+	validated, err := config.Parse(scenario, config.Options{Authorized: *authorized || *dry, AllowWrites: *writes, AllowInsecureHTTP: *insecure, NetworkBaseline: true, ExtendedEnvelope: extendedRequest})
 	if err != nil {
 		fmt.Fprintf(stderr, "configuration error: %v\n", err)
 		return 2
@@ -123,6 +137,23 @@ func arrivalCampaignCmd(args []string, stdout, stderr io.Writer) int {
 	if err := arrivalcampaign.Validate(validated, options); err != nil {
 		fmt.Fprintf(stderr, "invalid arrival campaign: %v\n", err)
 		return 2
+	}
+	var selfCalibration *calibration.ScenarioRecord
+	if extendedRequest != nil {
+		selfCalibration, err = loadExtendedArrivalCalibration(*calibrationFile)
+		if err == nil {
+			rates := []int{validated.Scenario.ArrivalRate}
+			if options.SpikeRate > 0 {
+				rates = append(rates, options.SpikeRate)
+			}
+			err = gateExtendedArrivalRates(&validated, selfCalibration, rates)
+		}
+		if err != nil {
+			fmt.Fprintf(stderr, "extended arrival campaign: %v; no traffic was sent\n", err)
+			return 2
+		}
+		options.Guardrails = validated.GeneratorGuardrails
+		guardrails = options.Guardrails
 	}
 	if scenario.WindowDuration == "" {
 		shortest := min(*observation, *recovery)
@@ -156,7 +187,7 @@ func arrivalCampaignCmd(args []string, stdout, stderr io.Writer) int {
 		if *applicationMetricsEndpoint != "" {
 			fmt.Fprintf(stdout, "Application metrics endpoint validated; dry run will not scrape it (interval %s).\n", *applicationMetricsInterval)
 		}
-		if *calibrationFile != "" {
+		if *calibrationFile != "" && selfCalibration == nil {
 			record, loadErr := loadCalibration(*calibrationFile)
 			if loadErr != nil {
 				fmt.Fprintf(stderr, "calibration error: %v\n", loadErr)
@@ -181,7 +212,7 @@ func arrivalCampaignCmd(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 	var calibrationRecord *calibration.Record
-	if *calibrationFile != "" {
+	if *calibrationFile != "" && selfCalibration == nil {
 		record, loadErr := loadCalibration(*calibrationFile)
 		if loadErr != nil {
 			fmt.Fprintf(stderr, "calibration error: %v\n", loadErr)
@@ -194,12 +225,15 @@ func arrivalCampaignCmd(args []string, stdout, stderr io.Writer) int {
 			return 2
 		}
 		calibrationRecord = &record
-	} else {
+	} else if selfCalibration == nil {
 		fmt.Fprintln(stdout, "No generator calibration envelope supplied; generator readiness was not checked before the campaign.")
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	runner := arrivalcampaign.Runner(engine.Run)
+	if selfCalibration != nil {
+		runner = arrivalcampaign.Runner(withScenarioCalibration(*selfCalibration, phaseRunner(runner)))
+	}
 	if calibrationRecord != nil {
 		record := *calibrationRecord
 		runner = func(ctx context.Context, scenario config.Validated) report.Result {
