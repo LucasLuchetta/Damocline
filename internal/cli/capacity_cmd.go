@@ -65,7 +65,9 @@ func capacityObservation(
 	}
 	required = max(required, p95Samples)
 	fmt.Fprintf(w, "Minimum samples per series and window: %d (conditional zero-error and p95-rank bounds).\n", required)
-	if result.HighestPassingUsers == nil || (result.Outcome != "BRACKETED" && result.Outcome != "PASSED_TO_CONFIGURED_CEILING") {
+	if result.HighestPassingUsers != nil && result.Outcome == "ABORTED" {
+		fmt.Fprintf(w, "Explore stopped early (ABORTED); continuing with the highest repeatedly passing level %d VUs. Levels above it were not explored.\n", *result.HighestPassingUsers)
+	} else if result.HighestPassingUsers == nil || (result.Outcome != "BRACKETED" && result.Outcome != "PASSED_TO_CONFIGURED_CEILING") {
 		return 0, 0, errors.New("explore recorded no reproducible passing capacity bracket")
 	}
 	users := *result.HighestPassingUsers
@@ -250,6 +252,27 @@ func capacityCmd(args []string, stdout, stderr io.Writer) int {
 		return fail(errors.New("even the configured request ceiling cannot supply the minimum samples in a 60s window; use fewer steps or raise the request ceiling within supported limits"))
 	}
 	ladder := explorer.PlannedLevels(opt)
+	// Size the explore budget from the actual stages: each planned level runs
+	// opt.Repeats stages plus a bounded network preflight. A default budget
+	// grows to fit (within the 15m explorer cap); an explicit budget that is
+	// too small is refused before any traffic instead of aborting mid-ladder.
+	exploreNeed := time.Duration(len(ladder)*opt.Repeats) * (opt.StageDuration + 5*time.Second)
+	explicitExploreBudget := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "explore-budget" {
+			explicitExploreBudget = true
+		}
+	})
+	if exploreNeed > 15*time.Minute {
+		return fail(fmt.Errorf("explore needs about %s for %d levels x %d repeats of %s stages, above the 15m explore cap; lower --max-users", exploreNeed.Round(time.Second), len(ladder), opt.Repeats, opt.StageDuration))
+	}
+	if *exploreBudget < exploreNeed {
+		if explicitExploreBudget {
+			return fail(fmt.Errorf("--explore-budget %s is too small for %d levels x %d repeats of %s stages; use at least %s", *exploreBudget, len(ladder), opt.Repeats, opt.StageDuration, exploreNeed.Round(time.Second)))
+		}
+		*exploreBudget = exploreNeed.Round(time.Second)
+		opt.Budget = *exploreBudget
+	}
 	calWall := time.Duration(0)
 	if *calibration == "" {
 		ladderWall, err := capacityCalibrationWall(len(ladder), *calLevel)
