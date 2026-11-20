@@ -7,25 +7,22 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/LucasLuchetta/Damocline/internal/calibration"
 	"github.com/LucasLuchetta/Damocline/internal/capacityplan"
 	"github.com/LucasLuchetta/Damocline/internal/config"
 	"github.com/LucasLuchetta/Damocline/internal/explorer"
 )
 
-// knownCapacityWorkers is the loopback fixture's exact concurrency capacity.
-const knownCapacityWorkers = 5
-
-// knownCapacityTarget serves /work in 20ms while at most knownCapacityWorkers
-// requests are in flight and in 150ms once that pool is exceeded. A
-// zero-think closed loop therefore meets a 100ms p95 SLO at 5 VUs or fewer
-// and fails it at 6 VUs or more.
-func knownCapacityTarget(t *testing.T) string {
+// knownCapacityTarget serves /work in 150ms while at most workers requests
+// are in flight and in 600ms once that pool is exceeded. A zero-think closed
+// loop therefore meets a 400ms p95 SLO at `workers` VUs or fewer and fails
+// it above.
+func knownCapacityTarget(t *testing.T, workers int64) string {
 	t.Helper()
 	var inflight atomic.Int64
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -33,13 +30,13 @@ func knownCapacityTarget(t *testing.T) string {
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
-		delay := 20 * time.Millisecond
-		if inflight.Add(1) > knownCapacityWorkers {
-			delay = 150 * time.Millisecond
+		delay := 150 * time.Millisecond
+		if inflight.Add(1) > workers {
+			delay = 600 * time.Millisecond
 		}
 		time.Sleep(delay)
-		// Leave the pool before the response is written so the client's
-		// next closed-loop request never overlaps its own previous one.
+		// Leave the pool before the response is written so a VU's next
+		// closed-loop request never overlaps its own previous one.
 		inflight.Add(-1)
 		w.Write([]byte("ok"))
 	}))
@@ -57,20 +54,30 @@ func shortenCapacityTiming(t *testing.T) {
 }
 
 // TestCapacityExtendedProtocolFindsKnownCapacityEndToEnd runs the full
-// capacity chain (baseline, self-calibration, extended explore, calibrated
-// campaign, audit, executive report) against a loopback server whose
-// capacity is known in advance.
+// capacity chain (baseline, self-calibration, extended explore above 50 VUs,
+// calibrated campaign, audit, executive report) against a loopback server
+// whose capacity is known in advance.
 func TestCapacityExtendedProtocolFindsKnownCapacityEndToEnd(t *testing.T) {
 	if testing.Short() {
 		t.Skip("end-to-end capacity protocol runs for a few minutes")
 	}
 	shortenCapacityTiming(t)
-	base := knownCapacityTarget(t)
+	const maxUsers = 100
+	const levelDuration = 5 * time.Second
+	opt := explorer.Options{MinUsers: 2, MaxUsers: maxUsers}
+	calibrated := capacityCalibrationLevels(opt, levelDuration)
+	// The known capacity is a calibrated level above the standard ceiling
+	// with a higher calibrated level that must fail.
+	known := calibrated[len(calibrated)-2]
+	if known <= config.StandardEnvelopeLimits.MaxUsers {
+		t.Fatalf("fixture needs a calibrated level above 50 VUs: %v", calibrated)
+	}
+	base := knownCapacityTarget(t, int64(known))
 	dir := t.TempDir()
 	scenarioPath := filepath.Join(dir, "scenario.json")
 	data, err := json.Marshal(config.Scenario{
 		Name: "known capacity", BaseURL: base, Mode: "closed", Users: 2, Duration: "10s",
-		MaxRPS: 1000, P95LimitMS: 100, MaxErrorRate: .01, Environment: "lab",
+		MaxRPS: 1000, P95LimitMS: 400, MaxErrorRate: .01, Environment: "lab",
 		BaselinePath: "/baseline", Steps: []config.Step{{Name: "work", Method: "GET", Path: "/work"}},
 	})
 	if err != nil {
@@ -82,23 +89,23 @@ func TestCapacityExtendedProtocolFindsKnownCapacityEndToEnd(t *testing.T) {
 	out := filepath.Join(dir, "run")
 	var stdout, stderr bytes.Buffer
 	code := capacityCmd([]string{
-		"--config", scenarioPath, "--authorized", "--output-dir", out, "--max-users", "8",
-		"--response-bytes", "2", "--server-delay", "20ms", "--calibration-level-duration", "5s",
+		"--config", scenarioPath, "--authorized", "--output-dir", out, "--max-users", "100",
+		"--response-bytes", "2", "--server-delay", "150ms", "--calibration-level-duration", levelDuration.String(),
 		"--extended-envelope", "--extended-load-authorized", "--target-class", "lab",
 	}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("capacity exit %d\nstdout:\n%s\nstderr:\n%s", code, &stdout, &stderr)
 	}
+	log := stdout.String()
 
-	for _, name := range []string{"selfcal-explore.json", "selfcal-campaign.json"} {
-		loaded, err := loadAnyCalibration(filepath.Join(out, name))
-		if err != nil || loaded.scenario == nil || loaded.scenario.Status != "PASSED" {
-			t.Fatalf("%s did not pass: %v", name, err)
-		}
+	loaded, err := loadAnyCalibration(filepath.Join(out, "selfcal-explore.json"))
+	if err != nil || loaded.scenario == nil || loaded.scenario.Status != calibration.ScenarioCalibrationPassed {
+		t.Fatalf("self-calibration did not pass: %v\n%s", err, log)
 	}
+
 	// The planned explore budget must cover the explore stage's real wall
-	// time: it starts after the explore calibration artifact is written and
-	// ends when explore.json is written.
+	// time, which starts after calibration and ends when explore.json is
+	// written.
 	manifestData, err := os.ReadFile(filepath.Join(out, "protocol.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -107,39 +114,43 @@ func TestCapacityExtendedProtocolFindsKnownCapacityEndToEnd(t *testing.T) {
 	if err := json.Unmarshal(manifestData, &manifest); err != nil {
 		t.Fatal(err)
 	}
-	calibrated, errA := os.Stat(filepath.Join(out, "selfcal-explore.json"))
-	explored, errB := os.Stat(filepath.Join(out, "explore.json"))
+	calibratedAt, errA := os.Stat(filepath.Join(out, "selfcal-explore.json"))
+	exploredAt, errB := os.Stat(filepath.Join(out, "explore.json"))
 	if errA != nil || errB != nil {
 		t.Fatal(errA, errB)
 	}
-	if elapsed := explored.ModTime().Sub(calibrated.ModTime()); elapsed <= 0 || elapsed > manifest.ExploreBudget {
+	elapsed := exploredAt.ModTime().Sub(calibratedAt.ModTime())
+	if elapsed <= 0 || elapsed > manifest.ExploreBudget {
 		t.Fatalf("explore took %s, planned budget %s", elapsed, manifest.ExploreBudget)
-	} else {
-		t.Logf("explore took %s within planned budget %s", elapsed, manifest.ExploreBudget)
 	}
+	t.Logf("explore took %s within the planned %s budget", elapsed, manifest.ExploreBudget)
+
 	exploration, err := readCapacityExplore(filepath.Join(out, "explore.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if exploration.Outcome != "BRACKETED" || exploration.HighestPassingUsers == nil || exploration.FirstFailingUsers == nil {
-		t.Fatalf("exploration did not bracket the knee: %s %s\n%s", exploration.Outcome, exploration.Reason, &stdout)
+	if got := capacityPassingLevel(exploration, true); got != known {
+		t.Fatalf("highest passing level %d VUs, want the known capacity %d (%s: %s)\n%s", got, known, exploration.Outcome, exploration.Reason, log)
 	}
-	if got := *exploration.HighestPassingUsers; got != knownCapacityWorkers {
-		t.Fatalf("highest passing %d VUs, want the known capacity %d\n%s", got, knownCapacityWorkers, &stdout)
+	failedAbove := false
+	for _, probe := range exploration.Probes {
+		if probe.Users > known && probe.Status == "FAIL" {
+			failedAbove = true
+		}
+		if probe.Users <= known && probe.Status != "PASS" {
+			t.Fatalf("level %d at or below the known capacity did not pass: %s", probe.Users, probe.Status)
+		}
 	}
-	if *exploration.FirstFailingUsers != knownCapacityWorkers+1 {
-		t.Fatalf("first failing %d VUs, want %d", *exploration.FirstFailingUsers, knownCapacityWorkers+1)
-	}
-	if exploration.LoadEnvelope == nil {
-		t.Fatal("extended exploration did not record its load envelope")
+	if !failedAbove || exploration.LoadEnvelope == nil {
+		t.Fatalf("exploration did not bracket the knee under the extended envelope\n%s", log)
 	}
 
 	evidence, err := capacityplan.ReadCampaign(filepath.Join(out, "campaign.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if evidence.BaseUsers != knownCapacityWorkers || evidence.Outcome != "PASS" || len(evidence.Trials) != 2 {
-		t.Fatalf("campaign users=%d outcome=%s trials=%d\n%s", evidence.BaseUsers, evidence.Outcome, len(evidence.Trials), &stdout)
+	if evidence.BaseUsers != known || evidence.Outcome != "PASS" || len(evidence.Trials) != 2 {
+		t.Fatalf("campaign users=%d outcome=%s trials=%d\n%s", evidence.BaseUsers, evidence.Outcome, len(evidence.Trials), log)
 	}
 	for _, trial := range evidence.Trials {
 		for _, phase := range trial.Phases {
@@ -158,67 +169,52 @@ func TestCapacityExtendedProtocolFindsKnownCapacityEndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 	if assessment.State == "" || assessment.State == "INSUFFICIENT_EVIDENCE" {
-		t.Fatalf("audit state %q blockers %+v audit %+v", assessment.State, assessment.DecisionBlockers, assessment.Audit)
+		t.Fatalf("audit state %q blockers %+v", assessment.State, assessment.DecisionBlockers)
 	}
-	reportBytes, err := os.ReadFile(filepath.Join(out, "capacity.md"))
-	if err != nil || len(reportBytes) == 0 {
+	t.Logf("known capacity %d VUs; explore %s; audit %s", known, exploration.Outcome, assessment.State)
+	if report, err := os.ReadFile(filepath.Join(out, "capacity.md")); err != nil || len(report) == 0 {
 		t.Fatalf("executive report missing: %v", err)
 	}
-	if !strings.Contains(stdout.String(), "Extended envelope (target class lab)") {
-		t.Fatalf("plan did not state the extended envelope:\n%s", &stdout)
+	if !strings.Contains(log, "Explore sizing:") {
+		t.Fatalf("plan did not print the explore sizing:\n%s", log)
 	}
 }
 
-func TestCapacityExtendedCalibrationLevelsFillBrackets(t *testing.T) {
-	levels, probes := capacityExtendedCalibrationLevels([]int{2, 4, 8}, 5*time.Second)
-	if !slices.Equal(levels, []int{2, 3, 4, 5, 6, 7, 8}) || probes != 2 {
-		t.Fatalf("small ladder: %v %d", levels, probes)
+func TestCapacityWorstCaseProbesCountRefinement(t *testing.T) {
+	// Standard: failing at 16 leaves 7 levels inside 8-16, three probes.
+	if got := capacityWorstCaseProbes([]int{2, 4, 8, 16, 20}, nil, false); got != 7 {
+		t.Fatalf("standard worst case %d", got)
 	}
-	ladder := explorer.PlannedLevels(explorer.Options{MinUsers: 2, MaxUsers: 500})
-	levels, probes = capacityExtendedCalibrationLevels(ladder, 20*time.Second)
-	if len(levels) != 12 || !slices.IsSorted(levels) || probes < 1 {
-		t.Fatalf("large ladder: %v %d", levels, probes)
+	// Extended: only calibrated levels inside a bracket can be probed.
+	if got := capacityWorstCaseProbes([]int{2, 4, 8}, []int{2, 4, 8}, true); got != 3 {
+		t.Fatalf("extended without fill-ins %d", got)
 	}
-	for _, level := range ladder {
-		if !slices.Contains(levels, level) {
-			t.Fatalf("ladder level %d missing from %v", level, levels)
-		}
-	}
-	// A long level duration leaves no room for fill-ins within the wall cap.
-	levels, _ = capacityExtendedCalibrationLevels(ladder, 65*time.Second)
-	if len(levels) != len(ladder) {
-		t.Fatalf("wall-capped fill-ins: %v", levels)
+	if got := capacityWorstCaseProbes([]int{2, 4, 8}, []int{2, 3, 4, 5, 6, 7, 8}, true); got != 5 {
+		t.Fatalf("extended with fill-ins %d", got)
 	}
 }
 
-func TestCapacityContinuesFromUncalibratedRefinementStop(t *testing.T) {
-	result := explorer.Result{Outcome: "INCONCLUSIVE", Reason: explorer.UncalibratedRefinementReason + " Bracket 64-128 VUs.",
-		Probes: []explorer.Probe{{Users: 32, Status: "PASS"}, {Users: 64, Status: "PASS"}, {Users: 128, Status: "FAIL"}}}
-	if users, ok := capacityCoarseBracket(result); !ok || users != 64 {
-		t.Fatalf("coarse bracket %d %v", users, ok)
+func TestCapacityStageOverheadUsesEngineBounds(t *testing.T) {
+	s := config.Scenario{Name: "fixture", BaseURL: "http://127.0.0.1:18089", Users: 2, Duration: "20s", Timeout: "4s",
+		P95LimitMS: 750, MaxErrorRate: .01, MaxRPS: 50, BaselinePath: "/baseline",
+		Steps: []config.Step{{Name: "a", Path: "/a"}, {Name: "b", Path: "/b"}}}
+	overhead, err := capacityStageOverhead(s, 2, nil, false)
+	want := config.NetworkBaselineWallBudget + 8*time.Second + capacityStageSetupAllowance
+	if err != nil || overhead != want {
+		t.Fatalf("overhead %s, want %s (%v)", overhead, want, err)
 	}
-	result.Reason = "The configured request-rate ceiling may be limiting the workload."
-	if _, ok := capacityCoarseBracket(result); ok {
-		t.Fatal("other INCONCLUSIVE outcomes must still stop the protocol")
+	s.BaselinePath, s.NetworkBaselineSkipReason = "", "synthetic-loopback-test"
+	if overhead, err := capacityStageOverhead(s, 2, nil, false); err != nil || overhead != want-config.NetworkBaselineWallBudget {
+		t.Fatalf("skipped baseline overhead %s (%v)", overhead, err)
 	}
 }
 
-func TestCapacityExtendedEnvelopeForwardsToTrafficStages(t *testing.T) {
-	if args := capacityEnvelopeArgs(false, ""); args != nil {
-		t.Fatalf("standard envelope forwarded %v", args)
-	}
-	got := strings.Join(capacityEnvelopeArgs(true, "staging"), " ")
-	if got != "--extended-envelope --extended-load-authorized --target-class staging" {
-		t.Fatalf("forwarded %q", got)
-	}
+func TestCapacityRefusesExploreAboveCapWithProposal(t *testing.T) {
 	dir := t.TempDir()
 	scenario := writeCapacityScenario(t, dir, 100)
 	var out, errOut bytes.Buffer
-	code := capacityCmd([]string{"--config", scenario, "--dry-run", "--max-users", "200", "--extended-envelope", "--extended-load-authorized", "--target-class", "lab"}, &out, &errOut)
-	if code != 0 || !strings.Contains(out.String(), "3. Explore levels [2 4 8 16 32 64 128 200]") || !strings.Contains(out.String(), "bracket refinement probes only calibrated levels") {
-		t.Fatalf("extended dry run above 50 VUs: %d %s %s", code, &out, &errOut)
-	}
-	if code := capacityCmd([]string{"--config", scenario, "--dry-run", "--max-users", "200"}, &bytes.Buffer{}, &bytes.Buffer{}); code != 2 {
-		t.Fatalf("standard envelope accepted 200 VUs: %d", code)
+	code := capacityCmd([]string{"--config", scenario, "--dry-run", "--max-users", "128", "--extended-envelope", "--extended-load-authorized", "--target-class", "lab"}, &out, &errOut)
+	if code != 2 || !strings.Contains(errOut.String(), "above the 15m explore cap") || !strings.Contains(errOut.String(), "lower --max-users") {
+		t.Fatalf("oversized explore plan: %d %s %s", code, &out, &errOut)
 	}
 }

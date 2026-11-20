@@ -83,7 +83,9 @@ func TestCapacityRequiresMirrorSourceAndExtendedGateFlags(t *testing.T) {
 		t.Fatal("refused execution created an output directory")
 	}
 	var out bytes.Buffer
-	if code := capacityCmd([]string{"--config", scenario, "--dry-run", "--max-users", "8", "--extended-envelope", "--extended-load-authorized", "--target-class", "lab"}, &out, &bytes.Buffer{}); code != 0 || !strings.Contains(out.String(), "extended-envelope gate (target class lab)") {
+	if code := capacityCmd([]string{"--config", scenario, "--dry-run", "--max-users", "32", "--extended-envelope", "--extended-load-authorized", "--target-class", "lab"}, &out, &bytes.Buffer{}); code != 0 ||
+		!strings.Contains(out.String(), "One calibration for ladder, refinement and campaign candidates") ||
+		!strings.Contains(out.String(), "Explore and campaign use the extended envelope (target class lab)") {
 		t.Fatalf("extended dry run: %d %s", code, &out)
 	}
 }

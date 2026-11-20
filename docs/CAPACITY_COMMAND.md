@@ -30,19 +30,10 @@ exploration it warns again when the campaign level ran at 90% or more of
 wall ceilings is refused with a proposed adjustment. A numeric observation
 forecast requires a matching exploration artifact.
 
-Standard ceilings apply by default. `--extended-envelope` (with
-`--extended-load-authorized` and `--target-class lab|staging`) allows
-`--max-users` up to 500. The protocol forwards the opt-in to calibration,
-exploration and campaign (ADR 0170). It self-calibrates the ladder and
-bisection fill-in levels, because extended refinement probes only calibrated
-levels. If no calibrated level remains inside the failing bracket, the
-campaign confirms the highest passing tested level, and the bracket is
-reported as not refined.
-
-The explore budget counts every stage, including reserved refinement probes,
-as the stage duration plus the per-stage overhead. The overhead is the
-network baseline cap, the bounded drain and setup time. Dry-run prints this
-sizing. A plan above the 15m explore cap is refused before traffic.
+Standard ceilings apply. `--extended-envelope` (with
+`--extended-load-authorized` and `--target-class lab|staging`) passes the
+ADR 0155 extended gate to calibration only; exploration and campaign stages
+still run within the standard 50 VU ceiling in this release.
 
 The protocol uses the weakest measured delivery rate across all relevant
 series and repeats. For a 1% error budget, the zero-failure conditional
@@ -83,3 +74,13 @@ executable and repeated `--session-hook-arg` literal arguments. It reads
 `DAMOCLINE_SESSION_COUNT` and prints exactly that many distinct Cookie header
 strings in a JSON array. No hook is executed during dry-run. Its stdout is
 bounded, and its diagnostics and cookies are excluded from artifacts.
+
+## Executive HTML report
+
+After the offline audit, the protocol writes `capacity.html` next to
+`capacity.md` in the output directory (ADR 0173). It is generated from the
+saved campaign and exploration only, with no extra traffic, and plots the
+exploration probes and campaign phases against the objectives. A declared
+`--actions-per-user-minute` or `--access-log` intensity appears only as a
+labeled assumption. The file is created with mode 0600 and never overwritten;
+directories completed by an earlier release keep only the Markdown report.
