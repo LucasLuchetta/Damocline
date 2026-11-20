@@ -129,6 +129,14 @@ func renderCampaignCapacityReport(assessment capacityplan.Assessment, source str
 	}
 	fmt.Fprintln(&b)
 	fmt.Fprintf(&b, "Confidence dimensions: measurement **%s**, workload representativeness **%s**, decision **%s**.\n", markdownText(assessment.Confidence.Measurement), markdownText(assessment.Confidence.WorkloadRepresentativeness), markdownText(assessment.Confidence.Decision))
+	if mix := assessment.Confidence.WorkloadMix; mix != nil {
+		fmt.Fprintf(&b, "Workload mix: assessed **%t**, executed mix **%s**, reference **%s**.\n", mix.Assessed, markdownText(mix.State), markdownText(mix.ReferenceState))
+		blockers := make([]string, 0, len(mix.Blockers))
+		for _, blocker := range mix.Blockers {
+			blockers = append(blockers, blocker.Finding+" Action: "+blocker.Action)
+		}
+		writeMarkdownList(&b, "Workload-mix blockers", blockers)
+	}
 	writeMarkdownList(&b, "Observed workflow breaches", breachDescriptions(a.WorkflowBreaches))
 	writeMarkdownList(&b, "Audit findings", a.Findings)
 	writeDecisionBlockers(&b, assessment.Demand)

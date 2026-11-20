@@ -249,7 +249,7 @@ func RunConfigFor(v config.Validated) report.RunConfig {
 	if len(v.Scenario.Profiles) > 0 {
 		profileConfig = make([]report.ProfileConfig, 0, len(v.Profiles))
 		for _, profile := range v.Profiles {
-			entry := report.ProfileConfig{Name: profile.Name, Weight: profile.Weight, ThinkTime: profile.ThinkTime.String()}
+			entry := report.ProfileConfig{Name: profile.Name, Weight: profile.Weight, ThinkTime: profile.ThinkTime.String(), Writes: config.ProfileWrites(profile), DataVariability: config.ProfileDataVariability(profile)}
 			if profile.ThinkTimeMax > 0 {
 				entry.ThinkTime = ""
 				entry.ThinkTimeRange = &report.ThinkTimeRange{Min: profile.ThinkTimeMin.String(), Max: profile.ThinkTimeMax.String()}
@@ -275,7 +275,8 @@ func RunConfigFor(v config.Validated) report.RunConfig {
 		Mode: v.Scenario.Mode, ArrivalRate: v.Scenario.ArrivalRate,
 		SeparateSessions:  len(v.Cookies) > 0 || len(v.ProfileCookies) > 0,
 		MinSamplesPerStep: v.Scenario.MinSamplesPerStep, Profiles: profileConfig,
-		WindowDuration: v.Window.String(),
+		ProfileMixReferenceCounts: referenceCounts(v),
+		WindowDuration:            v.Window.String(),
 	}
 	if v.Scenario.ThinkTimeRange != nil {
 		cfg.ThinkTimeRange = &report.ThinkTimeRange{Min: v.Scenario.ThinkTimeRange.Min, Max: v.Scenario.ThinkTimeRange.Max}
@@ -287,6 +288,17 @@ func RunConfigFor(v config.Validated) report.RunConfig {
 	}
 	cfg.ThinkTimeSamples = append([]string(nil), v.Scenario.ThinkTimeSamples...)
 	return cfg
+}
+
+func referenceCounts(v config.Validated) []report.ProfileMixCount {
+	if len(v.Scenario.ProfileMixReferenceCounts) == 0 {
+		return nil
+	}
+	counts := make([]report.ProfileMixCount, 0, len(v.Profiles))
+	for _, profile := range v.Profiles {
+		counts = append(counts, report.ProfileMixCount{Name: profile.Name, Count: v.Scenario.ProfileMixReferenceCounts[profile.Name]})
+	}
+	return counts
 }
 
 func runWithTransport(parent context.Context, v config.Validated, transport *http.Transport) report.Result {
@@ -628,6 +640,10 @@ func runWithTransportAndIdentity(parent context.Context, v config.Validated, tra
 		Config:  RunConfigFor(v),
 		Metrics: agg, Journeys: journeyMetrics, Steps: steps, Profiles: profileResults, Windows: windows, Outcome: "PASS", ErrorsRate: round(errorsRate), IterationsStarted: startedIterations.Load(), IterationsCompleted: completedIterations.Load(), ArrivalsScheduled: scheduledIterations.Load(), ArrivalsAdmitted: &arrivalsAdmitted, ArrivalsDropped: droppedIterations.Load(), ArrivalsDroppedLate: arrivalStats.DroppedLate, ArrivalsDroppedBusy: arrivalStats.DroppedBusy, ArrivalsCancelledBeforeAdmission: &cancelledBeforeAdmission, SchedulerLagSamples: arrivalStats.LagSamples, SchedulerLagP50MS: float64(arrivalStats.P50Lag.Microseconds()) / 1000, SchedulerLagP95MS: float64(arrivalStats.P95Lag.Microseconds()) / 1000, SchedulerLagMaxMS: float64(arrivalStats.MaxLag.Microseconds()) / 1000, SchedulerLagMethod: calibration.SchedulerDispatchLagMethod, AverageInFlight: round(averageInFlight), LittleLawEstimate: round(littleLawEstimate), ObservedThinkTimeMS: ms(coll.thinkTime), ThinkTimeObservations: coll.thinkSamples,
 		Note: "Measured synthetic HTTP actors under the configured workload; not a universal server capacity or a browser-user count.", GeneratorIdentity: generatorIdentity, Generator: &generatorSnapshot}
+	result.ProfileMix = report.ComputeProfileMix(result)
+	if result.ProfileMix != nil && result.ProfileMix.State == report.MixDeviated {
+		result.Warnings = append(result.Warnings, "The executed workflow mix deviates from the declared weights.")
+	}
 	if agg.Total == 0 || agg.Success == 0 || errorsRate > v.Scenario.MaxErrorRate || agg.P95MS > v.Scenario.P95LimitMS || result.ArrivalsDropped > 0 {
 		result.Outcome = "FAIL"
 	}

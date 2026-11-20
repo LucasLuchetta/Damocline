@@ -394,7 +394,7 @@ func TestSchemaTwentyTwoRequiresReconciledWindowJourneyLedger(t *testing.T) {
 	r.Windows[0].Profiles = []WindowMetric{{Name: "default", Metrics: MetricSet{Total: 2, Success: 2}}}
 	r.Journeys = MetricSet{Total: 3, Success: 3}
 	r.Profiles = []ProfileResult{{Name: "default", Weight: 1, SelectedStarts: 3, ActorsObserved: 1, Journeys: MetricSet{Total: 3, Success: 3}}}
-	r.Config.Profiles = []ProfileConfig{{Name: "default", Weight: 1}}
+	r.Config.Profiles = []ProfileConfig{{Name: "default", Weight: 1, DataVariability: DataVariabilityFixed}}
 	r.Config.ProfileSelection = "per_journey_start"
 	r.Windows[0].Profiles[0].Metrics = MetricSet{Total: 1, Success: 1}
 	if q := AssessQuality(r); q.State != QualityInvalid {
@@ -404,6 +404,7 @@ func TestSchemaTwentyTwoRequiresReconciledWindowJourneyLedger(t *testing.T) {
 	r.Profiles[0].SelectedStarts = 2
 	r.Journeys.Total, r.Journeys.Success = 2, 2
 	r.Windows[0].Profiles[0].Metrics = MetricSet{Total: 2, Success: 2}
+	r.ProfileMix = ComputeProfileMix(r)
 	if q := AssessQuality(r); q.State == QualityInvalid {
 		t.Fatalf("reconciled profile and aggregate journey ledgers were rejected: %+v", q)
 	}
