@@ -241,6 +241,9 @@ func capacityCmd(args []string, stdout, stderr io.Writer) int {
 		return fail(err)
 	}
 	opt := explorer.Options{MinUsers: min(2, *maxUsers), MaxUsers: *maxUsers, Repeats: 2, StageDuration: 20 * time.Second, Budget: *exploreBudget}
+	if stage, ok := capacityExploreStage(scenario, opt.MinUsers, *referenceReport); ok {
+		opt.StageDuration = stage
+	}
 	campaignOptions := campaign.Options{
 		Warmup: 10 * time.Second, Recovery: 15 * time.Second, Observation: 45 * time.Second,
 		Repeats: 2, Budget: *budget, LongRun: *long, StagingConfirmed: *staging,
@@ -366,6 +369,9 @@ func capacityCmd(args []string, stdout, stderr io.Writer) int {
 	}
 	exploreScenario := scenario
 	exploreScenario.Users = opt.MinUsers
+	// Explore judges each stage on its aggregate; observation windows are a
+	// campaign control and would split short stages below the sample floor.
+	exploreScenario.WindowDuration = ""
 	v, err := config.Parse(exploreScenario, config.Options{Authorized: true, NetworkBaseline: true, ExtendedEnvelope: extendedRequest, AllowInsecureHTTP: *insecureHTTP})
 	if err != nil {
 		return fail(err)
@@ -375,11 +381,16 @@ func capacityCmd(args []string, stdout, stderr io.Writer) int {
 	if exploreCalibration == "" {
 		exploreCalibration = filepath.Join(*dir, "selfcal-explore.json")
 	}
+	exploreFile := *file
 	if *dry {
 		explorePath = *existing
 	} else {
 		explorePath = filepath.Join(*dir, "explore.json")
 		campaignPath = filepath.Join(*dir, "campaign.json")
+		exploreFile = filepath.Join(*dir, "explore-scenario.json")
+		if err := report.WriteAnyJSON(exploreFile, exploreScenario); err != nil {
+			return fail(err)
+		}
 		if *resume {
 			if err := archiveInterruptedCapacity(explorePath, campaignPath); err != nil {
 				return fail(err)
@@ -390,7 +401,7 @@ func capacityCmd(args []string, stdout, stderr io.Writer) int {
 				return fail(err)
 			}
 			if *calibration == "" {
-				if code := ensureCapacityCalibration(exploreCalibration, *file, v, calibrationLevels, mirror, stdout, stderr); code != 0 {
+				if code := ensureCapacityCalibration(exploreCalibration, exploreFile, v, calibrationLevels, mirror, stdout, stderr); code != 0 {
 					return code
 				}
 			}
@@ -400,8 +411,8 @@ func capacityCmd(args []string, stdout, stderr io.Writer) int {
 				}
 			}
 			exploreArgs := []string{
-				"--config", *file, "--min-users", strconv.Itoa(opt.MinUsers), "--max-users", strconv.Itoa(*maxUsers),
-				"--budget", exploreBudget.String(), "--authorized", "--out", explorePath,
+				"--config", exploreFile, "--min-users", strconv.Itoa(opt.MinUsers), "--max-users", strconv.Itoa(*maxUsers),
+				"--budget", exploreBudget.String(), "--stage-duration", opt.StageDuration.String(), "--authorized", "--out", explorePath,
 				"--calibration", exploreCalibration, "--require-calibration",
 			}
 			exploreArgs = append(exploreArgs, capacityTransportArgs(*insecureHTTP)...)

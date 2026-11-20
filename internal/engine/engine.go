@@ -648,8 +648,18 @@ func runWithTransportAndIdentity(parent context.Context, v config.Validated, tra
 		}
 	}
 	for _, st := range steps {
-		if st.Metrics.Total < v.Scenario.MinSamplesPerStep || st.Metrics.Success == 0 || st.Metrics.P95MS > v.Scenario.P95LimitMS || (st.Metrics.Total > 0 && float64(st.Metrics.Failures)/float64(st.Metrics.Total) > v.Scenario.MaxErrorRate) {
+		// Too few observations is missing evidence, not an objective breach:
+		// a step that met its objectives on a small sample is inconclusive,
+		// as documented for windows and profiles below.
+		if st.Metrics.Total > 0 && (st.Metrics.Success == 0 || st.Metrics.P95MS > v.Scenario.P95LimitMS || float64(st.Metrics.Failures)/float64(st.Metrics.Total) > v.Scenario.MaxErrorRate) {
 			result.Outcome = "FAIL"
+			continue
+		}
+		if st.Metrics.Total < v.Scenario.MinSamplesPerStep || st.Metrics.Total == 0 {
+			if result.Outcome == "PASS" {
+				result.Outcome = "INCONCLUSIVE"
+			}
+			result.Warnings = append(result.Warnings, "A named step has fewer completed samples than min_samples_per_step; the run is inconclusive, not failed.")
 		}
 	}
 	for _, window := range windows {
