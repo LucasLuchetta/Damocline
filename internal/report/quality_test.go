@@ -1008,7 +1008,7 @@ func TestSchema20RequiresVersionedFailureClassificationEvidence(t *testing.T) {
 
 func TestHTTPDiagnosticsClassifiesBodyReadFailureAsTransportFailure(t *testing.T) {
 	var diagnostics HTTPDiagnostics
-	diagnostics.Record(http.StatusOK, "body_read", false, false)
+	diagnostics.Record(http.StatusOK, "body_read", false, false, "")
 	if diagnostics.Status2xx != 1 || diagnostics.StatusCodes[http.StatusOK] != 1 ||
 		diagnostics.TransportFailures != 1 || diagnostics.NetworkTimeouts != 0 || diagnostics.TLSFailures != 0 {
 		t.Fatalf("truncated successful-status response was not categorized consistently: %+v", diagnostics)

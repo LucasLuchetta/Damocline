@@ -33,7 +33,9 @@ import (
 // conditional exact IID rank intervals for p99 when sample counts permit them.
 // Version 33 requires measured OS process CPU and preserves unavailable Go
 // runtime CPU-class estimates as unknown rather than measured idle CPU.
-const CurrentSchemaVersion = 33
+// Version 34 requires DNS and TLS failure subtype counters that reconcile
+// exactly with the DNS and TLS failure totals in every HTTP ledger.
+const CurrentSchemaVersion = 34
 
 // GeneratorIdentity records path-free runtime and executable provenance.
 // It identifies the generator process, not the physical host or target.
@@ -188,10 +190,89 @@ type HTTPDiagnostics struct {
 	TLSFailures                  int         `json:"tls_failures"`
 	TransportFailures            int         `json:"transport_failures"`
 	UnexpectedResponseSizes      int         `json:"unexpected_response_sizes"`
+	// FailureSubtypes is required from schema v34. Absence in older reports
+	// means the subtype was not recorded, never that its count was zero.
+	FailureSubtypes *FailureSubtypes `json:"failure_subtypes,omitempty"`
 }
 
-func (d *HTTPDiagnostics) Record(statusCode int, reason string, assertionFailure, tlsFailure bool) {
+// FailureSubtypes partitions client-observed DNS and TLS failures by the Go
+// error class that was observed. A subtype describes the client-side error
+// surface only; it is not a root-cause diagnosis of the resolver or server.
+type FailureSubtypes struct {
+	DNSNotFound       int `json:"dns_not_found"`
+	DNSTemporary      int `json:"dns_temporary"`
+	DNSTimeout        int `json:"dns_timeout"`
+	DNSOther          int `json:"dns_other"`
+	TLSCertificate    int `json:"tls_certificate"`
+	TLSNonTLSResponse int `json:"tls_non_tls_response"`
+	TLSOther          int `json:"tls_other"`
+}
+
+// Failure subtype labels recorded by HTTPDiagnostics.Record.
+const (
+	FailureSubtypeDNSNotFound       = "dns_not_found"
+	FailureSubtypeDNSTemporary      = "dns_temporary"
+	FailureSubtypeDNSTimeout        = "dns_timeout"
+	FailureSubtypeDNSOther          = "dns_other"
+	FailureSubtypeTLSCertificate    = "tls_certificate"
+	FailureSubtypeTLSNonTLSResponse = "tls_non_tls_response"
+	FailureSubtypeTLSOther          = "tls_other"
+)
+
+func (f *FailureSubtypes) fields() []*int {
+	return []*int{&f.DNSNotFound, &f.DNSTemporary, &f.DNSTimeout, &f.DNSOther, &f.TLSCertificate, &f.TLSNonTLSResponse, &f.TLSOther}
+}
+
+// DNSTotal returns the sum of DNS subtype counters.
+func (f FailureSubtypes) DNSTotal() int {
+	return f.DNSNotFound + f.DNSTemporary + f.DNSTimeout + f.DNSOther
+}
+
+// TLSTotal returns the sum of TLS subtype counters.
+func (f FailureSubtypes) TLSTotal() int {
+	return f.TLSCertificate + f.TLSNonTLSResponse + f.TLSOther
+}
+
+func (f *FailureSubtypes) record(subtype string) {
+	switch subtype {
+	case FailureSubtypeDNSNotFound:
+		f.DNSNotFound++
+	case FailureSubtypeDNSTemporary:
+		f.DNSTemporary++
+	case FailureSubtypeDNSTimeout:
+		f.DNSTimeout++
+	case FailureSubtypeDNSOther:
+		f.DNSOther++
+	case FailureSubtypeTLSCertificate:
+		f.TLSCertificate++
+	case FailureSubtypeTLSNonTLSResponse:
+		f.TLSNonTLSResponse++
+	case FailureSubtypeTLSOther:
+		f.TLSOther++
+	}
+}
+
+func (d *HTTPDiagnostics) Record(statusCode int, reason string, assertionFailure, tlsFailure bool, subtype string) {
 	d.FailureClassificationVersion = 1
+	if d.FailureSubtypes == nil {
+		d.FailureSubtypes = &FailureSubtypes{}
+	}
+	if tlsFailure {
+		switch subtype {
+		case FailureSubtypeTLSCertificate, FailureSubtypeTLSNonTLSResponse:
+			d.FailureSubtypes.record(subtype)
+		default:
+			d.FailureSubtypes.record(FailureSubtypeTLSOther)
+		}
+	}
+	if reason == "dns_failure" {
+		switch subtype {
+		case FailureSubtypeDNSNotFound, FailureSubtypeDNSTemporary, FailureSubtypeDNSTimeout:
+			d.FailureSubtypes.record(subtype)
+		default:
+			d.FailureSubtypes.record(FailureSubtypeDNSOther)
+		}
+	}
 	if statusCode >= 100 && statusCode <= 599 {
 		if d.StatusCodes == nil {
 			d.StatusCodes = make(map[int]int)
@@ -308,7 +389,7 @@ func (t *HTTPTrace) Record(o HTTPTrace) {
 func NewMetricSet() *MetricSet {
 	return &MetricSet{
 		Reasons: make(map[string]int),
-		HTTP:    HTTPDiagnostics{FailureClassificationVersion: 1},
+		HTTP:    HTTPDiagnostics{FailureClassificationVersion: 1, FailureSubtypes: &FailureSubtypes{}},
 	}
 }
 func (m *MetricSet) Record(latency time.Duration, success, cancelled bool, reason string) {
@@ -327,8 +408,8 @@ func (m *MetricSet) Record(latency time.Duration, success, cancelled bool, reaso
 	m.totalDuration += latency
 }
 
-func (m *MetricSet) RecordHTTPOutcome(statusCode int, reason string, assertionFailure, tlsFailure bool) {
-	m.HTTP.Record(statusCode, reason, assertionFailure, tlsFailure)
+func (m *MetricSet) RecordHTTPOutcome(statusCode int, reason string, assertionFailure, tlsFailure bool, subtype string) {
+	m.HTTP.Record(statusCode, reason, assertionFailure, tlsFailure, subtype)
 }
 func (m *MetricSet) Snapshot() MetricSet {
 	v := *m
@@ -345,6 +426,11 @@ func (m *MetricSet) Snapshot() MetricSet {
 	for code, count := range m.HTTP.StatusCodes {
 		v.HTTP.StatusCodes[code] = count
 	}
+	subtypes := FailureSubtypes{}
+	if m.HTTP.FailureSubtypes != nil {
+		subtypes = *m.HTTP.FailureSubtypes
+	}
+	v.HTTP.FailureSubtypes = &subtypes
 	if len(m.durations) == 0 {
 		v.durations = nil
 		return v

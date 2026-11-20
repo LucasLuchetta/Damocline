@@ -795,6 +795,10 @@ func TestSupportedReportSchemaGoldensRoundTrip(t *testing.T) {
 				if got.Generator == nil || got.Generator.GoCPUValid || !got.Generator.ProcessCPUValid || got.Generator.MeanProcessCPUUtilizationRatio != .25 {
 					t.Fatal("schema-v33 measured process CPU and unavailable runtime estimate were not preserved")
 				}
+			case 34:
+				if got.Metrics.HTTP.FailureSubtypes == nil || got.Steps[0].Metrics.HTTP.FailureSubtypes == nil || *got.Metrics.HTTP.FailureSubtypes != (report.FailureSubtypes{}) {
+					t.Fatal("schema-v34 explicit zero failure subtypes were not preserved")
+				}
 			}
 		})
 	}

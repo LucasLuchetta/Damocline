@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Persist DNS and TLS failure subtypes in run report schema v34 (`http_diagnostics.failure_subtypes`); readers require them to partition DNS/TLS totals exactly and reject them in older schemas. A plaintext server behind an `https://` URL is now counted as a TLS failure (ADR 0147).
+- Reconcile a mixed GET/POST/GET journey with think time, cancelled mid-journey, against a loopback server ledger with exact per-step, journey, iteration and think-time conservation.
+- Add exhaustive missing/null-field presence tests for exploration, arrival-exploration, campaign-profile and offline audit campaign readers.
 - Require a recorded phase evidence state in closed-loop campaign reports
   with predeclared objectives.
 

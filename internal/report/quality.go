@@ -791,7 +791,8 @@ func validFailureClassificationEvidence(r Result) bool {
 	validMetrics := func(metrics MetricSet) bool {
 		return metrics.HTTP.FailureClassificationVersion == 1 &&
 			metrics.HTTP.DNSFailures == metrics.Reasons["dns_failure"] &&
-			metrics.HTTP.ConnectionFailures == metrics.Reasons["connection_failure"]
+			metrics.HTTP.ConnectionFailures == metrics.Reasons["connection_failure"] &&
+			validFailureSubtypes(r.SchemaVersion, metrics.HTTP)
 	}
 	if !validMetrics(r.Metrics) {
 		return false
@@ -812,6 +813,31 @@ func validFailureClassificationEvidence(r Result) bool {
 		}
 	}
 	return true
+}
+
+// validFailureSubtypes requires schema-v34 DNS and TLS subtype counters to be
+// present, non-negative and to partition the DNS and TLS failure totals
+// exactly whenever either total is non-zero. When both totals are zero the
+// partition is fully determined (every subtype is zero), so absence carries
+// no ambiguity. Older schemas must not carry subtypes: absence there is
+// unknown, not zero.
+func validFailureSubtypes(schemaVersion int, d HTTPDiagnostics) bool {
+	if schemaVersion < 34 {
+		return d.FailureSubtypes == nil
+	}
+	f := d.FailureSubtypes
+	if f == nil {
+		return d.DNSFailures == 0 && d.TLSFailures == 0
+	}
+	maximum := int(^uint(0) >> 1)
+	total := 0
+	for _, value := range f.fields() {
+		if *value < 0 || *value > maximum-total {
+			return false
+		}
+		total += *value
+	}
+	return f.DNSTotal() == d.DNSFailures && f.TLSTotal() == d.TLSFailures
 }
 
 // HasValidFailureClassification reports whether a schema-v20 run contains
@@ -1155,6 +1181,19 @@ func addHTTPDiagnostics(dst *HTTPDiagnostics, src HTTPDiagnostics) bool {
 		}
 		*left[i] = value
 	}
+	if src.FailureSubtypes != nil {
+		if dst.FailureSubtypes == nil {
+			dst.FailureSubtypes = &FailureSubtypes{}
+		}
+		into, from := dst.FailureSubtypes.fields(), src.FailureSubtypes.fields()
+		for i := range into {
+			value, ok := add(into[i], *from[i])
+			if !ok {
+				return false
+			}
+			*into[i] = value
+		}
+	}
 	if dst.StatusCodes == nil && len(src.StatusCodes) > 0 {
 		dst.StatusCodes = make(map[int]int, len(src.StatusCodes))
 	}
@@ -1169,8 +1208,20 @@ func addHTTPDiagnostics(dst *HTTPDiagnostics, src HTTPDiagnostics) bool {
 	return true
 }
 
+// subtypeValue treats an absent subtype partition as all-zero; validity of
+// absence is checked separately by validFailureSubtypes.
+func subtypeValue(f *FailureSubtypes) FailureSubtypes {
+	if f == nil {
+		return FailureSubtypes{}
+	}
+	return *f
+}
+
 func equalHTTPDiagnostics(a, b HTTPDiagnostics) bool {
 	if a.Status1xx != b.Status1xx || a.Status2xx != b.Status2xx || a.Status3xx != b.Status3xx || a.Status4xx != b.Status4xx || a.Status5xx != b.Status5xx || a.RedirectResponses != b.RedirectResponses || a.RateLimitedResponses != b.RateLimitedResponses || a.AssertionFailures != b.AssertionFailures || a.NetworkTimeouts != b.NetworkTimeouts || a.DNSFailures != b.DNSFailures || a.ConnectionFailures != b.ConnectionFailures || a.TLSFailures != b.TLSFailures || a.TransportFailures != b.TransportFailures || a.UnexpectedResponseSizes != b.UnexpectedResponseSizes || len(a.StatusCodes) != len(b.StatusCodes) {
+		return false
+	}
+	if subtypeValue(a.FailureSubtypes) != subtypeValue(b.FailureSubtypes) {
 		return false
 	}
 	for code, count := range a.StatusCodes {

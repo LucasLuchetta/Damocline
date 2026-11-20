@@ -479,6 +479,10 @@ func TestHTTPDiagnosticsIdentifyTLSHandshakeFailure(t *testing.T) {
 		r.Steps[0].HTTPTrace.TLSStartCount != 1 || r.Steps[0].HTTPTrace.TLSCount != 1 {
 		t.Fatalf("expected one observed failed handshake: %+v", r.Steps)
 	}
+	if d.FailureSubtypes == nil || d.FailureSubtypes.TLSCertificate != 1 || d.FailureSubtypes.TLSTotal() != d.TLSFailures ||
+		d.FailureSubtypes.DNSTotal() != 0 || *r.Steps[0].Metrics.HTTP.FailureSubtypes != *d.FailureSubtypes {
+		t.Fatalf("untrusted certificate was not recorded as a TLS certificate subtype: %+v", d.FailureSubtypes)
+	}
 	if r.Quality == nil || r.Quality.State == report.QualityInvalid {
 		t.Fatalf("classified TLS failure should remain arithmetically valid: %+v", r.Quality)
 	}
@@ -655,6 +659,9 @@ func TestHTTPDiagnosticsIdentifyInjectedLoopbackDNSFailure(t *testing.T) {
 		dnsTrace.ConnectStartCount != 0 || queries.Load() == 0 {
 		t.Fatalf("injected NXDOMAIN was not observed and classified as a pre-connect transport failure: metrics=%+v dns_trace=%+v resolver_queries=%d", r.Metrics, dnsTrace, queries.Load())
 	}
+	if f := r.Metrics.HTTP.FailureSubtypes; f == nil || f.DNSNotFound != r.Metrics.Total || f.DNSTotal() != r.Metrics.HTTP.DNSFailures || f.TLSTotal() != 0 {
+		t.Fatalf("injected NXDOMAIN was not recorded as the DNS not-found subtype: %+v", f)
+	}
 	if r.Quality == nil || r.Quality.State == report.QualityInvalid {
 		t.Fatalf("accounted DNS failures must not corrupt measurement arithmetic: %+v", r.Quality)
 	}
@@ -717,6 +724,9 @@ func TestHTTPDiagnosticsClassifyInjectedDNSLookupTimeoutAsTimeout(t *testing.T) 
 		r.Metrics.HTTP.TransportFailures != 0 || r.Metrics.HTTP.TLSFailures != 0 ||
 		len(r.Steps) != 1 || dnsTrace.DNSStartCount == 0 || dnsTrace.ConnectStartCount != 0 || queries.Load() == 0 {
 		t.Fatalf("injected DNS lookup timeout was not kept separate from resolver and transport failures: metrics=%+v dns_trace=%+v resolver_queries=%d", r.Metrics, dnsTrace, queries.Load())
+	}
+	if f := r.Metrics.HTTP.FailureSubtypes; f == nil || f.DNSTotal() != 0 {
+		t.Fatalf("request-deadline DNS timeout must not be counted as a DNS failure subtype: %+v", f)
 	}
 }
 
@@ -785,6 +795,9 @@ func TestHTTPDiagnosticsClassifyInjectedDNSServFailAsDNSFailure(t *testing.T) {
 		r.Metrics.HTTP.TLSFailures != 0 || r.Metrics.HTTP.Status2xx != 0 ||
 		len(r.Steps) != 1 || dnsTrace.DNSStartCount == 0 || dnsTrace.ConnectStartCount != 0 || queries.Load() == 0 {
 		t.Fatalf("injected DNS SERVFAIL was not classified as a DNS resolution failure: metrics=%+v dns_trace=%+v resolver_queries=%d", r.Metrics, dnsTrace, queries.Load())
+	}
+	if f := r.Metrics.HTTP.FailureSubtypes; f == nil || f.DNSTemporary != r.Metrics.Total || f.DNSNotFound != 0 || f.DNSTotal() != r.Metrics.HTTP.DNSFailures {
+		t.Fatalf("injected DNS SERVFAIL was not recorded as the temporary DNS subtype: %+v", f)
 	}
 	if r.Quality == nil || r.Quality.State == report.QualityInvalid {
 		t.Fatalf("accounted DNS SERVFAIL must not corrupt measurement arithmetic: %+v", r.Quality)
@@ -2261,5 +2274,37 @@ func TestResponseBodySizesMatchIndependentLoopbackLedger(t *testing.T) {
 	}
 	if strings.Contains(string(encoded), "synthetic-private-response") {
 		t.Fatal("report must not preserve response-body values")
+	}
+}
+
+func TestHTTPDiagnosticsClassifyPlaintextResponseToTLSClientAsTLSSubtype(t *testing.T) {
+	var received atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		received.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+	v, err := config.Parse(config.Scenario{
+		Name: "plaintext loopback behind https URL", BaseURL: strings.Replace(server.URL, "http://", "https://", 1),
+		Users: 1, Mode: "arrival", ArrivalRate: 1, Duration: "1s",
+		MaxRPS: 10, Timeout: "500ms", P95LimitMS: 1000,
+		Steps: []config.Step{{Name: "tls", Path: "/"}},
+	}, config.Options{Authorized: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	r := Run(ctx, v)
+	d := r.Metrics.HTTP
+	if r.Metrics.Total != 1 || r.Metrics.Failures != 1 || d.TLSFailures != 1 || d.TransportFailures != 0 ||
+		d.ConnectionFailures != 0 || d.DNSFailures != 0 || len(d.StatusCodes) != 0 {
+		t.Fatalf("plaintext response to TLS client was not a TLS failure: %+v", r.Metrics)
+	}
+	if d.FailureSubtypes == nil || d.FailureSubtypes.TLSNonTLSResponse != 1 || d.FailureSubtypes.TLSTotal() != 1 {
+		t.Fatalf("plaintext response to TLS client was not recorded as the non-TLS-response subtype: %+v", d.FailureSubtypes)
+	}
+	if r.Quality == nil || r.Quality.State == report.QualityInvalid {
+		t.Fatalf("classified TLS subtype must remain arithmetically valid: %+v", r.Quality)
 	}
 }

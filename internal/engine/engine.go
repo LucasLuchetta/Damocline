@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -51,6 +52,7 @@ type sample struct {
 	statusCode         int
 	assertionFailure   bool
 	tlsFailure         bool
+	failureSubtype     string
 	success, cancelled bool
 	requestRejected    bool
 	reason             string
@@ -181,8 +183,8 @@ func (c *collector) add(s sample) {
 	defer c.mu.Unlock()
 	c.aggregate.Record(s.latency, s.success, s.cancelled, s.reason)
 	c.steps[s.name].Record(s.latency, s.success, s.cancelled, s.reason)
-	c.aggregate.RecordHTTPOutcome(s.statusCode, s.reason, s.assertionFailure, s.tlsFailure)
-	c.steps[s.name].RecordHTTPOutcome(s.statusCode, s.reason, s.assertionFailure, s.tlsFailure)
+	c.aggregate.RecordHTTPOutcome(s.statusCode, s.reason, s.assertionFailure, s.tlsFailure, s.failureSubtype)
+	c.steps[s.name].RecordHTTPOutcome(s.statusCode, s.reason, s.assertionFailure, s.tlsFailure, s.failureSubtype)
 	if s.responseBodyState != "" {
 		c.aggregate.RecordResponseBody(s.responseBodyState, s.responseBodyBytes)
 		c.steps[s.name].RecordResponseBody(s.responseBodyState, s.responseBodyBytes)
@@ -206,8 +208,8 @@ func (c *collector) add(s sample) {
 	window := c.windowAtIndex(index)
 	window.aggregate.Record(s.latency, s.success, s.cancelled, s.reason)
 	window.steps[s.name].Record(s.latency, s.success, s.cancelled, s.reason)
-	window.aggregate.RecordHTTPOutcome(s.statusCode, s.reason, s.assertionFailure, s.tlsFailure)
-	window.steps[s.name].RecordHTTPOutcome(s.statusCode, s.reason, s.assertionFailure, s.tlsFailure)
+	window.aggregate.RecordHTTPOutcome(s.statusCode, s.reason, s.assertionFailure, s.tlsFailure, s.failureSubtype)
+	window.steps[s.name].RecordHTTPOutcome(s.statusCode, s.reason, s.assertionFailure, s.tlsFailure, s.failureSubtype)
 	if s.responseBodyState != "" {
 		window.aggregate.RecordResponseBody(s.responseBodyState, s.responseBodyBytes)
 		window.steps[s.name].RecordResponseBody(s.responseBodyState, s.responseBodyBytes)
@@ -994,10 +996,10 @@ func execute(parent context.Context, client *http.Client, base *url.URL, timeout
 			return sample{name: s.Name, latency: d, trace: observedTrace, reason: "timeout"}, nil
 		}
 		if isDNSFailure(err) {
-			return sample{name: s.Name, latency: d, trace: observedTrace, reason: "dns_failure"}, nil
+			return sample{name: s.Name, latency: d, trace: observedTrace, reason: "dns_failure", failureSubtype: dnsFailureSubtype(err)}, nil
 		}
 		if isTLSFailure(err) {
-			return sample{name: s.Name, latency: d, trace: observedTrace, reason: "transport", tlsFailure: true}, nil
+			return sample{name: s.Name, latency: d, trace: observedTrace, reason: "transport", tlsFailure: true, failureSubtype: tlsFailureSubtype(err)}, nil
 		}
 		if isConnectionEstablishmentFailure(err) {
 			return sample{name: s.Name, latency: d, trace: observedTrace, reason: "connection_failure"}, nil
@@ -1126,6 +1128,46 @@ func isDNSFailure(err error) bool {
 	return errors.As(err, &dnsErr)
 }
 
+// dnsFailureSubtype labels the Go resolver error surface. It does not prove
+// which resolver, zone or network element produced the failure.
+func dnsFailureSubtype(err error) string {
+	var dnsErr *net.DNSError
+	if !errors.As(err, &dnsErr) {
+		return report.FailureSubtypeDNSOther
+	}
+	switch {
+	case dnsErr.IsNotFound:
+		return report.FailureSubtypeDNSNotFound
+	case dnsErr.IsTimeout:
+		return report.FailureSubtypeDNSTimeout
+	case dnsErr.IsTemporary:
+		return report.FailureSubtypeDNSTemporary
+	default:
+		return report.FailureSubtypeDNSOther
+	}
+}
+
+// nonTLSResponseMessage is the net/http error emitted when a TLS client
+// receives a plaintext HTTP record; net/http replaces the typed
+// tls.RecordHeaderError with this message.
+const nonTLSResponseMessage = "server gave http response to https client"
+
+// tlsFailureSubtype labels the client-observed TLS error surface.
+func tlsFailureSubtype(err error) string {
+	var certificateVerification *tls.CertificateVerificationError
+	var unknownAuthority x509.UnknownAuthorityError
+	var hostname x509.HostnameError
+	var invalid x509.CertificateInvalidError
+	if errors.As(err, &certificateVerification) || errors.As(err, &unknownAuthority) || errors.As(err, &hostname) || errors.As(err, &invalid) {
+		return report.FailureSubtypeTLSCertificate
+	}
+	var recordHeader tls.RecordHeaderError
+	if errors.As(err, &recordHeader) || strings.Contains(strings.ToLower(err.Error()), nonTLSResponseMessage) {
+		return report.FailureSubtypeTLSNonTLSResponse
+	}
+	return report.FailureSubtypeTLSOther
+}
+
 func isConnectionEstablishmentFailure(err error) bool {
 	if isDNSFailure(err) {
 		return false
@@ -1147,7 +1189,7 @@ func isTLSFailure(err error) bool {
 		return true
 	}
 	message := strings.ToLower(err.Error())
-	return strings.Contains(message, "tls") || strings.Contains(message, "x509") || strings.Contains(message, "certificate")
+	return strings.Contains(message, nonTLSResponseMessage) || strings.Contains(message, "tls") || strings.Contains(message, "x509") || strings.Contains(message, "certificate")
 }
 
 func ms(d time.Duration) float64 { return float64(d) / float64(time.Millisecond) }
