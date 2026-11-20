@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Forward the extended envelope through closed-loop capacity and reuse one
+  bounded calibration across ladder, refinement and confirmation (ADR 0167).
+
 - Size the `damocline capacity` explore budget from the planned stages,
   refuse an undersized explicit budget before traffic, and continue from the
   highest repeatedly passing level when explore stops early.
