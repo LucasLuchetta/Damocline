@@ -394,5 +394,35 @@ damocline run --config lab.json --authorized   --extended-envelope --extended-lo
   the generator, not the target.
 - The report (schema v38) records `load_envelope`; `insights` states when results
   above the standard ceiling were produced under the extended envelope.
-- `campaign`, `explore`, `explore-arrival` and `arrival-campaign` remain on the
-  standard envelope.
+- Closed-loop `explore` and `campaign` accept the same opt-in (ADR 0157); see
+  below. `explore-arrival` and `arrival-campaign` remain on the standard
+  envelope.
+
+### Extended explore and campaign (closed-loop)
+
+```text
+damocline explore --config lab.json --min-users 40 --max-users 160 --authorized   --extended-envelope --extended-load-authorized --target-class lab   --calibration reports/selfcal.json --require-calibration --out reports/explore.json
+damocline campaign --config lab.json --spike-users 120 --spike-duration 30s --authorized   --extended-envelope --extended-load-authorized --target-class staging   --calibration reports/selfcal.json --require-calibration --out reports/campaign.json
+```
+
+- Before any traffic, every planned level must be `READY`: the whole explore
+  ladder (including an exact `--peak-users` goal stage) or the campaign base
+  and spike levels. One uncovered level refuses the command with
+  `EXTENDED ENVELOPE BLOCKED`. Self-calibrate every level you plan to test,
+  for example `damocline calibrate --users 40,80,160`.
+- Explore bracket refinement only probes calibrated levels: it uses the
+  calibrated level nearest the bracket midpoint. If no calibrated level is
+  left inside a failing bracket, the exploration stops `INCONCLUSIVE` with a
+  "Bracket refinement stopped" reason and does not report a narrowed bracket.
+- Generator guardrails are always on. Explore uses the `run` flags; campaign
+  uses its `--max-generator-cpu-percent`, `--max-generator-rss-mb` and
+  `--resource-guardrail-samples`, which may only tighten the defaults. A
+  guardrail stop makes the explore probe `INCONCLUSIVE` (`GENERATOR_LIMITED`)
+  or the campaign trial `ABORTED` (`GENERATOR_LIMITED:` abort reason). It is
+  never reported as an application limit.
+- Extended explorations write exploration schema v3 and extended campaigns
+  write closed-loop campaign schema v18, both with `load_envelope`. `goal` and
+  `audit` recompute the envelope offline, and state when levels above the
+  standard 50 VU ceiling were tested under it. Standard explorations and
+  campaigns keep schemas v2 and v17.
+- `--rotate-vu-cookies` remains limited to 50 VUs.

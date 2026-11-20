@@ -62,9 +62,12 @@ func Evaluate(ex explorer.Result, g Goal) (Assessment, error) {
 	if err != nil {
 		return Assessment{}, err
 	}
-	if ex.SchemaVersion < 1 || ex.SchemaVersion > 2 || ex.Scenario == "" || ex.MaxUsers < ex.MinUsers || ex.MinUsers < 1 || ex.MaxUsers < 1 ||
+	if ex.SchemaVersion < 1 || ex.SchemaVersion > explorer.CurrentSchemaVersion || ex.Scenario == "" || ex.MaxUsers < ex.MinUsers || ex.MinUsers < 1 || ex.MaxUsers < 1 ||
 		ex.Repeats < 2 || len(ex.Probes) == 0 {
-		return Assessment{}, errors.New("invalid or empty capacity exploration: expected repeated schema-v1 or schema-v2 probes")
+		return Assessment{}, errors.New("invalid or empty capacity exploration: expected repeated schema-v1 to schema-v3 probes")
+	}
+	if err := explorer.ValidateEnvelope(ex); err != nil {
+		return Assessment{}, err
 	}
 	stage, err := time.ParseDuration(ex.StageDuration)
 	if err != nil || stage <= 0 {
@@ -83,6 +86,9 @@ func Evaluate(ex explorer.Result, g Goal) (Assessment, error) {
 		Next: []string{"Test the exact target workload with representative, independently verified sessions and safety limits.",
 			"Repeat a sustained campaign with generator, application, database and host telemetry before confirming capacity.",
 		},
+	}
+	if note := report.AggregateEnvelopeNote(ex.LoadEnvelope); note != "" {
+		a.Findings = append(a.Findings, note)
 	}
 	if target > ex.MaxUsers {
 		a.State = "OUTSIDE_TESTED_CEILING"

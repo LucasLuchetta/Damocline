@@ -21,6 +21,15 @@ import (
 
 const CurrentSchemaVersion = 17
 
+// EnvelopeSchemaVersion is the campaign schema written by extended-envelope
+// campaigns; it records load_envelope (ADR 0157). Standard campaigns keep
+// writing CurrentSchemaVersion without an envelope so their evidence is
+// unchanged.
+const EnvelopeSchemaVersion = 18
+
+// MaxSchemaVersion is the newest campaign schema readers accept.
+const MaxSchemaVersion = EnvelopeSchemaVersion
+
 // WorkloadSource identifies the exact bounded configuration bytes used to
 // construct a campaign. Digests identify bytes but do not authenticate origin.
 type WorkloadSource struct {
@@ -111,6 +120,32 @@ type Options struct {
 	HostSensorEndpoint string
 	HostSensorToken    string
 	HostSensorInterval time.Duration
+	// UserCeiling is the inclusive base/spike VU ceiling; zero means the
+	// standard 50 VUs. Only a validated extended envelope raises it to the
+	// hard maximum (ADR 0157).
+	UserCeiling int
+}
+
+// EffectiveUserCeiling returns the VU ceiling Validate applies.
+func EffectiveUserCeiling(options Options) int {
+	if options.UserCeiling == 0 {
+		return report.StandardMaxUsers
+	}
+	return options.UserCeiling
+}
+
+// EvidenceUserCeiling returns the VU ceiling a saved campaign may use: the
+// extended hard maximum only when it records a valid extended envelope.
+func EvidenceUserCeiling(r Result) int {
+	if r.SchemaVersion >= EnvelopeSchemaVersion && r.LoadEnvelope != nil && r.LoadEnvelope.Mode == report.EnvelopeModeExtended {
+		return report.ExtendedMaxUsers
+	}
+	return report.StandardMaxUsers
+}
+
+// PlannedMaxUsers returns the highest planned VU level of a campaign.
+func PlannedMaxUsers(baseUsers, spikeUsers int) int {
+	return max(baseUsers, spikeUsers)
 }
 
 // PlannedPhase is one bounded stage in each campaign trial.
@@ -211,6 +246,8 @@ type Result struct {
 	Outcome                string                          `json:"outcome"`
 	DriftBaseline          string                          `json:"drift_baseline,omitempty"`
 	Notes                  []string                        `json:"notes"`
+	// LoadEnvelope records the ceilings that applied (schema 18+).
+	LoadEnvelope *report.Envelope `json:"load_envelope,omitempty"`
 }
 
 // ExpectedDriftBaseline returns the drift-screen reference rule implied by
@@ -327,8 +364,15 @@ func Validate(options Options) error {
 	if (options.SpikeUsers == 0) != (options.SpikeDuration == 0) {
 		return fmt.Errorf("spike-users and spike-duration must be set together")
 	}
-	if options.SpikeUsers < 0 || options.SpikeUsers > 50 || options.SpikeDuration < 0 || options.SpikeDuration > 3*time.Minute || (options.SpikeUsers > 0 && options.SpikeDuration < 10*time.Second) {
-		return fmt.Errorf("spike-users must be 1-50 and spike-duration must be 10s-3m")
+	ceiling := EffectiveUserCeiling(options)
+	if ceiling != report.StandardMaxUsers && ceiling != report.ExtendedMaxUsers {
+		return fmt.Errorf("campaign VU ceiling must be the standard or extended-envelope maximum")
+	}
+	if ceiling != report.StandardMaxUsers && !options.Guardrails.Enabled() {
+		return fmt.Errorf("extended-envelope campaigns require enabled generator guardrails")
+	}
+	if options.SpikeUsers < 0 || options.SpikeUsers > ceiling || options.SpikeDuration < 0 || options.SpikeDuration > 3*time.Minute || (options.SpikeUsers > 0 && options.SpikeDuration < 10*time.Second) {
+		return fmt.Errorf("spike-users must be 1-%d and spike-duration must be 10s-3m", ceiling)
 	}
 	if options.SpikeDuration > 0 && options.Recovery == 0 {
 		return fmt.Errorf("a spike requires a recovery phase so post-spike behavior is retained")
@@ -445,6 +489,16 @@ func WithRunnerProgress(ctx context.Context, base config.Validated, options Opti
 	if options.SpikeUsers > 0 && options.SpikeUsers <= base.Scenario.Users {
 		return Result{}, fmt.Errorf("spike-users must exceed the base scenario users")
 	}
+	extended := base.Envelope.Mode == config.EnvelopeExtended
+	if extended != (EffectiveUserCeiling(options) == report.ExtendedMaxUsers) || extended && base.Envelope.CalibrationCoverage != "READY" {
+		return Result{}, fmt.Errorf("campaign VU ceiling does not match the validated scenario envelope")
+	}
+	if extended && !options.Guardrails.Equal(base.GeneratorGuardrails) {
+		return Result{}, fmt.Errorf("extended-envelope campaigns must enforce the validated generator guardrails")
+	}
+	if base.Scenario.Users > EffectiveUserCeiling(options) {
+		return Result{}, fmt.Errorf("base users exceed the campaign VU ceiling")
+	}
 	var spikeCookies []string
 	if options.SpikeUsers > 0 && base.Scenario.PerVUCookieEnvPrefix != "" {
 		var err error
@@ -525,6 +579,11 @@ func WithRunnerProgress(ctx context.Context, base config.Validated, options Opti
 			"Only the first phase of each trial and a configured spike apply the scenario ramp; later phases start at their target VU count so their windows measure steady load.",
 			"Active stabilization, observation, configured spike, recovery, and the optional final soak require complete bounded evidence; passing phases do not establish universal capacity certification.",
 		},
+	}
+	if extended {
+		result.SchemaVersion = EnvelopeSchemaVersion
+		result.LoadEnvelope = report.NewAggregateEnvelope(true, base.Envelope.TargetClass, PlannedMaxUsers(base.Scenario.Users, options.SpikeUsers))
+		result.Notes = append(result.Notes, report.AggregateEnvelopeNote(result.LoadEnvelope))
 	}
 	if options.LongRun {
 		result.Notes = append(result.Notes, "Long-run mode was explicitly enabled for a user-declared staging environment with a bounded wall-time budget; Damocline does not verify the environment designation.")
@@ -629,9 +688,9 @@ func WithRunnerProgress(ctx context.Context, base config.Validated, options Opti
 					if run.Generator != nil && run.Generator.GuardrailTrigger != nil {
 						trigger := run.Generator.GuardrailTrigger
 						if trigger.Resource == "generator_process_cpu" {
-							trial.AbortReason = fmt.Sprintf("Generator process CPU reached %.1f%% (limit %.1f%%) for %d consecutive samples.", trigger.ObservedCPUPercent, trigger.LimitCPUPercent, trigger.ConsecutiveSamples)
+							trial.AbortReason = fmt.Sprintf("GENERATOR_LIMITED: Generator process CPU reached %.1f%% (limit %.1f%%) for %d consecutive samples.", trigger.ObservedCPUPercent, trigger.LimitCPUPercent, trigger.ConsecutiveSamples)
 						} else {
-							trial.AbortReason = fmt.Sprintf("Generator process RSS reached %d bytes (limit %d bytes) for %d consecutive samples.", trigger.ObservedRSSBytes, trigger.LimitRSSBytes, trigger.ConsecutiveSamples)
+							trial.AbortReason = fmt.Sprintf("GENERATOR_LIMITED: Generator process RSS reached %d bytes (limit %d bytes) for %d consecutive samples.", trigger.ObservedRSSBytes, trigger.LimitRSSBytes, trigger.ConsecutiveSamples)
 						}
 					}
 				}
