@@ -5,6 +5,10 @@
 - Forward the extended envelope through closed-loop capacity and reuse one
   bounded calibration across ladder, refinement and confirmation (ADR 0167).
 
+- Size the `damocline capacity` explore budget from the planned stages,
+  refuse an undersized explicit budget before traffic, and continue from the
+  highest repeatedly passing level when explore stops early.
+
 - Treat a run whose named step has fewer samples than
   `min_samples_per_step` as INCONCLUSIVE instead of FAIL, as documented, and
   size `damocline capacity` explore stages from the recorded per-VU rate so
