@@ -40,7 +40,7 @@ func TestReadCampaignRequiresPersistedTopLevelEvidence(t *testing.T) {
 	if err := json.Unmarshal(valid, &root); err != nil {
 		t.Fatal(err)
 	}
-	for _, field := range []string{"started_at", "warmup", "trials"} {
+	for _, field := range []string{"started_at", "warmup", "trials", "execution_state"} {
 		t.Run("missing_"+field, func(t *testing.T) {
 			candidate := make(map[string]json.RawMessage, len(root))
 			for key, value := range root {
@@ -60,6 +60,10 @@ func TestReadCampaignRequiresPersistedTopLevelEvidence(t *testing.T) {
 			writeCampaignAndAssertRejected(t, candidate)
 		})
 	}
+	t.Run("null_execution_state", func(t *testing.T) {
+		root["execution_state"] = json.RawMessage("null")
+		writeCampaignAndAssertRejected(t, root)
+	})
 }
 
 func TestReadCampaignRequiresValidStartTimestampFromSchemaV5(t *testing.T) {
