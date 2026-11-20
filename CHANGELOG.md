@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Require recorded cooldown and trial IDs in closed-loop campaign artifacts
+  from schema v9 onward, including the trial ID in pending checkpoints.
+
 - Require a recorded execution state in closed-loop campaign reports from
   schema v10 onward before dashboard, export or assessment decoding.
 

@@ -40,7 +40,7 @@ func TestReadCampaignRequiresPersistedTopLevelEvidence(t *testing.T) {
 	if err := json.Unmarshal(valid, &root); err != nil {
 		t.Fatal(err)
 	}
-	for _, field := range []string{"started_at", "warmup", "trials", "execution_state"} {
+	for _, field := range []string{"started_at", "warmup", "trials", "execution_state", "cooldown"} {
 		t.Run("missing_"+field, func(t *testing.T) {
 			candidate := make(map[string]json.RawMessage, len(root))
 			for key, value := range root {
@@ -101,6 +101,12 @@ func TestReadCampaignRequiresPersistedNestedTrialAndPhaseEvidence(t *testing.T) 
 	}{
 		{name: "trial_number", mutate: func(root map[string]json.RawMessage) error {
 			return mutateCampaignTrial(root, func(trial map[string]json.RawMessage) { delete(trial, "number") })
+		}},
+		{name: "trial_run_id", mutate: func(root map[string]json.RawMessage) error {
+			return mutateCampaignTrial(root, func(trial map[string]json.RawMessage) { delete(trial, "run_id") })
+		}},
+		{name: "trial_run_id_null", mutate: func(root map[string]json.RawMessage) error {
+			return mutateCampaignTrial(root, func(trial map[string]json.RawMessage) { trial["run_id"] = json.RawMessage("null") })
 		}},
 		{name: "trial_phases", mutate: func(root map[string]json.RawMessage) error {
 			return mutateCampaignTrial(root, func(trial map[string]json.RawMessage) { delete(trial, "phases") })
