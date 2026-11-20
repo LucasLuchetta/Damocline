@@ -128,9 +128,13 @@ func auditCmd(args []string, stdout, stderr io.Writer) int {
 	}
 	if assessment.Demand != nil {
 		fmt.Fprintf(stdout, "Demand target: %d workload-equivalent active actors | plan state: %s\n", assessment.Demand.TargetUsers, assessment.Demand.State)
-		for _, finding := range assessment.Demand.Findings {
+		writeDecisionBlockers(stdout, assessment.Demand)
+		for _, finding := range demandFindings(assessment.Demand) {
 			fmt.Fprintf(stdout, "  - %s\n", finding)
 		}
+	}
+	if assessment.Demand == nil {
+		writeDecisionBlockerGroups(stdout, assessment.DecisionBlockers)
 	}
 	for _, finding := range audit.Findings {
 		fmt.Fprintf(stdout, "  - %s\n", finding)
@@ -231,7 +235,8 @@ func auditCampaignCollection(paths, expectedEvidenceIDs, expectedCampaignFileSHA
 		if assessment.DemandEvidenceID != "" {
 			fmt.Fprintf(stdout, "Demand evidence ID: %s\n", assessment.DemandEvidenceID)
 		}
-		for _, finding := range assessment.Demand.Findings {
+		writeDecisionBlockers(stdout, assessment.Demand)
+		for _, finding := range demandFindings(assessment.Demand) {
 			fmt.Fprintf(stdout, "  - %s\n", finding)
 		}
 	}

@@ -325,26 +325,26 @@ func BuildCampaignCollectionAssessment(evidence []campaign.Result, goal *capacit
 		if err != nil {
 			return CampaignCollectionAssessment{}, err
 		}
-		if result.State == "INVALID_EVIDENCE" {
-			result.Demand = &Result{State: "INSUFFICIENT_EVIDENCE", TargetUsers: target, Findings: []string{
-				"At least one campaign in the collection has invalid evidence; no combined demand conclusion is reported.",
-			}}
-		} else {
-			result.Demand = &Result{State: "INSUFFICIENT_EVIDENCE", TargetUsers: target, Findings: []string{
-				"A demand decision requires a campaign at the exact calculated workload level; nearby levels are not interpolated.",
-			}}
-			for _, item := range levels {
-				if item.campaign.BaseUsers != target {
-					continue
-				}
-				demand, err := Evaluate(item.campaign, *goal)
-				if err != nil {
-					return CampaignCollectionAssessment{}, err
-				}
-				result.Demand = &demand
-				result.DemandEvidenceID = evidenceDigest(item.campaign)
-				break
+		result.Demand = &Result{State: "INSUFFICIENT_EVIDENCE", TargetUsers: target}
+		for _, item := range levels {
+			if item.campaign.BaseUsers != target {
+				continue
 			}
+			demand, err := Evaluate(item.campaign, *goal)
+			if err != nil {
+				return CampaignCollectionAssessment{}, err
+			}
+			result.Demand = &demand
+			if result.State != "INVALID_EVIDENCE" {
+				result.DemandEvidenceID = evidenceDigest(item.campaign)
+			}
+			break
+		}
+		if result.Demand.TestedUsers == 0 {
+			result.Demand.block("A demand decision requires a campaign at the exact calculated workload level; nearby levels are not interpolated.")
+		}
+		if result.State == "INVALID_EVIDENCE" {
+			result.Demand.invalidateDecision("At least one campaign in the collection has invalid evidence; no combined demand conclusion is reported.")
 		}
 	}
 	return result, nil

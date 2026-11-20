@@ -10,7 +10,10 @@ Observed pattern: UNAVAILABLE
   4 VUs: ABORTED | audit INCONCLUSIVE | measurement LIMITED | evidence sha256:34958e454384d341e9578dca6a4a154c4428db3e158fae68cd1e510395a31ac5
     Repeat pass probability interval unavailable: 1 trial(s) were not terminal PASS/FAIL outcomes.
 Demand target: 3 workload-equivalent active actors | plan state: INSUFFICIENT_EVIDENCE
-  - A demand decision requires a campaign at the exact calculated workload level; nearby levels are not interpolated.
+
+### Configuration and scenario
+
+- A demand decision requires a campaign at the exact calculated workload level; nearby levels are not interpolated. Run the campaign at the exact required VU level.
   - Each level is audited independently; no result is interpolated or extrapolated to an untested workload.
   - Observed passing and failing levels do not establish a monotone capacity boundary or sustainable human-user capacity.
   - Level 2 VUs cannot be compared: workload revision, application revision, or declared environment is missing.
