@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Allow one independent, logged retry of the extended calibration on
+  hosted Windows CI after a late-arrival failure (ADR 0152).
+
 - Add a bounded loopback lab for comparing Damocline and k6 under identical
   closed-loop workloads at three VU levels (ADR 0160).
 
