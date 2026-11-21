@@ -173,6 +173,9 @@ func arrivalCampaignCmd(args []string, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintf(stdout, "Arrival campaign: %s | %s://%s | base %d scheduled starts/s | worker limit %d | stabilization %s | observation %s | repeats %d | cooldown %s | wall-time cap %s\n",
 		validated.Scenario.Name, validated.Base.Scheme, validated.Base.Host, validated.Scenario.ArrivalRate, validated.Scenario.Users, options.Stabilization, options.Observation, options.Repeats, options.Cooldown, arrivalcampaign.PlannedBudget(options))
+	if options.Repeats < 3 {
+		fmt.Fprintln(stdout, "Two repetitions cannot earn ROBUST_PASS. Use --repeats 3 or more to allow the p95 trend screen.")
+	}
 	if options.LongRun {
 		fmt.Fprintln(stdout, "LONG-RUN MODE: explicit opt-in; environment declared staging (user-provided, not independently verified).")
 	}

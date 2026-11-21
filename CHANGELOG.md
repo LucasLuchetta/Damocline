@@ -31,8 +31,8 @@
 - An arrival campaign needs observation p95 evidence from at least three
   repetitions to earn a robust p95 pass. Offline goal assessment still reads
   older artifacts and withholds a sustained-target claim when their trend
-  screen was unavailable (ADR 0183).
-
+  screen was unavailable (ADR 0185).
+  The CLI warns when the campaign plan uses two repetitions, its default.
 
 - `damocline capacity` no longer discards repeatedly passing explore levels
   when explore ends INCONCLUSIVE: it continues the sustained campaign from
