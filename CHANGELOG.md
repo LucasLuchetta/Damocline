@@ -9,6 +9,12 @@
   after a short settle wait when a first attempt partially failed; the
   retry is recorded as `retried_after_failures` (ADR 0180).
 
+- Add the Reliability Qualification (RQ) milestone with verifiable P0/P1
+  acceptance criteria and a validation protocol, plus the evidence levels
+  `IMPLEMENTED`, `VALIDATED_CONTROLLED` and `PROVEN_REPRESENTATIVE`. RQ takes
+  priority over new features; the PR template now asks for the evidence
+  level reached (ADR 0181). Documentation only.
+
 - `damocline capacity` step-downs now bisect over the repeatedly passing
   explore levels (at most three campaigns) and run a recovery gate before
   each: a bounded cooldown plus network-path probes that must return near

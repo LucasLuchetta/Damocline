@@ -5,6 +5,8 @@
 
 **Product question:** *Given a specified workload, environment, business demand, observation horizon and performance/error objectives, what load was demonstrably supported, how certain is that finding, what constrained it, and does the evidence warrant optimization or additional infrastructure?*
 
+**Current priority: Reliability Qualification (RQ).** The [RQ milestone](RELIABILITY_QUALIFICATION.md) takes precedence over new features. Claims use the evidence levels `IMPLEMENTED`, `VALIDATED_CONTROLLED` and `PROVEN_REPRESENTATIVE` defined there; a `[x]` below means `IMPLEMENTED` unless stated otherwise ([ADR 0181](adr/0181-reliability-qualification-milestone.md)).
+
 **Reliability focus:** prioritize cohesive fixes and validation that make one bounded report reproducible and technically reviewable. Pause unrelated capability expansion while exact source/auditor replay, scenario identity, phase evidence, and stated uncertainty still have acceptance gaps.
 
 Read [measurement definitions](METRICS.md), [scientific foundations and limitations](SCIENTIFIC_FOUNDATIONS.md), [local reference-validation protocol](REFERENCE_VALIDATION.md), and [architecture](ARCHITECTURE.md) before implementing a milestone.

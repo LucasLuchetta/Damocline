@@ -31,6 +31,18 @@ Related issue/proposal:
 
 <!-- List actual commands and outcomes; unchecked means not performed. -->
 
+## Evidence level reached
+
+<!-- See docs/RELIABILITY_QUALIFICATION.md. Pick the highest level the
+     capability actually reached; do not claim more. -->
+
+- [ ] Not a measurement capability (docs, refactor, tooling)
+- [ ] `IMPLEMENTED`: merged code with deterministic tests in scope
+- [ ] `VALIDATED_CONTROLLED`: agrees with an independent reference in
+      repeated controlled runs, including fault cases (link evidence)
+- [ ] `PROVEN_REPRESENTATIVE`: reproduced on representative applications in
+      two environments under the RQ protocol (link evidence)
+
 ## Known limitations
 
 <!-- Record untested assumptions, remaining gaps and follow-up work. -->
