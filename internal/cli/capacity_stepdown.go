@@ -97,28 +97,50 @@ func capacityCampaignFiles(index, users int) (campaignFile, scenarioFile, calibr
 }
 
 // capacityBisection searches the ascending candidate levels for the highest
-// level whose sustained campaign passes. Indices below lo are known or assumed
-// lower; indices at or above hi are known to fail. lo == -1 means no
-// candidate has passed yet; hi starts at len(levels) because the selected
-// level above every candidate already failed.
+// level whose sustained campaign passes. Indices below or at lo are known to
+// pass or were excluded as unmeasurable; indices at or above hi are known to
+// fail. lo == -1 means no candidate has passed or been excluded yet; hi starts
+// at len(levels) because the selected level above every candidate (failed)
+// already failed.
 type capacityBisection struct {
 	levels []int
+	failed int
 	lo, hi int
 }
 
-func newCapacityBisection(stepDowns []int) *capacityBisection {
+func newCapacityBisection(stepDowns []int, failed int) *capacityBisection {
 	levels := append([]int(nil), stepDowns...)
 	sort.Ints(levels)
-	return &capacityBisection{levels: levels, lo: -1, hi: len(levels)}
+	return &capacityBisection{levels: levels, failed: failed, lo: -1, hi: len(levels)}
 }
 
-// next returns the upper middle of the open interval, or false when the
-// search has converged.
+// next returns the next level to try, or false when the search has converged.
+//
+// Choice rule: take the ceiling of the midpoint between the lower bound (the
+// last passing or excluded level, otherwise the lowest candidate) and the
+// lowest failing level, and try the lowest open candidate at or above that
+// value; when none is, try the highest open candidate. This biases the search
+// towards the highest plausible level, which is the goal of the search and
+// where an earlier failure contaminated the target the least.
 func (b *capacityBisection) next() (int, bool) {
 	if b.hi-b.lo <= 1 {
 		return 0, false
 	}
-	return b.levels[b.lo+(b.hi-b.lo+1)/2], true
+	low := b.levels[0]
+	if b.lo >= 0 {
+		low = b.levels[b.lo]
+	}
+	high := b.failed
+	if b.hi < len(b.levels) {
+		high = b.levels[b.hi]
+	}
+	target := low + (high-low+1)/2
+	for i := b.lo + 1; i < b.hi; i++ {
+		if b.levels[i] >= target {
+			return b.levels[i], true
+		}
+	}
+	return b.levels[b.hi-1], true
 }
 
 func (b *capacityBisection) record(level int, passed bool) {
@@ -132,6 +154,19 @@ func (b *capacityBisection) record(level int, passed bool) {
 			b.hi = i
 		}
 		return
+	}
+}
+
+// exclude removes a level that cannot be measured honestly (its per-window
+// sample floor does not fit the window or wall-budget ceilings) together with
+// every lower candidate: a lower level delivers fewer samples per second, so
+// it needs an even longer window. It is not recorded as a pass.
+func (b *capacityBisection) exclude(level int) {
+	for i, candidate := range b.levels {
+		if candidate == level && i > b.lo {
+			b.lo = i
+			return
+		}
 	}
 }
 
@@ -293,7 +328,7 @@ func capacityStepDownPlanLine(budget time.Duration) string {
 }
 
 // capacityFirstStepDown returns the first level the bisection would try.
-func capacityFirstStepDown(stepDowns []int) int {
-	level, _ := newCapacityBisection(stepDowns).next()
+func capacityFirstStepDown(stepDowns []int, failed int) int {
+	level, _ := newCapacityBisection(stepDowns, failed).next()
 	return level
 }

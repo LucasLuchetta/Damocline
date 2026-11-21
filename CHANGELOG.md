@@ -4,6 +4,13 @@
 
 - Added `damocline crosscheck`, which compares a run report with a server or reverse-proxy access log (nginx, combined or JSON) offline. It gives MATCH, MISMATCH or NOT_ASSESSABLE verdicts for request counts, status classes and server p95, and it flags clock skew (ADR 0182).
 - Added the `lab/k6-compare` kit. It contains a scenario-to-k6 converter for single closed-loop workflows and `damocline compare-external`, which classifies differences in offered load, throughput, error rate and p95 between Damocline and k6 as consistent, explainable or a red flag.
+- `damocline capacity` step-downs now try the upper-middle candidate first
+  (ceiling of the value midpoint, for example 100 VUs from 25/50/100 below a
+  FAIL at 150), and a level whose sample-sized window exceeds 60s or the wall
+  budget is recorded `NOT_RUN` with its reason while the bisection continues
+  over higher candidates instead of stopping. Per-window minimum samples are
+  unchanged (ADR 0183).
+
 - `damocline capacity` no longer discards repeatedly passing explore levels
   when explore ends INCONCLUSIVE: it continues the sustained campaign from
   the highest repeatedly passing level and states which higher levels are

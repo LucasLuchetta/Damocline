@@ -24,7 +24,7 @@ func TestCapacityBisectionConvergesToHighestSustainedLevel(t *testing.T) {
 		"25 sustains":  {25, []int{100, 50, 25}},
 		"none":         {0, []int{100, 50, 25}},
 	} {
-		b := newCapacityBisection(levels)
+		b := newCapacityBisection(levels, 175)
 		var tried []int
 		for i := 0; i < capacityMaxStepDowns; i++ {
 			level, ok := b.next()
@@ -41,8 +41,58 @@ func TestCapacityBisectionConvergesToHighestSustainedLevel(t *testing.T) {
 			t.Errorf("%s: bisection did not converge within %d campaigns", name, capacityMaxStepDowns)
 		}
 	}
-	if first := capacityFirstStepDown(levels); first != 100 {
+	if first := capacityFirstStepDown(levels, 175); first != 100 {
 		t.Fatalf("first step-down = %d", first)
+	}
+}
+
+func TestCapacityBisectionPrefersUpperMiddleCandidate(t *testing.T) {
+	// Pilot shape: 25/50/100 passed explore below a sustained FAIL at 150.
+	if first := capacityFirstStepDown([]int{25, 50, 100}, 150); first != 100 {
+		t.Fatalf("first step-down = %d, want 100", first)
+	}
+	b := newCapacityBisection([]int{25, 50, 100}, 150)
+	var tried []int
+	for {
+		level, ok := b.next()
+		if !ok {
+			break
+		}
+		tried = append(tried, level)
+		b.record(level, false)
+	}
+	if !reflect.DeepEqual(tried, []int{100, 50, 25}) {
+		t.Fatalf("tried %v", tried)
+	}
+	if first := capacityFirstStepDown([]int{10, 20, 30, 40, 50, 60}, 70); first != 40 {
+		t.Fatalf("six candidates: first = %d, want 40", first)
+	}
+}
+
+func TestCapacityBisectionExcludedLevelContinuesAbove(t *testing.T) {
+	b := newCapacityBisection([]int{25, 50, 100}, 150)
+	b.record(100, false)
+	level, _ := b.next()
+	if level != 50 {
+		t.Fatalf("after 100 FAIL next = %d", level)
+	}
+	b.exclude(50)
+	if level, ok := b.next(); ok {
+		t.Fatalf("excluded 50 must also skip 25, got %d", level)
+	}
+	b = newCapacityBisection([]int{25, 50, 100, 125}, 150)
+	b.exclude(50)
+	var tried []int
+	for {
+		level, ok := b.next()
+		if !ok {
+			break
+		}
+		tried = append(tried, level)
+		b.record(level, level <= 100)
+	}
+	if !reflect.DeepEqual(tried, []int{100, 125}) {
+		t.Fatalf("tried %v", tried)
 	}
 }
 
