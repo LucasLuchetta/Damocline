@@ -6,8 +6,8 @@
   repetitions to earn a robust p95 pass. Offline goal assessment still reads
   older artifacts and withholds a sustained-target claim when their trend
   screen was unavailable (ADR 0183).
-
-
+- Added `damocline crosscheck`, which compares a run report with a server or reverse-proxy access log (nginx, combined or JSON) offline. It gives MATCH, MISMATCH or NOT_ASSESSABLE verdicts for request counts, status classes and server p95, and it flags clock skew (ADR 0182).
+- Added the `lab/k6-compare` kit. It contains a scenario-to-k6 converter for single closed-loop workflows and `damocline compare-external`, which classifies differences in offered load, throughput, error rate and p95 between Damocline and k6 as consistent, explainable or a red flag.
 - `damocline capacity` no longer discards repeatedly passing explore levels
   when explore ends INCONCLUSIVE: it continues the sustained campaign from
   the highest repeatedly passing level and states which higher levels are
