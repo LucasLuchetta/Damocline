@@ -315,8 +315,7 @@ func WithRunner(ctx context.Context, base config.Validated, opt Options, runner 
 	for {
 		status := probe(candidate)
 		if status == "ABORTED" || status == "INCONCLUSIVE" {
-			result.Outcome = status
-			result.Reason = result.Probes[len(result.Probes)-1].Reason
+			stopUnresolved(&result, status, candidate, low)
 			return result, nil
 		}
 		if status == "PASS" {
@@ -366,8 +365,7 @@ func WithRunner(ctx context.Context, base config.Validated, opt Options, runner 
 		}
 		status := probe(mid)
 		if status == "ABORTED" || status == "INCONCLUSIVE" {
-			result.Outcome = status
-			result.Reason = result.Probes[len(result.Probes)-1].Reason
+			stopUnresolved(&result, status, mid, low)
 			return result, nil
 		}
 		if status == "PASS" {
@@ -380,6 +378,27 @@ func WithRunner(ctx context.Context, base config.Validated, opt Options, runner 
 	result.FirstFailingUsers = &high
 	result.Outcome = "BRACKETED"
 	return result, nil
+}
+
+// stopUnresolved ends an exploration whose probe at users was ABORTED or
+// INCONCLUSIVE. Levels that already passed every repeat stay recorded as the
+// highest repeatedly passing level, and a note states that the stopped level
+// and everything above it are unresolved and why.
+func stopUnresolved(result *Result, status string, users, low int) {
+	result.Outcome = status
+	result.Reason = result.Probes[len(result.Probes)-1].Reason
+	if low < 1 {
+		return
+	}
+	passing := low
+	result.HighestPassingUsers = &passing
+	result.Notes = append(result.Notes, UnresolvedNote(users, result.Reason))
+}
+
+// UnresolvedNote states that a stopped probe level and the levels above it
+// were not resolved by exploration.
+func UnresolvedNote(users int, reason string) string {
+	return fmt.Sprintf("Levels from %d VUs upward are unresolved: the %d VU probe ended without a target verdict (%s)", users, users, strings.TrimSpace(reason))
 }
 
 // GeneratorLimitedReason explains a probe stopped by a generator guardrail.

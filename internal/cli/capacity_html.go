@@ -458,6 +458,11 @@ func writeHTMLFactsHypothesesUnknowns(b *strings.Builder, in htmlReportInput) {
 	if in.Explore != nil && in.Explore.HighestPassingUsers != nil {
 		facts = append(facts, fmt.Sprintf("Exploration passed short probes up to %d modeled users. This is exploratory and is not an approved level.", *in.Explore.HighestPassingUsers))
 	}
+	if in.Explore != nil {
+		if note := capacityUnresolvedNote(*in.Explore); note != "" {
+			facts = append(facts, note)
+		}
+	}
 	writeHTMLList(b, facts, "")
 	b.WriteString("</div>\n<div class=\"kind k-hyp\">\n<h3><span class=\"tag t-hyp\">hypothesis</span> Possible explanations and assumptions (not validated)</h3>\n")
 	var hypotheses []string

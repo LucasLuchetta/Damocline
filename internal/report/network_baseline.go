@@ -52,6 +52,9 @@ type NetworkBaseline struct {
 	P95MS                float64 `json:"p95_ms"`
 	MaxMS                float64 `json:"max_ms"`
 	MaxToP50Ratio        float64 `json:"max_to_p50_ratio"`
+	// RetriedAfterFailures is the number of failed requests in a first
+	// pre-load attempt that was discarded and repeated once (ADR 0180).
+	RetriedAfterFailures int `json:"retried_after_failures,omitempty"`
 }
 
 // ValidNetworkBaseline checks schema gating and internal consistency. It does
@@ -82,7 +85,7 @@ func ValidNetworkBaseline(r Result) bool {
 		(b.Method != "GET" && b.Method != "HEAD") || len(b.Path) == 0 || b.Path[0] != '/' ||
 		b.Planned < 1 || b.Planned > maxNetworkBaselineRequests || b.Completed < 0 || b.Failures < 0 || b.NotAttempted < 0 ||
 		b.Completed+b.Failures+b.NotAttempted != b.Planned || b.UnexpectedHTTPStatus < 0 || b.UnexpectedHTTPStatus > b.Completed ||
-		b.IntervalMS <= 0 || b.TimeoutMS <= 0 {
+		b.IntervalMS <= 0 || b.TimeoutMS <= 0 || b.RetriedAfterFailures < 0 || b.RetriedAfterFailures > b.Planned {
 		return false
 	}
 	if b.Completed == 0 {
