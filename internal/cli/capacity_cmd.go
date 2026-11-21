@@ -643,7 +643,7 @@ func capacityCmd(args []string, stdout, stderr io.Writer) int {
 	}
 	ladderRecord.Entries = append(ladderRecord.Entries, capacityLadderEntry{Users: users, Campaign: filepath.Base(path), Outcome: evidence.Outcome})
 	results[filepath.Base(path)], levelUsers[filepath.Base(path)] = evidence, users
-	bisection := newCapacityBisection(stepDowns)
+	bisection := newCapacityBisection(stepDowns, users)
 	recoveryReference := capacityRecoveryReference(result)
 	searching := capacityStepDownAllowed(evidence)
 	for i := 0; i < capacityMaxStepDowns && searching; i++ {
@@ -659,8 +659,14 @@ func capacityCmd(args []string, stdout, stderr io.Writer) int {
 			options, err = planLevel(level, levelWindow)
 		}
 		if err != nil {
-			ladderRecord.Entries = append(ladderRecord.Entries, capacityLadderEntry{Users: level, Outcome: "NOT_RUN", Reason: err.Error()})
-			break
+			// The level cannot be measured within the per-window sample floor,
+			// the 60s window ceiling, or the wall budget. Lower levels deliver
+			// fewer samples per second, so exclude them too and keep searching
+			// the remaining higher candidates instead of stopping the ladder.
+			ladderRecord.Entries = append(ladderRecord.Entries, capacityLadderEntry{Users: level, Outcome: "NOT_RUN", Reason: err.Error() + "; lower candidates need even longer windows and were skipped"})
+			fmt.Fprintf(stdout, "Campaign at %d VUs NOT_RUN: %v; skipping it and lower candidates, continuing the bisection above it.\n", level, err)
+			bisection.exclude(level)
+			continue
 		}
 		var recovery *capacityRecoveryCheck
 		campaignFile, _, _ := capacityCampaignFiles(i+1, level)
