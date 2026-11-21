@@ -17,14 +17,14 @@ const (
 )
 
 var (
-	consoleKernel            = syscall.NewLazyDLL("kernel32.dll")
-	procGetConsoleMode       = consoleKernel.NewProc("GetConsoleMode")
-	procSetConsoleMode       = consoleKernel.NewProc("SetConsoleMode")
-	procReadConsoleInputW    = consoleKernel.NewProc("ReadConsoleInputW")
+	consoleKernel         = syscall.NewLazyDLL("kernel32.dll")
+	procGetConsoleMode    = consoleKernel.NewProc("GetConsoleMode")
+	procSetConsoleMode    = consoleKernel.NewProc("SetConsoleMode")
+	procReadConsoleInputW = consoleKernel.NewProc("ReadConsoleInputW")
 )
 
 type windowsHomeKeyboard struct {
-	input, output syscall.Handle
+	input, output         syscall.Handle
 	inputMode, outputMode uint32
 }
 
@@ -47,11 +47,11 @@ func openHomeKeyboard() (homeKeyboard, bool) {
 	if !setWindowsConsoleMode(output, outMode|enableVTOutput) {
 		return nil, false
 	}
-	if !setWindowsConsoleMode(input, inMode &^ (enableLineInput | enableEchoInput)) {
+	if !setWindowsConsoleMode(input, inMode&^(enableLineInput|enableEchoInput)) {
 		setWindowsConsoleMode(output, outMode)
 		return nil, false
 	}
-	return &windowsHomeKeyboard{input:input,output:output,inputMode:inMode,outputMode:outMode}, true
+	return &windowsHomeKeyboard{input: input, output: output, inputMode: inMode, outputMode: outMode}, true
 }
 
 func getWindowsConsoleMode(handle syscall.Handle, mode *uint32) bool {

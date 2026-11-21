@@ -31,7 +31,7 @@ func TestIndependentZeroErrorPlanningExample(t *testing.T) {
 }
 
 func TestWilsonBoundsRemainWithinUnitInterval(t *testing.T) {
-	for _, tc := range []struct{failed,total int}{{1,100},{3,50},{50,100},{99,100},{100,100}} {
+	for _, tc := range []struct{ failed, total int }{{1, 100}, {3, 50}, {50, 100}, {99, 100}, {100, 100}} {
 		v, err := UpperFailureRate95(tc.failed, tc.total)
 		if err != nil || v < float64(tc.failed)/float64(tc.total) || v > 1 {
 			t.Fatalf("invalid failure-rate bound for %+v: %.8f %v", tc, v, err)
@@ -40,12 +40,12 @@ func TestWilsonBoundsRemainWithinUnitInterval(t *testing.T) {
 }
 
 func TestInvalidCountsAndBudgetsRejected(t *testing.T) {
-	for _, bad := range [][2]int{{0,0},{-1,5},{6,5}} {
+	for _, bad := range [][2]int{{0, 0}, {-1, 5}, {6, 5}} {
 		if _, err := UpperFailureRate95(bad[0], bad[1]); err == nil {
 			t.Fatalf("accepted invalid counts %v", bad)
 		}
 	}
-	for _, bad := range []float64{-0.01,0,1,math.NaN()} {
+	for _, bad := range []float64{-0.01, 0, 1, math.NaN()} {
 		if _, err := ZeroFailureSamples95(bad); err == nil {
 			t.Fatalf("accepted invalid budget %v", bad)
 		}
