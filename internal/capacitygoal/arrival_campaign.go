@@ -60,7 +60,7 @@ func EvaluateJourneyCampaign(saved arrivalcampaign.Result, goal JourneyStartGoal
 		return JourneyStartAssessment{}, err
 	}
 	limits := config.StandardEnvelopeLimits
-	if saved.SchemaVersion == arrivalcampaign.EnvelopeSchemaVersion {
+	if arrivalcampaign.IsEnvelopeSchema(saved.SchemaVersion) {
 		if !report.ValidArrivalAggregateEnvelope(saved.LoadEnvelope, saved.WorkerLimit,
 			max(saved.BaseStartsPerSecond, saved.SpikeStartsPerSecond), saved.RequestRateCeiling) ||
 			saved.GeneratorGuardrails == nil || !saved.GeneratorGuardrails.Enabled() {
@@ -323,6 +323,28 @@ func EvaluateJourneyCampaign(saved arrivalcampaign.Result, goal JourneyStartGoal
 	if saved.Outcome == "PASS" && !allPass && !assessmentLimitedNativePass || saved.Outcome == "ABORTED" && saved.Trials[len(saved.Trials)-1].Outcome != "ABORTED" ||
 		saved.Outcome == "FAIL" && saved.Trials[len(saved.Trials)-1].Outcome != "FAIL" || saved.Outcome == "INCONCLUSIVE" && saved.Trials[len(saved.Trials)-1].Outcome != "INCONCLUSIVE" {
 		return JourneyStartAssessment{}, errors.New("campaign outcome disagrees with its terminal trial")
+	}
+	robustness := arrivalcampaign.AssessP95Robustness(saved)
+	if saved.SchemaVersion >= arrivalcampaign.FirstP95RobustnessSchema && !inProgressCheckpoint {
+		if saved.P95Robustness == nil {
+			return JourneyStartAssessment{}, errors.New("completed arrival campaign is missing its p95 robustness verdict")
+		}
+		savedJSON, _ := json.Marshal(saved.P95Robustness)
+		derivedJSON, _ := json.Marshal(robustness)
+		if !bytes.Equal(savedJSON, derivedJSON) {
+			return JourneyStartAssessment{}, errors.New("saved p95 robustness verdict disagrees with native report data")
+		}
+	}
+	assessment.P95Robustness = &robustness
+	if allPass && robustness.State != arrivalcampaign.P95RobustPass {
+		if saved.SchemaVersion >= arrivalcampaign.FirstP95RobustnessSchema {
+			allPass = false
+			for _, reason := range robustness.Reasons {
+				assessment.Findings = append(assessment.Findings, "P95 SLO robustness "+robustness.State+": "+reason)
+			}
+		} else {
+			assessment.Findings = append(assessment.Findings, "This legacy campaign schema predates the robust p95 verdict; recomputed robustness is "+robustness.State+" and is reported for information only.")
+		}
 	}
 	if allPass && assessment.ScenarioIdentityStatus == "CONSISTENT" {
 		assessment.State = "SUSTAINED_TARGET_PASSED_UNDER_TESTED_CONDITIONS"

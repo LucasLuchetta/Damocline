@@ -9,6 +9,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/LucasLuchetta/Damocline/internal/arrivalcampaign"
 	"github.com/LucasLuchetta/Damocline/internal/arrivalexplorer"
 	"github.com/LucasLuchetta/Damocline/internal/campaign"
 	"github.com/LucasLuchetta/Damocline/internal/config"
@@ -46,8 +47,9 @@ type JourneyStartAssessment struct {
 	MatchedTrials                 int
 	Findings                      []string
 	Next                          []string
-	Objectives                    *campaign.ObjectiveContract `json:"predeclared_objectives,omitempty"`
-	StabilityPolicy               *campaign.StabilityPolicy   `json:"stability_policy,omitempty"`
+	Objectives                    *campaign.ObjectiveContract    `json:"predeclared_objectives,omitempty"`
+	StabilityPolicy               *campaign.StabilityPolicy      `json:"stability_policy,omitempty"`
+	P95Robustness                 *arrivalcampaign.P95Robustness `json:"p95_robustness,omitempty"`
 }
 
 func (g JourneyStartGoal) required() (int, error) {

@@ -141,6 +141,8 @@ func TestGoalCommandWritesOpenArrivalObjectiveReportOffline(t *testing.T) {
 		Warmup: "0s", Stabilization: "0s", Observation: "10s", Recovery: "10s", Soak: "0s", Cooldown: "0s", Budget: "2m40s", Repeats: 2, Outcome: "ABORTED",
 		Objectives: &contract, StabilityPolicy: &policy,
 		Trials: []arrivalcampaign.Trial{{Number: 1, RunID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Phases: []arrivalcampaign.Phase{}, Outcome: "ABORTED", AbortReason: "The campaign was interrupted by its caller."}}}
+	robustness := arrivalcampaign.AssessP95Robustness(saved)
+	saved.P95Robustness = &robustness
 	if err := report.WriteAnyJSON(campaignPath, saved); err != nil {
 		t.Fatal(err)
 	}

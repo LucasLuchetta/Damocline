@@ -21,6 +21,13 @@
   whose campaign passed as sustainable, or state that none passed. The plan
   declares the step-downs in its total wall time (ADR 0176).
 
+- Qualify open-arrival campaign passes with a robust p95 verdict (schema
+  v11, extended v12): each judged window's exact order-statistic 95% p95
+  interval must have its upper bound below the limit, and a Mann-Kendall
+  screen flags monotonic drift across repetitions (warm-up or carry-over).
+  Otherwise the verdict is LIMITED or INCONCLUSIVE with reasons, and `goal`
+  does not report a sustained pass (ADR 0177).
+
 - Add `--min-users` to `damocline capacity` to start the exploration
   ladder at a higher level.
 

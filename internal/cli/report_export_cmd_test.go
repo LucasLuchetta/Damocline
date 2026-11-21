@@ -171,6 +171,8 @@ func TestReportExportValidHistoricalCampaignsThroughCLIWithoutChangingSources(t 
 	arrivalV8.Objectives = &objectives
 	arrivalV8.StabilityPolicy = &policy
 	arrivalV8.Trials = []arrivalcampaign.Trial{{RunID: strings.Repeat("b", 32), Number: 1, Phases: []arrivalcampaign.Phase{}, Outcome: "ABORTED", AbortReason: "synthetic interruption"}}
+	arrivalRobustness := arrivalcampaign.AssessP95Robustness(arrivalV8)
+	arrivalV8.P95Robustness = &arrivalRobustness
 
 	for _, tc := range []struct {
 		name string
