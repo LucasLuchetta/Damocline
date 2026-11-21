@@ -1,0 +1,9 @@
+# Default review owner. CODEOWNERS requests reviews; enforcement requires
+# a GitHub branch protection rule or repository ruleset.
+/* @LucasLuchetta
+
+# Explicitly identify high-impact areas for future ownership changes.
+/.github/ @LucasLuchetta
+/cmd/ @LucasLuchetta
+/internal/ @LucasLuchetta
+/docs/adr/ @LucasLuchetta
