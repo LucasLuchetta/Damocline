@@ -170,7 +170,13 @@ func TestAuditConsumesSelfCalibratedCampaign(t *testing.T) {
 	calibrateForTest(t, scenario, artifact, "--users", "4")
 	campaignOut := filepath.Join(dir, "campaign.json")
 	var stdout, stderr bytes.Buffer
+	// This test verifies that audit consumes the embedded self-calibration,
+	// not the drift screen (covered in internal/campaign). On a loaded host a
+	// scheduler stall can cut one 4-user closed-loop window's throughput by
+	// more than the default 20% and mark a trial NON_STATIONARY, so the
+	// throughput-drop screen is widened like the p95 floor already is.
 	code := Run([]string{"campaign", "--config", scenario, "--warmup", "0s", "--observation", "10s", "--recovery", "10s", "--repeats", "2", "--stability-max-p95-increase-ms", "100",
+		"--stability-max-throughput-drop-percent", "60",
 		"--calibration", artifact, "--require-calibration", "--authorized", "--out", campaignOut}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("campaign failed (%d): %s %s", code, stdout.String(), stderr.String())
