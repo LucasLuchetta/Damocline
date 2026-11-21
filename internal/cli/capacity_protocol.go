@@ -104,12 +104,19 @@ func capacityRateWarning(w io.Writer, referencePath string, users, maxRPS int) e
 	if recorded.ElapsedSeconds <= 0 || recorded.Config.Users <= 0 || recorded.Metrics.Total <= 0 {
 		return errors.New("reference report has no usable request rate")
 	}
-	perVU := float64(recorded.Metrics.Total) / recorded.ElapsedSeconds / float64(recorded.Config.Users)
+	observed := float64(recorded.Metrics.Total) / recorded.ElapsedSeconds
+	if recorded.Config.MaxRPS > 0 && observed >= 0.9*float64(recorded.Config.MaxRPS) {
+		fmt.Fprintf(w, "WARNING: the reference delivered %.1f requests/s against its own max_rps %d. Its rate may have been capped and can underestimate delivery at the planned max_rps %d. Use a representative reference with observed rate headroom to forecast delivery.\n", observed, recorded.Config.MaxRPS, maxRPS)
+		return nil
+	}
+	perVU := observed / float64(recorded.Config.Users)
 	expected := perVU * float64(users)
 	fmt.Fprintf(w, "Reference delivery: %.3f requests/s per VU; %d VUs imply about %.1f requests/s against max_rps %d.\n", perVU, users, expected, maxRPS)
 	if expected > float64(maxRPS) {
 		fmt.Fprintf(w, "WARNING: max_rps %d would cap throughput below the %d VU level (about %.0f requests/s); the measured capacity would reflect the rate cap, not the target. Raise max_rps within its ceiling or lower --max-users to about %d.\n",
 			maxRPS, users, expected, max(1, int(float64(maxRPS)/perVU)))
+	} else if expected >= 0.9*float64(maxRPS) {
+		fmt.Fprintf(w, "WARNING: reference delivery for %d VUs is at least 90%% of max_rps %d; the exploration may be inconclusive at this ceiling.\n", users, maxRPS)
 	}
 	return nil
 }
@@ -178,6 +185,9 @@ func capacityExploreStage(s config.Scenario, minUsers int, referencePath string)
 		need = 1
 	}
 	perStep := float64(recorded.Metrics.Total) / recorded.ElapsedSeconds / float64(recorded.Config.Users) * float64(minUsers) / float64(len(s.Steps))
+	if s.MaxRPS > 0 {
+		perStep = min(perStep, float64(s.MaxRPS)/float64(len(s.Steps)))
+	}
 	if perStep <= 0 {
 		return 0, false
 	}

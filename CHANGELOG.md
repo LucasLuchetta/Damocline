@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Warn during capacity planning when estimated delivery is at least 90% of
+  the configured request-rate ceiling and exploration may be inconclusive. A
+  reference collected near its own ceiling no longer supplies a throughput
+  forecast. Explore stage sizing accounts for the planned request ceiling.
+
+- Size the `damocline capacity` explore budget from the engine's real
+  bounds: the network baseline cap, the drain allowance and setup time
+  instead of a flat 5s per stage. Include worst-case bracket refinement
+  probes, show the sizing in dry-run, and refuse a plan above the 15m cap
+  before traffic (ADR 0170). Add an end-to-end loopback test of the
+  extended capacity chain against a server with a known capacity above
+  50 VUs.
+
 - Add an offline executive HTML capacity report (ADR 0173):
   `damocline audit --html-out` (single campaign, optional `--explore-file`
   and `--actions-per-user-minute`) and `capacity.html` by default in the

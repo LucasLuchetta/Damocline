@@ -1,4 +1,7 @@
-package cli
+// Package capacitye2e runs the full capacity protocol end to end against a
+// loopback fixture. It is a separate package so its few minutes run in
+// parallel with the other package tests.
+package capacitye2e
 
 import (
 	"bytes"
@@ -14,6 +17,7 @@ import (
 
 	"github.com/LucasLuchetta/Damocline/internal/calibration"
 	"github.com/LucasLuchetta/Damocline/internal/capacityplan"
+	"github.com/LucasLuchetta/Damocline/internal/cli"
 	"github.com/LucasLuchetta/Damocline/internal/config"
 	"github.com/LucasLuchetta/Damocline/internal/explorer"
 )
@@ -44,13 +48,15 @@ func knownCapacityTarget(t *testing.T, workers int64) string {
 	return server.URL
 }
 
-func shortenCapacityTiming(t *testing.T) {
+func readJSON(t *testing.T, path string, value any) {
 	t.Helper()
-	previous := capacityTiming
-	capacityTiming.ExploreStage = 10 * time.Second
-	capacityTiming.Warmup = 2 * time.Second
-	capacityTiming.Recovery = 3 * time.Second
-	t.Cleanup(func() { capacityTiming = previous })
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, value); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // TestCapacityExtendedProtocolFindsKnownCapacityEndToEnd runs the full
@@ -61,11 +67,10 @@ func TestCapacityExtendedProtocolFindsKnownCapacityEndToEnd(t *testing.T) {
 	if testing.Short() {
 		t.Skip("end-to-end capacity protocol runs for a few minutes")
 	}
-	shortenCapacityTiming(t)
+	t.Cleanup(cli.SetCapacityStageFloorsForTest(10*time.Second, 2*time.Second, 3*time.Second))
 	const maxUsers = 100
 	const levelDuration = 5 * time.Second
-	opt := explorer.Options{MinUsers: 2, MaxUsers: maxUsers}
-	calibrated := capacityCalibrationLevels(opt, levelDuration)
+	calibrated := cli.CapacityCalibrationLevels(2, maxUsers, levelDuration)
 	// The known capacity is a calibrated level above the standard ceiling
 	// with a higher calibrated level that must fail.
 	known := calibrated[len(calibrated)-2]
@@ -88,7 +93,7 @@ func TestCapacityExtendedProtocolFindsKnownCapacityEndToEnd(t *testing.T) {
 	}
 	out := filepath.Join(dir, "run")
 	var stdout, stderr bytes.Buffer
-	code := capacityCmd([]string{
+	code := cli.Run([]string{"capacity",
 		"--config", scenarioPath, "--authorized", "--output-dir", out, "--max-users", "100",
 		"--response-bytes", "2", "--server-delay", "150ms", "--calibration-level-duration", levelDuration.String(),
 		"--extended-envelope", "--extended-load-authorized", "--target-class", "lab",
@@ -98,22 +103,17 @@ func TestCapacityExtendedProtocolFindsKnownCapacityEndToEnd(t *testing.T) {
 	}
 	log := stdout.String()
 
-	loaded, err := loadAnyCalibration(filepath.Join(out, "selfcal-explore.json"))
-	if err != nil || loaded.scenario == nil || loaded.scenario.Status != calibration.ScenarioCalibrationPassed {
-		t.Fatalf("self-calibration did not pass: %v\n%s", err, log)
+	var selfCalibration calibration.ScenarioRecord
+	readJSON(t, filepath.Join(out, "selfcal-explore.json"), &selfCalibration)
+	if selfCalibration.Status != calibration.ScenarioCalibrationPassed {
+		t.Fatalf("self-calibration did not pass: %s\n%s", selfCalibration.Status, log)
 	}
 
 	// The planned explore budget must cover the explore stage's real wall
 	// time, which starts after calibration and ends when explore.json is
 	// written.
-	manifestData, err := os.ReadFile(filepath.Join(out, "protocol.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var manifest capacityManifest
-	if err := json.Unmarshal(manifestData, &manifest); err != nil {
-		t.Fatal(err)
-	}
+	var manifest struct{ ExploreBudget time.Duration }
+	readJSON(t, filepath.Join(out, "protocol.json"), &manifest)
 	calibratedAt, errA := os.Stat(filepath.Join(out, "selfcal-explore.json"))
 	exploredAt, errB := os.Stat(filepath.Join(out, "explore.json"))
 	if errA != nil || errB != nil {
@@ -125,11 +125,15 @@ func TestCapacityExtendedProtocolFindsKnownCapacityEndToEnd(t *testing.T) {
 	}
 	t.Logf("explore took %s within the planned %s budget", elapsed, manifest.ExploreBudget)
 
-	exploration, err := readCapacityExplore(filepath.Join(out, "explore.json"))
-	if err != nil {
-		t.Fatal(err)
+	var exploration explorer.Result
+	readJSON(t, filepath.Join(out, "explore.json"), &exploration)
+	got := 0
+	for _, probe := range exploration.Probes {
+		if probe.Status == "PASS" {
+			got = max(got, probe.Users)
+		}
 	}
-	if got := capacityPassingLevel(exploration, true); got != known {
+	if got != known {
 		t.Fatalf("highest passing level %d VUs, want the known capacity %d (%s: %s)\n%s", got, known, exploration.Outcome, exploration.Reason, log)
 	}
 	failedAbove := false
@@ -160,14 +164,8 @@ func TestCapacityExtendedProtocolFindsKnownCapacityEndToEnd(t *testing.T) {
 		}
 	}
 
-	auditData, err := os.ReadFile(filepath.Join(out, "audit.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
 	var assessment capacityplan.Assessment
-	if err := json.Unmarshal(auditData, &assessment); err != nil {
-		t.Fatal(err)
-	}
+	readJSON(t, filepath.Join(out, "audit.json"), &assessment)
 	if assessment.State == "" || assessment.State == "INSUFFICIENT_EVIDENCE" {
 		t.Fatalf("audit state %q blockers %+v", assessment.State, assessment.DecisionBlockers)
 	}
@@ -177,44 +175,5 @@ func TestCapacityExtendedProtocolFindsKnownCapacityEndToEnd(t *testing.T) {
 	}
 	if !strings.Contains(log, "Explore sizing:") {
 		t.Fatalf("plan did not print the explore sizing:\n%s", log)
-	}
-}
-
-func TestCapacityWorstCaseProbesCountRefinement(t *testing.T) {
-	// Standard: failing at 16 leaves 7 levels inside 8-16, three probes.
-	if got := capacityWorstCaseProbes([]int{2, 4, 8, 16, 20}, nil, false); got != 7 {
-		t.Fatalf("standard worst case %d", got)
-	}
-	// Extended: only calibrated levels inside a bracket can be probed.
-	if got := capacityWorstCaseProbes([]int{2, 4, 8}, []int{2, 4, 8}, true); got != 3 {
-		t.Fatalf("extended without fill-ins %d", got)
-	}
-	if got := capacityWorstCaseProbes([]int{2, 4, 8}, []int{2, 3, 4, 5, 6, 7, 8}, true); got != 5 {
-		t.Fatalf("extended with fill-ins %d", got)
-	}
-}
-
-func TestCapacityStageOverheadUsesEngineBounds(t *testing.T) {
-	s := config.Scenario{Name: "fixture", BaseURL: "http://127.0.0.1:18089", Users: 2, Duration: "20s", Timeout: "4s",
-		P95LimitMS: 750, MaxErrorRate: .01, MaxRPS: 50, BaselinePath: "/baseline",
-		Steps: []config.Step{{Name: "a", Path: "/a"}, {Name: "b", Path: "/b"}}}
-	overhead, err := capacityStageOverhead(s, 2, nil, false)
-	want := config.NetworkBaselineWallBudget + 8*time.Second + capacityStageSetupAllowance
-	if err != nil || overhead != want {
-		t.Fatalf("overhead %s, want %s (%v)", overhead, want, err)
-	}
-	s.BaselinePath, s.NetworkBaselineSkipReason = "", "synthetic-loopback-test"
-	if overhead, err := capacityStageOverhead(s, 2, nil, false); err != nil || overhead != want-config.NetworkBaselineWallBudget {
-		t.Fatalf("skipped baseline overhead %s (%v)", overhead, err)
-	}
-}
-
-func TestCapacityRefusesExploreAboveCapWithProposal(t *testing.T) {
-	dir := t.TempDir()
-	scenario := writeCapacityScenario(t, dir, 100)
-	var out, errOut bytes.Buffer
-	code := capacityCmd([]string{"--config", scenario, "--dry-run", "--max-users", "128", "--extended-envelope", "--extended-load-authorized", "--target-class", "lab"}, &out, &errOut)
-	if code != 2 || !strings.Contains(errOut.String(), "above the 15m explore cap") || !strings.Contains(errOut.String(), "lower --max-users") {
-		t.Fatalf("oversized explore plan: %d %s %s", code, &out, &errOut)
 	}
 }

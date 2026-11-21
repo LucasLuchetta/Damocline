@@ -13,6 +13,7 @@ import (
 
 	"github.com/LucasLuchetta/Damocline/internal/calibration"
 	"github.com/LucasLuchetta/Damocline/internal/config"
+	"github.com/LucasLuchetta/Damocline/internal/insights"
 	"github.com/LucasLuchetta/Damocline/internal/selfcalibration"
 )
 
@@ -61,6 +62,50 @@ func TestCapacityWarnsWhenMaxRPSCapsRequestedLevel(t *testing.T) {
 	out.Reset()
 	if err := capacityRateWarning(&out, reference, 1, 1000); err != nil || strings.Contains(out.String(), "WARNING") {
 		t.Fatalf("unexpected warning under a generous cap: %s %v", &out, err)
+	}
+}
+
+func TestCapacityRateWarningDoesNotExtrapolateCappedReference(t *testing.T) {
+	reference := filepath.Join("..", "insights", "testdata", "reports", "schema-v39.json")
+	run, err := insights.ReadRun(reference)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run.Config.MaxRPS = 1
+	data, err := json.Marshal(run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reference = filepath.Join(t.TempDir(), "reference.json")
+	if err := os.WriteFile(reference, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := capacityRateWarning(&out, reference, 1, 10); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "its own max_rps 1") ||
+		!strings.Contains(out.String(), "planned max_rps 10") ||
+		strings.Contains(out.String(), "VUs imply") {
+		t.Fatalf("expected a capped-reference warning without a forecast: %s", out.String())
+	}
+}
+
+func TestCapacityRateWarningNearCeiling(t *testing.T) {
+	reference := filepath.Join("..", "insights", "testdata", "reports", "schema-v39.json")
+	run, err := insights.ReadRun(reference)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const users = 100
+	expected := float64(run.Metrics.Total) / run.ElapsedSeconds / float64(run.Config.Users) * users
+	ceiling := int(expected) + 1
+	var out bytes.Buffer
+	if err := capacityRateWarning(&out, reference, users, ceiling); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "the exploration may be inconclusive") {
+		t.Fatalf("missing near-ceiling warning: %s", out.String())
 	}
 }
 

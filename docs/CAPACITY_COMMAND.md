@@ -24,7 +24,11 @@ A failed calibration stops the protocol before target workload traffic.
 Dry-run prints every stage, its wall cap, the sizing formula and the total
 planned wall time. It warns when the scenario `max_rps` would cap
 throughput below the requested level, estimated from the per-VU request rate
-of the reference report, and proposes a lower `--max-users`. After
+of the reference report, and proposes a lower `--max-users`. It also warns when estimated delivery
+is at least 90% of the ceiling, where exploration may be inconclusive. If the
+reference itself reached 90% of its recorded ceiling, dry-run explains why
+it cannot forecast unconstrained delivery from that reference. Explore stage
+sizing accounts for the planned request ceiling. After
 exploration it warns again when the campaign level ran at 90% or more of
 `max_rps`. Calibration sizing that exceeds the self-calibration level or
 wall ceilings is refused with a proposed adjustment. A numeric observation
@@ -34,6 +38,14 @@ Standard ceilings apply. `--extended-envelope` (with
 `--extended-load-authorized` and `--target-class lab|staging`) passes the
 ADR 0155 extended gate to calibration only; exploration and campaign stages
 still run within the standard 50 VU ceiling in this release.
+
+The explore budget is sized for the worst case. That case is the ladder up
+to a failing level plus that bracket's refinement probes, each run
+`repeats` times. Each stage counts as its duration plus its overhead: the
+network baseline wall cap, the engine's bounded drain and 2s of setup
+(ADR 0170). Dry-run prints this sizing. A plan above the 15m explore cap is
+refused before traffic, with a proposal to lower `--max-users` or shorten
+the stages.
 
 The protocol uses the weakest measured delivery rate across all relevant
 series and repeats. For a 1% error budget, the zero-failure conditional

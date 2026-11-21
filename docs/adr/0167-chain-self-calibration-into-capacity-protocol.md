@@ -45,3 +45,6 @@ Total wall time grows by the calibration allowance. The rate-cap estimate is
 a linear per-VU extrapolation from one recorded run and is a hypothesis, not
 a measurement. Calibration is generator-side evidence only and does not
 establish target identity or application capacity.
+
+ADR 0170 sizes the explore budget from the engine bounds, including the
+network baseline cap, the drain allowance and refinement probes.
