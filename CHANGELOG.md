@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Require complete, workload-matched k6 checks before `compare-external`
+  can report `k6_would_pass=true`. A failed content check vetoes a pass
+  even when the HTTP status meets expectations (ADR 0186).
+
 - `damocline capacity` now sizes each campaign warm-up from the level: the
   ramp plus three per-VU journey cycles measured in explore, in whole
   settling windows, bounded to 90s and to the wall cap. The warm-up must
