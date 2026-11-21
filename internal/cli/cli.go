@@ -116,7 +116,7 @@ func help(w io.Writer) {
 
 Usage:
   damocline capacity --config scenario.json --authorized --output-dir DIR (--reference-report run.json | --response-bytes N --server-delay D) [--dry-run] [--resume]
-  damocline import-har --file capture.har --origin https://app.example.com --out proposal.json
+  damocline import-har --har capture.har --base-url https://app.example.com --out scenario.json [--include-writes]
   damocline          # branded welcome screen with guided menu
   damocline /start   # create a new saved scenario (archives the previous one)
   damocline /history # select and repeat a previous saved scenario

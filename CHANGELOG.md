@@ -28,6 +28,17 @@
   Otherwise the verdict is LIMITED or INCONCLUSIVE with reasons, and `goal`
   does not report a sustained pass (ADR 0177).
 
+- `damocline import-har --har file.har --base-url https://app.example.com
+  --out scenario.json` now writes a complete scenario draft: same-origin
+  requests only, static assets dropped by default, credentials, cookies,
+  tokens and bodies replaced by listed `${ENV}` placeholders, write methods
+  kept only with `--include-writes`, and every dropped request printed with
+  its reason (ADR 0178). `--keep-path` was removed.
+
+- Scenarios can declare a CSV `data` source and use `${data.column}` in
+  paths, header values and `body_env` content, with `sequential`, `random`
+  or `unique_per_vu` row selection validated at load time (ADR 0178).
+
 - Add `--min-users` to `damocline capacity` to start the exploration
   ladder at a higher level.
 

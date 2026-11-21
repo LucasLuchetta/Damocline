@@ -310,6 +310,30 @@ an isolated test namespace, validate cleanup in staging, and retain an
 application-specific cleanup procedure; Damocline does not delete resources
 outside the configured, authorized journey.
 
+## Variable journey data from CSV
+
+To avoid every journey reusing one account or search term, declare a local CSV
+file and reference its columns with `${data.column}` (ADR 0178). A relative
+path resolves against the scenario file. Placeholders work in complete path
+segments, query values, header values and `body_env` content.
+
+```json
+{
+  "data": {"file": "accounts.csv", "mode": "unique_per_vu"},
+  "steps": [
+    {"name": "account", "path": "/accounts/${data.account}?q=${data.term}"}
+  ]
+}
+```
+
+`sequential` (default) walks the rows with a run-wide journey counter,
+`random` picks rows deterministically from `workload_seed`, and
+`unique_per_vu` binds row N to virtual user N and needs at least `users`
+rows. The file is validated before any traffic: a unique lowercase header,
+at least one row, at most 100000 rows, 50 columns and 4 MiB, and no line
+breaks in values. Use synthetic data only; row values are not written to
+reports, but the CSV digest is part of the workload fingerprint.
+
 ## 8. Monitor the Linux VPS independently
 
 Run Damocline natively on your Linux host (not inside a container whose procfs could refer to other scopes). The following collects host-wide CPU and available-memory estimates without opening any network port, launching Docker or requiring elevated privileges:

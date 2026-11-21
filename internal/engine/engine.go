@@ -399,6 +399,7 @@ func runWithTransportAndIdentity(parent context.Context, v config.Validated, tra
 		}
 	}
 	var syntheticSequence atomic.Int64
+	var dataSequence atomic.Uint64
 	iteration := func(client *http.Client, profile config.PreparedProfile, actor int, journeyOrdinal uint64) {
 		startedIterations.Add(1)
 		journeyStart := time.Now()
@@ -409,6 +410,9 @@ func runWithTransportAndIdentity(parent context.Context, v config.Validated, tra
 		if v.SyntheticDataPrefix != "" {
 			sequence := syntheticSequence.Add(1)
 			variables["synthetic_id"] = fmt.Sprintf("%s-%x-%d-%d", v.SyntheticDataPrefix, started.UnixNano(), actor+1, sequence)
+		}
+		if v.Data != nil {
+			v.Data.Variables(v.Data.Select(actor, dataSequence.Add(1), v.Scenario.WorkloadSeed), variables)
 		}
 		for stepIndex, step := range profile.Steps {
 			if step.Step.Cleanup {
