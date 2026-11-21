@@ -257,12 +257,12 @@ func capacityCmd(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return fail(err)
 	}
-	opt := explorer.Options{MinUsers: min(2, *maxUsers), MaxUsers: *maxUsers, Repeats: 2, StageDuration: 20 * time.Second, Budget: *exploreBudget}
+	opt := explorer.Options{MinUsers: min(2, *maxUsers), MaxUsers: *maxUsers, Repeats: 2, StageDuration: capacityTiming.ExploreStage, Budget: *exploreBudget}
 	if stage, ok := capacityExploreStage(scenario, opt.MinUsers, *referenceReport); ok {
 		opt.StageDuration = stage
 	}
 	campaignOptions := campaign.Options{
-		Warmup: 10 * time.Second, Recovery: 15 * time.Second, Observation: 45 * time.Second,
+		Warmup: capacityTiming.Warmup, Recovery: capacityTiming.Recovery, Observation: 45 * time.Second,
 		Repeats: 2, Budget: *budget, LongRun: *long, StagingConfirmed: *staging,
 	}
 	if *extended {
@@ -297,11 +297,22 @@ func capacityCmd(args []string, stdout, stderr io.Writer) int {
 		return fail(errors.New("even the configured request ceiling cannot supply the minimum samples in a 60s window; use fewer steps or raise the request ceiling within supported limits"))
 	}
 	ladder := explorer.PlannedLevels(opt)
-	// Size the explore budget from the actual stages: each planned level runs
-	// opt.Repeats stages plus a bounded network preflight. A default budget
-	// grows to fit (within the 15m explorer cap); an explicit budget that is
-	// too small is refused before any traffic instead of aborting mid-ladder.
-	exploreNeed := time.Duration(len(ladder)*opt.Repeats) * (opt.StageDuration + 5*time.Second)
+	calibrationLevels := ladder
+	if *extended {
+		calibrationLevels = capacityCalibrationLevels(opt, *calLevel)
+	}
+	// Size the explore budget from the actual stages: every planned level and
+	// every reserved refinement probe runs opt.Repeats stages, each with the
+	// engine's own bounded overhead (ADR 0170). A default budget grows to fit
+	// (within the 15m explorer cap); an explicit budget that is too small is
+	// refused before any traffic instead of aborting mid-ladder.
+	overhead, err := capacityStageOverhead(scenario, opt.MinUsers, extendedRequest, *insecureHTTP)
+	if err != nil {
+		return fail(err)
+	}
+	probes := capacityWorstCaseProbes(ladder, calibrationLevels, *extended)
+	stages := probes * opt.Repeats
+	exploreNeed := time.Duration(stages) * (opt.StageDuration + overhead)
 	explicitExploreBudget := false
 	fs.Visit(func(f *flag.Flag) {
 		if f.Name == "explore-budget" {
@@ -309,18 +320,14 @@ func capacityCmd(args []string, stdout, stderr io.Writer) int {
 		}
 	})
 	if exploreNeed > 15*time.Minute {
-		return fail(fmt.Errorf("explore needs about %s for %d levels x %d repeats of %s stages, above the 15m explore cap; lower --max-users", exploreNeed.Round(time.Second), len(ladder), opt.Repeats, opt.StageDuration))
+		return fail(fmt.Errorf("explore needs about %s for %d stages (worst case %d probes including bracket refinement, x %d repeats) of %s plus %s per-stage overhead, above the 15m explore cap; lower --max-users for a shorter ladder or shorten the stages", exploreNeed.Round(time.Second), stages, probes, opt.Repeats, opt.StageDuration, overhead))
 	}
 	if *exploreBudget < exploreNeed {
 		if explicitExploreBudget {
-			return fail(fmt.Errorf("--explore-budget %s is too small for %d levels x %d repeats of %s stages; use at least %s", *exploreBudget, len(ladder), opt.Repeats, opt.StageDuration, exploreNeed.Round(time.Second)))
+			return fail(fmt.Errorf("--explore-budget %s is too small for %d stages of %s plus %s overhead; use at least %s", *exploreBudget, stages, opt.StageDuration, overhead, exploreNeed.Round(time.Second)))
 		}
 		*exploreBudget = exploreNeed.Round(time.Second)
 		opt.Budget = *exploreBudget
-	}
-	calibrationLevels := ladder
-	if *extended {
-		calibrationLevels = capacityCalibrationLevels(opt, *calLevel)
 	}
 	calWall := time.Duration(0)
 	if *calibration == "" {
@@ -354,6 +361,8 @@ func capacityCmd(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "  2. Existing calibration artifact %s (no new calibration).\n", *calibration)
 	}
 	fmt.Fprintf(stdout, "  3. Explore levels %v with --calibration and --require-calibration (%s cap).\n", ladder, *exploreBudget)
+	fmt.Fprintf(stdout, "     Explore sizing: %d stages (worst case %d probes including bracket refinement, x %d repeats) x (%s stage + %s overhead: network baseline cap, bounded drain, setup) = %s.\n",
+		stages, probes, opt.Repeats, opt.StageDuration, overhead, exploreNeed.Round(time.Second))
 	fmt.Fprintf(stdout, "  4. Campaign at the highest passing level with sample-sized observation (%s cap, including six network preflights and drains).\n", *budget)
 	if *extended {
 		fmt.Fprintf(stdout, "  Explore and campaign use the extended envelope (target class %s); uncalibrated levels are never probed.\n", *targetClass)
@@ -470,7 +479,7 @@ func capacityCmd(args []string, stdout, stderr io.Writer) int {
 	}
 	capacityObservedRateWarning(stdout, result, users, scenario.MaxRPS)
 	campaignOptions.Observation = max(10*time.Second, 3*window)
-	campaignOptions.Recovery = max(15*time.Second, window)
+	campaignOptions.Recovery = max(capacityTiming.Recovery, window)
 	baselineAllowance := 6 * config.NetworkBaselineWallBudget
 	schedule := campaignOptions
 	schedule.Budget = 0

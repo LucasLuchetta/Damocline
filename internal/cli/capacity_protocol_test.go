@@ -13,6 +13,7 @@ import (
 
 	"github.com/LucasLuchetta/Damocline/internal/calibration"
 	"github.com/LucasLuchetta/Damocline/internal/config"
+	"github.com/LucasLuchetta/Damocline/internal/insights"
 	"github.com/LucasLuchetta/Damocline/internal/selfcalibration"
 )
 
@@ -64,6 +65,50 @@ func TestCapacityWarnsWhenMaxRPSCapsRequestedLevel(t *testing.T) {
 	}
 }
 
+func TestCapacityRateWarningDoesNotExtrapolateCappedReference(t *testing.T) {
+	reference := filepath.Join("..", "insights", "testdata", "reports", "schema-v39.json")
+	run, err := insights.ReadRun(reference)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run.Config.MaxRPS = 1
+	data, err := json.Marshal(run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reference = filepath.Join(t.TempDir(), "reference.json")
+	if err := os.WriteFile(reference, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := capacityRateWarning(&out, reference, 1, 10); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "its own max_rps 1") ||
+		!strings.Contains(out.String(), "planned max_rps 10") ||
+		strings.Contains(out.String(), "VUs imply") {
+		t.Fatalf("expected a capped-reference warning without a forecast: %s", out.String())
+	}
+}
+
+func TestCapacityRateWarningNearCeiling(t *testing.T) {
+	reference := filepath.Join("..", "insights", "testdata", "reports", "schema-v39.json")
+	run, err := insights.ReadRun(reference)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const users = 100
+	expected := float64(run.Metrics.Total) / run.ElapsedSeconds / float64(run.Config.Users) * users
+	ceiling := int(expected) + 1
+	var out bytes.Buffer
+	if err := capacityRateWarning(&out, reference, users, ceiling); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "the exploration may be inconclusive") {
+		t.Fatalf("missing near-ceiling warning: %s", out.String())
+	}
+}
+
 func TestCapacityRequiresMirrorSourceAndExtendedGateFlags(t *testing.T) {
 	dir := t.TempDir()
 	scenario := writeCapacityScenario(t, dir, 100)
@@ -83,7 +128,7 @@ func TestCapacityRequiresMirrorSourceAndExtendedGateFlags(t *testing.T) {
 		t.Fatal("refused execution created an output directory")
 	}
 	var out bytes.Buffer
-	if code := capacityCmd([]string{"--config", scenario, "--dry-run", "--max-users", "80", "--extended-envelope", "--extended-load-authorized", "--target-class", "lab"}, &out, &bytes.Buffer{}); code != 0 ||
+	if code := capacityCmd([]string{"--config", scenario, "--dry-run", "--max-users", "32", "--extended-envelope", "--extended-load-authorized", "--target-class", "lab"}, &out, &bytes.Buffer{}); code != 0 ||
 		!strings.Contains(out.String(), "One calibration for ladder, refinement and campaign candidates") ||
 		!strings.Contains(out.String(), "Explore and campaign use the extended envelope (target class lab)") {
 		t.Fatalf("extended dry run: %d %s", code, &out)

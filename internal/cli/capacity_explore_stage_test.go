@@ -34,3 +34,12 @@ func TestCapacityExploreStageReachesSampleFloor(t *testing.T) {
 		t.Fatal("no reference must keep the default")
 	}
 }
+
+func TestCapacityExploreStageAccountsForPlannedRateCeiling(t *testing.T) {
+	reference := filepath.Join("..", "insights", "testdata", "reports", "schema-v39.json")
+	scenario := config.Scenario{MinSamplesPerStep: 40, MaxRPS: 1, Steps: make([]config.Step, 1)}
+	stage, ok := capacityExploreStage(scenario, 20, reference)
+	if !ok || stage != 50*time.Second {
+		t.Fatalf("stage = %s, available = %v; want 50s including headroom at 1 request/s", stage, ok)
+	}
+}
