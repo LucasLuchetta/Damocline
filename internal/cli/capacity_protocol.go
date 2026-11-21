@@ -255,3 +255,8 @@ func capacityWorstCaseProbes(ladder, calibrated []int, extended bool) int {
 	}
 	return worst
 }
+
+// capacityExpectedOverhead is the per-stage setup, network preflight and drain
+// time the capacity planner expects in practice. The worst case (each bound
+// at its cap) is still reported and enforced by the explorer budget itself.
+const capacityExpectedOverhead = 10 * time.Second
