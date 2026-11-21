@@ -6,15 +6,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"math"
-	"net/url"
 	"os"
 	"os/exec"
 	"regexp"
-	"strings"
 	"time"
 
 	"github.com/LucasLuchetta/Damocline/internal/campaign"
@@ -144,119 +141,6 @@ func capacityLogIntensity(path string) (float64, error) {
 		return 0, errors.New("access log requires a readable, nonzero observation span")
 	}
 	return float64(count) / float64(len(users)) / last.Sub(first).Minutes(), nil
-}
-
-type harEntry struct {
-	Request struct {
-		Method  string
-		URL     string
-		Headers []struct{ Name string }
-		Cookies []json.RawMessage
-	}
-	Response struct{ Status int }
-}
-
-var harLiteralSegment = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,23}$`)
-var harSensitiveSegment = regexp.MustCompile(`(?i)token|password|credential|secret|reset|session|oauth|signature|api-key|magic-link`)
-
-func importHARCmd(args []string, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("import-har", flag.ContinueOnError)
-	fs.SetOutput(stderr)
-	file := fs.String("file", "", "local HAR file")
-	origin := fs.String("origin", "", "explicit application origin")
-	out := fs.String("out", "", "new proposal path")
-	var keepPaths stringList
-	fs.Var(&keepPaths, "keep-path", "reviewed public route to retain; repeat as needed")
-	if err := fs.Parse(args); err != nil || fs.NArg() != 0 || *file == "" || *out == "" {
-		return 2
-	}
-	base, err := url.Parse(*origin)
-	if err != nil || base.User != nil || base.Hostname() == "" || base.RawQuery != "" || base.Fragment != "" ||
-		(base.Scheme != "https" && base.Scheme != "http") || (base.Path != "" && base.Path != "/") {
-		fmt.Fprintln(stderr, "import-har requires an explicit HTTP(S) origin")
-		return 2
-	}
-	data, err := readCapacityFile(*file)
-	if err != nil {
-		fmt.Fprintln(stderr, "cannot read bounded HAR input")
-		return 2
-	}
-	proposal, err := harProposal(data, base, keepPaths)
-	if err != nil {
-		fmt.Fprintln(stderr, err)
-		return 2
-	}
-	f, err := os.OpenFile(*out, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
-	if err != nil {
-		fmt.Fprintln(stderr, "cannot create a new HAR proposal")
-		return 2
-	}
-	err = json.NewEncoder(f).Encode(proposal)
-	closeErr := f.Close()
-	if err != nil || closeErr != nil {
-		_ = os.Remove(*out)
-		fmt.Fprintln(stderr, "cannot write HAR proposal")
-		return 2
-	}
-	fmt.Fprintln(stdout, "Review the proposed steps, replace omitted paths manually, and supply independent sessions when indicated.")
-	return 0
-}
-
-type proposedStep struct {
-	Method          string `json:"method"`
-	Path            string `json:"path,omitempty"`
-	RequiresSession bool   `json:"requires_session"`
-}
-
-func harProposal(data []byte, base *url.URL, keepPaths []string) ([]proposedStep, error) {
-	var document struct{ Log struct{ Entries []harEntry } }
-	if err := json.Unmarshal(data, &document); err != nil {
-		return nil, errors.New("invalid HAR input")
-	}
-	proposal := make([]proposedStep, 0, 20)
-	approved := make(map[string]bool, len(keepPaths))
-	for _, path := range keepPaths {
-		approved[path] = true
-	}
-	for _, entry := range document.Log.Entries {
-		if entry.Request.Method != "GET" && entry.Request.Method != "HEAD" {
-			continue
-		}
-		u, err := url.Parse(entry.Request.URL)
-		if err != nil || u.User != nil || u.Scheme != base.Scheme || !strings.EqualFold(u.Host, base.Host) {
-			continue
-		}
-		path := u.EscapedPath()
-		if path == "" {
-			path = "/"
-		}
-		segments := strings.Split(strings.Trim(path, "/"), "/")
-		for _, segment := range segments {
-			if segment != "" && (!harLiteralSegment.MatchString(segment) || harSensitiveSegment.MatchString(segment) ||
-				strings.IndexFunc(segment, func(r rune) bool { return r >= '0' && r <= '9' }) >= 0) {
-				path = ""
-				break
-			}
-		}
-		auth := len(entry.Request.Cookies) > 0 || entry.Response.Status == 401 || entry.Response.Status == 403
-		for _, header := range entry.Request.Headers {
-			name := strings.ToLower(header.Name)
-			auth = auth || name == "authorization" || name == "cookie" || strings.Contains(name, "token") || strings.Contains(name, "api-key")
-		}
-		// A path behind authentication can embed an account or token. Keep it
-		// as a manual placeholder rather than exporting its literal text.
-		if auth || u.RawQuery != "" || !approved[path] {
-			path = ""
-		}
-		proposal = append(proposal, proposedStep{Method: entry.Request.Method, Path: path, RequiresSession: auth})
-		if len(proposal) == cap(proposal) {
-			break
-		}
-	}
-	if len(proposal) == 0 {
-		return nil, errors.New("HAR contains no same-origin GET or HEAD requests")
-	}
-	return proposal, nil
 }
 
 func writeNetworkPlacement(w io.Writer, result report.Result) {

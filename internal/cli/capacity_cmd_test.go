@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -86,20 +85,6 @@ func capacityScenario(t *testing.T, target string) config.Validated {
 		t.Fatal(err)
 	}
 	return v
-}
-
-func TestCapacityHARFiltersAndRedacts(t *testing.T) {
-	base, _ := url.Parse("https://app.example.com")
-	input := []byte(`{"log":{"entries":[
-	    {"request":{"method":"GET","url":"https://app.example.com/home"}},
-	    {"request":{"method":"HEAD","url":"https://app.example.com/private?token=fixture","headers":[{"name":"Authorization","value":"fixture"}]}},
-	    {"request":{"method":"POST","url":"https://app.example.com/write"}},
-	    {"request":{"method":"GET","url":"https://third.example.com/script"}}
-	]}}`)
-	steps, err := harProposal(input, base, []string{"/home", "/private"})
-	if err != nil || len(steps) != 2 || steps[0].Path != "/home" || steps[1].Path != "" || !steps[1].RequiresSession {
-		t.Fatal(fmt.Sprintf("unexpected HAR projection: %v %v", steps, err))
-	}
 }
 
 func TestCapacityResumeRequiresSameScenarioDigest(t *testing.T) {

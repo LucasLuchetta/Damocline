@@ -43,6 +43,8 @@ type fingerprintInput struct {
 	SyntheticPrefix       string               `json:"synthetic_prefix,omitempty"`
 	SessionCount          int                  `json:"session_count,omitempty"`
 	WorkloadSeed          uint64               `json:"workload_seed,omitempty"`
+	DataMode              string               `json:"data_mode,omitempty"`
+	DataSHA256            string               `json:"data_sha256,omitempty"`
 }
 
 // WorkloadFingerprint returns a stable digest of the declared request and
@@ -75,6 +77,14 @@ func WorkloadFingerprint(v Validated) string {
 	}
 	if hasVariableThinkTime(v.Profiles) {
 		input.WorkloadSeed = v.Scenario.WorkloadSeed
+	}
+	if v.Data != nil {
+		// The digest identifies the CSV bytes without exposing any cell value.
+		input.DataMode = v.Data.Mode
+		input.DataSHA256 = v.Data.SHA256
+		if v.Data.Mode == DataModeRandom {
+			input.WorkloadSeed = v.Scenario.WorkloadSeed
+		}
 	}
 	for _, profile := range v.Profiles {
 		p := fingerprintProfile{Name: profile.Name, Weight: profile.Weight, ThinkTime: profile.ThinkTime.String(), Steps: make([]fingerprintStep, 0, len(profile.Steps))}

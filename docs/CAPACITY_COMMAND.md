@@ -72,14 +72,18 @@ divides its actions by distinct observed identities and capture duration.
 Review the one-request-per-action and workload-mix assumptions.
 
 ```powershell
-damocline import-har --file capture.har --origin https://app.example.com --out proposal.json
+damocline import-har --har capture.har --base-url https://app.example.com --out scenario.json
 ```
 
-Review the generated read-only proposal before turning it into a scenario.
-Fill in omitted paths and required assertions by hand. Repeat
-`--keep-path` to retain explicitly reviewed public routes. Cookie and token
-headers are discarded. A session flag indicates observed credential
-signals or an authorization response. Keep HARs and proposals local.
+The command converts a local browser HAR into a scenario draft without
+sending traffic (ADR 0178). Only same-origin requests are kept; static assets
+are dropped unless `--keep-static` is given, and POST, PUT, PATCH and DELETE
+are dropped unless `--include-writes` is given (running them still needs
+`--allow-writes`). Cookies, authorization and token headers become `${ENV}`
+placeholders, request bodies become `body_env` placeholders, and sensitive
+query parameters are removed. The command lists every dropped request and
+every placeholder to set. Review paths, statuses, think time and pass
+criteria before running the draft. Keep HARs and drafts local.
 
 With a scenario-wide per-VU cookie prefix, pass `--session-hook` with the
 executable and repeated `--session-hook-arg` literal arguments. It reads

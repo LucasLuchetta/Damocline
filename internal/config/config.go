@@ -13,6 +13,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -63,6 +64,9 @@ type Scenario struct {
 	NetworkBaselineSkipReason string    `json:"network_baseline_skip_reason,omitempty"`
 	Steps                     []Step    `json:"steps,omitempty"`
 	Profiles                  []Profile `json:"profiles,omitempty"`
+	// Data optionally feeds ${data.column} placeholders from a local CSV
+	// file (ADR 0178). A relative file resolves against the scenario file.
+	Data *DataSource `json:"data,omitempty"`
 }
 
 // Profile is a weighted, named workflow. Its weight expresses the intended
@@ -134,6 +138,8 @@ type Validated struct {
 	NetworkBaseline *NetworkBaselinePlan
 	// Envelope records the ceilings this plan was validated against.
 	Envelope EnvelopeRecord
+	// Data is nil unless the scenario declares a CSV data source.
+	Data *DataSet
 }
 
 // PreparedProfile contains the safe, resolved workflow selected by the
@@ -202,6 +208,10 @@ func LoadWithSHA256(path string) (Scenario, string, error) {
 	}
 	if err := validateScenarioFormat(s); err != nil {
 		return Scenario{}, "", err
+	}
+	if s.Data != nil && s.Data.File != "" && !filepath.IsAbs(s.Data.File) {
+		// Resolve once against the scenario file so copies stay valid.
+		s.Data.File = filepath.Join(filepath.Dir(path), s.Data.File)
 	}
 	digest := sha256.Sum256(data)
 	return s, "sha256:" + hex.EncodeToString(digest[:]), nil
@@ -435,6 +445,10 @@ func Parse(s Scenario, o Options) (Validated, error) {
 			return v, fmt.Errorf("synthetic data prefix environment variable %s must contain 1-64 letters, digits, underscores, or hyphens", s.SyntheticDataPrefixEnv)
 		}
 	}
+	dataSet, err := loadDataSet(s.Data, s.Users)
+	if err != nil {
+		return v, err
+	}
 	for _, profile := range profiles {
 		if countThinkPolicies(profile.ThinkTime, profile.ThinkTimeRange, profile.ThinkTimeSamples) > 1 {
 			return v, fmt.Errorf("profile %q combines think_time, think_time_range, or think_time_samples", profile.Name)
@@ -478,6 +492,11 @@ func Parse(s Scenario, o Options) (Validated, error) {
 		if dataPrefix != "" {
 			available["synthetic_id"] = true
 		}
+		if dataSet != nil {
+			for _, column := range dataSet.Columns {
+				available[dataVariablePrefix+column] = true
+			}
+		}
 		cleanupStarted := false
 		businessSteps := 0
 		for _, step := range profile.Steps {
@@ -519,6 +538,9 @@ func Parse(s Scenario, o Options) (Validated, error) {
 			if step.BodyEnv != "" && !regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`).MatchString(step.BodyEnv) {
 				return v, fmt.Errorf("invalid body_env in %q", step.Name)
 			}
+			if step.Path, err = rewriteDataPlaceholders(step.Path, dataSet); err != nil {
+				return v, fmt.Errorf("step %q path: %w", step.Name, err)
+			}
 			if len(step.Path) > maxPathTemplateBytes {
 				return v, fmt.Errorf("step %q path template exceeds 16 KiB", step.Name)
 			}
@@ -555,6 +577,9 @@ func Parse(s Scenario, o Options) (Validated, error) {
 				if len(value) > 8192 {
 					return v, fmt.Errorf("header value too large in %q", step.Name)
 				}
+				if value, err = rewriteDataPlaceholders(value, dataSet); err != nil {
+					return v, fmt.Errorf("header %q in step %q: %w", key, step.Name, err)
+				}
 				if err := validateTemplate(value, available); err != nil {
 					return v, fmt.Errorf("header %q in step %q: %w", key, step.Name, err)
 				}
@@ -585,6 +610,9 @@ func Parse(s Scenario, o Options) (Validated, error) {
 				if len(secret) > 65536 {
 					return v, fmt.Errorf("body_env %s exceeds 64 KiB", step.BodyEnv)
 				}
+				if secret, err = rewriteDataPlaceholders(secret, dataSet); err != nil {
+					return v, fmt.Errorf("body_env in step %q: %w", step.Name, err)
+				}
 				body = []byte(secret)
 				if err := validateTemplate(secret, available); err != nil {
 					return v, fmt.Errorf("body_env in step %q: %w", step.Name, err)
@@ -603,13 +631,13 @@ func Parse(s Scenario, o Options) (Validated, error) {
 		}
 		preparedProfiles = append(preparedProfiles, PreparedProfile{Name: profile.Name, Weight: profile.Weight, ThinkTime: profileThink, ThinkTimeMin: profileMin, ThinkTimeMax: profileMax, ThinkTimeSamples: profileSamples, Steps: profileSteps})
 	}
-	if s.WorkloadSeed != 0 && !hasVariableThinkTime(preparedProfiles) {
+	if s.WorkloadSeed != 0 && !hasVariableThinkTime(preparedProfiles) && (dataSet == nil || dataSet.Mode != DataModeRandom) {
 		return v, errors.New("workload_seed requires a variable think-time policy")
 	}
 	if (s.ThinkTimeRange != nil || s.ThinkTimeSamples != nil) && !hasVariableThinkTime(preparedProfiles) {
 		return v, errors.New("scenario variable think time is overridden by every profile")
 	}
-	if s.WorkloadSeed == 0 && hasVariableThinkTime(preparedProfiles) {
+	if s.WorkloadSeed == 0 && (hasVariableThinkTime(preparedProfiles) || (dataSet != nil && dataSet.Mode == DataModeRandom)) {
 		s.WorkloadSeed = 1
 	}
 	if len(s.ProfileCookieEnvPrefixes) > 0 {
@@ -671,7 +699,7 @@ func Parse(s Scenario, o Options) (Validated, error) {
 	if err := validateMixDeclaration(s, preparedProfiles, dataPrefix, len(cookies) > 0, profileCookies); err != nil {
 		return v, err
 	}
-	v = Validated{Scenario: s, Base: u, Duration: duration, RampUp: ramp, ThinkTime: think, Timeout: timeout, Window: window, Steps: prepared, Profiles: preparedProfiles, Cookies: cookies, ProfileCookies: profileCookies, SyntheticDataPrefix: dataPrefix, Envelope: envelope}
+	v = Validated{Scenario: s, Base: u, Duration: duration, RampUp: ramp, ThinkTime: think, Timeout: timeout, Window: window, Steps: prepared, Profiles: preparedProfiles, Cookies: cookies, ProfileCookies: profileCookies, SyntheticDataPrefix: dataPrefix, Envelope: envelope, Data: dataSet}
 	v.WorkloadFingerprint = WorkloadFingerprint(v)
 	if o.ExtendedEnvelope != nil {
 		if strings.Contains(strings.ToLower(s.Environment), "prod") {
