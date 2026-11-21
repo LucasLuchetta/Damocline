@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- `damocline crosscheck` now refuses false `MATCH` conclusions when a scenario
+  step has no matching server log entries or when HTTP status-class counts
+  contradict the client's observations within the absolute count tolerance.
+  Incomplete status evidence is `NOT_ASSESSABLE`; exact but contradictory
+  request totals produce `MISMATCH`. The CLI exits nonzero for either result
+  (previously only mismatches returned exit 1). Added deterministic regression
+  tests for missing evidence, small-count status drift and CLI exit behavior.
+
 - Require complete, workload-matched k6 checks before `compare-external`
   can report `k6_would_pass=true`. A failed content check vetoes a pass
   even when the HTTP status meets expectations (ADR 0186).
