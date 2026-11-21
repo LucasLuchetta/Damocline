@@ -198,8 +198,16 @@ func Compare(run report.Result, log ParseResult, format string, o Options) (Resu
 	for _, m := range ms {
 		sc := checkStep(m, o)
 		for _, c := range sc.Checks {
-			if c.Verdict == Mismatch {
+			switch c.Verdict {
+			case Mismatch:
 				overall = Mismatch
+			case NotAssessable:
+				// Missing server evidence must prevent a positive count or
+				// status verdict. Logs without durations can still reconcile
+				// counts and status classes independently.
+				if c.Metric != "p95_ms" && overall == Match {
+					overall = NotAssessable
+				}
 			}
 		}
 		res.Steps = append(res.Steps, sc)
@@ -273,6 +281,7 @@ func checkStep(m *matcher, o Options) StepCheck {
 			durations = append(durations, e.DurationMS)
 		}
 	}
+	total := h.Status1xx + h.Status2xx + h.Status3xx + h.Status4xx + h.Status5xx
 	count := func(metric string, dam, srv int) MetricCheck {
 		tol := o.allowed(dam)
 		c := MetricCheck{Metric: metric, Damocline: float64(dam), Server: float64(srv), AllowedLow: math.Max(0, float64(dam)-tol), AllowedHigh: float64(dam+unresolved) + tol}
@@ -283,13 +292,27 @@ func checkStep(m *matcher, o Options) StepCheck {
 		case float64(srv) > c.AllowedHigh:
 			c.Verdict = Mismatch
 			c.Explanation = fmt.Sprintf("Server logged %d more than Damocline's upper bound: other clients, retries, redirects followed by the generator, or a too-wide window may be inflating the server count.", srv-int(c.AllowedHigh))
+		case len(m.hits) == 0:
+			c.Verdict = NotAssessable
+			c.Explanation = "No matching server log entries. An absolute count tolerance cannot substitute for independent evidence."
+		case metric != "requests" && dam != srv:
+			// The count tolerance permits a small difference in the number
+			// of logged requests, not a contradictory HTTP status class.
+			// Exact, fully observed totals make a class difference a mismatch;
+			// otherwise the missing/unresolved work prevents verification.
+			if unresolved == 0 && len(m.hits) == total {
+				c.Verdict = Mismatch
+				c.Explanation = fmt.Sprintf("Client and server both accounted for %d requests, but the HTTP status class differs (%d vs %d); count tolerance does not apply.", total, dam, srv)
+			} else {
+				c.Verdict = NotAssessable
+				c.Explanation = fmt.Sprintf("HTTP status class differs (%d vs %d) within count tolerance, with incomplete request reconciliation; status evidence is not verified.", dam, srv)
+			}
 		default:
 			c.Verdict = Match
 			c.Explanation = fmt.Sprintf("Within declared tolerance (%.0f, plus %d Damocline requests without a response).", tol, unresolved)
 		}
 		return c
 	}
-	total := h.Status1xx + h.Status2xx + h.Status3xx + h.Status4xx + h.Status5xx
 	sc.Checks = append(sc.Checks, count("requests", total, len(m.hits)))
 	sc.Checks = append(sc.Checks, count("status_2xx", h.Status2xx, server[2]))
 	sc.Checks = append(sc.Checks, count("status_3xx", h.Status3xx, server[3]))
