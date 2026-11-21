@@ -23,9 +23,12 @@ import (
 )
 
 // knownCapacityTarget serves /work in 150ms while at most workers requests
-// are in flight and in 600ms once that pool is exceeded. A zero-think closed
-// loop therefore meets a 400ms p95 SLO at `workers` VUs or fewer and fails
-// it above.
+// are in flight and in 2s once that pool is exceeded. A zero-think closed
+// loop therefore meets a 1s p95 SLO at `workers` VUs or fewer and fails it
+// above. The SLO leaves 850ms for host scheduling inflation of the 150ms
+// service time: with a 400ms SLO, CPU load from parallel package tests
+// inflated passing levels past the SLO (even 4 VUs and the 91 VU campaign
+// failed), while the 2s over-capacity delay still fails it twice over.
 func knownCapacityTarget(t *testing.T, workers int64) string {
 	t.Helper()
 	var inflight atomic.Int64
@@ -36,7 +39,7 @@ func knownCapacityTarget(t *testing.T, workers int64) string {
 		}
 		delay := 150 * time.Millisecond
 		if inflight.Add(1) > workers {
-			delay = 600 * time.Millisecond
+			delay = 2 * time.Second
 		}
 		time.Sleep(delay)
 		// Leave the pool before the response is written so a VU's next
@@ -82,7 +85,7 @@ func TestCapacityExtendedProtocolFindsKnownCapacityEndToEnd(t *testing.T) {
 	scenarioPath := filepath.Join(dir, "scenario.json")
 	data, err := json.Marshal(config.Scenario{
 		Name: "known capacity", BaseURL: base, Mode: "closed", Users: 2, Duration: "10s",
-		MaxRPS: 1000, P95LimitMS: 400, MaxErrorRate: .01, Environment: "lab",
+		MaxRPS: 1000, P95LimitMS: 1000, MaxErrorRate: .01, Environment: "lab",
 		BaselinePath: "/baseline", Steps: []config.Step{{Name: "work", Method: "GET", Path: "/work"}},
 	})
 	if err != nil {

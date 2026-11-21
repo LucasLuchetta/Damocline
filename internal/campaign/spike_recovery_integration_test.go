@@ -22,8 +22,6 @@ func TestClosedAndOpenCampaignsMeasureSpikeAndRecoveryAgainstControlledServer(t 
 		server := newSpikeRecoveryServer(&saturated, &served)
 		defer server.Close()
 		base := integrationScenario(t, server.URL, 1, 100, "closed", 0)
-		base.Window = 1 * time.Second
-		base.Scenario.WindowDuration = base.Window.String()
 		stability := campaign.DefaultStabilityPolicy()
 		stability.MaxP95IncreasePercent = 100
 		stability.MaxP95IncreaseMS = 100
@@ -63,9 +61,7 @@ func TestClosedAndOpenCampaignsMeasureSpikeAndRecoveryAgainstControlledServer(t 
 		var served atomic.Int64
 		server := newSpikeRecoveryServer(&saturated, &served)
 		defer server.Close()
-		base := integrationScenario(t, server.URL, 30, 100, "arrival", 24)
-		base.Window = 1 * time.Second
-		base.Scenario.WindowDuration = base.Window.String()
+		base := integrationScenario(t, server.URL, 50, 100, "arrival", 24)
 		stability := campaign.DefaultStabilityPolicy()
 		stability.MaxP95IncreasePercent = 100
 		stability.MaxP95IncreaseMS = 100
@@ -82,7 +78,7 @@ func TestClosedAndOpenCampaignsMeasureSpikeAndRecoveryAgainstControlledServer(t 
 		}
 		if len(result.Trials) == 1 && len(result.Trials[0].Phases) == 1 {
 			phase := result.Trials[0].Phases[0]
-			if stoppedByDriftScreen(t, result.Outcome, phase.Name, phase.Stability, phase.EvidenceState, phase.Run, 30, 24) {
+			if stoppedByDriftScreen(t, result.Outcome, phase.Name, phase.Stability, phase.EvidenceState, phase.Run, 50, 24) {
 				return
 			}
 		}
@@ -90,9 +86,9 @@ func TestClosedAndOpenCampaignsMeasureSpikeAndRecoveryAgainstControlledServer(t 
 			t.Fatalf("arrival campaign stopped before recovery: %+v", result)
 		}
 		phases := result.Trials[0].Phases
-		assertNativePhase(t, phases[0].Run, 30, 24, "PASS")
-		assertNativePhase(t, phases[1].Run, 30, 48, "FAIL")
-		assertNativePhase(t, phases[2].Run, 30, 24, "PASS")
+		assertNativePhase(t, phases[0].Run, 50, 24, "PASS")
+		assertNativePhase(t, phases[1].Run, 50, 48, "FAIL")
+		assertNativePhase(t, phases[2].Run, 50, 24, "PASS")
 		assertObservedSpikeRecovery(t, result.Outcome, []phaseEvidence{
 			{name: phases[0].Name, state: phases[0].EvidenceState, outcome: phases[0].Run.Outcome},
 			{name: phases[1].Name, state: phases[1].EvidenceState, outcome: phases[1].Run.Outcome},
@@ -131,8 +127,13 @@ func runWithPhaseLedger(t *testing.T, ctx context.Context, phase config.Validate
 
 func newSpikeRecoveryServer(saturated *atomic.Bool, served *atomic.Int64) *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		// The saturated delay is 2.5x the 120ms SLO, so the spike fails
+		// clearly, while 48 arrivals/s need only about 14 of the 50 open-
+		// arrival workers (Little's law). A 450ms delay needed about 22 of 30
+		// workers, so host scheduling stalls exhausted the pool and the spike
+		// ended INVALID_DELIVERY instead of an observed FAIL.
 		if saturated.Load() {
-			time.Sleep(450 * time.Millisecond)
+			time.Sleep(300 * time.Millisecond)
 		} else {
 			time.Sleep(30 * time.Millisecond)
 		}
@@ -141,6 +142,10 @@ func newSpikeRecoveryServer(saturated *atomic.Bool, served *atomic.Int64) *httpt
 	}))
 }
 
+// integrationScenario keeps the default 2.5s windows so each baseline window
+// holds roughly 60-80 completed journeys (30ms service time, or 24 arrivals/s).
+// One-second windows held only 24-33 journeys, so a loaded host could push a
+// window below the 20-sample stability minimum and end the campaign early.
 func integrationScenario(t *testing.T, target string, users, maxRPS int, mode string, arrivalRate int) config.Validated {
 	t.Helper()
 	scenario := config.Scenario{

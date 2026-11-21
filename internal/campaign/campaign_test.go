@@ -668,28 +668,27 @@ func TestNativeEngineCampaignRecordsStableLoopbackWindows(t *testing.T) {
 	stability.MaxP95IncreasePercent = 50
 	stability.MaxP95IncreaseMS = 20
 	stability.MaxThroughputDropPercent = 50
-	result, err := Run(context.Background(), v, Options{Observation: 10 * time.Second, Recovery: 10 * time.Second, Repeats: 2, Stability: stability})
-	if err != nil || result.Outcome != "PASS" || len(result.Trials) != 2 || received.Load() < 400 {
-		var phases []string
-		for _, trial := range result.Trials {
-			for _, phase := range trial.Phases {
-				minP95, maxP95 := math.Inf(1), 0.0
-				generatorCPU := 0.0
-				if phase.Run.Generator != nil {
-					generatorCPU = phase.Run.Generator.MeanProcessCPUUtilizationRatio * 100
-				}
-				for _, window := range phase.Run.Windows {
-					if window.Metrics.P95MS < minP95 {
-						minP95 = window.Metrics.P95MS
-					}
-					if window.Metrics.P95MS > maxP95 {
-						maxP95 = window.Metrics.P95MS
-					}
-				}
-				phases = append(phases, fmt.Sprintf("trial=%d phase=%s evidence=%s stability=%s reason=%q outcome=%s requests=%d windows=%d window_p95_range_ms=%.1f..%.1f generator_cpu=%.2f%%", trial.Number, phase.Name, phase.EvidenceState, phase.Stability, phase.Reason, phase.Run.Outcome, phase.Run.Metrics.Total, len(phase.Run.Windows), minP95, maxP95, generatorCPU))
-			}
+	// A loaded host (for example go test ./... running other packages) can
+	// stall the 20ms loopback server for tens or hundreds of milliseconds inside
+	// one window. The drift screen then correctly reports NON_STATIONARY and the
+	// campaign stops INCONCLUSIVE. That is the product working, not a defect, so
+	// the fixture repeats the whole campaign a bounded number of times. Only a
+	// drift-screen stop after a passing observation is retried; any other
+	// outcome fails immediately, and a stable campaign is still required.
+	const attempts = 3
+	var result Result
+	for attempt := 1; ; attempt++ {
+		before := received.Load()
+		result, err = Run(context.Background(), v, Options{Observation: 10 * time.Second, Recovery: 10 * time.Second, Repeats: 2, Stability: stability})
+		served := received.Load() - before
+		if err == nil && result.Outcome == "PASS" && len(result.Trials) == 2 && served >= 400 {
+			break
 		}
-		t.Fatalf("bounded local campaign failed: outcome=%s trials=%d received=%d err=%v phases=%v", result.Outcome, len(result.Trials), received.Load(), err, phases)
+		if attempt < attempts && err == nil && driftScreenStop(result) {
+			t.Logf("attempt %d stopped by the drift screen under host scheduling noise: %s", attempt, describeCampaignPhases(result))
+			continue
+		}
+		t.Fatalf("bounded local campaign failed: attempt=%d outcome=%s trials=%d received=%d err=%v phases=%s", attempt, result.Outcome, len(result.Trials), served, err, describeCampaignPhases(result))
 	}
 	for _, trial := range result.Trials {
 		if len(trial.Phases) != 2 || trial.Phases[0].Name != "observation" || trial.Phases[0].Stability != "NO_LARGE_DRIFT_DETECTED" || trial.Phases[0].EvidenceState != "PASS_OBSERVED" || len(trial.Phases[0].Run.Windows) != 4 || trial.Phases[1].Name != "recovery" || trial.Phases[1].EvidenceState != "PASS_OBSERVED" {
@@ -722,6 +721,40 @@ func TestNativeEngineCampaignRecordsStableLoopbackWindows(t *testing.T) {
 	if state, reason := ClassifyEvidence(run); state != "INVALID_DELIVERY" || reason == "" {
 		t.Fatalf("locally rejected request was interpreted as target evidence: %s %q", state, reason)
 	}
+}
+
+// driftScreenStop reports whether a campaign ended only because one passing
+// observation failed the stationarity screen.
+func driftScreenStop(result Result) bool {
+	if result.Outcome != "INCONCLUSIVE" || len(result.Trials) == 0 {
+		return false
+	}
+	trial := result.Trials[len(result.Trials)-1]
+	if len(trial.Phases) == 0 {
+		return false
+	}
+	phase := trial.Phases[len(trial.Phases)-1]
+	return phase.Name == "observation" && phase.Stability == "NON_STATIONARY" &&
+		phase.EvidenceState == "PASS_OBSERVED" && phase.Run.Outcome == "PASS"
+}
+
+func describeCampaignPhases(result Result) []string {
+	var phases []string
+	for _, trial := range result.Trials {
+		for _, phase := range trial.Phases {
+			minP95, maxP95 := math.Inf(1), 0.0
+			generatorCPU := 0.0
+			if phase.Run.Generator != nil {
+				generatorCPU = phase.Run.Generator.MeanProcessCPUUtilizationRatio * 100
+			}
+			for _, window := range phase.Run.Windows {
+				minP95 = math.Min(minP95, window.Metrics.P95MS)
+				maxP95 = math.Max(maxP95, window.Metrics.P95MS)
+			}
+			phases = append(phases, fmt.Sprintf("trial=%d phase=%s evidence=%s stability=%s reason=%q outcome=%s requests=%d windows=%d window_p95_range_ms=%.1f..%.1f generator_cpu=%.2f%%", trial.Number, phase.Name, phase.EvidenceState, phase.Stability, phase.Reason, phase.Run.Outcome, phase.Run.Metrics.Total, len(phase.Run.Windows), minP95, maxP95, generatorCPU))
+		}
+	}
+	return phases
 }
 
 func TestCampaignSeparatesInvalidDeliveryFromObservedFailure(t *testing.T) {
