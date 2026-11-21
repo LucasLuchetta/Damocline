@@ -33,6 +33,7 @@ func TestValidateArtifactJSONRequiresPersistedEvidence(t *testing.T) {
 		"outcome":          "PASS",
 		"objectives":       campaign.ObjectiveContract{},
 		"stability_policy": campaign.StabilityPolicy{},
+		"p95_robustness":   P95Robustness{},
 	}
 	encoded, err := json.Marshal(valid)
 	if err != nil {
@@ -40,6 +41,16 @@ func TestValidateArtifactJSONRequiresPersistedEvidence(t *testing.T) {
 	}
 	if err := ValidateArtifactJSON(encoded); err != nil {
 		t.Fatalf("explicit zero values and complete nested evidence were rejected: %v", err)
+	}
+	delete(valid, "p95_robustness")
+	encoded, _ = json.Marshal(valid)
+	if err := ValidateArtifactJSON(encoded); err == nil || !strings.Contains(err.Error(), "p95_robustness") {
+		t.Fatalf("completed schema-v11 campaign without p95 robustness was accepted: %v", err)
+	}
+	valid["arrival_campaign_schema_version"] = 9
+	encoded, _ = json.Marshal(valid)
+	if err := ValidateArtifactJSON(encoded); err != nil {
+		t.Fatalf("legacy schema without p95 robustness was rejected: %v", err)
 	}
 }
 

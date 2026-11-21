@@ -31,7 +31,7 @@ func ValidateArtifactJSON(data []byte) error {
 	if err := json.Unmarshal(root["arrival_campaign_schema_version"], &schema); err != nil || schema < 1 || schema > EnvelopeSchemaVersion {
 		return errors.New("arrival campaign has an unsupported schema version")
 	}
-	if schema == EnvelopeSchemaVersion {
+	if IsEnvelopeSchema(schema) {
 		if err := requireArtifactFields(root, "load_envelope"); err != nil {
 			return err
 		}
@@ -44,6 +44,14 @@ func ValidateArtifactJSON(data []byte) error {
 	if schema >= 6 {
 		if err := requireArtifactFields(root, "execution_state"); err != nil {
 			return err
+		}
+	}
+	if schema >= FirstP95RobustnessSchema {
+		var execution string
+		if json.Unmarshal(root["execution_state"], &execution) == nil && execution == "COMPLETED" {
+			if err := requireArtifactFields(root, "p95_robustness"); err != nil {
+				return err
+			}
 		}
 	}
 	if schema >= 8 {

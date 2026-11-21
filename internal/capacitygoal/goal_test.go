@@ -444,3 +444,47 @@ func TestMalformedAndInvalidGoalAreRejected(t *testing.T) {
 		t.Fatal("single trial is insufficient")
 	}
 }
+
+func TestArrivalCampaignAuditVerifiesP95Robustness(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
+	defer server.Close()
+	base, err := config.Parse(config.Scenario{
+		Name: "robustness", BaseURL: server.URL, Users: 2, Mode: "arrival", ArrivalRate: 1,
+		Duration: "10s", WindowDuration: "2s", MaxRPS: 10, Timeout: "2s", P95LimitMS: 1000, MaxErrorRate: .1,
+		MinSamplesPerStep: 1, Steps: []config.Step{{Name: "read", Method: http.MethodGet, Path: "/"}},
+	}, config.Options{Authorized: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	options := arrivalcampaign.Options{Observation: 10 * time.Second, Recovery: 10 * time.Second, Repeats: 2}
+	final, err := arrivalcampaign.WithRunnerProgress(context.Background(), base, options, func(_ context.Context, phaseBase config.Validated) report.Result {
+		return report.Result{
+			SchemaVersion: report.CurrentSchemaVersion, GeneratorIdentity: report.GeneratorIdentity{OS: "linux", Architecture: "amd64", GoVersion: "go1.24.0", RunnerIdentityMethod: "git_commit", RunnerIdentity: strings.Repeat("a", 40)}, Name: phaseBase.Scenario.Name,
+			Target: phaseBase.Base.Scheme + "://" + phaseBase.Base.Host, StartedAt: time.Now().UTC().Format(time.RFC3339Nano), Outcome: "PASS",
+			Config: report.RunConfig{Mode: "arrival", ArrivalRate: phaseBase.Scenario.ArrivalRate, Users: phaseBase.Scenario.Users,
+				Duration: phaseBase.Scenario.Duration, WorkloadFingerprint: phaseBase.WorkloadFingerprint, MaxRPS: phaseBase.Scenario.MaxRPS,
+				P95LimitMS: phaseBase.Scenario.P95LimitMS, MaxErrorRate: phaseBase.Scenario.MaxErrorRate,
+				MinSamplesPerStep: phaseBase.Scenario.MinSamplesPerStep, RequestTimeout: phaseBase.Timeout.String(), WindowDuration: phaseBase.Window.String(), ConnectionPolicy: "reuse"},
+		}
+	}, nil)
+	if err != nil || final.SchemaVersion != arrivalcampaign.CurrentSchemaVersion || final.P95Robustness == nil {
+		t.Fatalf("completed campaign lacks a p95 robustness verdict: %+v err=%v", final.P95Robustness, err)
+	}
+	assessment, err := EvaluateJourneyCampaign(final, JourneyStartGoal{PeakStartsPerSecond: 1})
+	if err != nil || assessment.P95Robustness == nil || assessment.State == "SUSTAINED_TARGET_PASSED_UNDER_TESTED_CONDITIONS" {
+		t.Fatalf("audit of saved robustness failed: assessment=%+v err=%v", assessment, err)
+	}
+	tampered := final
+	forged := *final.P95Robustness
+	forged.State = arrivalcampaign.P95RobustPass
+	forged.Reasons = []string{}
+	tampered.P95Robustness = &forged
+	if _, err := EvaluateJourneyCampaign(tampered, JourneyStartGoal{PeakStartsPerSecond: 1}); err == nil || !strings.Contains(err.Error(), "p95 robustness") {
+		t.Fatalf("forged p95 robustness verdict was accepted: %v", err)
+	}
+	missing := final
+	missing.P95Robustness = nil
+	if _, err := EvaluateJourneyCampaign(missing, JourneyStartGoal{PeakStartsPerSecond: 1}); err == nil || !strings.Contains(err.Error(), "missing its p95 robustness") {
+		t.Fatalf("missing p95 robustness verdict was accepted: %v", err)
+	}
+}

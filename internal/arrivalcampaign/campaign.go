@@ -17,8 +17,18 @@ import (
 	"github.com/LucasLuchetta/Damocline/internal/report"
 )
 
-const CurrentSchemaVersion = 9
-const EnvelopeSchemaVersion = 10
+const CurrentSchemaVersion = 11
+const EnvelopeSchemaVersion = 12
+
+// LegacyEnvelopeSchemaVersion is the extended-envelope schema written before
+// the p95 robustness verdict was persisted.
+const LegacyEnvelopeSchemaVersion = 10
+
+// IsEnvelopeSchema reports whether an arrival campaign schema is an
+// extended-envelope variant that must carry load_envelope.
+func IsEnvelopeSchema(schema int) bool {
+	return schema == LegacyEnvelopeSchemaVersion || schema == EnvelopeSchemaVersion
+}
 
 // FirstRobustDriftBaselineSchema is the first open-arrival campaign schema
 // whose drift screen excludes a light leading window as its reference.
@@ -137,6 +147,9 @@ type Result struct {
 	PendingTrial         *Trial                      `json:"pending_trial,omitempty"`
 	Outcome              string                      `json:"outcome"`
 	Notes                []string                    `json:"notes"`
+	// P95Robustness (schema v11+) qualifies a PASS with per-window p95
+	// order-statistic intervals and a repetition-independence screen.
+	P95Robustness *P95Robustness `json:"p95_robustness,omitempty"`
 }
 
 type Runner func(context.Context, config.Validated) report.Result
@@ -417,6 +430,13 @@ func WithRunnerProgress(parent context.Context, base config.Validated, options O
 	finish := func() error {
 		result.ExecutionState = "COMPLETED"
 		result.PendingTrial = nil
+		robustness := AssessP95Robustness(result)
+		result.P95Robustness = &robustness
+		if robustness.State == P95Limited || robustness.State == P95Inconclusive {
+			for _, reason := range robustness.Reasons {
+				result.Notes = append(result.Notes, "P95 SLO robustness "+robustness.State+": "+reason)
+			}
+		}
 		if progress != nil {
 			if err := progress(result); err != nil {
 				return fmt.Errorf("persist final arrival campaign report: %w", err)
