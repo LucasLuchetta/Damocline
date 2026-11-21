@@ -483,6 +483,9 @@ func writeHTMLEvidence(b *strings.Builder, in htmlReportInput) {
 	b.WriteString("<section aria-labelledby=\"evidence\">\n<h2 id=\"evidence\">Evidence quality</h2>\n")
 	fmt.Fprintf(b, "<p>Campaign calibration requirement: %s. Generator runtime identity: <code>%s</code>; CPU capacity consistency: <code>%s</code>; host type: <code>%s</code>.</p>\n",
 		h(calibrationSummary(in.Evidence)), h(audit.GeneratorRuntimeStatus), h(audit.GeneratorCapacityStatus), h(audit.HostType))
+	for _, line := range warmupSettlingSentences(in.Evidence) {
+		fmt.Fprintf(b, "<p>%s</p>\n", h(line))
+	}
 	b.WriteString("<div class=\"table-wrap\"><table>\n<caption>Per-phase calibration, network baseline, generator health and drift</caption>\n<thead><tr><th scope=\"col\">Trial</th><th scope=\"col\">Phase</th><th scope=\"col\">Delivery verdict</th><th scope=\"col\">Measurement quality</th><th scope=\"col\">Calibration</th><th scope=\"col\">Network baseline</th><th scope=\"col\">Generator CPU peak</th><th scope=\"col\">Drift screen</th></tr></thead>\n<tbody>\n")
 	runs := map[string]report.Result{}
 	for _, trial := range in.Evidence.Trials {

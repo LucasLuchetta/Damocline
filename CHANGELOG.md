@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- `damocline capacity` now sizes each campaign warm-up from the level: the
+  ramp plus three per-VU journey cycles measured in explore, in whole
+  settling windows, bounded to 90s and to the wall cap. The warm-up must
+  settle before judged phases start: its last two consecutive window-to-window
+  changes in request, journey and step p95 must stay within 25% (or 50ms).
+  A warm-up that never settles ends the trial INCONCLUSIVE (NON_STATIONARY),
+  never PASS. Observation windows are still each judged against the SLO.
+  `campaign` exposes the rule as `--warmup-settle-*` flags. The plan and dry
+  run show the bounds, capacity.md and capacity.html explain the verdict, and
+  the audit recomputes it (ADR 0184).
+
 - CI stability: the capacity recovery-gate unit tests now use a frozen
   clock so the reported wait no longer picks up runner jitter; a nightly and
   manual `flake-hunt` workflow repeats the timing-sensitive packages on
