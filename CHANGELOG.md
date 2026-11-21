@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Add a bounded WordPress and MariaDB lab baseline that compares a published
+  post read in Damocline and k6 against independent Apache access logs.
+
 - `damocline capacity` now sizes each campaign warm-up from the level: the
   ramp plus three per-VU journey cycles measured in explore, in whole
   settling windows, bounded to 90s and to the wall cap. The warm-up must

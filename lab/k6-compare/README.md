@@ -85,3 +85,61 @@ Results:
 Limitations: these tools compare counters and percentiles. They do not prove
 a root cause. Pooled percentiles from different estimators can differ by a
 few percent even with identical traffic.
+
+## WordPress published-post baseline
+
+Run `python lab/k6-compare/verify-wordpress-baseline.py` from the repository
+root with Python 3, Go and an amd64 Linux Docker engine with Compose. The
+script starts a disposable WordPress and MariaDB project, inserts one
+synthetic published post, and uses the WordPress CLI to verify persisted
+content before and after the experiment.
+
+The two generators run sequentially with five identical warm-up reads each.
+Both use one closed-loop VU, 30 seconds, a 10 requests/s ceiling and a
+two-second request timeout. A successful read requires HTTP 200 and the
+published post marker in the response body. Damocline baseline probes use
+`/wp-login.php`. Each work route ledger is sliced from independent Apache
+logs between snapshots taken immediately before and after the measured run.
+
+The baseline requires exact agreement between each client's request count
+and its Apache slice, at least 250 work requests per client, and at most 30
+requests difference between clients. It requires zero HTTP or business
+check failures, a 500 ms p95 objective, and no red flag from the external
+comparator. Each client p95 must be within the larger of 10 ms or 25% of the
+larger p95 compared with its Apache slice. Client and server p95 use
+different timing boundaries.
+
+Evidence remains in gitignored `.damocline/rq3-wordpress-*/`, including the
+scenario, generated k6 script, client reports, Apache slices, persisted
+post check, and offline comparisons. The run checks one read operation
+under an imposed request ceiling on one host. This qualifies a comparison
+procedure for RQ-3 and leaves sustainable capacity, representative
+multi-journey traffic and independent network environments to later phases.
+
+### Observations
+
+WordPress 7.1.3 with MariaDB 11.8.9 ran on a single Linux amd64 Docker
+Desktop engine. Damocline ran first, followed by k6 2.3.0, in each of two
+fresh Compose projects.
+
+| Run | Client | Client requests | Apache requests | Client p95 | Apache p95 |
+| --- | --- | ---: | ---: | ---: | ---: |
+| 1 | Damocline | 278 | 278 | 162.20 ms | 157.83 ms |
+| 1 | k6 | 289 | 289 | 79.08 ms | 79.58 ms |
+| 2 | Damocline | 292 | 292 | 61.29 ms | 60.42 ms |
+| 2 | k6 | 297 | 297 | 40.08 ms | 39.82 ms |
+
+Apache recorded only HTTP 200 responses on the work route. Both clients
+passed the marker check on every measured request, and the persisted post
+was unchanged. The Damocline access-log cross-check was `MATCH`. The
+external comparator classified delivered throughput and error rate as
+`CONSISTENT` and the overall comparison as `EXPLAINABLE_DIFFERENCE`.
+Apache itself recorded a lower p95 in the second window, so the difference
+between client p95 values cannot be attributed to timing definitions alone.
+Local Go verification overlapped the runs. The source of that
+window-to-window difference remains unresolved.
+
+This is a two-run baseline for the comparison procedure. Damocline
+reported limited measurement quality near the configured client ceiling
+and without workload calibration. Repeated campaigns, order effects,
+separate hosts, and capacity conclusions remain open.
