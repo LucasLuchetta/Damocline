@@ -23,5 +23,6 @@
       ],
       "must_contain": "damocline-remote-reference-v1"
     }
-  ]
+  ],
+  "baseline_path": "/healthz"
 }
