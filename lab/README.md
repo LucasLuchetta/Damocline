@@ -1,5 +1,9 @@
 # Controlled Linux capacity lab
 
+For independent-host validation using a separate Ubuntu home server as the
+synthetic target and a Windows PC as generator, see
+[the RQ-3 remote reference lab](../docs/REMOTE_REFERENCE_LAB.md).
+
 This lab runs three separate containers: a synthetic HTTP target with one work
 slot, an authenticated Linux host sensor, and the Damocline generator. The
 target's queue and work delay are deliberately bounded. Its `/metrics` endpoint
