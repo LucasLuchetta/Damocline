@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add `damocline compare --before DIR --after DIR` to compare two saved
+  closed-loop capacity campaigns offline. It refuses non-comparable inputs
+  (scenario, load, envelope or pass criteria differ) and reports per-step
+  p95, error-rate and throughput deltas as IMPROVED, REGRESSED or
+  INCONCLUSIVE from repetition ranges, in Markdown and JSON (ADR 0174).
+
 - Add `--min-users` to `damocline capacity` to start the exploration
   ladder at a higher level.
 
