@@ -97,3 +97,11 @@ func runNetworkBaseline(ctx context.Context, plan *config.NetworkBaselinePlan, t
 	}
 	return out
 }
+
+// ProbeNetworkPath runs the same bounded, sequential, credential-free
+// network-path probe outside a load run. The capacity protocol uses it as a
+// recovery gate between sustained campaigns (ADR 0179); it never runs
+// concurrently with load.
+func ProbeNetworkPath(ctx context.Context, plan *config.NetworkBaselinePlan) *report.NetworkBaseline {
+	return runNetworkBaseline(ctx, plan, nil)
+}

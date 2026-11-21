@@ -25,12 +25,12 @@ func stepDownExplore() explorer.Result {
 }
 
 func TestCapacityStepDownLevelsAreLowerRepeatedPasses(t *testing.T) {
-	if got := capacityStepDownLevels(stepDownExplore(), 150, capacityMaxStepDowns); !reflect.DeepEqual(got, []int{100, 50}) {
+	if got := capacityStepDownLevels(stepDownExplore(), 150, 2); !reflect.DeepEqual(got, []int{100, 50}) {
 		t.Fatalf("step-down levels = %v", got)
 	}
 	result := stepDownExplore()
 	result.Probes[4].Runs = make([]report.Result, 2)
-	if got := capacityStepDownLevels(result, 150, capacityMaxStepDowns); !reflect.DeepEqual(got, []int{125, 100}) {
+	if got := capacityStepDownLevels(result, 150, 2); !reflect.DeepEqual(got, []int{125, 100}) {
 		t.Fatalf("calibrated 125 must be preferred: %v", got)
 	}
 	if got := capacityStepDownLevels(stepDownExplore(), 25, capacityMaxStepDowns); len(got) != 0 {
