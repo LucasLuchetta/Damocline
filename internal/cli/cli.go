@@ -145,7 +145,7 @@ Usage:
 	  damocline campaign profile save --file profile.json [--replace]
 	  damocline campaign profile list | show --name NAME | migrate --name NAME | delete --name NAME
 	  damocline campaign profile run --name NAME --authorized [--allow-writes] [--allow-insecure-http] [--staging-confirmed] [--calibration FILE]
-	  damocline arrival-campaign --config arrival.json --observation 2m --recovery 30s --repeats 2 --calibration reports/reference.json --app-metrics-endpoint https://app.example.com/metrics --authorized
+	  damocline arrival-campaign --config arrival.json --observation 2m --recovery 30s --repeats 3 --calibration reports/reference.json --app-metrics-endpoint https://app.example.com/metrics --authorized
 	  damocline arrival-campaign --config staging-arrival.json --observation 30m --allow-long-run --staging-confirmed --budget 70m --authorized
   damocline explore --config scenario.json --peak-users 10 --growth-percent 25 --reserve-percent 20 --authorized
   damocline monitor --duration 3m --interval 2s --out reports/host.json
