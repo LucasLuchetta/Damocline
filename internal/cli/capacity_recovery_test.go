@@ -60,14 +60,19 @@ func recoveryExplore(p50 ...float64) explorer.Result {
 func withRecoveryFakes(t *testing.T, probes []float64) *int {
 	t.Helper()
 	calls := 0
-	oldProbe, oldSleep := capacityRecoveryProbe, capacityRecoverySleep
+	oldProbe, oldSleep, oldNow := capacityRecoveryProbe, capacityRecoverySleep, capacityRecoveryNow
+	// A frozen clock makes each fake probe take exactly zero wall time, so
+	// the reported wait is the cooldown plus retries only, even on a loaded
+	// CI host where a real time.Since added sub-microsecond jitter.
+	frozen := time.Unix(0, 0)
+	capacityRecoveryNow = func() time.Time { return frozen }
 	capacityRecoveryProbe = func(context.Context, *config.NetworkBaselinePlan) *report.NetworkBaseline {
 		v := probes[min(calls, len(probes)-1)]
 		calls++
 		return &report.NetworkBaseline{Status: report.NetworkBaselineMeasured, Completed: 20, P50MS: v}
 	}
 	capacityRecoverySleep = func(context.Context, time.Duration) bool { return true }
-	t.Cleanup(func() { capacityRecoveryProbe, capacityRecoverySleep = oldProbe, oldSleep })
+	t.Cleanup(func() { capacityRecoveryProbe, capacityRecoverySleep, capacityRecoveryNow = oldProbe, oldSleep, oldNow })
 	return &calls
 }
 

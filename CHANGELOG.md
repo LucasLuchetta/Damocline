@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- CI stability: the capacity recovery-gate unit tests now use a frozen
+  clock so the reported wait no longer picks up runner jitter; a nightly and
+  manual `flake-hunt` workflow repeats the timing-sensitive packages on
+  Linux and Windows and uploads failing logs; `docs/CI_STABILITY.md` keeps
+  the flake ledger.
+
 - Added `damocline crosscheck`, which compares a run report with a server or reverse-proxy access log (nginx, combined or JSON) offline. It gives MATCH, MISMATCH or NOT_ASSESSABLE verdicts for request counts, status classes and server p95, and it flags clock skew (ADR 0182).
 - Added the `lab/k6-compare` kit. It contains a scenario-to-k6 converter for single closed-loop workflows and `damocline compare-external`, which classifies differences in offered load, throughput, error rate and p95 between Damocline and k6 as consistent, explainable or a red flag.
 - `damocline capacity` no longer discards repeatedly passing explore levels

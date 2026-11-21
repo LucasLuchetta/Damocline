@@ -1,0 +1,56 @@
+name: flake-hunt
+
+# Repeats the timing-sensitive packages so an intermittent failure shows up
+# here, with its log, instead of as an unexplained red run on master.
+# Ledger and triage procedure: docs/CI_STABILITY.md.
+on:
+  workflow_dispatch:
+    inputs:
+      count:
+        description: "Repetitions per test (-count)"
+        required: false
+        default: "5"
+  schedule:
+    - cron: "17 3 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  repeat:
+    name: Repeat timing-sensitive packages (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Repeat tests
+        shell: bash
+        env:
+          COUNT: ${{ github.event.inputs.count || '5' }}
+        run: |
+          mkdir -p flake-logs
+          status=0
+          for pkg in ./internal/engine ./internal/campaign ./internal/arrivalcampaign ./internal/cli ./internal/generatorhealth; do
+            name=$(echo "$pkg" | tr '/.' '__')
+            if ! go test "$pkg" -count="$COUNT" -timeout=100m > "flake-logs/$name.log" 2>&1; then
+              status=1
+              echo "::error::$pkg failed in a repeated run; see the flake-logs artifact"
+              grep -E '^(--- FAIL|    --- FAIL|FAIL)' "flake-logs/$name.log" || true
+            fi
+          done
+          exit "$status"
+      - name: Upload failure logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: flake-logs-${{ matrix.os }}
+          path: flake-logs/
+          retention-days: 30

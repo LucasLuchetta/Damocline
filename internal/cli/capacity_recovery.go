@@ -46,9 +46,11 @@ type capacityRecoveryCheck struct {
 }
 
 // Test hooks: production probes the real network path and sleeps on the wall
-// clock; unit tests substitute deterministic fakes.
+// clock; unit tests substitute deterministic fakes, including the clock so
+// the reported wait never depends on how long a fake probe took to return.
 var (
 	capacityRecoveryProbe = engine.ProbeNetworkPath
+	capacityRecoveryNow   = time.Now
 	capacityRecoverySleep = func(ctx context.Context, d time.Duration) bool {
 		if d <= 0 {
 			return ctx.Err() == nil
@@ -124,9 +126,9 @@ func capacityRecoveryGate(ctx context.Context, plan *config.NetworkBaselinePlan,
 	}
 	check.ReferenceP50MS, check.LimitP50MS = reference, capacityRecoveryLimit(reference)
 	for {
-		start := time.Now()
+		start := capacityRecoveryNow()
 		probe := capacityRecoveryProbe(ctx, plan)
-		waited += min(time.Since(start), plan.WallBudget)
+		waited += min(capacityRecoveryNow().Sub(start), plan.WallBudget)
 		if probe != nil && probe.Completed > 0 && probe.Failures == 0 && probe.P50MS > 0 {
 			check.ProbeP50MS = append(check.ProbeP50MS, probe.P50MS)
 			if probe.P50MS <= check.LimitP50MS {
