@@ -485,7 +485,7 @@ An `--extended` run adds the exact 15/20/50/100 arrivals-per-second loopback sta
 
 ## Contributing
 
-Damocline is at the foundation stage. Design feedback, reproducibility research, documentation, and focused contributions are welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md) and discuss major changes in an issue before coding them.
+Damocline is open source but **maintainer-governed**. Public suggestions and focused pull requests are welcome; major features and changes to load or measurement semantics require prior maintainer agreement, and only authorized maintainers decide what merges. Read [GOVERNANCE.md](GOVERNANCE.md) and [CONTRIBUTING.md](CONTRIBUTING.md) before proposing work.
 
 ## License
 
