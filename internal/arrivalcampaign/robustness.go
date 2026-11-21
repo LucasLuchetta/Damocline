@@ -53,8 +53,8 @@ type RepetitionIndependence struct {
 }
 
 // P95Robustness is the campaign-level p95 SLO verdict. A PASS is robust only
-// when every judged window's upper bound is strictly below the limit and no
-// monotonic trend across repetitions is detected.
+// when every judged window's upper bound is strictly below the limit and the
+// repetition screen runs without detecting a monotonic trend.
 type P95Robustness struct {
 	Method       string                 `json:"method"`
 	Confidence   float64                `json:"confidence"`
@@ -139,6 +139,10 @@ func AssessP95Robustness(result Result) P95Robustness {
 			out.State = P95Limited
 		}
 		out.Reasons = append(out.Reasons, fmt.Sprintf("%d judged window(s) have a p95 upper 95%% bound at or above the %.3f ms limit; the point estimate passes but the SLO margin is not statistically established.", above, limit))
+	}
+	if out.Independence.State == TrendNotAssessed && out.State == P95RobustPass {
+		out.State = P95Inconclusive
+		out.Reasons = append(out.Reasons, out.Independence.Reason)
 	}
 	if out.Independence.State == TrendDetected {
 		if out.State == P95RobustPass {

@@ -136,3 +136,121 @@ go run ./cmd/damocline-calibrate --extended --out .damocline/calibration/referen
 ```
 
 The scheduler also has deterministic tests that fault-inject a callback stall and require late arrivals and lag to be counted. Engine tests ensure insufficient samples cannot pass, admitted work drains within a bounded grace window, cancelled requests cannot pass, and responses above the 2 MiB body limit fail visibly. Schema v4 reports both the configured workload observation window and full elapsed wall-clock time, including drain; throughput uses the observation window. The local reference server tests fixed payload sizes, bounded concurrency, failures, queueing, and recovery. CI runs the extended matrix on Linux and Windows. These checks establish the tested operating envelope through 100 arrivals/s, a 4 KiB response, and a 30-second soak on hosts where the matrix is run. They do not establish the maximum possible generator throughput, precision on untested machines or payload sizes, or a client-capacity recommendation. Repeat the matrix on each deployment host class before using it to interpret a capacity campaign.
+
+
+## Phantom capacity
+
+On Linux, run the three loopback controls with:
+
+```sh
+go test -tags=integration ./internal/arrivalcampaign -run '^TestPhantomCapacity$' -count=3 -v
+```
+
+Each control uses one HTTP request per journey, a five-second observation
+window, a 500 ms p95 limit, and zero allowed errors. The independent server
+ledger counts receipts, service completions, queue rejections, and
+cancellations. The server has two service slots, two waiting places, and
+100 ms service time, giving a nominal ceiling of 20 requests/s. Totals
+include completed work during drain.
+
+| Control | Predeclared acceptance criteria |
+| --- | --- |
+| 15 scheduled starts/s | All 75 requests arrive and complete. No drops, rejections or cancellations. The phase is `PASS_OBSERVED`. |
+| 30 scheduled starts/s | All 150 requests arrive. At least 75 and at most 104 complete, allowing up to four pending requests during drain. Excess receipts are rejected. The phase is `FAIL_OBSERVED`. |
+| 30 scheduled starts/s with generator CPU withheld | The parent suspends only the generator process for 4.9 seconds after the second receipt. The target receives between two and 75 requests, completes all of them, and records zero rejections and cancellations. The engine records late starts and reports `INCONCLUSIVE`. The phase is `INVALID_DELIVERY`. |
+
+Each control also requires exact agreement between native request totals and
+the independent ledger. The intervention emulates loss of generator CPU time
+through Linux process suspension. Its evidence applies to that intervention,
+the native engine, and the open-arrival phase classifier. It leaves steady
+CPU quotas, full campaign/goal execution, and representative application
+capacity outside this protocol.
+
+Three runs in a Linux amd64 Docker container with network mode `none` and
+Go 1.26.3 produced the same counts in each control:
+
+| Control | Scheduled | Received | Completed | Rejected | Late starts | Phase |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| 15 starts/s | 75 | 75 | 75 | 0 | 0 | `PASS_OBSERVED` |
+| 30 starts/s | 150 | 150 | 101 | 49 | 0 | `FAIL_OBSERVED` |
+| 30 starts/s, generator suspended | 150 | 4 | 4 | 0 | 146 | `INVALID_DELIVERY` |
+
+All server cancellation counts were zero. This is `VALIDATED_CONTROLLED`
+evidence for these phase classifications on this fixture.
+
+### Continuous CPU quota through campaign and goal
+
+Run `python lab/verify-arrival-cpu-quota.py` with Go, Python 3, and an amd64
+Linux Docker engine with cgroup v2. The script builds Linux binaries locally.
+Each case gets a fresh server and a generator with a shared loopback network
+namespace and a separate CPU cgroup. Both generators run the same background
+CPU load and use `GOMAXPROCS=4`. Both pass the same workload self-calibration
+at 25 starts/s before running through the extended-envelope campaign entry
+point. The extended entry point attaches the workload-specific calibration
+to phase evidence. After the server records at least ten work completions,
+the intervention adds a 5 ms CPU quota per 100 ms period to the generator
+alone. Applying the quota during observation lets the experiment exercise
+delivery after passing the CPU-entitlement preflight. The script checks the
+quota and kernel throttling counters.
+
+The server has fifteen 20 ms service slots, with fifteen total admissions.
+The read-only scenario schedules 25 starts/s, with three 30-second
+observations and a 10-second recovery per trial, a 500 ms p95 objective,
+and zero allowed HTTP errors. Network baseline probes use `/healthz`. The
+independent ledger counts completions and rejections on `/work`.
+
+- The control must complete all 3,000 starts with no drops or target
+  rejections. The campaign must pass and offline `goal` must credit the
+  exact target at 25 starts/s across all three trials.
+- The intervention must deliver a positive count below the scheduled
+  count for the phases executed, reconcile the shortfall with dropped
+  starts, and reconcile native requests with the target ledger. The
+  affected phase must be `INVALID_DELIVERY`, the campaign must be
+  `INCONCLUSIVE`, and both the embedded assessment and offline `goal`
+  must return `INSUFFICIENT_EVIDENCE`.
+
+The script retains the calibration records, campaign artifacts, offline goal
+reports, server counters, and CPU quota evidence under the gitignored
+`.damocline/` directory. Goal replay runs with networking disabled.
+
+With workload calibration, both controls passed all three trials, delivered
+3,000 starts each, and earned
+`SUSTAINED_TARGET_PASSED_UNDER_TESTED_CONDITIONS` at 25 starts/s. In both
+limited cases, the server and generator counted the same successful HTTP
+requests, with zero rejections:
+
+| Calibrated run under quota | Scheduled | Target completions | Dropped starts | Cgroup throttles |
+| --- | ---: | ---: | ---: | ---: |
+| 1 | 750 | 360 | 390 | 305 |
+| 2 | 750 | 488 | 262 | 305 |
+
+Both limited runs were `INVALID_DELIVERY` at the phase, `INCONCLUSIVE` at
+the campaign, and `INSUFFICIENT_EVIDENCE` in both demand assessments.
+
+Replaying the first limited phase with a Go overlay that removes only the dropped or
+cancelled delivery branch in `arrivalcampaign.ClassifyEvidence` failed the
+`INVALID_DELIVERY` assertion. The mutated classifier returned
+`INSUFFICIENT_EVIDENCE` because the native run was already inconclusive.
+The suspension regression (`TestPhantomCapacity/generator-denied-cpu`)
+also failed under the same overlay. A live mutant attempt reached the
+CPU abort guardrail before the expected classification, so only the replay
+isolates the classifier change on the calibrated quota evidence.
+
+Earlier uncalibrated runs applied the quota before campaign startup and
+used `GOMAXPROCS=1`. Two Docker Desktop runs with Linux amd64 and Go
+1.26.3 delivered all 3,000 control starts per run. Both control campaigns
+passed. Under quota, the first observation produced the following counts
+before the campaign stopped:
+
+| Run | Scheduled | Target completions | Dropped starts | Cgroup throttles |
+| --- | ---: | ---: | ---: | ---: |
+| 1 | 750 | 484 | 266 | 598 |
+| 2 | 750 | 510 | 240 | 570 |
+
+The target and generator counts agreed, with zero target rejections and
+zero HTTP failures. Both limited phases were `INVALID_DELIVERY`, both
+campaigns were `INCONCLUSIVE`, and both embedded and offline assessments
+returned `INSUFFICIENT_EVIDENCE`. The offline control assessments also
+returned `INSUFFICIENT_EVIDENCE` because measurement quality fell short of
+the capacity-assessment threshold. This is `VALIDATED_CONTROLLED` evidence
+for rejection of underdelivered load in this setup.

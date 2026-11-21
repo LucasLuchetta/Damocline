@@ -2,8 +2,11 @@ package cli
 
 import (
 	"bytes"
+	"compress/gzip"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,10 +15,96 @@ import (
 	"github.com/LucasLuchetta/Damocline/internal/arrivalcampaign"
 	"github.com/LucasLuchetta/Damocline/internal/arrivalexplorer"
 	"github.com/LucasLuchetta/Damocline/internal/campaign"
+	"github.com/LucasLuchetta/Damocline/internal/capacitygoal"
 	"github.com/LucasLuchetta/Damocline/internal/explorer"
 	"github.com/LucasLuchetta/Damocline/internal/generatorhealth"
 	"github.com/LucasLuchetta/Damocline/internal/report"
 )
+
+func TestGoalCommandVerifiesHistoricalArrivalRobustness(t *testing.T) {
+	fixture := filepath.Join("..", "capacitygoal", "testdata", "arrival-campaign-v11-robust-pass.json.gz")
+	compressed, err := os.ReadFile(fixture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader, err := gzip.NewReader(bytes.NewReader(compressed))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saved arrivalcampaign.Result
+	if err := json.Unmarshal(data, &saved); err != nil {
+		t.Fatal(err)
+	}
+	if saved.SchemaVersion != 11 || saved.P95Robustness == nil ||
+		saved.P95Robustness.State != arrivalcampaign.P95RobustPass || len(saved.P95Robustness.Windows) == 0 {
+		t.Fatal("expected a schema-v11 artifact with a saved robust pass")
+	}
+
+	runGoal := func(t *testing.T, artifact []byte) (int, string, string, string) {
+		t.Helper()
+		dir := t.TempDir()
+		file := filepath.Join(dir, "campaign.json")
+		output := filepath.Join(dir, "goal.json")
+		if err := os.WriteFile(file, artifact, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		var stdout, stderr bytes.Buffer
+		args := []string{"goal", "--file", file, "--peak-journeys-per-second", "25", "--out", output}
+		code := Run(args, &stdout, &stderr)
+		return code, stdout.String(), stderr.String(), output
+	}
+	t.Run("accepts original artifact", func(t *testing.T) {
+		code, stdout, stderr, output := runGoal(t, data)
+		if code != 0 || stderr != "" || !strings.Contains(stdout, "EVIDENCE STATUS: INSUFFICIENT_EVIDENCE") {
+			t.Fatalf("goal exit %d, stdout=%s stderr=%s", code, stdout, stderr)
+		}
+		raw, err := os.ReadFile(output)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var assessment capacitygoal.JourneyStartAssessment
+		if err := json.Unmarshal(raw, &assessment); err != nil {
+			t.Fatal(err)
+		}
+		if assessment.State != "INSUFFICIENT_EVIDENCE" || assessment.MatchedStartsPerSecond != nil ||
+			assessment.MatchedTrials != 0 {
+			t.Fatalf("unexpected saved assessment: %+v", assessment)
+		}
+		robustness := assessment.P95Robustness
+		if robustness == nil || robustness.State != arrivalcampaign.P95Inconclusive ||
+			robustness.Independence.State != arrivalcampaign.TrendNotAssessed {
+			t.Fatalf("unexpected recomputed robustness: %+v", robustness)
+		}
+	})
+	t.Run("rejects altered bound", func(t *testing.T) {
+		var artifact map[string]json.RawMessage
+		if err := json.Unmarshal(data, &artifact); err != nil {
+			t.Fatal(err)
+		}
+		saved.P95Robustness.Windows[0].UpperMS++
+		altered, err := json.Marshal(saved.P95Robustness)
+		if err != nil {
+			t.Fatal(err)
+		}
+		artifact["p95_robustness"] = altered
+		tampered, err := json.Marshal(artifact)
+		if err != nil {
+			t.Fatal(err)
+		}
+		code, stdout, stderr, output := runGoal(t, tampered)
+		if code != 2 || !strings.Contains(stderr, "saved p95 robustness verdict disagrees with native report data") {
+			t.Fatalf("goal exit %d, stdout=%s stderr=%s", code, stdout, stderr)
+		}
+		if _, err := os.Stat(output); !os.IsNotExist(err) {
+			t.Fatalf("rejected artifact must not produce an assessment, stat error=%v", err)
+		}
+	})
+}
 
 func TestGoalCommandUsesSavedExploreWithoutGeneratingTraffic(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "capacity.json")

@@ -12,7 +12,9 @@ jobs:
   go:
     name: Format, vet, test, and run source
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Race tests and source compilation can use nearly 30 minutes before G0.
+    # Leave room for the two independently bounded G0 acceptance runs.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5

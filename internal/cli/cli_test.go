@@ -76,11 +76,11 @@ func TestMigrateScenarioCommandWritesVersionedOutputWithoutOverwriting(t *testin
 func TestArrivalCampaignDryRunShowsOpenArrivalSchedule(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	path := filepath.Join("..", "..", "examples", "arrival-rate-readonly.json")
-	code := Run([]string{"arrival-campaign", "--config", path, "--observation", "10s", "--recovery", "10s", "--repeats", "2", "--peak-journeys-per-second", "1", "--cooldown", "1s", "--dry-run"}, &stdout, &stderr)
+	code := Run([]string{"arrival-campaign", "--config", path, "--observation", "10s", "--recovery", "10s", "--peak-journeys-per-second", "1", "--cooldown", "1s", "--dry-run"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("dry run failed: code=%d stderr=%s", code, stderr.String())
 	}
-	for _, expected := range []string{"base 1 scheduled starts/s", "worker limit", "Trial 1 warmup: 30s at 1 scheduled starts/s", "Trial 1 observation: 10s at 1 scheduled starts/s", "Cool-down between independent trials: 1s", "DRY RUN: no traffic generated"} {
+	for _, expected := range []string{"base 1 scheduled starts/s", "worker limit", "Trial 1 warmup: 30s at 1 scheduled starts/s", "Trial 1 observation: 10s at 1 scheduled starts/s", "Cool-down between independent trials: 1s", "DRY RUN: no traffic generated", "repeats 2", "Two repetitions cannot earn ROBUST_PASS. Use --repeats 3"} {
 		if !strings.Contains(stdout.String(), expected) {
 			t.Fatalf("dry run missing %q: %s", expected, stdout.String())
 		}
