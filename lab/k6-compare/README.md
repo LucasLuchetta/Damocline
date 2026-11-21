@@ -65,7 +65,26 @@ Results:
 - `RED_FLAG`: Damocline approved a level where k6 fails the same criteria,
   or k6 delivered materially more throughput at the same VUs. That points to
   a Damocline generator limit. Exit code 1.
-- `NOT_COMPARABLE`: different VU counts, a non-closed mode or missing metrics.
+- `NOT_COMPARABLE`: different VU counts, a non-closed mode, missing
+  metrics, or incomplete or unverified business checks.
+
+The generated script labels each check with the workload fingerprint and
+step index when it can reproduce the scenario. The comparison can report
+`k6_would_pass=true` only when those labels match the Damocline report,
+each step has enough checks, and the aggregate and per-step check counts
+reconcile to one passing check per HTTP request. Use a k6 summary that
+includes both `metrics.checks` and `root_group.checks`. The default
+`--summary-export` or an unfiltered `handleSummary(data)` can retain
+these fields.
+
+A reported failed check, HTTP error rate above the limit, or p95 above the
+limit sets `k6_would_pass=false`. A legacy summary can still report a
+failure but cannot establish a passing business verdict without the
+matching generated checks. When the evidence is incomplete, the JSON
+omits `k6_would_pass` and the Markdown report says it is not assessable.
+Check labels identify the generator's declared rules. They do not
+authenticate the summary, verify environment values, or establish the
+representativeness of the target.
 
 ## Generator on a separate, monitored machine
 

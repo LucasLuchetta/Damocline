@@ -21,22 +21,29 @@ const (
 
 // K6Summary holds the k6 values used for the comparison.
 type K6Summary struct {
-	HTTPReqs     float64
-	HTTPReqRate  float64
-	FailedRate   float64
-	HasFailed    bool
-	P95MS        float64
-	HasP95       bool
-	VUsMax       float64
-	DurationSecs float64
+	HTTPReqs       float64
+	HTTPReqRate    float64
+	FailedRate     float64
+	HasFailed      bool
+	P95MS          float64
+	HasP95         bool
+	VUsMax         float64
+	DurationSecs   float64
+	checkPasses    float64
+	checkFailures  float64
+	hasCheckTotals bool
+	namedChecks    []checkCounts
 }
 
 // ParseK6Summary accepts both `k6 run --summary-export` output and the
 // handleSummary(data) JSON shape (metrics.<name>.values).
 func ParseK6Summary(data []byte) (K6Summary, error) {
 	var raw struct {
-		Metrics map[string]map[string]any `json:"metrics"`
-		State   struct {
+		Metrics   map[string]map[string]any `json:"metrics"`
+		RootGroup struct {
+			Checks json.RawMessage `json:"checks"`
+		} `json:"root_group"`
+		State struct {
 			TestRunDurationMS float64 `json:"testRunDurationMs"`
 		} `json:"state"`
 	}
@@ -73,6 +80,11 @@ func ParseK6Summary(data []byte) (K6Summary, error) {
 		s.VUsMax, _ = get("vus_max", "value")
 	}
 	s.DurationSecs = raw.State.TestRunDurationMS / 1000
+	var hasPasses, hasFailures bool
+	s.checkPasses, hasPasses = get("checks", "passes")
+	s.checkFailures, hasFailures = get("checks", "fails")
+	s.hasCheckTotals = hasPasses && hasFailures && validCount(s.checkPasses) && validCount(s.checkFailures)
+	s.namedChecks = namedChecks(raw.RootGroup.Checks)
 	return s, nil
 }
 
@@ -202,8 +214,42 @@ func Compare(run report.Result, k K6Summary, o Options) Result {
 	}
 	add(p95)
 
-	if k.HasFailed && k.HasP95 {
-		pass := k.FailedRate <= run.Config.MaxErrorRate && (run.Config.P95LimitMS <= 0 || k.P95MS <= run.Config.P95LimitMS)
+	checkFailed, checksComplete := businessCheckEvidence(run, k)
+	var namedFailures float64
+	for _, check := range k.namedChecks {
+		if check.Fails != nil && validCount(*check.Fails) {
+			namedFailures += *check.Fails
+		}
+	}
+	business := Check{
+		Metric: "failed_business_checks", Damocline: float64(run.Metrics.HTTP.AssertionFailures),
+		K6: max(k.checkFailures, namedFailures),
+	}
+	switch {
+	case checkFailed:
+		business.Classification = Explainable
+		business.Explanation = "k6 recorded a failed check; HTTP status and latency alone cannot establish business success."
+		if comparable && checksComplete && run.Outcome == "PASS" {
+			business.Classification = RedFlag
+		}
+	case !checksComplete:
+		business.Classification = NotComparable
+		business.Explanation = "k6 lacks complete checks for the same generated workload contract."
+	default:
+		business.Classification = Consistent
+		business.Explanation = "Every k6 request passed a check from the matching workload contract."
+	}
+	add(business)
+
+	httpFailed := k.HasFailed && k.FailedRate > run.Config.MaxErrorRate
+	latencyFailed := k.HasP95 && run.Config.P95LimitMS > 0 && k.P95MS > run.Config.P95LimitMS
+	switch {
+	case checkFailed || httpFailed || latencyFailed:
+		pass := false
+		res.K6WouldPass = &pass
+	case comparable && checksComplete && k.HasFailed && k.HasP95 &&
+		run.Config.P95LimitMS > 0 && k.FailedRate >= 0 && k.FailedRate <= 1 && k.P95MS >= 0:
+		pass := true
 		res.K6WouldPass = &pass
 	}
 	res.Overall = Consistent
@@ -234,6 +280,8 @@ func Markdown(r Result) string {
 	fmt.Fprintf(&b, "# Damocline vs k6 comparison\n\n- Run: %s\n- Damocline outcome: %s\n", r.RunName, r.DamoclineOutcome)
 	if r.K6WouldPass != nil {
 		fmt.Fprintf(&b, "- Same pass criteria applied to k6: %t\n", *r.K6WouldPass)
+	} else {
+		b.WriteString("- Same pass criteria applied to k6: not assessable\n")
 	}
 	fmt.Fprintf(&b, "- Overall: **%s**\n\n| Metric | Damocline | k6 | Classification | Explanation |\n|---|---:|---:|---|---|\n", r.Overall)
 	for _, c := range r.Checks {
