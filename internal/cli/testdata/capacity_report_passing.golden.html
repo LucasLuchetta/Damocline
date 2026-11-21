@@ -30,10 +30,13 @@ svg{width:100%;height:auto;max-width:720px;display:block}
 svg text{fill:var(--fg);font-size:12px}svg .axis{stroke:var(--muted);stroke-width:1}svg .grid{stroke:var(--line);stroke-width:1}
 svg .limit{stroke:var(--bad);stroke-width:2;stroke-dasharray:6 4}
 svg .s-explore{stroke:var(--s1);stroke-width:2}svg .s-campaign{stroke:var(--s2);stroke-width:2}
+svg .line-p95{fill:none;stroke:var(--s1);stroke-width:2}svg .line-rps{fill:none;stroke:var(--s2);stroke-width:2}
+.exec{border:2px solid var(--line);border-radius:8px;padding:16px;margin:16px 0}.exec>h2{border:0;margin-top:0}.exec .headline{font-size:1.25rem;font-weight:700}
+.notmean{border:2px dashed var(--warn);background:var(--warn-bg);border-radius:8px;padding:8px 16px;margin:12px 0}.notmean>h3{margin-top:4px}
 svg .fill-explore{fill:var(--s1)}svg .fill-campaign{fill:var(--s2)}svg .hollow{fill:var(--bg)}
 pre{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:12px;overflow-x:auto;white-space:pre-wrap;word-break:break-all}
 code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:.88em}
-@media print{:root{--bg:#fff;--fg:#000;--muted:#333;--line:#888;--panel:#fff}body{font-size:11pt}main{max-width:none;padding:0}h2,h3,figure,.verdict,.figure,table{break-inside:avoid}details{display:block}details>summary{display:none}a{color:inherit}}
+@media print{:root{--bg:#fff;--fg:#000;--muted:#333;--line:#888;--panel:#fff}body{font-size:11pt}main{max-width:none;padding:0}h2,h3,figure,.exec,.notmean,.verdict,.figure,table{break-inside:avoid}details{display:block}details>summary{display:none}a{color:inherit}}
 </style>
 </head>
 <body>
@@ -42,6 +45,54 @@ code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:.88em}
 <h1>Capacity assessment</h1>
 <p class="muted">Scenario synthetic &lt;local&gt; fixture · environment development · target http://127.0.0.1:18080 · campaign started 2026-10-19T12:00:00Z. Generated offline from saved evidence; no traffic was sent to produce this report.</p>
 </header>
+<section class="exec" aria-labelledby="exec-heading">
+<h2 id="exec-heading">Executive summary</h2>
+<p class="headline">Under the tested conditions, the application supports 8 concurrent active virtual users doing the &#34;synthetic &lt;local&gt; fixture&#34; journey with request p95 under 500 ms and request errors under 1.00%.</p>
+<p><span class="tag t-fact">measured fact</span> Decision confidence: NOT_ESTABLISHED; measurement quality: LIMITED. 2 of 2 repeat trials passed; the exact 95% interval for the repeat pass rate is 15.8% to 100.0%, assuming independent, stationary trials. The result holds only for the tested scenario, environment and duration.</p>
+<p><span class="tag t-fact">measured fact</span> Observed limit (knee): every measurement passed at 8 virtual users, and objectives were breached at 16 virtual users (worst request p95 900 ms, errors 4.65%). The limit lies between these levels; short exploration probes are not approvals.</p>
+<p><span class="tag t-hyp">hypothesis</span> Correlational, not a measured root cause: throughput rose only from 56.0 to 80.0 successful requests/s while load rose from 4 to 8 virtual users, which suggests the system was saturating between these levels. No diagnostic evidence in this report proves which resource saturated.</p>
+<figure>
+<svg viewBox="0 0 640 300" role="img" aria-labelledby="chart-level-t chart-level-d">
+<title id="chart-level-t">Request p95 and throughput versus load level</title>
+<desc id="chart-level-d">Line chart over 4 load levels: worst request p95 in milliseconds on the left axis and mean successful requests per second on the right axis.</desc>
+<line class="grid" x1="64.0" y1="256.0" x2="576.0" y2="256.0"/><text x="58.0" y="260.0" text-anchor="end">0</text><text x="582.0" y="260.0" text-anchor="start">0.0</text>
+<text x="64.0" y="272.0" text-anchor="middle">0</text>
+<line class="grid" x1="64.0" y1="196.0" x2="576.0" y2="196.0"/><text x="58.0" y="200.0" text-anchor="end">250</text><text x="582.0" y="200.0" text-anchor="start">25.0</text>
+<text x="192.0" y="272.0" text-anchor="middle">5</text>
+<line class="grid" x1="64.0" y1="136.0" x2="576.0" y2="136.0"/><text x="58.0" y="140.0" text-anchor="end">500</text><text x="582.0" y="140.0" text-anchor="start">50.0</text>
+<text x="320.0" y="272.0" text-anchor="middle">10</text>
+<line class="grid" x1="64.0" y1="76.0" x2="576.0" y2="76.0"/><text x="58.0" y="80.0" text-anchor="end">750</text><text x="582.0" y="80.0" text-anchor="start">75.0</text>
+<text x="448.0" y="272.0" text-anchor="middle">15</text>
+<line class="grid" x1="64.0" y1="16.0" x2="576.0" y2="16.0"/><text x="58.0" y="20.0" text-anchor="end">1000</text><text x="582.0" y="20.0" text-anchor="start">100.0</text>
+<text x="576.0" y="272.0" text-anchor="middle">20</text>
+<line class="axis" x1="64.0" y1="256.0" x2="576.0" y2="256.0"/>
+<text x="320.0" y="294.0" text-anchor="middle">Concurrent active virtual users</text>
+<text x="14" y="136.0" text-anchor="middle" transform="rotate(-90 14 136.0)">Request p95 (ms)</text>
+<text x="630" y="136.0" text-anchor="middle" transform="rotate(90 630 136.0)">Successful requests/s</text>
+<line class="limit" x1="64.0" y1="136.0" x2="576.0" y2="136.0"/>
+<polyline class="line-p95" points="115.2,235.6 166.4,227.2 268.8,205.6 473.6,40.0"/>
+<polyline class="line-rps" points="115.2,184.2 166.4,121.6 268.8,64.0 473.6,59.2"/>
+<circle class="s-explore fill-explore" cx="115.2" cy="235.6" r="4.5"><title>2 users: p95 85.0 ms</title></circle>
+<rect class="s-campaign fill-campaign" x="110.7" y="179.7" width="9" height="9"><title>2 users: 29.90 successful requests/s</title></rect>
+<circle class="s-explore fill-explore" cx="166.4" cy="227.2" r="4.5"><title>4 users: p95 120.0 ms</title></circle>
+<rect class="s-campaign fill-campaign" x="161.9" y="117.1" width="9" height="9"><title>4 users: 56.00 successful requests/s</title></rect>
+<circle class="s-explore fill-explore" cx="268.8" cy="205.6" r="4.5"><title>8 users: p95 210.0 ms</title></circle>
+<rect class="s-campaign fill-campaign" x="264.3" y="59.5" width="9" height="9"><title>8 users: 80.00 successful requests/s</title></rect>
+<circle class="s-explore hollow" cx="473.6" cy="40.0" r="4.5"><title>16 users: p95 900.0 ms</title></circle>
+<rect class="s-campaign fill-campaign" x="469.1" y="54.7" width="9" height="9"><title>16 users: 82.00 successful requests/s</title></rect>
+</svg>
+<figcaption>Blue circles and line: worst request p95 per level (left axis; hollow means a measurement at that level failed). Orange squares and line: mean successful requests/s (right axis). Dashed line: p95 objective 500 ms. When throughput flattens while p95 climbs, the system is saturating.</figcaption>
+</figure>
+<aside class="notmean" aria-labelledby="notmean-heading">
+<h3 id="notmean-heading">What this does NOT mean</h3>
+<ul>
+<li>Virtual users are simulated clients repeating the recorded journey with only the pauses the scenario declares. They are not registered users, logged-in accounts, connected sessions, requests in flight or requests per second.</li>
+<li>The result applies only to the tested journey mix, environment and duration. It is not a prediction for other workloads, peak events or future releases.</li>
+<li>Estimate, not a measurement: Declared usage assumption: at 4.00 actions per person per minute, 8 modeled users would correspond to about 1200.0 people, assuming one successful measured request per real action and the same workflow mix. This is not a measured human concurrency and does not change the decision.</li>
+</ul>
+</aside>
+<p class="muted">Technical details, evidence quality and the replay command follow below.</p>
+</section>
 <section class="verdict v-ok" aria-labelledby="verdict-heading">
 <h2 id="verdict-heading" style="border:0;margin:0">Decision</h2>
 <strong class="state">DEMAND MET UNDER TESTED CONDITIONS</strong>

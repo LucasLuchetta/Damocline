@@ -2,6 +2,18 @@
 
 ## Executive summary
 
+**No sustainable level is approved yet: the evidence does not establish how many concurrent active virtual users doing the "synthetic local fixture" journey the application supports with request p95 under 500 ms and request errors under 1.00%.**
+
+- **Confidence (measured):** Decision confidence: NOT_ESTABLISHED; measurement quality: LIMITED. 2 of 2 repeat trials passed; the exact 95% interval for the repeat pass rate is 15.8% to 100.0%, assuming independent, stationary trials.
+- **Limit (measured):** No measured level recorded a pass or fail outcome, so no limit was observed.
+- **What saturated (hypothesis):** No saturation pattern was observed in the measured range. Which resource would saturate first is unknown.
+
+> **What this does NOT mean**
+>
+> - Virtual users are simulated clients repeating the recorded journey with only the pauses the scenario declares. They are not registered users, logged-in accounts, connected sessions, requests in flight or requests per second.
+> - The result applies only to the tested journey mix, environment and duration. It is not a prediction for other workloads, peak events or future releases.
+> - No usage assumption (think time or actions per person) was declared, so no estimate of real people is shown. Real people usually outnumber active virtual users because they pause between actions.
+
 - **Assessment:** INSUFFICIENT_EVIDENCE
 - **Observed campaign:** OBSERVED_PASS_ONLY
 - **Measurement quality:** LIMITED
