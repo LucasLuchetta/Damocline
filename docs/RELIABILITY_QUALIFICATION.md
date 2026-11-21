@@ -33,6 +33,8 @@ A criterion is `MET` only when every listed check has recorded evidence.
 
 **Status:** `IN_PROGRESS` — CI exists, but some intermittent failures were
 rerun without a recorded root cause (see hosted CI notes in [G0 status](G0_STATUS.md)).
+Recorded root causes, fixes and the nightly repeated-run workflow are kept in
+the flake ledger in [CI stability](CI_STABILITY.md).
 
 - [ ] The full CI workflow runs at least 20 consecutive times on `master`
       on every hosted OS with no failure, **or** every failure has a recorded
