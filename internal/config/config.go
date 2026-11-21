@@ -22,36 +22,40 @@ import (
 )
 
 type Scenario struct {
-	ScenarioVersion          int               `json:"scenario_version,omitempty"`
-	Workflows                []Profile         `json:"workflows,omitempty"`
-	Name                     string            `json:"name"`
-	WorkloadRevision         string            `json:"workload_revision,omitempty"`
-	ApplicationRevision      string            `json:"application_revision,omitempty"`
-	Environment              string            `json:"environment,omitempty"`
-	ProfileMixBasis          string            `json:"profile_mix_basis,omitempty"`
-	ProfileMixReference      string            `json:"profile_mix_reference,omitempty"`
-	BaseURL                  string            `json:"base_url"`
-	Users                    int               `json:"users"`
-	Duration                 string            `json:"duration"`
-	RampUp                   string            `json:"ramp_up"`
-	ThinkTime                string            `json:"think_time"`
-	ThinkTimeRange           *ThinkTimeRange   `json:"think_time_range,omitempty"`
-	ThinkTimeSamples         []string          `json:"think_time_samples,omitempty"`
-	WorkloadSeed             uint64            `json:"workload_seed,omitempty"`
-	Timeout                  string            `json:"request_timeout"`
-	ConnectionPolicy         string            `json:"connection_policy,omitempty"`
-	MaxConnectionsPerHost    int               `json:"max_connections_per_host,omitempty"`
-	MaxRPS                   int               `json:"max_rps"`
-	P95LimitMS               float64           `json:"p95_limit_ms"`
-	JourneyP95LimitMS        float64           `json:"journey_p95_limit_ms,omitempty"`
-	MaxErrorRate             float64           `json:"max_error_rate"`
-	Mode                     string            `json:"mode,omitempty"`
-	ArrivalRate              int               `json:"arrival_rate,omitempty"`
-	PerVUCookieEnvPrefix     string            `json:"per_vu_cookie_env_prefix,omitempty"`
-	ProfileCookieEnvPrefixes map[string]string `json:"profile_cookie_env_prefixes,omitempty"`
-	SyntheticDataPrefixEnv   string            `json:"synthetic_data_prefix_env,omitempty"`
-	MinSamplesPerStep        int               `json:"min_samples_per_step,omitempty"`
-	WindowDuration           string            `json:"window_duration,omitempty"`
+	ScenarioVersion     int       `json:"scenario_version,omitempty"`
+	Workflows           []Profile `json:"workflows,omitempty"`
+	Name                string    `json:"name"`
+	WorkloadRevision    string    `json:"workload_revision,omitempty"`
+	ApplicationRevision string    `json:"application_revision,omitempty"`
+	Environment         string    `json:"environment,omitempty"`
+	ProfileMixBasis     string    `json:"profile_mix_basis,omitempty"`
+	ProfileMixReference string    `json:"profile_mix_reference,omitempty"`
+	// ProfileMixReferenceCounts optionally records user-provided counts per
+	// workflow, for example from a sanitized access-log summary. They are a
+	// reference assumption compared with the declared weights, never facts.
+	ProfileMixReferenceCounts map[string]int64  `json:"profile_mix_reference_counts,omitempty"`
+	BaseURL                   string            `json:"base_url"`
+	Users                     int               `json:"users"`
+	Duration                  string            `json:"duration"`
+	RampUp                    string            `json:"ramp_up"`
+	ThinkTime                 string            `json:"think_time"`
+	ThinkTimeRange            *ThinkTimeRange   `json:"think_time_range,omitempty"`
+	ThinkTimeSamples          []string          `json:"think_time_samples,omitempty"`
+	WorkloadSeed              uint64            `json:"workload_seed,omitempty"`
+	Timeout                   string            `json:"request_timeout"`
+	ConnectionPolicy          string            `json:"connection_policy,omitempty"`
+	MaxConnectionsPerHost     int               `json:"max_connections_per_host,omitempty"`
+	MaxRPS                    int               `json:"max_rps"`
+	P95LimitMS                float64           `json:"p95_limit_ms"`
+	JourneyP95LimitMS         float64           `json:"journey_p95_limit_ms,omitempty"`
+	MaxErrorRate              float64           `json:"max_error_rate"`
+	Mode                      string            `json:"mode,omitempty"`
+	ArrivalRate               int               `json:"arrival_rate,omitempty"`
+	PerVUCookieEnvPrefix      string            `json:"per_vu_cookie_env_prefix,omitempty"`
+	ProfileCookieEnvPrefixes  map[string]string `json:"profile_cookie_env_prefixes,omitempty"`
+	SyntheticDataPrefixEnv    string            `json:"synthetic_data_prefix_env,omitempty"`
+	MinSamplesPerStep         int               `json:"min_samples_per_step,omitempty"`
+	WindowDuration            string            `json:"window_duration,omitempty"`
 	// BaselinePath optionally selects the same-origin GET path used by the
 	// bounded pre-load network-path baseline (ADR 0153).
 	BaselinePath string `json:"baseline_path,omitempty"`
@@ -664,6 +668,9 @@ func Parse(s Scenario, o Options) (Validated, error) {
 	for i := range preparedProfiles {
 		preparedProfiles[i].Cookies = profileCookies[preparedProfiles[i].Name]
 	}
+	if err := validateMixDeclaration(s, preparedProfiles, dataPrefix, len(cookies) > 0, profileCookies); err != nil {
+		return v, err
+	}
 	v = Validated{Scenario: s, Base: u, Duration: duration, RampUp: ramp, ThinkTime: think, Timeout: timeout, Window: window, Steps: prepared, Profiles: preparedProfiles, Cookies: cookies, ProfileCookies: profileCookies, SyntheticDataPrefix: dataPrefix, Envelope: envelope}
 	v.WorkloadFingerprint = WorkloadFingerprint(v)
 	if o.ExtendedEnvelope != nil {
@@ -932,4 +939,85 @@ func optionalDuration(name, value string, def, max time.Duration) (time.Duration
 		return 0, fmt.Errorf("%s must be between 0 and %s", name, max)
 	}
 	return d, nil
+}
+
+// maxReferenceCount bounds one user-provided reference count.
+const maxReferenceCount = 1_000_000_000_000
+
+// validateMixDeclaration checks the optional reference mix and the safety
+// requirements for write workflows in a declared multi-workflow mix
+// (ADR 0171). A write workflow in a mix must use a synthetic data prefix and a
+// per-actor identity, so concurrent writes stay attributable and reversible.
+func validateMixDeclaration(s Scenario, profiles []PreparedProfile, dataPrefix string, perVUSessions bool, profileCookies map[string][]string) error {
+	if len(s.ProfileMixReferenceCounts) > 0 {
+		if len(s.Profiles) == 0 {
+			return errors.New("profile_mix_reference_counts requires explicit weighted profiles")
+		}
+		if s.ProfileMixBasis == "assumption" {
+			return errors.New("profile_mix_reference_counts requires a non-assumption profile_mix_basis and profile_mix_reference")
+		}
+		if len(s.ProfileMixReferenceCounts) != len(profiles) {
+			return errors.New("profile_mix_reference_counts must provide exactly one count per declared workflow")
+		}
+		var total int64
+		for _, profile := range profiles {
+			count, ok := s.ProfileMixReferenceCounts[profile.Name]
+			if !ok {
+				return fmt.Errorf("profile_mix_reference_counts is missing workflow %q", profile.Name)
+			}
+			if count < 0 || count > maxReferenceCount {
+				return fmt.Errorf("profile_mix_reference_counts for %q must be between 0 and %d", profile.Name, int64(maxReferenceCount))
+			}
+			total += count
+		}
+		if total < 1 {
+			return errors.New("profile_mix_reference_counts must contain at least one observation")
+		}
+	}
+	if len(s.Profiles) < 2 {
+		return nil
+	}
+	for _, profile := range profiles {
+		if !ProfileWrites(profile) {
+			continue
+		}
+		if dataPrefix == "" {
+			return fmt.Errorf("write workflow %q in a declared mix requires synthetic_data_prefix_env", profile.Name)
+		}
+		if !perVUSessions && len(profileCookies[profile.Name]) == 0 {
+			return fmt.Errorf("write workflow %q in a declared mix requires a per-actor identity (per_vu_cookie_env_prefix or profile_cookie_env_prefixes)", profile.Name)
+		}
+		if ProfileDataVariability(profile) != "synthetic_per_journey" {
+			return fmt.Errorf("write workflow %q in a declared mix must reference {{synthetic_id}} in a write step path, header or body", profile.Name)
+		}
+	}
+	return nil
+}
+
+// ProfileWrites reports whether a workflow contains a state-changing method.
+func ProfileWrites(profile PreparedProfile) bool {
+	for _, step := range profile.Steps {
+		if step.Method != "GET" && step.Method != "HEAD" {
+			return true
+		}
+	}
+	return false
+}
+
+// ProfileDataVariability derives the recorded data-variability label: a
+// workflow whose steps reference {{synthetic_id}} uses distinct synthetic data
+// per journey; otherwise its request data is fixed.
+func ProfileDataVariability(profile PreparedProfile) string {
+	const marker = "{{synthetic_id}}"
+	for _, step := range profile.Steps {
+		if strings.Contains(step.PathTemplate, marker) || strings.Contains(string(step.Body), marker) {
+			return "synthetic_per_journey"
+		}
+		for _, value := range step.Headers {
+			if strings.Contains(value, marker) {
+				return "synthetic_per_journey"
+			}
+		}
+	}
+	return "fixed"
 }

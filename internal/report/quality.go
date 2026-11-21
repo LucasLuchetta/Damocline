@@ -108,6 +108,11 @@ func AssessQuality(r Result) *Quality {
 	if !ValidEnvelope(r) {
 		invalidate("Load-envelope evidence is malformed, exceeds its ceilings or is not allowed by the report schema.")
 	}
+	if err := ValidProfileMix(r); err != nil {
+		invalidate("Workflow-mix evidence is malformed or does not match offline recomputation: " + err.Error() + ".")
+	} else if r.ProfileMix != nil && r.ProfileMix.State == MixDeviated {
+		limit("The executed workflow mix deviates from the declared weights; results do not describe the declared workload.")
+	}
 	if !ValidNetworkBaseline(r) {
 		invalidate("Network-path baseline evidence is malformed or not allowed by the report schema.")
 	} else if issue := NetworkBaselineIssue(r); issue != "" {

@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Record the executed workflow mix in run schema v40 (`profile_mix`): selected
+  starts and completed journeys per workflow, chi-square fits against the
+  declared weights (`MIX_MATCHED`, `MIX_DEVIATED`, `INSUFFICIENT_SAMPLES`), and
+  an optional comparison with user-provided `profile_mix_reference_counts`.
+  Readers recompute the evidence offline. Audit (assessment schema v7) now
+  assesses workload representativeness from it and lists blockers with
+  remediation. Write workflows in a declared mix now also require a synthetic
+  data prefix, a per-actor identity and `{{synthetic_id}}` (ADR 0171).
+
 - Add opt-in, read-only workload attribution to `damocline-sensor`:
   `--workload-descendants` measures the bounded process tree under
   `--workload-pid` (tree CPU cores, summed RSS, top processes, busiest

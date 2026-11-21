@@ -18,6 +18,7 @@ import (
 	"github.com/LucasLuchetta/Damocline/internal/config"
 	"github.com/LucasLuchetta/Damocline/internal/engine"
 	"github.com/LucasLuchetta/Damocline/internal/generatorhealth"
+	"github.com/LucasLuchetta/Damocline/internal/report"
 )
 
 type campaignProfileVerification struct {
@@ -211,7 +212,11 @@ func verifyCampaignProfile(profile campaignprofile.Profile, evidence campaign.Re
 				phaseConfig.Window = min(30*time.Second, want.Duration/4)
 				phaseConfig.Scenario.WindowDuration = phaseConfig.Window.String()
 			}
-			if !reflect.DeepEqual(engine.RunConfigFor(phaseConfig), phase.Run.Config) {
+			expected := engine.RunConfigFor(phaseConfig)
+			if phase.Run.SchemaVersion < report.ProfileMixSchemaVersion {
+				expected = report.WithoutProfileMixDeclarations(expected)
+			}
+			if !reflect.DeepEqual(expected, phase.Run.Config) {
 				addMismatch(fmt.Sprintf("trial %d phase %d workload and SLO controls", trial.Number, phaseIndex+1))
 				continue
 			}

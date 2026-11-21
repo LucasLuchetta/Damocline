@@ -148,6 +148,12 @@ func auditCmd(args []string, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stdout, "Recomputed measurement quality: %s\n", audit.MeasurementQuality)
 	fmt.Fprintf(stdout, "Required phases reviewed: %d\n", audit.RequiredPhases)
 	fmt.Fprintf(stdout, "Confidence dimensions: measurement=%s | workload representativeness=%s | decision=%s\n", assessment.Confidence.Measurement, assessment.Confidence.WorkloadRepresentativeness, assessment.Confidence.Decision)
+	if mix := assessment.Confidence.WorkloadMix; mix != nil {
+		fmt.Fprintf(stdout, "Workload mix: assessed=%t | executed mix=%s | reference=%s\n", mix.Assessed, mix.State, mix.ReferenceState)
+		for _, blocker := range mix.Blockers {
+			fmt.Fprintf(stdout, "  Workload-mix blocker (%s): %s Action: %s\n", blocker.Category, blocker.Finding, blocker.Action)
+		}
+	}
 	fmt.Fprintf(stdout, "Evidence ID: %s\n", audit.EvidenceID)
 	fmt.Fprintln(stdout, "Evidence ID scope: SHA-256 of canonical decoded campaign fields; it is not a hash of original file bytes, signature, or producer/host/target attestation.")
 	fmt.Fprintf(stdout, "Source file SHA-256: %s\n", audit.SourceFileSHA256)

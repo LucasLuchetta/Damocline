@@ -167,11 +167,14 @@ type ConfidenceDimensions struct {
 	WorkloadRepresentativeness string   `json:"workload_representativeness"`
 	Decision                   string   `json:"decision_confidence"`
 	Findings                   []string `json:"findings"`
+	// WorkloadMix is the executed-versus-declared workflow-mix assessment
+	// (assessment schema v7, ADR 0171).
+	WorkloadMix *WorkloadMixAssessment `json:"workload_mix,omitempty"`
 }
 
 func BuildAssessment(e campaign.Result, goal *capacitygoal.Goal) (Assessment, error) {
 	audit := AuditCampaign(e)
-	assessment := Assessment{SchemaVersion: 6, Audit: audit, Confidence: assessConfidence(e, audit), State: audit.State}
+	assessment := Assessment{SchemaVersion: AssessmentSchemaVersion, Audit: audit, Confidence: assessConfidence(e, audit), State: audit.State}
 	if goal != nil {
 		plan, err := Evaluate(e, *goal)
 		if err != nil {
@@ -238,9 +241,27 @@ func assessConfidence(e campaign.Result, audit CampaignAudit) ConfidenceDimensio
 			}
 		}
 	}
+	mix := assessWorkloadMix(e)
+	dimensions.WorkloadMix = &mix
 	if inconsistent {
 		dimensions.WorkloadRepresentativeness = "INCONSISTENT_DECLARATION"
 		dimensions.Findings = append(dimensions.Findings, "Profile-mix basis or reference changes between required phases; workload representativeness is not assessed.")
+	} else if mix.Assessed {
+		dimensions.WorkloadRepresentativeness = mix.State
+		switch mix.State {
+		case report.MixMatched:
+			dimensions.Findings = append(dimensions.Findings, "The executed workflow mix matches the declared weights in every required phase; this verifies execution of the declared mix, not that the declaration represents real demand.")
+		case report.MixDeviated:
+			dimensions.Findings = append(dimensions.Findings, "The executed workflow mix deviates from the declared weights in at least one required phase; results do not describe the declared workload.")
+		default:
+			dimensions.Findings = append(dimensions.Findings, "At least one required phase has too few journeys per workflow to assess the executed mix.")
+		}
+		switch mix.ReferenceState {
+		case report.ReferenceMatched:
+			dimensions.Findings = append(dimensions.Findings, "The declared mix is consistent with the user-provided reference counts; the reference itself is an unverified assumption.")
+		case report.ReferenceDeviated:
+			dimensions.Findings = append(dimensions.Findings, "The declared mix differs from the user-provided reference counts.")
+		}
 	} else if declared && !missing {
 		dimensions.WorkloadRepresentativeness = "DECLARED_UNVERIFIED"
 		dimensions.Findings = append(dimensions.Findings, fmt.Sprintf("Profile-mix basis %q and reference %q are declared, but no independent evidence verifies that they represent actual demand.", basis, reference))
@@ -248,6 +269,7 @@ func assessConfidence(e campaign.Result, audit CampaignAudit) ConfidenceDimensio
 		dimensions.Findings = append(dimensions.Findings, "Workload representativeness is not assessed because a complete profile-mix basis and reference are not recorded in every required phase.")
 	}
 	if audit.State == "INVALID_EVIDENCE" {
+		mix.Assessed, mix.State = false, "NOT_ASSESSED"
 		dimensions.WorkloadRepresentativeness = "NOT_ASSESSED"
 		dimensions.Decision = "INVALID_EVIDENCE"
 		dimensions.Findings = append(dimensions.Findings, "Source campaign evidence is invalid; workload representativeness cannot be assessed from it.")
