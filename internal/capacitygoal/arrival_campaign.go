@@ -331,7 +331,7 @@ func EvaluateJourneyCampaign(saved arrivalcampaign.Result, goal JourneyStartGoal
 		}
 		savedJSON, _ := json.Marshal(saved.P95Robustness)
 		derivedJSON, _ := json.Marshal(robustness)
-		if !bytes.Equal(savedJSON, derivedJSON) {
+		if !bytes.Equal(savedJSON, derivedJSON) && !matchesEarlierP95Pass(savedJSON, robustness) {
 			return JourneyStartAssessment{}, errors.New("saved p95 robustness verdict disagrees with native report data")
 		}
 	}
@@ -662,4 +662,21 @@ func campaignSLOBreach(run report.Result) bool {
 		}
 	}
 	return false
+}
+
+// matchesEarlierP95Pass verifies the original representation of a pass whose
+// only newly identified limitation is the unavailable repetition screen.
+// The caller still uses the current, conservative verdict for assessment.
+func matchesEarlierP95Pass(saved []byte, current arrivalcampaign.P95Robustness) bool {
+	if current.State != arrivalcampaign.P95Inconclusive ||
+		current.Independence.State != arrivalcampaign.TrendNotAssessed {
+		return false
+	}
+	if len(current.Reasons) != 1 || current.Reasons[0] != current.Independence.Reason {
+		return false
+	}
+	current.State = arrivalcampaign.P95RobustPass
+	current.Reasons = []string{}
+	earlier, _ := json.Marshal(current)
+	return bytes.Equal(saved, earlier)
 }

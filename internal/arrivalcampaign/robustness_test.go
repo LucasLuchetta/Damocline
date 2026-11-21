@@ -51,8 +51,8 @@ func TestMonotonicRepetitionDriftIsLimited(t *testing.T) {
 		t.Fatalf("tiny monotonic change must not be flagged: %+v", small)
 	}
 	two := AssessP95Robustness(robustnessFixture([]float64{200, 400}, 450, true))
-	if two.Independence.State != TrendNotAssessed {
-		t.Fatalf("two repetitions cannot be screened: %+v", two)
+	if two.Independence.State != TrendNotAssessed || two.State != P95Inconclusive || len(two.Reasons) == 0 {
+		t.Fatalf("two repetitions cannot establish a robust pass: %+v", two)
 	}
 }
 
