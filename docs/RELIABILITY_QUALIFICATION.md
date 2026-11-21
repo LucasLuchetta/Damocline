@@ -61,6 +61,9 @@ complete or independent of the code under test for every row.
       failures, timeouts, cancellation, worker and rate limits, and
       generator saturation.
 
+The [phantom-capacity protocol](REFERENCE_VALIDATION.md#phantom-capacity)
+checks whether underdelivery can earn a passing open-arrival phase verdict.
+
 ### RQ-3 (P0) — Representative applications
 
 **Status:** `NOT_STARTED`

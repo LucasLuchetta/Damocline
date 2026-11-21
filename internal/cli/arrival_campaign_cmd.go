@@ -38,7 +38,7 @@ func arrivalCampaignCmd(args []string, stdout, stderr io.Writer) int {
 	maxGeneratorCPU := fs.Float64("max-generator-cpu-percent", 0, "abort when sampled generator process CPU exceeds this percent of detected capacity (0 disables)")
 	maxGeneratorRSSMB := fs.Uint64("max-generator-rss-mb", 0, "abort when sampled generator process RSS exceeds this MiB limit (0 disables)")
 	guardrailSamples := fs.Int("resource-guardrail-samples", 2, "consecutive process samples required to trigger resource aborts (2-20)")
-	repeats := fs.Int("repeats", 2, "independent trials (2-5)")
+	repeats := fs.Int("repeats", 2, "independent trials (2-5; robust p95 requires at least 3 observations)")
 	minWindows := fs.Int("stability-min-windows", 3, "minimum complete windows for the drift screen (3-20)")
 	minSamples := fs.Int("stability-min-samples", 20, "minimum completed samples in each window (20-100000)")
 	maxP95IncreasePercent := fs.Float64("stability-max-p95-increase-percent", 20, "maximum p95 increase before drift is reported (>0-100)")
