@@ -22,8 +22,6 @@ func TestClosedAndOpenCampaignsMeasureSpikeAndRecoveryAgainstControlledServer(t 
 		server := newSpikeRecoveryServer(&saturated, &served)
 		defer server.Close()
 		base := integrationScenario(t, server.URL, 1, 100, "closed", 0)
-		base.Window = 1 * time.Second
-		base.Scenario.WindowDuration = base.Window.String()
 		stability := campaign.DefaultStabilityPolicy()
 		stability.MaxP95IncreasePercent = 100
 		stability.MaxP95IncreaseMS = 100
@@ -64,8 +62,6 @@ func TestClosedAndOpenCampaignsMeasureSpikeAndRecoveryAgainstControlledServer(t 
 		server := newSpikeRecoveryServer(&saturated, &served)
 		defer server.Close()
 		base := integrationScenario(t, server.URL, 30, 100, "arrival", 24)
-		base.Window = 1 * time.Second
-		base.Scenario.WindowDuration = base.Window.String()
 		stability := campaign.DefaultStabilityPolicy()
 		stability.MaxP95IncreasePercent = 100
 		stability.MaxP95IncreaseMS = 100
@@ -141,6 +137,10 @@ func newSpikeRecoveryServer(saturated *atomic.Bool, served *atomic.Int64) *httpt
 	}))
 }
 
+// integrationScenario keeps the default 2.5s windows so each baseline window
+// holds roughly 60-80 completed journeys (30ms service time, or 24 arrivals/s).
+// One-second windows held only 24-33 journeys, so a loaded host could push a
+// window below the 20-sample stability minimum and end the campaign early.
 func integrationScenario(t *testing.T, target string, users, maxRPS int, mode string, arrivalRate int) config.Validated {
 	t.Helper()
 	scenario := config.Scenario{

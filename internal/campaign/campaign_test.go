@@ -665,8 +665,12 @@ func TestNativeEngineCampaignRecordsStableLoopbackWindows(t *testing.T) {
 	// Keep enough drift tolerance for hosted-runner scheduling noise; deterministic
 	// tests above exercise the default policy thresholds and boundary behavior.
 	stability := DefaultStabilityPolicy()
-	stability.MaxP95IncreasePercent = 50
-	stability.MaxP95IncreaseMS = 20
+	// A single scheduler stall on a loaded host (observed: 21.6ms -> 54.2ms
+	// window p95 with a 20ms service time) is absolute, not proportional, so
+	// the absolute floor must exceed a stall while staying below a real
+	// regression of this controlled server.
+	stability.MaxP95IncreasePercent = 100
+	stability.MaxP95IncreaseMS = 60
 	stability.MaxThroughputDropPercent = 50
 	result, err := Run(context.Background(), v, Options{Observation: 10 * time.Second, Recovery: 10 * time.Second, Repeats: 2, Stability: stability})
 	if err != nil || result.Outcome != "PASS" || len(result.Trials) != 2 || received.Load() < 400 {
