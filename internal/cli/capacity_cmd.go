@@ -319,15 +319,28 @@ func capacityCmd(args []string, stdout, stderr io.Writer) int {
 			explicitExploreBudget = true
 		}
 	})
-	if exploreNeed > 15*time.Minute {
-		return fail(fmt.Errorf("explore needs about %s for %d stages (worst case %d probes including bracket refinement, x %d repeats) of %s plus %s per-stage overhead, above the 15m explore cap; lower --max-users for a shorter ladder or shorten the stages", exploreNeed.Round(time.Second), stages, probes, opt.Repeats, opt.StageDuration, overhead))
+	// The overhead above is each bound at its cap (for example the 30s
+	// network-baseline budget and the full drain allowance); real stages
+	// rarely approach it. Refuse only when even the expected plan (ladder
+	// levels without refinement, overhead capped at capacityExpectedOverhead)
+	// cannot fit. When only the worst case exceeds the cap, warn: the
+	// explorer enforces its budget itself and an early stop continues from
+	// the highest repeatedly passing level (ADR 0170).
+	expectedOverhead := min(overhead, capacityExpectedOverhead)
+	expectedNeed := time.Duration(len(ladder)*opt.Repeats) * (opt.StageDuration + expectedOverhead)
+	const exploreCap = 15 * time.Minute
+	if expectedNeed > exploreCap {
+		return fail(fmt.Errorf("explore needs about %s even without bracket refinement (%d levels x %d repeats of %s plus about %s expected overhead), above the 15m explore cap; lower --max-users for a shorter ladder or shorten the stages", expectedNeed.Round(time.Second), len(ladder), opt.Repeats, opt.StageDuration, expectedOverhead))
 	}
-	if *exploreBudget < exploreNeed {
-		if explicitExploreBudget {
-			return fail(fmt.Errorf("--explore-budget %s is too small for %d stages of %s plus %s overhead; use at least %s", *exploreBudget, stages, opt.StageDuration, overhead, exploreNeed.Round(time.Second)))
-		}
-		*exploreBudget = exploreNeed.Round(time.Second)
+	if *exploreBudget < expectedNeed && explicitExploreBudget {
+		return fail(fmt.Errorf("--explore-budget %s is too small for %d levels x %d repeats of %s plus about %s expected overhead; use at least %s", *exploreBudget, len(ladder), opt.Repeats, opt.StageDuration, expectedOverhead, expectedNeed.Round(time.Second)))
+	}
+	if !explicitExploreBudget && *exploreBudget < exploreNeed {
+		*exploreBudget = min(exploreCap, exploreNeed.Round(time.Second))
 		opt.Budget = *exploreBudget
+	}
+	if exploreNeed > *exploreBudget {
+		fmt.Fprintf(stdout, "WARNING: the worst-case explore plan (%s: %d stages including bracket refinement, each bound at its cap) exceeds the %s explore budget. The expected plan needs about %s. If explore stops early, capacity continues from the highest repeatedly passing level and states that higher levels were not explored.\n", exploreNeed.Round(time.Second), stages, *exploreBudget, expectedNeed.Round(time.Second))
 	}
 	calWall := time.Duration(0)
 	if *calibration == "" {

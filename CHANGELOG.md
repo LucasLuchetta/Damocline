@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Plan `damocline capacity` explore budgets from expected stage overhead,
+  refusing only when the expected plan exceeds the 15m cap and warning when
+  only the worst case does.
+
 - Warn during capacity planning when estimated delivery is at least 90% of
   the configured request-rate ceiling and exploration may be inconclusive. A
   reference collected near its own ceiling no longer supplies a throughput

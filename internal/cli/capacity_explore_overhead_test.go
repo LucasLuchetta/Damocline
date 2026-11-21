@@ -38,12 +38,26 @@ func TestCapacityStageOverheadUsesEngineBounds(t *testing.T) {
 	}
 }
 
-func TestCapacityRefusesExploreAboveCapWithProposal(t *testing.T) {
+// When only the worst case (every bound at its cap, plus refinement) exceeds
+// the explore cap, the plan proceeds with a warning: the explorer enforces
+// its own budget and an early stop continues from the highest passing level.
+func TestCapacityWarnsWhenOnlyWorstCaseExploreExceedsCap(t *testing.T) {
 	dir := t.TempDir()
 	scenario := writeCapacityScenario(t, dir, 100)
 	var out, errOut bytes.Buffer
 	code := capacityCmd([]string{"--config", scenario, "--dry-run", "--max-users", "128", "--extended-envelope", "--extended-load-authorized", "--target-class", "lab"}, &out, &errOut)
-	if code != 2 || !strings.Contains(errOut.String(), "above the 15m explore cap") || !strings.Contains(errOut.String(), "lower --max-users") {
-		t.Fatalf("oversized explore plan: %d %s %s", code, &out, &errOut)
+	if code != 0 || !strings.Contains(out.String(), "WARNING: the worst-case explore plan") || !strings.Contains(out.String(), "continues from the highest repeatedly passing level") {
+		t.Fatalf("worst-case-only overrun should warn and proceed: %d %s %s", code, &out, &errOut)
+	}
+}
+
+// When even the expected plan cannot fit, refuse before traffic.
+func TestCapacityRefusesExploreWhenExpectedPlanExceedsCap(t *testing.T) {
+	dir := t.TempDir()
+	scenario := writeCapacityScenario(t, dir, 100)
+	var out, errOut bytes.Buffer
+	code := capacityCmd([]string{"--config", scenario, "--dry-run", "--max-users", "500", "--calibration-level-duration", "3m", "--extended-envelope", "--extended-load-authorized", "--target-class", "lab"}, &out, &errOut)
+	if code == 0 {
+		t.Fatalf("an expected plan above the cap must be refused: %s %s", &out, &errOut)
 	}
 }
