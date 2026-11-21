@@ -111,7 +111,9 @@ func crosscheckCmd(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	fmt.Fprint(stdout, md)
-	if res.Overall == crosscheck.Mismatch {
+	// Only independently corroborated MATCH results may exit successfully.
+	// Treat missing/ambiguous evidence as non-approval, like a mismatch.
+	if res.Overall != crosscheck.Match {
 		return 1
 	}
 	return 0
