@@ -128,6 +128,8 @@ It distinguishes **meeting your p95/error objectives** from **proving user capac
 
 See [Understand your results](docs/REPORT_EXPLAINER.md) for interpretation, sample-size and comparison warnings. The command never sends traffic.
 
+To compare two `damocline capacity` results of the same scenario under the same load (for example before and after a code change), run `damocline compare --before reports/before --after reports/after [--out comparison.json --report-out comparison.md]`. It refuses campaigns whose scenario, load, envelope or pass criteria differ, and reports per-step p95, error-rate and throughput deltas as `IMPROVED`, `REGRESSED` or `INCONCLUSIVE` (difference within run-to-run spread across repetitions). See [ADR 0174](docs/adr/0174-offline-before-after-campaign-comparison.md).
+
 To share aggregate evidence, use `damocline report export --file run-campaign-or-exploration.json --out redacted.json`.
 This opt-in export aliases workflow and step names, removes destinations, routes,
 free text, fingerprints and absolute timestamps, and emits a separate descriptive

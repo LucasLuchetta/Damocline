@@ -78,6 +78,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return auditCmd(args[1:], stdout, stderr)
 	case "capacity":
 		return capacityCmd(args[1:], stdout, stderr)
+	case "compare":
+		return compareCmd(args[1:], stdout, stderr)
 	case "import-har":
 		return importHARCmd(args[1:], stdout, stderr)
 	case "protocol":
@@ -120,6 +122,7 @@ Usage:
   damocline /history # select and repeat a previous saved scenario
   damocline start    # original guided wizard
   damocline report --file run.json [--compare previous.json] [--host host.json]
+  damocline compare --before DIR|campaign.json --after DIR|campaign.json [--out comparison.json] [--report-out comparison.md]
 	  damocline report export --file run-or-campaign.json --out redacted.json
 	  damocline report save --file artifact.json [--dir .damocline/reports]
 	  damocline report history [--dir .damocline/reports]
