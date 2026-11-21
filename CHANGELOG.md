@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- `damocline capacity` no longer discards repeatedly passing explore levels
+  when explore ends INCONCLUSIVE: it continues the sustained campaign from
+  the highest repeatedly passing level and states which higher levels are
+  unresolved and why. The pre-load network-path baseline is retried once
+  after a short settle wait when a first attempt partially failed; the
+  retry is recorded as `retried_after_failures` (ADR 0180).
+
 - `damocline capacity` step-downs now bisect over the repeatedly passing
   explore levels (at most three campaigns) and run a recovery gate before
   each: a bounded cooldown plus network-path probes that must return near

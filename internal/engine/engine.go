@@ -314,7 +314,7 @@ func runWithTransportAndIdentity(parent context.Context, v config.Validated, tra
 	}
 	// The bounded network-path baseline (ADR 0153) runs sequentially before
 	// the load observation starts and is excluded from every load counter.
-	networkBaseline := runNetworkBaseline(parent, v.NetworkBaseline, transport)
+	networkBaseline := runPreLoadNetworkBaseline(parent, v.NetworkBaseline, transport)
 	started := time.Now()
 	scheduleDeadline := started.Add(v.Duration)
 	// Stop admitting new work at the configured boundary, then allow any

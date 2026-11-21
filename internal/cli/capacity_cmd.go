@@ -81,8 +81,8 @@ func capacityObservation(
 	if users < 1 {
 		return 0, 0, errors.New("explore recorded no reproducible passing capacity bracket")
 	}
-	if result.Outcome == "ABORTED" {
-		fmt.Fprintf(w, "Explore stopped early (ABORTED); continuing with the highest repeatedly passing level %d VUs. Levels above it were not explored.\n", *result.HighestPassingUsers)
+	if note := capacityUnresolvedNote(result); note != "" {
+		fmt.Fprintln(w, note)
 	}
 	window, err := capacityObservationAt(w, result, v, maxUsers, users, required)
 	return users, window, err
@@ -148,7 +148,7 @@ func capacityObservationAt(
 }
 
 func capacityPassingLevel(result explorer.Result, extended bool) int {
-	if result.HighestPassingUsers != nil && (result.Outcome == "BRACKETED" || result.Outcome == "PASSED_TO_CONFIGURED_CEILING" || result.Outcome == "ABORTED") {
+	if result.HighestPassingUsers != nil && (result.Outcome == "BRACKETED" || result.Outcome == "PASSED_TO_CONFIGURED_CEILING" || result.Outcome == "ABORTED" || result.Outcome == "INCONCLUSIVE") {
 		return *result.HighestPassingUsers
 	}
 	if extended && result.Outcome == "INCONCLUSIVE" && strings.HasPrefix(result.Reason, explorer.UncalibratedRefinementReason) {
@@ -161,6 +161,16 @@ func capacityPassingLevel(result explorer.Result, extended bool) int {
 		return users
 	}
 	return 0
+}
+
+// capacityUnresolvedNote explains, for an exploration that stopped ABORTED or
+// INCONCLUSIVE after a repeatedly passing level, which levels stayed
+// unresolved and why. It is empty for a resolved exploration.
+func capacityUnresolvedNote(result explorer.Result) string {
+	if result.HighestPassingUsers == nil || (result.Outcome != "ABORTED" && result.Outcome != "INCONCLUSIVE") {
+		return ""
+	}
+	return fmt.Sprintf("Explore stopped early (%s); continuing with the highest repeatedly passing level %d VUs. Levels above it are unresolved and were not concluded as passing or failing. Reason: %s", result.Outcome, *result.HighestPassingUsers, strings.TrimSpace(result.Reason))
 }
 
 func secsInvalid(seconds float64) bool {

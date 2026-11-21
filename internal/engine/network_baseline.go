@@ -98,6 +98,38 @@ func runNetworkBaseline(ctx context.Context, plan *config.NetworkBaselinePlan, t
 	return out
 }
 
+// networkBaselineSettle is the wait before the single pre-load baseline retry.
+// It is a variable so tests can shorten it.
+var networkBaselineSettle = 2 * time.Second
+
+// runPreLoadNetworkBaseline runs the pre-load baseline and, when the attempt
+// had transport failures but at least one completed request and no request
+// left unattempted, waits a short settle period and repeats the whole bounded
+// baseline exactly once (ADR 0180). Both attempts share the plan's single
+// wall budget, so the retry never extends the bounded pre-load time; a retry
+// cut short by the budget records not-attempted requests and keeps the
+// baseline issue. A single transient failure right after a
+// previous loaded stage then does not invalidate the run, while a genuinely
+// bad path still fails both attempts. The recorded baseline is the retry, and
+// it carries the first attempt's failure count so the retry stays visible.
+func runPreLoadNetworkBaseline(ctx context.Context, plan *config.NetworkBaselinePlan, transport *http.Transport) *report.NetworkBaseline {
+	if plan != nil && plan.WallBudget > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, plan.WallBudget)
+		defer cancel()
+	}
+	first := runNetworkBaseline(ctx, plan, transport)
+	if first == nil || first.Status != report.NetworkBaselineMeasured || first.Failures == 0 || first.Completed == 0 || first.NotAttempted > 0 {
+		return first
+	}
+	if !sleep(ctx, networkBaselineSettle) {
+		return first
+	}
+	retry := runNetworkBaseline(ctx, plan, transport)
+	retry.RetriedAfterFailures = first.Failures
+	return retry
+}
+
 // ProbeNetworkPath runs the same bounded, sequential, credential-free
 // network-path probe outside a load run. The capacity protocol uses it as a
 // recovery gate between sustained campaigns (ADR 0179); it never runs
