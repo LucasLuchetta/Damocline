@@ -13,6 +13,7 @@ import (
 func SetCapacityStageFloorsForTest(exploreStage, warmup, recovery time.Duration) func() {
 	previous := capacityTiming
 	capacityTiming.ExploreStage, capacityTiming.Warmup, capacityTiming.Recovery = exploreStage, warmup, recovery
+	capacityTiming.SettleWindowMin = 2 * time.Second
 	return func() { capacityTiming = previous }
 }
 

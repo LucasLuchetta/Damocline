@@ -208,7 +208,9 @@ func capacityExploreStage(s config.Scenario, minUsers int, referencePath string)
 // them, and always within the explore and campaign validators.
 var capacityTiming = struct {
 	ExploreStage, Warmup, Recovery time.Duration
-}{ExploreStage: 20 * time.Second, Warmup: 10 * time.Second, Recovery: 15 * time.Second}
+	// SettleWindowMin is the shortest warm-up settling window (ADR 0184).
+	SettleWindowMin time.Duration
+}{ExploreStage: 20 * time.Second, Warmup: 10 * time.Second, Recovery: 15 * time.Second, SettleWindowMin: 5 * time.Second}
 
 // capacityStageSetupAllowance covers per-stage process, report and
 // connection setup outside the engine's own bounded phases.

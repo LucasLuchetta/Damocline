@@ -529,8 +529,17 @@ func capacityCmd(args []string, stdout, stderr io.Writer) int {
 		options := campaignOptions
 		options.Observation = max(10*time.Second, 3*window)
 		options.Recovery = max(capacityTiming.Recovery, window)
+		var floor time.Duration
+		var cycle float64
+		options.Warmup, floor, cycle, options.WarmupSettling = capacityWarmup(result, level, v.RampUp, window)
 		schedule := options
 		schedule.Budget = 0
+		// Shrink a sized warm-up toward its settling floor only as far as
+		// the wall cap requires; the settling check still verifies it.
+		for options.Warmup-options.WarmupSettling.Window() >= floor && campaign.PlannedBudget(schedule)+baselineAllowance > options.Budget {
+			options.Warmup -= options.WarmupSettling.Window()
+			schedule.Warmup = options.Warmup
+		}
 		minimumBudget := campaign.PlannedBudget(schedule) + baselineAllowance
 		fmt.Fprintf(stdout, "Minimum campaign wall budget at %d VUs including six network preflights and bounded drains: %s.\n", level, minimumBudget)
 		if options.Budget < minimumBudget {
@@ -541,6 +550,7 @@ func capacityCmd(args []string, stdout, stderr io.Writer) int {
 		}
 		fmt.Fprintf(stdout, "Campaign at %d VUs: two trials of %s warm-up, %s observation and %s recovery, using %s windows and a %s wall cap.\n",
 			level, options.Warmup, options.Observation, options.Recovery, window, *budget)
+		fmt.Fprintln(stdout, capacityWarmupPlanLine(options, v.RampUp, cycle, floor))
 		return options, nil
 	}
 	firstOptions, err := planLevel(users, window)
@@ -584,6 +594,7 @@ func capacityCmd(args []string, stdout, stderr io.Writer) int {
 				"--warmup", options.Warmup.String(), "--observation", options.Observation.String(),
 				"--recovery", options.Recovery.String(), "--budget", budget.String(),
 			}
+			campaignArgs = append(campaignArgs, warmupSettlingArgs(options.WarmupSettling)...)
 			campaignCalibration := *calibration
 			if *extended {
 				campaignCalibration = exploreCalibration
@@ -612,6 +623,7 @@ func capacityCmd(args []string, stdout, stderr io.Writer) int {
 			return evidence, path, 2, errors.New("preserved interrupted campaign; use --resume --authorized to repeat it with a fresh schedule")
 		}
 		if evidence.BaseUsers != level || evidence.Observation != options.Observation.String() ||
+			evidence.Warmup != options.Warmup.String() || !sameWarmupSettling(evidence.WarmupSettling, options.WarmupSettling) ||
 			evidence.Recovery != options.Recovery.String() || evidence.Budget != budget.String() ||
 			evidence.Objectives == nil || evidence.Objectives.WindowDuration != window.String() ||
 			evidence.Objectives.MaxJourneyErrorRate != v.Scenario.MaxErrorRate {

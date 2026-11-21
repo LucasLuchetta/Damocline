@@ -99,8 +99,11 @@ func effectiveStabilityPolicy(policy StabilityPolicy) StabilityPolicy {
 }
 
 type Options struct {
-	WorkloadSource     *WorkloadSource
-	Warmup             time.Duration
+	WorkloadSource *WorkloadSource
+	Warmup         time.Duration
+	// WarmupSettling, when enabled, windows the warm-up and requires its
+	// final windows' p95 to settle before judged phases start (ADR 0184).
+	WarmupSettling     WarmupSettlingPolicy
 	Stabilization      time.Duration
 	Observation        time.Duration
 	SpikeUsers         int
@@ -199,6 +202,9 @@ type Phase struct {
 	// StabilityBaselineWindow is the zero-based observation window used as
 	// the drift-screen reference (schema v17+); 0 is the first window.
 	StabilityBaselineWindow int `json:"stability_baseline_window,omitempty"`
+	// Settling is the warm-up settling verdict recomputable from the
+	// warm-up run's windows (ADR 0184); only set on a settled warm-up.
+	Settling *SettlingAssessment `json:"settling,omitempty"`
 }
 
 type Trial struct {
@@ -222,6 +228,7 @@ type Result struct {
 	Target                 string                          `json:"target"`
 	StartedAt              string                          `json:"started_at"`
 	Warmup                 string                          `json:"warmup"`
+	WarmupSettling         *WarmupSettlingPolicy           `json:"warmup_settling,omitempty"`
 	Stabilization          string                          `json:"stabilization,omitempty"`
 	Observation            string                          `json:"observation"`
 	SpikeUsers             int                             `json:"spike_users,omitempty"`
@@ -348,6 +355,9 @@ func Validate(options Options) error {
 	}
 	if options.Warmup < 0 || options.Warmup > 3*time.Minute || options.Recovery <= 0 || options.Recovery > 3*time.Minute {
 		return fmt.Errorf("warmup must be between 0 and 3m and recovery must be greater than 0 and at most 3m")
+	}
+	if err := ValidateWarmupSettlingPolicy(options.WarmupSettling, options.Warmup); err != nil {
+		return err
 	}
 	if options.Stabilization < 0 || options.Stabilization > stabilizationLimit || (options.Stabilization > 0 && options.Stabilization < 10*time.Second) {
 		return fmt.Errorf("stabilization must be between 10s and %s when enabled", stabilizationLimit)
@@ -553,6 +563,7 @@ func WithRunnerProgress(ctx context.Context, base config.Validated, options Opti
 		Target:               base.Base.Scheme + "://" + base.Base.Host,
 		StartedAt:            time.Now().UTC().Format(time.RFC3339),
 		Warmup:               options.Warmup.String(),
+		WarmupSettling:       settlingPolicyRecord(options.WarmupSettling),
 		Stabilization:        options.Stabilization.String(),
 		Observation:          options.Observation.String(),
 		SpikeUsers:           options.SpikeUsers,
@@ -645,6 +656,10 @@ func WithRunnerProgress(ctx context.Context, base config.Validated, options Opti
 			if v.RampUp != base.RampUp {
 				v.Scenario.RampUp = v.RampUp.String()
 			}
+			if phase.Name == "warmup" && options.WarmupSettling.Enabled() {
+				v.Window = options.WarmupSettling.Window()
+				v.Scenario.WindowDuration = v.Window.String()
+			}
 			if phase.Name != "warmup" && v.Window == 0 && phase.Duration >= 4*time.Second {
 				v.Window = min(30*time.Second, phase.Duration/4)
 				v.Scenario.WindowDuration = v.Window.String()
@@ -668,7 +683,12 @@ func WithRunnerProgress(ctx context.Context, base config.Validated, options Opti
 			if phase.Name == "stabilization" || phase.Name == "observation" || phase.Name == "soak" {
 				stability, baselineWindow = AssessStabilityWithBaseline(run, options.Stability, DriftBaselineSkipLightLeadingWindow)
 			}
-			trial.Phases = append(trial.Phases, Phase{Name: phase.Name, EvidenceState: state, Reason: reason, Stability: stability, Run: run, HostTelemetry: hostTelemetry, RampUp: v.RampUp.String(), StabilityBaselineWindow: baselineWindow})
+			var settling *SettlingAssessment
+			if phase.Name == "warmup" && options.WarmupSettling.Enabled() && SettlingApplies(run, state) {
+				assessment := AssessWarmupSettling(run, options.WarmupSettling)
+				settling = &assessment
+			}
+			trial.Phases = append(trial.Phases, Phase{Name: phase.Name, EvidenceState: state, Reason: reason, Stability: stability, Run: run, HostTelemetry: hostTelemetry, RampUp: v.RampUp.String(), StabilityBaselineWindow: baselineWindow, Settling: settling})
 			if err := checkpoint(trial); err != nil {
 				return result, err
 			}
@@ -697,6 +717,11 @@ func WithRunnerProgress(ctx context.Context, base config.Validated, options Opti
 						}
 					}
 				}
+				break
+			}
+			if settling != nil && settling.State != SettlingStabilized {
+				trial.Outcome = "INCONCLUSIVE"
+				result.Notes = append(result.Notes, fmt.Sprintf("Trial %d warm-up %s: %s", trial.Number, settling.State, settling.Reason))
 				break
 			}
 			if state == "INSUFFICIENT_EVIDENCE" && phase.Required {

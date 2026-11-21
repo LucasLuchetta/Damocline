@@ -703,6 +703,10 @@ func campaignCmdWithWorkloadSource(args []string, source *campaign.WorkloadSourc
 	fs.SetOutput(stderr)
 	filename := fs.String("config", "", "scenario JSON")
 	warmup := fs.Duration("warmup", 30*time.Second, "warm-up duration (0s-3m)")
+	settleWindow := fs.Duration("warmup-settle-window", 0, "optional warm-up settling window (2s-30s, whole seconds); the warm-up must end with settled p95 or the trial is INCONCLUSIVE (0 disables)")
+	settlePercent := fs.Float64("warmup-settle-tolerance-percent", 25, "maximum p95 change between consecutive warm-up settling windows, percent (>0-100)")
+	settleMS := fs.Float64("warmup-settle-tolerance-ms", 50, "absolute p95 change always tolerated between settling windows (0-10000 ms)")
+	settleConsecutive := fs.Int("warmup-settle-consecutive", 2, "consecutive within-tolerance settling comparisons that must end the warm-up (1-10)")
 	stabilization := fs.Duration("stabilization", 0, "optional bounded active stability screen before observation (10s-3m; long-run up to 30m)")
 	observation := fs.Duration("observation", 2*time.Minute, "steady observation duration (10s-10m)")
 	spikeUsers := fs.Int("spike-users", 0, "optional peak virtual users above the base scenario")
@@ -776,8 +780,9 @@ func campaignCmdWithWorkloadSource(args []string, source *campaign.WorkloadSourc
 		guardrails.ConsecutiveSamples = *guardrailSamples
 	}
 	options := campaign.Options{WorkloadSource: source, Warmup: *warmup, Stabilization: *stabilization, Observation: *observation, SpikeUsers: *spikeUsers, SpikeDuration: *spikeDuration, Recovery: *recovery, Soak: *soak, Cooldown: *cooldown, Repeats: *repeats, Budget: *budget,
-		Guardrails: guardrails,
-		LongRun:    *longRun, StagingConfirmed: *stagingConfirmed,
+		Guardrails:     guardrails,
+		WarmupSettling: warmupSettlingFromFlags(*settleWindow, *settlePercent, *settleMS, *settleConsecutive, *minSamples),
+		LongRun:        *longRun, StagingConfirmed: *stagingConfirmed,
 		Stability:          campaign.StabilityPolicy{MinimumWindows: *minWindows, MinimumSamplesPerWindow: *minSamples, MaxP95IncreasePercent: *maxP95IncreasePercent, MaxP95IncreaseMS: *maxP95IncreaseMS, MaxThroughputDropPercent: *maxThroughputDropPercent},
 		HostSensorEndpoint: *hostSensorEndpoint, HostSensorToken: hostSensorToken, HostSensorInterval: configuredHostSensorInterval}
 	if extendedRequest != nil {
@@ -907,6 +912,9 @@ func campaignCmdWithWorkloadSource(args []string, source *campaign.WorkloadSourc
 	}
 	fmt.Fprintf(stdout, "Campaign: %s | %s://%s | warm-up %s | stabilization %s | observation %s | spike %d VUs for %s | recovery %s | final soak %s | repeats %d | cooldown %s | wall-time cap %s\n", validated.Scenario.Name, validated.Base.Scheme, validated.Base.Host, options.Warmup, options.Stabilization, options.Observation, options.SpikeUsers, options.SpikeDuration, options.Recovery, options.Soak, options.Repeats, options.Cooldown, campaign.PlannedBudget(options))
 	fmt.Fprintf(stdout, "Drift screen: >=%d windows, >=%d samples/window, p95 increase >%.1f%% and >%.1fms, throughput decrease >%.1f%%\n", options.Stability.MinimumWindows, options.Stability.MinimumSamplesPerWindow, options.Stability.MaxP95IncreasePercent, options.Stability.MaxP95IncreaseMS, options.Stability.MaxThroughputDropPercent)
+	if options.WarmupSettling.Enabled() {
+		fmt.Fprintln(stdout, warmupSettlingPlanLine(options))
+	}
 	if options.LongRun {
 		fmt.Fprintln(stdout, "LONG-RUN MODE: explicit opt-in; environment declared staging (user-provided, not independently verified).")
 	}

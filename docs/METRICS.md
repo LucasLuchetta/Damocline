@@ -152,7 +152,7 @@ Closed-loop and open-loop models answer different questions and should be select
 
 - Authorized target identifiers and sanitized scenario revision.
 - Environment assumptions (machine size, application version, data size, deployment topology where known).
-- Test duration and configured ramp-up. Campaign reports preserve warm-up, observation, optional spike and recovery; schema-v4 can add one 10-second to 3-minute soak after all independent trials pass, and schema-v5 records the bounded coarse drift policy used for observation/soak windows. Neither is a predeclared long soak or stationarity test.
+- Test duration and configured ramp-up. Campaign reports preserve warm-up, observation, optional spike and recovery; schema-v4 can add one 10-second to 3-minute soak after all independent trials pass, and schema-v5 records the bounded coarse drift policy used for observation/soak windows. Neither is a predeclared long soak or stationarity test. An optional warm-up settling policy (ADR 0184) windows the warm-up and requires its last consecutive request, journey and step p95 changes to stay within a declared tolerance; a warm-up that does not settle ends the trial `INCONCLUSIVE` before judged phases. This is a bounded screen of the start-up transient, not a stationarity test, and warm-up windows are never judged against the SLO.
 - Requested and achieved load; scheduled, started, completed, and dropped work.
 - Request and journey p50/p95/p99 latency, counts, error rates, and timeouts.
 - Criteria for passing, including latency and business-operation error budgets.

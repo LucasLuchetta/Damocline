@@ -850,6 +850,16 @@ func validatePartialStageEvidence(evidence campaign.Result) error {
 			if err := validatePhaseRampUp(evidence, trial, phaseIndex); err != nil {
 				return err
 			}
+			unsettled, err := validateWarmupSettling(evidence, trial.Number, phase, state)
+			if err != nil {
+				return err
+			}
+			if unsettled {
+				if phaseIndex != len(trial.Phases)-1 {
+					return errors.New("an unsettled warm-up is followed by additional phases")
+				}
+				terminalCause = true
+			}
 			if phase.EvidenceState != state || (phase.Name == "stabilization" || phase.Name == "observation" || phase.Name == "soak") && phase.Stability != stability {
 				return fmt.Errorf("trial %d has stale or altered %s phase evidence", trial.Number, phase.Name)
 			}
@@ -1198,4 +1208,27 @@ func ValidateCampaignEnvelope(evidence campaign.Result) error {
 		}
 	}
 	return nil
+}
+
+// validateWarmupSettling recomputes a warm-up settling verdict from the
+// warm-up run's own windows and the saved policy (ADR 0184). It reports
+// whether the warm-up failed to settle, which is a terminal limitation.
+func validateWarmupSettling(evidence campaign.Result, trial int, phase campaign.Phase, state string) (bool, error) {
+	var want *campaign.SettlingAssessment
+	if phase.Name == "warmup" && evidence.WarmupSettling != nil && campaign.SettlingApplies(phase.Run, state) {
+		assessment := campaign.AssessWarmupSettling(phase.Run, *evidence.WarmupSettling)
+		want = &assessment
+	}
+	left, err := json.Marshal(phase.Settling)
+	if err != nil {
+		return false, err
+	}
+	right, err := json.Marshal(want)
+	if err != nil {
+		return false, err
+	}
+	if string(left) != string(right) {
+		return false, fmt.Errorf("trial %d has a stale or altered warm-up settling verdict", trial)
+	}
+	return want != nil && want.State != campaign.SettlingStabilized, nil
 }

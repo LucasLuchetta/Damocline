@@ -51,6 +51,9 @@ func renderCampaignCapacityReport(assessment capacityplan.Assessment, source str
 	}
 	fmt.Fprintln(&b, "- **Evidence ID scope:** SHA-256 of canonical decoded campaign fields; it identifies the fields interpreted by this reader. The source file SHA-256 separately covers the exact input bytes, including whitespace and fields unknown to this reader. Neither digest is a signature or producer/host/target attestation.")
 	fmt.Fprintf(&b, "- **Campaign schedule:** warm-up %s; stabilization %s; observation %s; spike %d users for %s; recovery %s; soak %s; cooldown %s; repeats %d; wall-time budget %s\n", markdownOptionalDuration(evidence.Warmup), markdownOptionalDuration(evidence.Stabilization), markdownOptionalDuration(evidence.Observation), evidence.SpikeUsers, markdownOptionalDuration(evidence.SpikeDuration), markdownOptionalDuration(evidence.Recovery), markdownOptionalDuration(evidence.Soak), markdownOptionalDuration(evidence.Cooldown), evidence.Repeats, markdownOptionalDuration(evidence.Budget))
+	for _, line := range warmupSettlingSentences(evidence) {
+		fmt.Fprintf(&b, "- **Warm-up:** %s\n", markdownText(line))
+	}
 	stability := evidence.EffectiveStabilityPolicy()
 	policySource := "persisted"
 	if evidence.SchemaVersion < 11 || evidence.StabilityPolicy == nil {

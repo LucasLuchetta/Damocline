@@ -580,6 +580,9 @@ func campaignLevelSchedule(e campaign.Result) (campaign.Options, []campaign.Plan
 	if e.SchemaVersion >= 7 && e.GeneratorGuardrails != nil {
 		options.Guardrails = *e.GeneratorGuardrails
 	}
+	if e.WarmupSettling != nil {
+		options.WarmupSettling = *e.WarmupSettling
+	}
 	if err := campaign.Validate(options); err != nil {
 		if !(e.SchemaVersion < 4 && options.Budget > 0 && options.Budget <= 15*time.Minute && options.Budget >= time.Duration(options.Repeats)*(options.Warmup+options.Observation+options.SpikeDuration+options.Recovery)) {
 			return campaign.Options{}, nil, fmt.Errorf("invalid campaign schedule: %w", err)
