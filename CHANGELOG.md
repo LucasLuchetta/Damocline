@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Add `--min-users` to `damocline capacity` to start the exploration
+  ladder at a higher level.
+
 - Plan `damocline capacity` explore budgets from expected stage overhead,
   refusing only when the expected plan exceeds the 15m cap and warning when
   only the worst case does.

@@ -175,6 +175,7 @@ func capacityCmd(args []string, stdout, stderr io.Writer) int {
 	dir := fs.String("output-dir", "", "private directory for protocol artifacts")
 	existing := fs.String("explore-file", "", "previous matching exploration used for offline dry-run")
 	maxUsers := fs.Int("max-users", 20, "maximum VUs for exploration")
+	minUsers := fs.Int("min-users", 2, "first VU level of the exploration ladder (use a higher start when lower levels are already known to pass)")
 	exploreBudget := fs.Duration("explore-budget", 8*time.Minute, "exploration wall cap")
 	budget := fs.Duration("budget", 12*time.Minute, "campaign wall cap including drain and network preflights")
 	calibration := fs.String("calibration", "", "existing calibration artifact")
@@ -257,7 +258,10 @@ func capacityCmd(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return fail(err)
 	}
-	opt := explorer.Options{MinUsers: min(2, *maxUsers), MaxUsers: *maxUsers, Repeats: 2, StageDuration: capacityTiming.ExploreStage, Budget: *exploreBudget}
+	if *minUsers < 1 || *minUsers > *maxUsers {
+		return fail(errors.New("--min-users must be between 1 and --max-users"))
+	}
+	opt := explorer.Options{MinUsers: *minUsers, MaxUsers: *maxUsers, Repeats: 2, StageDuration: capacityTiming.ExploreStage, Budget: *exploreBudget}
 	if stage, ok := capacityExploreStage(scenario, opt.MinUsers, *referenceReport); ok {
 		opt.StageDuration = stage
 	}
