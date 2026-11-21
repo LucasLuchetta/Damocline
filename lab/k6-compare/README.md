@@ -129,9 +129,10 @@ larger p95 compared with its Apache slice. Client and server p95 use
 different timing boundaries.
 
 Evidence remains in gitignored `.damocline/rq3-wordpress-*/`, including the
-scenario, generated k6 script, client reports, Apache slices, persisted
-post check, and offline comparisons. The run checks one read operation
-under an imposed request ceiling on one host. This qualifies a comparison
+declared protocol, pair outcomes, scenario, generated k6 script, client
+reports, Apache slices, persisted post check, and offline comparisons.
+The run checks one read operation under an imposed request ceiling on
+one host. This qualifies a comparison
 procedure for RQ-3 and leaves sustainable capacity, representative
 multi-journey traffic and independent network environments to later phases.
 
@@ -162,3 +163,62 @@ This is a two-run baseline for the comparison procedure. Damocline
 reported limited measurement quality near the configured client ceiling
 and without workload calibration. Repeated campaigns, order effects,
 separate hosts, and capacity conclusions remain open.
+
+### Counterbalanced order experiment
+
+```sh
+python lab/k6-compare/verify-wordpress-baseline.py --counterbalance
+```
+
+The mode declares four pairs in AB/BA/BA/AB order before building or
+measuring. A is Damocline and B is k6. Each pair uses a fresh Compose
+project and the same five-read warm-up before each 30-second window.
+Both Go binaries are built before the first pair. Keep other local
+builds or load tests idle during the experiment.
+
+The mode uses a 100 requests/s ceiling per client to reduce the effect
+of pacing. It requires fewer than 80 observed requests/s per client
+and at most 1.5 seconds of aggregate Damocline rate wait in the
+30-second window. A single closed-loop VU matches concurrency. The
+delivered counts and request timing can still differ between clients.
+The mode checks exact per-client Apache ledgers, at least 100 requests
+per client, zero business-check failures, the existing p95 objective
+and client-to-Apache p95 tolerance. It retains the external comparator
+classification as a diagnostic, including disagreements across windows.
+Docker CPU samples for WordPress and MariaDB are captured during each
+run, with MariaDB status snapshots immediately before and after. The
+request-ceiling screen does not establish that the target had spare CPU.
+
+The first counterbalanced set used one Docker host with no simultaneous
+Go builds. All eight client ledgers matched the Apache counts exactly.
+All windows met the request-ceiling screen.
+
+| Pair | Order | Requests, first / second | Apache p95, first / second |
+| --- | --- | ---: | ---: |
+| 1 | Damocline → k6 | 799 / 560 | 63.13 / 91.65 ms |
+| 2 | k6 → Damocline | 784 / 913 | 60.48 / 38.56 ms |
+| 3 | k6 → Damocline | 914 / 922 | 39.03 / 36.12 ms |
+| 4 | Damocline → k6 | 922 / 905 | 36.95 / 36.78 ms |
+
+The second window was slower in pair 1, faster in pairs 2 and 3, and
+nearly unchanged in pair 4. The InnoDB physical-read counter did not
+increase in any window. This set does not support a consistent
+second-window advantage. Host state, application warm-up, and other
+sources of variability were not isolated. Four pairs on one host
+cannot establish statistical latency equivalence or sustainable capacity.
+
+### Assertion-aware replay
+
+The earlier wrong-marker loopback control returned HTTP 200 for every
+request. Damocline failed 50 business assertions and k6 failed all 51
+checks, with `http_req_failed=0`. The comparator initially returned
+`true`. The fix in [PR #234](https://github.com/LucasLuchetta/Damocline/pull/234)
+made the same artifact return `false` and added the workload-matched
+check contract.
+
+The original 10 requests/s WordPress baseline was rerun with that fix.
+Apache matched 300 Damocline requests and 301 k6 requests. Damocline
+passed all 300 reads, k6 passed all 301 named workload checks, and the
+comparator emitted `k6_would_pass=true`. Apache p95 was 47.71 ms in the
+Damocline window and 39.91 ms in the k6 window. The access-log cross-check
+was `MATCH` and the external comparator was `EXPLAINABLE_DIFFERENCE`.
