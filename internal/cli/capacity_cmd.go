@@ -84,8 +84,17 @@ func capacityObservation(
 	if result.Outcome == "ABORTED" {
 		fmt.Fprintf(w, "Explore stopped early (ABORTED); continuing with the highest repeatedly passing level %d VUs. Levels above it were not explored.\n", *result.HighestPassingUsers)
 	}
+	window, err := capacityObservationAt(w, result, v, maxUsers, users, required)
+	return users, window, err
+}
+
+// capacityObservationAt sizes the observation window for one repeatedly
+// passing explore level from that level's own measured delivery rates.
+func capacityObservationAt(
+	w io.Writer, result explorer.Result, v config.Validated, maxUsers, users, required int,
+) (time.Duration, error) {
 	if users > maxUsers || result.Repeats < 2 || result.Repeats > 4 {
-		return 0, 0, errors.New("explore evidence is outside the declared capacity controls")
+		return 0, errors.New("explore evidence is outside the declared capacity controls")
 	}
 	slowest := math.Inf(1)
 	for _, probe := range result.Probes {
@@ -102,7 +111,7 @@ func capacityObservation(
 				run.Config.JourneyP95LimitMS != v.Scenario.JourneyP95LimitMS || run.Config.MaxErrorRate != v.Scenario.MaxErrorRate ||
 				run.Outcome != "PASS" || run.ElapsedSeconds <= 0 ||
 				len(run.Steps) != len(v.Steps) || len(run.Profiles) != len(v.Scenario.Profiles) {
-				return 0, 0, errors.New("explore trial does not match the scenario, target, or passing level")
+				return 0, errors.New("explore trial does not match the scenario, target, or passing level")
 			}
 			consider := func(label string, count int) {
 				rate := float64(count) / run.ElapsedSeconds
@@ -116,7 +125,7 @@ func capacityObservation(
 			for _, step := range v.Steps {
 				count, ok := steps[step.Step.Name]
 				if !ok {
-					return 0, 0, errors.New("explore trial is missing a configured step")
+					return 0, errors.New("explore trial is missing a configured step")
 				}
 				consider(step.Step.Name, count)
 			}
@@ -129,13 +138,13 @@ func capacityObservation(
 	}
 	seconds := math.Ceil(float64(required) / slowest)
 	if math.IsInf(slowest, 0) || secsInvalid(seconds) {
-		return 0, 0, errors.New("missing, zero, or invalid measured delivery rate for a required series")
+		return 0, errors.New("missing, zero, or invalid measured delivery rate for a required series")
 	}
 	fmt.Fprintf(w, "Slowest measured rate %.3f/s. Minimum window %.0fs; three-window observation %.0fs. Delivery may vary.\n", slowest, seconds, 3*seconds)
 	if seconds > 60 {
-		return 0, 0, errors.New("required window exceeds 60s; simplify the workload or validate more VUs within the supported ceiling")
+		return 0, errors.New("required window exceeds 60s; simplify the workload or validate more VUs within the supported ceiling")
 	}
-	return users, time.Duration(seconds) * time.Second, nil
+	return time.Duration(seconds) * time.Second, nil
 }
 
 func capacityPassingLevel(result explorer.Result, extended bool) int {
@@ -355,7 +364,9 @@ func capacityCmd(args []string, stdout, stderr io.Writer) int {
 		campaignWall, _ := capacityCalibrationWall(1, *calLevel)
 		calWall = ladderWall
 		if !*extended {
-			calWall += campaignWall
+			// One campaign-level calibration for the selected level and for
+			// each bounded step-down level (ADR 0176).
+			calWall += time.Duration(1+capacityMaxStepDowns) * campaignWall
 		}
 	}
 	fmt.Fprintln(stdout, "Plan:")
@@ -372,7 +383,7 @@ func capacityCmd(args []string, stdout, stderr io.Writer) int {
 		if *extended {
 			fmt.Fprintf(stdout, "  2. One calibration for ladder, refinement and campaign candidates %v (%s, loopback mirror only, %s; up to %s).\n", calibrationLevels, source, envelope, calWall)
 		} else {
-			fmt.Fprintf(stdout, "  2. damocline calibrate for levels %v, then for the campaign level (%s, loopback mirror only, %s; up to %s).\n", ladder, source, envelope, calWall)
+			fmt.Fprintf(stdout, "  2. damocline calibrate for levels %v, then for each campaign level (%s, loopback mirror only, %s; up to %s).\n", ladder, source, envelope, calWall)
 		}
 	} else {
 		fmt.Fprintf(stdout, "  2. Existing calibration artifact %s (no new calibration).\n", *calibration)
@@ -381,11 +392,14 @@ func capacityCmd(args []string, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stdout, "     Explore sizing: %d stages (worst case %d probes including bracket refinement, x %d repeats) x (%s stage + %s overhead: network baseline cap, bounded drain, setup) = %s.\n",
 		stages, probes, opt.Repeats, opt.StageDuration, overhead, exploreNeed.Round(time.Second))
 	fmt.Fprintf(stdout, "  4. Campaign at the highest passing level with sample-sized observation (%s cap, including six network preflights and drains).\n", *budget)
+	fmt.Fprintln(stdout, capacityStepDownPlanLine(*budget))
 	if *extended {
 		fmt.Fprintf(stdout, "  Explore and campaign use the extended envelope (target class %s); uncalibrated levels are never probed.\n", *targetClass)
 	}
 	fmt.Fprintln(stdout, "  5. Offline audit and executive report.")
-	fmt.Fprintf(stdout, "Total planned wall time at most %s.\n", config.NetworkBaselineWallBudget+calWall+*exploreBudget+*budget)
+	fmt.Fprintf(stdout, "Total planned wall time at most %s.\n", config.NetworkBaselineWallBudget+calWall+*exploreBudget+time.Duration(1+capacityMaxStepDowns)*(*budget))
+	fmt.Fprintf(stdout, "  The total reserves %d step-down campaigns; a campaign that passes, or ends without a latency or error FAIL, stops the ladder early.\n", capacityMaxStepDowns)
+	fmt.Fprintf(stdout, "  Protocol note: explore stages last %s each while campaigns sustain each level much longer; short stages can overestimate sustained capacity.\n", opt.StageDuration)
 	if err := capacityRateWarning(stdout, *referenceReport, *maxUsers, scenario.MaxRPS); err != nil {
 		return fail(err)
 	}
@@ -495,101 +509,181 @@ func capacityCmd(args []string, stdout, stderr io.Writer) int {
 		return fail(err)
 	}
 	capacityObservedRateWarning(stdout, result, users, scenario.MaxRPS)
-	campaignOptions.Observation = max(10*time.Second, 3*window)
-	campaignOptions.Recovery = max(capacityTiming.Recovery, window)
+	required, err := capacityRequiredSamples(v)
+	if err != nil {
+		return fail(err)
+	}
 	baselineAllowance := 6 * config.NetworkBaselineWallBudget
-	schedule := campaignOptions
-	schedule.Budget = 0
-	minimumBudget := campaign.PlannedBudget(schedule) + baselineAllowance
-	fmt.Fprintf(stdout, "Minimum campaign wall budget including six network preflights and bounded drains: %s.\n", minimumBudget)
-	if campaignOptions.Budget < minimumBudget {
-		return fail(fmt.Errorf("budget %s is below %s; increase --budget within its ceiling, use explicit long-run staging opt-in if needed, simplify the workload, or validate more VUs", *budget, minimumBudget))
+	// planLevel sizes one campaign level from its own explore delivery rates.
+	planLevel := func(level int, window time.Duration) (campaign.Options, error) {
+		options := campaignOptions
+		options.Observation = max(10*time.Second, 3*window)
+		options.Recovery = max(capacityTiming.Recovery, window)
+		schedule := options
+		schedule.Budget = 0
+		minimumBudget := campaign.PlannedBudget(schedule) + baselineAllowance
+		fmt.Fprintf(stdout, "Minimum campaign wall budget at %d VUs including six network preflights and bounded drains: %s.\n", level, minimumBudget)
+		if options.Budget < minimumBudget {
+			return options, fmt.Errorf("budget %s is below %s; increase --budget within its ceiling, use explicit long-run staging opt-in if needed, simplify the workload, or validate more VUs", *budget, minimumBudget)
+		}
+		if err := campaign.Validate(options); err != nil {
+			return options, fmt.Errorf("%w; increase --budget within its ceiling, use explicit long-run staging opt-in if needed, simplify the workload, or validate more VUs", err)
+		}
+		fmt.Fprintf(stdout, "Campaign at %d VUs: two trials of %s warm-up, %s observation and %s recovery, using %s windows and a %s wall cap.\n",
+			level, options.Warmup, options.Observation, options.Recovery, window, *budget)
+		return options, nil
 	}
-	if err := campaign.Validate(campaignOptions); err != nil {
-		return fail(fmt.Errorf("%w; increase --budget within its ceiling, use explicit long-run staging opt-in if needed, simplify the workload, or validate more VUs", err))
+	firstOptions, err := planLevel(users, window)
+	if err != nil {
+		return fail(err)
 	}
-	fmt.Fprintf(stdout, "Campaign at %d VUs: two trials of %s warm-up, %s observation and %s recovery, using %s windows and a %s wall cap.\n",
-		users, campaignOptions.Warmup, campaignOptions.Observation, campaignOptions.Recovery, window, *budget)
+	stepDowns := capacityStepDownLevels(result, users, capacityMaxStepDowns)
 	if *dry {
+		if len(stepDowns) > 0 {
+			fmt.Fprintf(stdout, "Step-down candidates if the %d VU campaign FAILs on latency or errors: %v (repeatedly passing explore levels, highest first).\n", users, stepDowns)
+		} else {
+			fmt.Fprintf(stdout, "No lower repeatedly passing explore level is available for a step-down below %d VUs.\n", users)
+		}
 		return 0
 	}
-	scenario.Users = users
-	scenario.WindowDuration = window.String()
-	if v.Duration < window {
-		scenario.Duration = window.String()
+	// runLevel runs (or reuses) one sustained campaign and verifies that the
+	// saved evidence matches its planned controls.
+	runLevel := func(index, level int, window time.Duration, options campaign.Options) (campaign.Result, string, int, error) {
+		campaignFile, scenarioFile, calibrationFile := capacityCampaignFiles(index, level)
+		path := filepath.Join(*dir, campaignFile)
+		levelScenario := scenario
+		levelScenario.Users = level
+		levelScenario.WindowDuration = window.String()
+		if v.Duration < window {
+			levelScenario.Duration = window.String()
+		}
+		campaignScenario, err := config.Parse(levelScenario, config.Options{Authorized: true, NetworkBaseline: true, ExtendedEnvelope: extendedRequest, AllowInsecureHTTP: *insecureHTTP})
+		if err != nil {
+			return campaign.Result{}, path, 2, err
+		}
+		if err := campaign.ValidateForScenario(campaignScenario, options); err != nil {
+			return campaign.Result{}, path, 2, err
+		}
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			derived := filepath.Join(*dir, scenarioFile)
+			if err := report.WriteAnyJSON(derived, levelScenario); err != nil {
+				return campaign.Result{}, path, 2, err
+			}
+			campaignArgs := []string{
+				"--config", derived, "--authorized", "--out", path,
+				"--warmup", options.Warmup.String(), "--observation", options.Observation.String(),
+				"--recovery", options.Recovery.String(), "--budget", budget.String(),
+			}
+			campaignCalibration := *calibration
+			if *extended {
+				campaignCalibration = exploreCalibration
+			}
+			if campaignCalibration == "" {
+				campaignCalibration = filepath.Join(*dir, calibrationFile)
+				if code := ensureCapacityCalibration(campaignCalibration, derived, campaignScenario, []int{level}, mirror, stdout, stderr); code != 0 {
+					return campaign.Result{}, path, code, nil
+				}
+			}
+			campaignArgs = append(campaignArgs, "--calibration", campaignCalibration, "--require-calibration")
+			campaignArgs = append(campaignArgs, capacityTransportArgs(*insecureHTTP)...)
+			campaignArgs = append(campaignArgs, envelopeArgs...)
+			if *long {
+				campaignArgs = append(campaignArgs, "--allow-long-run", "--staging-confirmed")
+			}
+			if code := campaignCmd(campaignArgs, stdout, stderr); code == 2 {
+				return campaign.Result{}, path, code, nil
+			}
+		}
+		evidence, err := capacityplan.ReadCampaign(path)
+		if err != nil {
+			return evidence, path, 2, err
+		}
+		if evidence.ExecutionState == "RUNNING" || evidence.Outcome == "ABORTED" {
+			return evidence, path, 2, errors.New("preserved interrupted campaign; use --resume --authorized to repeat it with a fresh schedule")
+		}
+		if evidence.BaseUsers != level || evidence.Observation != options.Observation.String() ||
+			evidence.Recovery != options.Recovery.String() || evidence.Budget != budget.String() ||
+			evidence.Objectives == nil || evidence.Objectives.WindowDuration != window.String() ||
+			evidence.Objectives.MaxJourneyErrorRate != v.Scenario.MaxErrorRate {
+			return evidence, path, 2, errors.New("saved campaign does not match the planned controls")
+		}
+		for _, trial := range evidence.Trials {
+			for _, phase := range trial.Phases {
+				if phase.Run.Config.P95LimitMS != v.Scenario.P95LimitMS ||
+					phase.Run.Target != v.Base.Scheme+"://"+v.Base.Host ||
+					phase.Run.Config.WorkloadFingerprint != campaignScenario.WorkloadFingerprint ||
+					phase.Run.Config.WorkloadRevision != v.Scenario.WorkloadRevision ||
+					phase.Run.Config.ApplicationRevision != v.Scenario.ApplicationRevision ||
+					phase.Run.Config.Environment != v.Scenario.Environment {
+					return evidence, path, 2, errors.New("saved campaign phase does not match the declared target and revisions")
+				}
+			}
+		}
+		return evidence, path, 0, nil
 	}
-	campaignScenario, err := config.Parse(scenario, config.Options{Authorized: true, NetworkBaseline: true, ExtendedEnvelope: extendedRequest, AllowInsecureHTTP: *insecureHTTP})
+	ladderRecord := capacityLadder{SchemaVersion: 1, ExploreStage: opt.StageDuration.String(), MaxStepDowns: capacityMaxStepDowns}
+	results := map[string]campaign.Result{}
+	levelUsers := map[string]int{}
+	evidence, path, code, err := runLevel(0, users, window, firstOptions)
 	if err != nil {
 		return fail(err)
 	}
-	if err := campaign.ValidateForScenario(campaignScenario, campaignOptions); err != nil {
-		return fail(err)
+	if code != 0 {
+		return code
 	}
-	if _, err := os.Stat(campaignPath); os.IsNotExist(err) {
-		derived := filepath.Join(*dir, "campaign-scenario.json")
-		if err := report.WriteAnyJSON(derived, scenario); err != nil {
+	ladderRecord.Entries = append(ladderRecord.Entries, capacityLadderEntry{Users: users, Campaign: filepath.Base(path), Outcome: evidence.Outcome})
+	results[filepath.Base(path)], levelUsers[filepath.Base(path)] = evidence, users
+	for i, level := range stepDowns {
+		if !capacityStepDownAllowed(evidence) {
+			break
+		}
+		fmt.Fprintf(stdout, "Sustained campaign at %d VUs FAILED on latency or errors although it passed the short explore stages; stepping down to %d VUs (%d of at most %d).\n",
+			ladderRecord.Entries[len(ladderRecord.Entries)-1].Users, level, i+1, capacityMaxStepDowns)
+		levelWindow, err := capacityObservationAt(stdout, result, v, *maxUsers, level, required)
+		var options campaign.Options
+		if err == nil {
+			options, err = planLevel(level, levelWindow)
+		}
+		if err != nil {
+			ladderRecord.Entries = append(ladderRecord.Entries, capacityLadderEntry{Users: level, Outcome: "NOT_RUN", Reason: err.Error()})
+			break
+		}
+		evidence, path, code, err = runLevel(i+1, level, levelWindow, options)
+		if err != nil {
 			return fail(err)
 		}
-		campaignArgs := []string{
-			"--config", derived, "--authorized", "--out", campaignPath,
-			"--warmup", campaignOptions.Warmup.String(), "--observation", campaignOptions.Observation.String(),
-			"--recovery", campaignOptions.Recovery.String(), "--budget", budget.String(),
-		}
-		campaignCalibration := *calibration
-		if *extended {
-			campaignCalibration = exploreCalibration
-		}
-		if campaignCalibration == "" {
-			campaignCalibration = filepath.Join(*dir, "selfcal-campaign.json")
-			if code := ensureCapacityCalibration(campaignCalibration, derived, campaignScenario, []int{users}, mirror, stdout, stderr); code != 0 {
-				return code
-			}
-		}
-		campaignArgs = append(campaignArgs, "--calibration", campaignCalibration, "--require-calibration")
-		campaignArgs = append(campaignArgs, capacityTransportArgs(*insecureHTTP)...)
-		campaignArgs = append(campaignArgs, envelopeArgs...)
-		if *long {
-			campaignArgs = append(campaignArgs, "--allow-long-run", "--staging-confirmed")
-		}
-		if code := campaignCmd(campaignArgs, stdout, stderr); code == 2 {
+		if code != 0 {
 			return code
 		}
+		ladderRecord.Entries = append(ladderRecord.Entries, capacityLadderEntry{Users: level, Campaign: filepath.Base(path), Outcome: evidence.Outcome})
+		results[filepath.Base(path)], levelUsers[filepath.Base(path)] = evidence, level
 	}
-	evidence, err := capacityplan.ReadCampaign(campaignPath)
-	if err != nil {
-		return fail(err)
-	}
-	if evidence.ExecutionState == "RUNNING" || evidence.Outcome == "ABORTED" {
-		return fail(errors.New("preserved interrupted campaign; use --resume --authorized to repeat it with a fresh schedule"))
-	}
-	if evidence.BaseUsers != users || evidence.Observation != campaignOptions.Observation.String() ||
-		evidence.Recovery != campaignOptions.Recovery.String() || evidence.Budget != budget.String() ||
-		evidence.Objectives == nil || evidence.Objectives.WindowDuration != window.String() ||
-		evidence.Objectives.MaxJourneyErrorRate != v.Scenario.MaxErrorRate {
-		return fail(errors.New("saved campaign does not match the planned controls"))
-	}
-	for _, trial := range evidence.Trials {
-		for _, phase := range trial.Phases {
-			if phase.Run.Config.P95LimitMS != v.Scenario.P95LimitMS ||
-				phase.Run.Target != v.Base.Scheme+"://"+v.Base.Host ||
-				phase.Run.Config.WorkloadFingerprint != campaignScenario.WorkloadFingerprint ||
-				phase.Run.Config.WorkloadRevision != v.Scenario.WorkloadRevision ||
-				phase.Run.Config.ApplicationRevision != v.Scenario.ApplicationRevision ||
-				phase.Run.Config.Environment != v.Scenario.Environment {
-				return fail(errors.New("saved campaign phase does not match the declared target and revisions"))
-			}
+	finishCapacityLadder(&ladderRecord)
+	stepped := len(ladderRecord.Entries) > 1
+	if stepped {
+		if err := report.WriteAnyJSON(filepath.Join(*dir, capacityLadderFile), ladderRecord); err != nil {
+			return fail(err)
+		}
+		for _, line := range capacityLadderSummary(ladderRecord) {
+			fmt.Fprintln(stdout, line)
 		}
 	}
+	campaignPath = filepath.Join(*dir, ladderRecord.AuditedCampaign)
+	evidence, users = results[ladderRecord.AuditedCampaign], levelUsers[ladderRecord.AuditedCampaign]
 	reportPath := filepath.Join(*dir, "capacity.md")
+	htmlPath := filepath.Join(*dir, "capacity.html")
 	auditJSON := filepath.Join(*dir, "audit.json")
-	auditReportPath := reportPath
-	if *intensity > 0 {
+	auditReportPath, auditHTMLPath := reportPath, htmlPath
+	if *intensity > 0 || stepped {
 		auditReportPath = filepath.Join(*dir, "capacity-audit.md")
+	}
+	if stepped {
+		auditHTMLPath = filepath.Join(*dir, "capacity-audit.html")
 	}
 	if _, err := os.Stat(auditReportPath); os.IsNotExist(err) {
 		auditArgs := []string{
 			"--campaign", campaignPath, "--peak-users", strconv.Itoa(users), "--out", auditJSON,
-			"--report-out", auditReportPath, "--html-out", filepath.Join(*dir, "capacity.html"), "--explore-file", explorePath,
+			"--report-out", auditReportPath, "--html-out", auditHTMLPath, "--explore-file", explorePath,
 		}
 		if *intensity > 0 {
 			auditArgs = append(auditArgs, "--actions-per-user-minute", strconv.FormatFloat(*intensity, 'f', -1, 64))
@@ -601,8 +695,21 @@ func capacityCmd(args []string, stdout, stderr io.Writer) int {
 	} else if err != nil {
 		return fail(err)
 	}
+	markdownSource := auditReportPath
 	if *intensity > 0 {
-		if err := appendIntensityHypothesis(auditReportPath, reportPath, evidence, *intensity); err != nil {
+		destination := reportPath
+		if stepped {
+			destination = filepath.Join(*dir, "capacity-intensity.md")
+			markdownSource = destination
+		}
+		if _, err := os.Stat(destination); os.IsNotExist(err) {
+			if err := appendIntensityHypothesis(auditReportPath, destination, evidence, *intensity); err != nil {
+				return fail(err)
+			}
+		}
+	}
+	if stepped {
+		if err := writeCapacityLadderReports(markdownSource, auditHTMLPath, reportPath, htmlPath, ladderRecord); err != nil {
 			return fail(err)
 		}
 	}
@@ -618,7 +725,15 @@ func completedCapacity(dir string, budget time.Duration) (string, error) {
 	if err != nil || len(data) == 0 {
 		return "", errors.New("saved executive report cannot be reused")
 	}
-	evidence, digest, err := capacityplan.ReadCampaignWithFileSHA256(filepath.Join(dir, "campaign.json"))
+	audited := "campaign.json"
+	ladder, err := readCapacityLadder(dir)
+	if err != nil {
+		return "", err
+	}
+	if ladder != nil {
+		audited = ladder.AuditedCampaign
+	}
+	evidence, digest, err := capacityplan.ReadCampaignWithFileSHA256(filepath.Join(dir, audited))
 	if err != nil || evidence.ExecutionState != "COMPLETED" || evidence.Budget != budget.String() {
 		return "", errors.New("completed campaign does not match the requested resume controls")
 	}
@@ -666,15 +781,20 @@ func archiveInterruptedCapacity(explorePath, campaignPath string) error {
 		}
 		return os.Rename(explorePath, explorePath+"."+strconv.FormatInt(time.Now().UnixNano(), 10)+".interrupted")
 	}
-	evidence, err := capacityplan.ReadCampaign(campaignPath)
-	if os.IsNotExist(err) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	if evidence.ExecutionState == "RUNNING" || evidence.Outcome == "ABORTED" {
-		return os.Rename(campaignPath, campaignPath+"."+strconv.FormatInt(time.Now().UnixNano(), 10)+".interrupted")
+	stepDowns, _ := filepath.Glob(filepath.Join(filepath.Dir(campaignPath), "campaign-stepdown-*.json"))
+	for _, path := range append([]string{campaignPath}, stepDowns...) {
+		evidence, err := capacityplan.ReadCampaign(path)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if evidence.ExecutionState == "RUNNING" || evidence.Outcome == "ABORTED" {
+			if err := os.Rename(path, path+"."+strconv.FormatInt(time.Now().UnixNano(), 10)+".interrupted"); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }

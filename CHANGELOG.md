@@ -15,6 +15,12 @@
   HTML adds an inline SVG chart of p95 and throughput per load level (ADR
   0175).
 
+- When the sustained campaign of `damocline capacity` FAILs on latency or
+  errors, step down to at most two lower repeatedly passing explore levels,
+  one campaign each. Reports list all campaigns and name the highest level
+  whose campaign passed as sustainable, or state that none passed. The plan
+  declares the step-downs in its total wall time (ADR 0176).
+
 - Add `--min-users` to `damocline capacity` to start the exploration
   ladder at a higher level.
 
