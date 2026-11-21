@@ -26,6 +26,7 @@ func renderCampaignCapacityReport(assessment capacityplan.Assessment, source str
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "## Executive summary")
 	fmt.Fprintln(&b)
+	writeMarkdownExecutiveSummary(&b, htmlReportInput{Assessment: assessment, Source: source, Evidence: evidence})
 	fmt.Fprintf(&b, "- **Assessment:** %s\n- **Observed campaign:** %s\n- **Measurement quality:** %s\n", assessment.State, a.State, a.MeasurementQuality)
 	fmt.Fprintf(&b, "- **Workload:** %s at %d modeled active users\n", markdownText(a.Scenario), a.TestedBaseUsers)
 	fmt.Fprintf(&b, "- **Observed passing levels:** %v; **failing levels:** %v\n", a.PassingLevels, a.FailingLevels)

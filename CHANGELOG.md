@@ -8,6 +8,13 @@
   p95, error-rate and throughput deltas as IMPROVED, REGRESSED or
   INCONCLUSIVE from repetition ranges, in Markdown and JSON (ADR 0174).
 
+- Open the capacity HTML and Markdown reports with a plain-language
+  executive summary: one sentence with the sustainable level in concurrent
+  active virtual users, a confidence statement, the observed knee, a
+  labeled saturation hypothesis, and a "What this does NOT mean" box. The
+  HTML adds an inline SVG chart of p95 and throughput per load level (ADR
+  0175).
+
 - Add `--min-users` to `damocline capacity` to start the exploration
   ladder at a higher level.
 

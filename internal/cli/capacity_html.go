@@ -63,6 +63,7 @@ type chartPoint struct {
 	RPS    float64
 	Errors float64
 	Passed bool
+	Failed bool // the run recorded an explicit FAIL outcome
 }
 
 func runThroughput(run report.Result) float64 {
@@ -90,14 +91,14 @@ func collectChartPoints(in htmlReportInput) []chartPoint {
 	if in.Explore != nil {
 		for _, probe := range in.Explore.Probes {
 			for index, run := range probe.Runs {
-				points = append(points, chartPoint{Source: "explore", Label: fmt.Sprintf("explore %d users, repeat %d", probe.Users, index+1), Users: probe.Users, P95MS: run.Metrics.P95MS, RPS: runThroughput(run), Errors: runErrorRate(run), Passed: run.Outcome == "PASS"})
+				points = append(points, chartPoint{Source: "explore", Label: fmt.Sprintf("explore %d users, repeat %d", probe.Users, index+1), Users: probe.Users, P95MS: run.Metrics.P95MS, RPS: runThroughput(run), Errors: runErrorRate(run), Passed: run.Outcome == "PASS", Failed: run.Outcome == "FAIL"})
 			}
 		}
 	}
 	for _, trial := range in.Evidence.Trials {
 		for _, phase := range trial.Phases {
 			run := phase.Run
-			points = append(points, chartPoint{Source: "campaign", Label: fmt.Sprintf("campaign trial %d %s", trial.Number, phase.Name), Users: run.Config.Users, P95MS: run.Metrics.P95MS, RPS: runThroughput(run), Errors: runErrorRate(run), Passed: run.Outcome == "PASS"})
+			points = append(points, chartPoint{Source: "campaign", Label: fmt.Sprintf("campaign trial %d %s", trial.Number, phase.Name), Users: run.Config.Users, P95MS: run.Metrics.P95MS, RPS: runThroughput(run), Errors: runErrorRate(run), Passed: run.Outcome == "PASS", Failed: run.Outcome == "FAIL"})
 		}
 	}
 	for i := range points {
@@ -180,10 +181,13 @@ svg{width:100%;height:auto;max-width:720px;display:block}
 svg text{fill:var(--fg);font-size:12px}svg .axis{stroke:var(--muted);stroke-width:1}svg .grid{stroke:var(--line);stroke-width:1}
 svg .limit{stroke:var(--bad);stroke-width:2;stroke-dasharray:6 4}
 svg .s-explore{stroke:var(--s1);stroke-width:2}svg .s-campaign{stroke:var(--s2);stroke-width:2}
+svg .line-p95{fill:none;stroke:var(--s1);stroke-width:2}svg .line-rps{fill:none;stroke:var(--s2);stroke-width:2}
+.exec{border:2px solid var(--line);border-radius:8px;padding:16px;margin:16px 0}.exec>h2{border:0;margin-top:0}.exec .headline{font-size:1.25rem;font-weight:700}
+.notmean{border:2px dashed var(--warn);background:var(--warn-bg);border-radius:8px;padding:8px 16px;margin:12px 0}.notmean>h3{margin-top:4px}
 svg .fill-explore{fill:var(--s1)}svg .fill-campaign{fill:var(--s2)}svg .hollow{fill:var(--bg)}
 pre{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:12px;overflow-x:auto;white-space:pre-wrap;word-break:break-all}
 code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:.88em}
-@media print{:root{--bg:#fff;--fg:#000;--muted:#333;--line:#888;--panel:#fff}body{font-size:11pt}main{max-width:none;padding:0}h2,h3,figure,.verdict,.figure,table{break-inside:avoid}details{display:block}details>summary{display:none}a{color:inherit}}`
+@media print{:root{--bg:#fff;--fg:#000;--muted:#333;--line:#888;--panel:#fff}body{font-size:11pt}main{max-width:none;padding:0}h2,h3,figure,.exec,.notmean,.verdict,.figure,table{break-inside:avoid}details{display:block}details>summary{display:none}a{color:inherit}}`
 
 // renderCampaignCapacityHTML renders a self-contained executive HTML report.
 // The output is deterministic for identical inputs and references no
@@ -199,6 +203,7 @@ func renderCampaignCapacityHTML(in htmlReportInput) string {
 	fmt.Fprintf(&b, "<header>\n<h1>Capacity assessment</h1>\n<p class=\"muted\">Scenario %s · environment %s · target %s · campaign started %s. Generated offline from saved evidence; no traffic was sent to produce this report.</p>\n</header>\n",
 		h(orNotRecorded(audit.Scenario)), h(orNotRecorded(audit.DeclaredEnvironment)), h(orNotRecorded(audit.Target)), h(orNotRecorded(audit.StartedAt)))
 
+	writeHTMLExecutiveSummary(&b, in)
 	writeHTMLVerdict(&b, in, outcome)
 	writeHTMLFigures(&b, in, outcome)
 	writeHTMLConclusion(&b, in, outcome)

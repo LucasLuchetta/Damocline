@@ -90,8 +90,8 @@ func TestCapacityHTMLReportGoldens(t *testing.T) {
 		expected []string
 		absent   []string
 	}{
-		{"passing", []string{"DEMAND MET UNDER TESTED CONDITIONS", "The highest approved level is 8 modeled active users", ">8 modeled active users</span>", "assumption", "about 1200.0 people"}, []string{"none approved", "INSUFFICIENT EVIDENCE"}},
-		{"failing", []string{"DEMAND NOT MET", "was not met", "none approved", "checkout", "A breach location is not a root cause", "No number in this report"}, []string{"DEMAND MET", "Declared usage assumption"}},
+		{"passing", []string{"DEMAND MET UNDER TESTED CONDITIONS", "The highest approved level is 8 modeled active users", ">8 modeled active users</span>", "assumption", "about 1200.0 people", "supports 8 concurrent active virtual users doing the &#34;synthetic &lt;local&gt; fixture&#34; journey with request p95 under 500 ms and request errors under 1.00%", "Estimate, not a measurement", "Observed limit (knee): every measurement passed at 8 virtual users, and objectives were breached at 16"}, []string{"none approved", "INSUFFICIENT EVIDENCE"}},
+		{"failing", []string{"DEMAND NOT MET", "was not met", "none approved", "checkout", "A breach location is not a root cause", "No number in this report", "did not sustain 8 concurrent active virtual users", "No usage assumption", "every measurement passed at 4 virtual users, and objectives were breached at 8"}, []string{"DEMAND MET", "Declared usage assumption"}},
 		{"insufficient", []string{"INSUFFICIENT EVIDENCE: NO CAPACITY DECISION", "neither confirmed nor refuted", "none approved", "No number in this report is an approved capacity", "Run the campaign at exactly 12 VUs."}, []string{"DEMAND MET", "Declared usage assumption"}},
 	}
 	for _, tc := range cases {
@@ -100,7 +100,7 @@ func TestCapacityHTMLReportGoldens(t *testing.T) {
 			if again := renderCampaignCapacityHTML(syntheticHTMLInput(tc.kind)); again != got {
 				t.Fatal("HTML report is not deterministic")
 			}
-			for _, expected := range append(tc.expected, "<svg", "measured fact", "hypothesis", "unknown", "--html-out", "sha256:explore-fixture", "synthetic &lt;local&gt; fixture", "prefers-color-scheme:dark", "@media print") {
+			for _, expected := range append(tc.expected, "<svg", "Executive summary", "What this does NOT mean", "not registered users", "chart-level-t", "suggests the system was saturating between", "Correlational, not a measured root cause", "measured fact", "hypothesis", "unknown", "--html-out", "sha256:explore-fixture", "synthetic &lt;local&gt; fixture", "prefers-color-scheme:dark", "@media print") {
 				if !strings.Contains(got, expected) {
 					t.Fatalf("HTML report omits %q", expected)
 				}
