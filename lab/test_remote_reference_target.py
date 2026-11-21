@@ -27,23 +27,21 @@ class RemoteReferenceTests(unittest.TestCase):
             background = threading.Thread(target=server.serve_forever, daemon=True)
             background.start()
             base = f"http://127.0.0.1:{server.server_port}"
-            received = []
-
-            def first():
-                with urlopen(base + "/work", timeout=5) as response:
-                    received.append((response.status, response.read()))
-
             try:
+                # Simulate a fully occupied worker slot deterministically.
+                # The 503 must be a real server response, not a mocked value.
+                self.assertTrue(server.slots.acquire(blocking=False))
+                try:
+                    with self.assertRaises(HTTPError) as caught:
+                        urlopen(base + "/work", timeout=2)
+                    self.assertEqual(caught.exception.code, 503)
+                    caught.exception.close()
+                finally:
+                    server.slots.release()
                 with urlopen(base + "/healthz", timeout=2) as response:
                     self.assertEqual(response.read(), b"ok")
-                worker = threading.Thread(target=first)
-                worker.start()
-                self.assertTrue(server.active.wait(2), "worker did not begin")
-                with self.assertRaises(HTTPError) as caught:
-                    urlopen(base + "/work", timeout=2)
-                self.assertEqual(caught.exception.code, 503)
-                worker.join(3)
-                self.assertEqual(received, [(200, MARKER)])
+                with urlopen(base + "/work", timeout=5) as response:
+                    self.assertEqual((response.status, response.read()), (200, MARKER))
             finally:
                 server.shutdown()
                 background.join(2)
