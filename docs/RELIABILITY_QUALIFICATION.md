@@ -66,7 +66,8 @@ checks whether underdelivery can earn a passing open-arrival phase verdict.
 
 ### RQ-3 (P0) — Representative applications
 
-**Status:** `NOT_STARTED`
+**Status:** `IN_PROGRESS` — the [WordPress published-post baseline](../lab/k6-compare/README.md#wordpress-published-post-baseline)
+reconciles two clients with independent server logs on one Docker host.
 
 - [ ] At least three representative journeys (see protocol) are tested
       across at least two servers/networks and all four load levels.

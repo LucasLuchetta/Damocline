@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Add a bounded WordPress and MariaDB lab baseline that compares a published
+  post read in Damocline and k6 against independent Apache access logs.
+
 - Require complete, workload-matched k6 checks before `compare-external`
   can report `k6_would_pass=true`. A failed content check vetoes a pass
   even when the HTTP status meets expectations (ADR 0186).
