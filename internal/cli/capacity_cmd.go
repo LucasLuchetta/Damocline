@@ -397,8 +397,8 @@ func capacityCmd(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "  Explore and campaign use the extended envelope (target class %s); uncalibrated levels are never probed.\n", *targetClass)
 	}
 	fmt.Fprintln(stdout, "  5. Offline audit and executive report.")
-	fmt.Fprintf(stdout, "Total planned wall time at most %s.\n", config.NetworkBaselineWallBudget+calWall+*exploreBudget+time.Duration(1+capacityMaxStepDowns)*(*budget))
-	fmt.Fprintf(stdout, "  The total reserves %d step-down campaigns; a campaign that passes, or ends without a latency or error FAIL, stops the ladder early.\n", capacityMaxStepDowns)
+	fmt.Fprintf(stdout, "Total planned wall time at most %s.\n", config.NetworkBaselineWallBudget+calWall+*exploreBudget+time.Duration(1+capacityMaxStepDowns)*(*budget)+time.Duration(capacityMaxStepDowns)*capacityRecoveryMaxWait)
+	fmt.Fprintf(stdout, "  The total reserves %d step-down campaigns and %d recovery gates of at most %s each; the bisection stops early when it converges or a campaign ends without a PASS or a latency or error FAIL.\n", capacityMaxStepDowns, capacityMaxStepDowns, capacityRecoveryMaxWait)
 	fmt.Fprintf(stdout, "  Protocol note: explore stages last %s each while campaigns sustain each level much longer; short stages can overestimate sustained capacity.\n", opt.StageDuration)
 	if err := capacityRateWarning(stdout, *referenceReport, *maxUsers, scenario.MaxRPS); err != nil {
 		return fail(err)
@@ -537,7 +537,7 @@ func capacityCmd(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return fail(err)
 	}
-	stepDowns := capacityStepDownLevels(result, users, capacityMaxStepDowns)
+	stepDowns := capacityStepDownLevels(result, users, 0)
 	if *dry {
 		if len(stepDowns) > 0 {
 			fmt.Fprintf(stdout, "Step-down candidates if the %d VU campaign FAILs on latency or errors: %v (repeatedly passing explore levels, highest first).\n", users, stepDowns)
@@ -633,12 +633,16 @@ func capacityCmd(args []string, stdout, stderr io.Writer) int {
 	}
 	ladderRecord.Entries = append(ladderRecord.Entries, capacityLadderEntry{Users: users, Campaign: filepath.Base(path), Outcome: evidence.Outcome})
 	results[filepath.Base(path)], levelUsers[filepath.Base(path)] = evidence, users
-	for i, level := range stepDowns {
-		if !capacityStepDownAllowed(evidence) {
+	bisection := newCapacityBisection(stepDowns)
+	recoveryReference := capacityRecoveryReference(result)
+	searching := capacityStepDownAllowed(evidence)
+	for i := 0; i < capacityMaxStepDowns && searching; i++ {
+		level, ok := bisection.next()
+		if !ok {
 			break
 		}
-		fmt.Fprintf(stdout, "Sustained campaign at %d VUs FAILED on latency or errors although it passed the short explore stages; stepping down to %d VUs (%d of at most %d).\n",
-			ladderRecord.Entries[len(ladderRecord.Entries)-1].Users, level, i+1, capacityMaxStepDowns)
+		fmt.Fprintf(stdout, "Sustained campaign at %d VUs FAILED on latency or errors although it passed the short explore stages; next sustained campaign at %d VUs by bisection (%d of at most %d).\n",
+			ladderRecord.Entries[0].Users, level, i+1, capacityMaxStepDowns)
 		levelWindow, err := capacityObservationAt(stdout, result, v, *maxUsers, level, required)
 		var options campaign.Options
 		if err == nil {
@@ -648,6 +652,19 @@ func capacityCmd(args []string, stdout, stderr io.Writer) int {
 			ladderRecord.Entries = append(ladderRecord.Entries, capacityLadderEntry{Users: level, Outcome: "NOT_RUN", Reason: err.Error()})
 			break
 		}
+		var recovery *capacityRecoveryCheck
+		campaignFile, _, _ := capacityCampaignFiles(i+1, level)
+		if _, statErr := os.Stat(filepath.Join(*dir, campaignFile)); os.IsNotExist(statErr) {
+			fmt.Fprintf(stdout, "Recovery gate before %d VUs: %s cooldown, then network-path probes until p50 returns near the pre-load reference (at most %s).\n", level, capacityRecoveryCooldown, capacityRecoveryMaxWait)
+			check := capacityRecoveryGate(context.Background(), v.NetworkBaseline, recoveryReference)
+			recovery = &check
+			fmt.Fprintf(stdout, "Recovery gate: %s after %s.\n", check.Status, check.Waited)
+			if check.Status == capacityRecoveryNotRecovered {
+				ladderRecord.Entries = append(ladderRecord.Entries, capacityLadderEntry{Users: level, Outcome: capacityOutcomeNotRecovered, Reason: check.Reason, Recovery: recovery})
+				ladderRecord.StopReason = "target did not recover; later campaigns would be contaminated"
+				break
+			}
+		}
 		evidence, path, code, err = runLevel(i+1, level, levelWindow, options)
 		if err != nil {
 			return fail(err)
@@ -655,8 +672,14 @@ func capacityCmd(args []string, stdout, stderr io.Writer) int {
 		if code != 0 {
 			return code
 		}
-		ladderRecord.Entries = append(ladderRecord.Entries, capacityLadderEntry{Users: level, Campaign: filepath.Base(path), Outcome: evidence.Outcome})
+		ladderRecord.Entries = append(ladderRecord.Entries, capacityLadderEntry{Users: level, Campaign: filepath.Base(path), Outcome: evidence.Outcome, Recovery: recovery})
 		results[filepath.Base(path)], levelUsers[filepath.Base(path)] = evidence, level
+		// Only target verdicts steer the bisection; INCONCLUSIVE or ABORTED
+		// evidence stops the ladder.
+		searching = evidence.ExecutionState == "COMPLETED" && (evidence.Outcome == "PASS" || evidence.Outcome == "FAIL")
+		if searching {
+			bisection.record(level, evidence.Outcome == "PASS")
+		}
 	}
 	finishCapacityLadder(&ladderRecord)
 	stepped := len(ladderRecord.Entries) > 1

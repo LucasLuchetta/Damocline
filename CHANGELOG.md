@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- `damocline capacity` step-downs now bisect over the repeatedly passing
+  explore levels (at most three campaigns) and run a recovery gate before
+  each: a bounded cooldown plus network-path probes that must return near
+  the pre-load reference. If the target does not recover, the ladder stops
+  with "target did not recover" instead of a contaminated FAIL. Reports
+  flag a short-explore pass with a sustained FAIL as a time-dependent knee
+  (ADR 0179).
+
 - Add `damocline compare --before DIR --after DIR` to compare two saved
   closed-loop capacity campaigns offline. It refuses non-comparable inputs
   (scenario, load, envelope or pass criteria differ) and reports per-step

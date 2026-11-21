@@ -43,7 +43,7 @@ func TestCapacityDryRunPrintsFullPlanAndWallTime(t *testing.T) {
 		t.Fatalf("dry run failed: %d %s", code, &errOut)
 	}
 	text := out.String()
-	for _, want := range []string{"1. Network baseline", "2. damocline calibrate for levels [2 4 8]", "3. Explore levels [2 4 8] with --calibration and --require-calibration", "4. Campaign", "step down to at most 2 lower", "5. Offline audit", "Total planned wall time at most", "Protocol note: explore stages last", "Zero-error sample floor: 299"} {
+	for _, want := range []string{"1. Network baseline", "2. damocline calibrate for levels [2 4 8]", "3. Explore levels [2 4 8] with --calibration and --require-calibration", "4. Campaign", "bisect over the lower repeatedly passing calibrated explore levels with at most 3 campaigns", "recovery gate waits 30s", "3 recovery gates of at most 3m0s", "5. Offline audit", "Total planned wall time at most 1h13m55s", "Protocol note: explore stages last", "Zero-error sample floor: 299"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("dry run output missing %q:\n%s", want, text)
 		}
