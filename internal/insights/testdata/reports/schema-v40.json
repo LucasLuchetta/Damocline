@@ -1,0 +1,99 @@
+{
+  "schema_version": 40,
+  "load_envelope": {"mode":"standard","max_users":50,"max_rps":100,"max_arrival_rate":100,"max_duration_seconds":180,"exceeds_standard":false},
+  "network_baseline": {"status":"MEASURED","phase":"before_load","source":"first_get_step","method":"GET","path":"/health","planned":20,"completed":20,"failures":0,"not_attempted":0,"unexpected_http_status":0,"interval_ms":100,"request_timeout_ms":5000,"min_ms":1.2,"p50_ms":2,"p95_ms":3.5,"max_ms":4,"max_to_p50_ratio":2},
+  "generator": {"samples":4,"process_samples":4,"go_cpu_valid":false,"process_cpu_valid":true,"mean_process_cpu_utilization_ratio":0.25,"peak_process_cpu_utilization_ratio":0.25},
+  "statistical_methods": {
+    "percentile_estimator": "NEAREST_RANK",
+    "p95_interval_method": "EXACT_BINOMIAL_ORDER_STATISTIC_RANKS",
+    "p95_interval_confidence": 0.95,
+    "p95_interval_assumption": "IID_STATIONARY_OBSERVATIONS",
+    "p99_interval_method": "EXACT_BINOMIAL_ORDER_STATISTIC_RANKS",
+    "p99_interval_confidence": 0.95,
+    "p99_interval_assumption": "IID_STATIONARY_OBSERVATIONS"
+  },
+  "name": "Synthetic bounded-template fixture",
+  "target": "http://127.0.0.1",
+  "started_at": "2026-10-19T00:00:00Z",
+  "elapsed_seconds": 1,
+  "observation_seconds": 1,
+  "iterations_started": 1,
+  "iterations_completed": 1,
+  "arrivals_scheduled": 1,
+  "arrivals_admitted": 1,
+  "arrivals_cancelled_before_admission": 0,
+  "config": {
+    "users": 1,
+    "duration": "1s",
+    "request_timeout": "1s",
+    "connection_policy": "reuse",
+    "workload_fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "max_rps": 10,
+    "p95_limit_ms": 100,
+    "journey_p95_limit_ms": 8000,
+    "max_error_rate": 0.1,
+    "mode": "closed",
+    "profile_selection": "per_journey_start",
+    "profile_mix_basis": "sanitized_analytics",
+    "profile_mix_reference": "synthetic-access-summary",
+    "profile_mix_reference_counts": [{"name":"browse","count":30},{"name":"update","count":10}],
+    "profiles": [
+      {"name":"browse","weight":3,"think_time":"0s","data_variability":"fixed"},
+      {"name":"update","weight":1,"think_time":"0s","writes":true,"data_variability":"synthetic_per_journey"}
+    ]
+  },
+  "metrics": {
+    "total": 1,
+    "success": 0,
+    "failures": 1,
+    "cancelled": 0,
+    "request_construction_failures": 1,
+    "failure_reasons": {
+      "request_expansion_limit": 1
+    },
+    "http_diagnostics": {
+      "failure_classification_version": 1,
+      "failure_subtypes": {"dns_not_found":0,"dns_temporary":0,"dns_timeout":0,"dns_other":0,"tls_certificate":0,"tls_non_tls_response":0,"tls_other":0}
+    }
+  },
+  "journeys": {
+    "total": 1,
+    "success": 0,
+    "failures": 1,
+    "cancelled": 0
+  },
+  "steps": [
+    {
+      "profile": "update",
+      "name": "write",
+      "method": "POST",
+      "path": "/write",
+      "metrics": {
+        "total": 1,
+        "success": 0,
+        "failures": 1,
+        "cancelled": 0,
+        "request_construction_failures": 1,
+        "failure_reasons": {
+          "request_expansion_limit": 1
+        },
+        "http_diagnostics": {
+          "failure_classification_version": 1,
+      "failure_subtypes": {"dns_not_found":0,"dns_temporary":0,"dns_timeout":0,"dns_other":0,"tls_certificate":0,"tls_non_tls_response":0,"tls_other":0}
+        }
+      }
+    }
+  ],
+  "profiles": [
+    {"name":"browse","weight":3,"journeys":{"total":0,"success":0,"failures":0,"cancelled":0}},
+    {"name":"update","weight":1,"profile_selected_starts":1,"actors_observed":1,"journeys":{"total":1,"success":0,"failures":1,"cancelled":0}}
+  ],
+  "profile_mix": {"state":"INSUFFICIENT_SAMPLES","workflows":[{"name":"browse","weight":3,"declared_share":0.75,"selected_starts":0,"completed_journeys":0,"reference_count":30},{"name":"update","weight":1,"declared_share":0.25,"selected_starts":1,"completed_journeys":1,"reference_count":10}],"selected_starts_fit":{"method":"pearson_chi_square_v1","alpha":0.01,"min_expected_count":5,"share_tolerance":0.02,"total":1,"degrees_of_freedom":1,"chi_square":3,"p_value":0.083265,"smallest_expected_count":0.25,"max_share_deviation":0.75,"state":"INSUFFICIENT_SAMPLES"},"completed_journeys_fit":{"method":"pearson_chi_square_v1","alpha":0.01,"min_expected_count":5,"share_tolerance":0.02,"total":1,"degrees_of_freedom":1,"chi_square":3,"p_value":0.083265,"smallest_expected_count":0.25,"max_share_deviation":0.75,"state":"INSUFFICIENT_SAMPLES"},"reference":{"provenance":"user_provided_assumption","basis":"sanitized_analytics","label":"synthetic-access-summary","declared_vs_reference":{"method":"pearson_chi_square_v1","alpha":0.01,"min_expected_count":5,"share_tolerance":0.05,"total":40,"degrees_of_freedom":1,"chi_square":0,"p_value":1,"smallest_expected_count":10,"max_share_deviation":0,"state":"REFERENCE_MATCHED"}}},
+  "generator_identity": {
+    "os": "linux",
+    "architecture": "amd64",
+    "go_version": "go1.26.3",
+    "runner_identity_method": "git_commit",
+    "runner_identity": "0123456789abcdef0123456789abcdef01234567"
+  }
+}

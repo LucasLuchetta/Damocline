@@ -110,7 +110,12 @@ type ProtocolReport struct {
 	ApplicationMetrics        []ApplicationMetricSummary  `json:"application_metrics"`
 	ApplicationMetricsOmitted int                         `json:"application_metrics_omitted"`
 	KeyLimits                 []string                    `json:"key_limits"`
+	// WorkloadSaturation is a labeled hypothesis (schema v2, ADR 0172).
+	WorkloadSaturation SaturationAssessment `json:"workload_saturation"`
 }
+
+// ProtocolReportSchemaVersion is the executive report schema emitted here.
+const ProtocolReportSchemaVersion = 2
 
 const maxApplicationMetricSummaries = 256
 
@@ -135,7 +140,7 @@ type ApplicationMetricSummary struct {
 }
 
 func BuildProtocolReport(p CapacityProtocol, a ConfirmationAssessment, campaigns []CampaignArtifact) ProtocolReport {
-	result := ProtocolReport{SchemaVersion: 1, ProtocolID: p.ProtocolID, State: a.State, Assessment: a, Campaigns: make([]CampaignAssessmentSummary, 0, len(campaigns)), KeyLimits: append([]string{}, a.Limitations...)}
+	result := ProtocolReport{SchemaVersion: ProtocolReportSchemaVersion, ProtocolID: p.ProtocolID, State: a.State, Assessment: a, Campaigns: make([]CampaignAssessmentSummary, 0, len(campaigns)), KeyLimits: append([]string{}, a.Limitations...)}
 	for _, artifact := range campaigns {
 		audit := AuditCampaign(artifact.Result)
 		summary := CampaignAssessmentSummary{Role: artifact.Role, EvidenceID: artifact.EvidenceID, Scenario: artifact.Result.Scenario, Users: artifact.Result.BaseUsers, Outcome: artifact.Result.Outcome, TrialsPlanned: artifact.Result.Repeats, TrialsCompleted: len(artifact.Result.Trials), AuditState: audit.State, MeasurementQuality: string(audit.MeasurementQuality)}
@@ -229,7 +234,27 @@ func BuildProtocolReport(p CapacityProtocol, a ConfirmationAssessment, campaigns
 		result.Campaigns = append(result.Campaigns, summary)
 	}
 	result.ApplicationMetrics, result.ApplicationMetricsOmitted = summarizeApplicationMetrics(campaigns)
+	results := make([]campaign.Result, len(campaigns))
+	for i, artifact := range campaigns {
+		results[i] = artifact.Result
+	}
+	result.WorkloadSaturation = AssessWorkloadSaturation(results)
 	return result
+}
+
+func renderSaturation(b *bytes.Buffer, s SaturationAssessment) {
+	b.WriteString("### Workload saturation hypothesis\n\n")
+	fmt.Fprintf(b, "**Label:** `%s`  \n**State:** `%s`\n\n", s.Label, s.State)
+	if s.Reason != "" {
+		fmt.Fprintf(b, "%s\n\n", md(s.Reason))
+	}
+	for _, fact := range s.Facts {
+		fmt.Fprintf(b, "- Measured: %s\n", md(fact))
+	}
+	for _, hypothesis := range s.Hypotheses {
+		fmt.Fprintf(b, "- Hypothesis: %s\n", md(hypothesis))
+	}
+	fmt.Fprintf(b, "\n%s\n\n", md(s.Note))
 }
 
 func summarizeApplicationMetrics(campaigns []CampaignArtifact) ([]ApplicationMetricSummary, int) {

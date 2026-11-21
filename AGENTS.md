@@ -22,6 +22,7 @@ Build a local-first, open-source system to measure sustainable application capac
 - Never embed real user-specific or customer application domains, production IP addresses, internal paths, test identities, or infrastructure details in public tests, documentation, commits, issues, or PR descriptions. Use reserved documentation domains (for example `app.example.com`), loopback addresses, and synthetic fixtures. Keep private scenarios and reports local and gitignored.
 - Do not copy implementation code from other tools without license review and attribution.
 - For PR validation, run the relevant checks locally and do not wait for GitHub-hosted CI unless the user explicitly asks for hosted checks.
+- Follow [GOVERNANCE.md](GOVERNANCE.md): upstream remains maintainer-governed; an issue or passing CI is not approval to merge. Propose major changes before implementation and submit focused PRs for review.
 
 ## Before opening a PR
 

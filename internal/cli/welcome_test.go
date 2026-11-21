@@ -57,8 +57,8 @@ func TestWelcomeEclipsePixelsAreTerminalFriendly(t *testing.T) {
 }
 
 type scriptedHomeKeyboard struct {
-	keys []homeKey
-	next int
+	keys   []homeKey
+	next   int
 	closed bool
 }
 
@@ -75,10 +75,10 @@ func (k *scriptedHomeKeyboard) close() { k.closed = true }
 
 func TestKeyboardHomeNavigation(t *testing.T) {
 	for _, tt := range []struct {
-		name string
-		keys []homeKey
+		name       string
+		keys       []homeKey
 		hasCurrent bool
-		want string
+		want       string
 	}{
 		{"enter picks first", []homeKey{homeKeyEnter}, false, "new"},
 		{"down then enter picks history", []homeKey{homeKeyDown, homeKeyEnter}, false, "history"},
@@ -153,7 +153,7 @@ func TestWelcomeRestartsWithoutDrawingOldSplash(t *testing.T) {
 func TestWelcomeMenuChoices(t *testing.T) {
 	for _, tt := range []struct {
 		name, input, want string
-		hasCurrent bool
+		hasCurrent        bool
 	}{
 		{"new by default", "\n", "new", false},
 		{"history", "2\n", "history", false},

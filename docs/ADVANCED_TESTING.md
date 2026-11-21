@@ -58,6 +58,10 @@ Scenario JSON files are limited to 1 MiB including trailing whitespace, base ori
 
 Optionally declare `profile_mix_basis` as `sanitized_analytics` or `business_estimate` and provide a short safe `profile_mix_reference` identifier. The default basis is `assumption`. This metadata is self-reported provenance, not proof that the mix is representative; do not put domains, paths, credentials, customer identifiers, or raw events in the reference.
 
+To compare the declared mix with real usage, add `profile_mix_reference_counts` with one aggregated count per workflow, for example `{"view_dashboard": 6000, "search_records": 2500, "update_record": 1500}` from a sanitized access-log summary. It requires a non-assumption basis and a reference label. Damocline records the counts as a user-provided assumption and reports whether the declared weights agree with them; it never infers them from traffic. Every v40 report also records the executed mix (`profile_mix`) and whether it matched the declared weights in that run or phase.
+
+In a mix with two or more workflows, a write workflow also needs `synthetic_data_prefix_env`, a per-actor identity (`per_vu_cookie_env_prefix` or `profile_cookie_env_prefixes`) and `{{synthetic_id}}` in a write step, in addition to `--allow-writes`. Pair the write with a final `DELETE` cleanup step so each journey reverts its own synthetic record.
+
 A later step may use a value extracted by an earlier one in the same journey. Path variables must occupy a whole path segment; query templates may occur in parameter values and are escaped as query components. Both remain relative to the configured origin. Header and body templates use `{{variable_name}}`. Extracted values and JSON assertion values are not placed in report output.
 
 For structured business outcomes, a step can declare, for example, `"json_assertions": {"/order/state": "ready"}`. The response must contain that scalar value at the JSON Pointer for the step to pass. Keep expected values synthetic and local. Assertion definitions change the workload fingerprint so runs with different business criteria are not treated as the same workload.

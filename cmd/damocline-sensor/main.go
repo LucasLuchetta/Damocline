@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/LucasLuchetta/Damocline/internal/hostmon"
 	"github.com/LucasLuchetta/Damocline/internal/hostsensor"
 )
 
@@ -21,6 +22,8 @@ func main() {
 	certFile := flag.String("tls-cert", "", "TLS certificate file for a remote listener")
 	keyFile := flag.String("tls-key", "", "TLS private key file for a remote listener")
 	workloadPID := flag.Int("workload-pid", 0, "optional PID to inspect process RSS/CPU and visible cgroup-v2 limits and memory events")
+	workloadDescendants := flag.Bool("workload-descendants", false, "also attribute CPU and RSS to the bounded process tree rooted at -workload-pid, including the busiest thread")
+	workloadCgroup := flag.String("workload-cgroup", "", "optional cgroup-v2 path relative to the cgroup mount for workload CPU usage, throttling and memory events")
 	flag.Parse()
 	if len(flag.Args()) != 0 {
 		fmt.Fprintln(os.Stderr, "positional arguments are not accepted")
@@ -35,7 +38,12 @@ func main() {
 		fmt.Fprintln(os.Stderr, "workload PID must not be negative")
 		os.Exit(2)
 	}
-	handler, err := hostsensor.NewHandler(token, hostsensor.NativeCollector(*workloadPID))
+	attribution := hostmon.AttributionConfig{PID: *workloadPID, Descendants: *workloadDescendants, CgroupPath: *workloadCgroup}
+	if err := hostmon.ValidateAttributionConfig(attribution); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+	handler, err := hostsensor.NewHandler(token, hostsensor.NativeAttributionCollector(*workloadPID, attribution))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)

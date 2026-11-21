@@ -73,7 +73,7 @@ func CollectRemote(ctx context.Context, endpoint, token, experimentID string) (R
 	if err := json.Unmarshal(body, &reading); err != nil {
 		return RemoteSample{}, fmt.Errorf("invalid host sensor response: %w", err)
 	}
-	if reading.SchemaVersion != 1 || reading.ExperimentID != experimentID || reading.Host.SchemaVersion != 1 || len(reading.Host.Samples) != 1 || !strings.HasPrefix(reading.Host.Source, "linux:") {
+	if !SupportedReadingSchema(reading.SchemaVersion) || reading.ExperimentID != experimentID || reading.Host.SchemaVersion != 1 || len(reading.Host.Samples) != 1 || !strings.HasPrefix(reading.Host.Source, "linux:") {
 		return RemoteSample{}, fmt.Errorf("host sensor response has mismatched identity or schema")
 	}
 	observed, err := time.Parse(time.RFC3339Nano, reading.ObservedAt)

@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -551,8 +552,13 @@ func TestWeightedProfilesArePrepared(t *testing.T) {
 	s.Steps = nil
 	s.Profiles = []Profile{
 		{Name: "browse", Weight: 3, ThinkTime: "20ms", Steps: []Step{{Name: "dashboard", Path: "/dashboard"}}},
-		{Name: "edit", Weight: 1, Steps: []Step{{Name: "save", Method: "POST", Path: "/save"}}},
+		{Name: "edit", Weight: 1, Steps: []Step{{Name: "save", Method: "POST", Path: "/save/{{synthetic_id}}"}}},
 	}
+	t.Setenv("DAMOCLINE_TEST_MIX_PREFIX", "synthetic")
+	for i := 1; i <= 4; i++ {
+		t.Setenv(fmt.Sprintf("DAMOCLINE_TEST_MIX_COOKIE_%d", i), fmt.Sprintf("sid=s%d", i))
+	}
+	s.SyntheticDataPrefixEnv, s.PerVUCookieEnvPrefix = "DAMOCLINE_TEST_MIX_PREFIX", "DAMOCLINE_TEST_MIX_COOKIE_"
 	v, err := Parse(s, Options{Authorized: true, AllowWrites: true})
 	if err != nil {
 		t.Fatal(err)

@@ -68,6 +68,9 @@ func ValidateRunReport(r report.Result) error {
 	if !report.ValidNetworkBaseline(r) {
 		return errors.New("network_baseline evidence is malformed or not allowed before schema v37")
 	}
+	if err := report.ValidProfileMix(r); err != nil {
+		return fmt.Errorf("workflow-mix evidence is invalid: %w", err)
+	}
 	if !report.ValidEnvelope(r) {
 		return errors.New("load_envelope evidence is malformed, exceeds its ceilings or is not allowed before schema v38")
 	}

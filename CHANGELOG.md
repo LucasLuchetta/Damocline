@@ -15,6 +15,27 @@
   extended capacity chain against a server with a known capacity above
   50 VUs.
 
+- Record the executed workflow mix in run schema v40 (`profile_mix`): selected
+  starts and completed journeys per workflow, chi-square fits against the
+  declared weights (`MIX_MATCHED`, `MIX_DEVIATED`, `INSUFFICIENT_SAMPLES`), and
+  an optional comparison with user-provided `profile_mix_reference_counts`.
+  Readers recompute the evidence offline. Audit (assessment schema v7) now
+  assesses workload representativeness from it and lists blockers with
+  remediation. Write workflows in a declared mix now also require a synthetic
+  data prefix, a per-actor identity and `{{synthetic_id}}` (ADR 0171).
+
+- Add opt-in, read-only workload attribution to `damocline-sensor`:
+  `--workload-descendants` measures the bounded process tree under
+  `--workload-pid` (tree CPU cores, summed RSS, top processes, busiest
+  thread), and `--workload-cgroup` (or the PID's own cgroup) reports cgroup-v2
+  CPU cores, quota, throttling and memory-event deltas with explicit coverage
+  states. The sensor reading schema advances to v2. The capacity protocol report
+  (schema v2) adds a `workload_saturation` finding that is always labeled as a
+  hypothesis and is `UNKNOWN` when attribution is absent (ADR 0172).
+
+- Preserve generator guardrail abort reasons in campaign summaries even
+  when the interrupted phase also has invalid delivery evidence.
+
 - Add an offline executive HTML capacity report (ADR 0173):
   `damocline audit --html-out` (single campaign, optional `--explore-file`
   and `--actions-per-user-minute`) and `capacity.html` by default in the

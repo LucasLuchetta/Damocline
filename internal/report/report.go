@@ -41,7 +41,10 @@ import (
 // Version 38 records the load envelope (standard or opt-in extended) that
 // bounded the run (ADR 0155).
 // Version 39 may embed a workload self-calibration artifact (ADR 0154).
-const CurrentSchemaVersion = 39
+// Version 40 records executed workflow-mix goodness-of-fit evidence,
+// per-workflow write and data-variability declarations and optional
+// user-provided reference counts (ADR 0171).
+const CurrentSchemaVersion = 40
 
 // ScenarioCalibrationSchemaVersion is the first run schema that may embed a
 // workload self-calibration artifact.
@@ -497,34 +500,37 @@ func percentile(values []time.Duration, p float64) time.Duration {
 func roundMS(d time.Duration) float64 { return float64(d.Microseconds()) / 1000.0 }
 
 type RunConfig struct {
-	WorkloadRevision      string          `json:"workload_revision,omitempty"`
-	ApplicationRevision   string          `json:"application_revision,omitempty"`
-	WorkloadFingerprint   string          `json:"workload_fingerprint,omitempty"`
-	Environment           string          `json:"environment,omitempty"`
-	ProfileMixBasis       string          `json:"profile_mix_basis,omitempty"`
-	ProfileMixReference   string          `json:"profile_mix_reference,omitempty"`
-	ProfileSelection      string          `json:"profile_selection,omitempty"`
-	ProfileSessionScopes  []string        `json:"profile_session_scopes,omitempty"`
-	Users                 int             `json:"users"`
-	Duration              string          `json:"duration"`
-	RampUp                string          `json:"ramp_up,omitempty"`
-	ThinkTime             string          `json:"think_time,omitempty"`
-	ThinkTimeRange        *ThinkTimeRange `json:"think_time_range,omitempty"`
-	ThinkTimeSamples      []string        `json:"think_time_samples,omitempty"`
-	WorkloadSeed          uint64          `json:"workload_seed,omitempty"`
-	RequestTimeout        string          `json:"request_timeout"`
-	ConnectionPolicy      string          `json:"connection_policy,omitempty"`
-	MaxConnectionsPerHost int             `json:"max_connections_per_host,omitempty"`
-	MaxRPS                int             `json:"max_rps"`
-	P95LimitMS            float64         `json:"p95_limit_ms"`
-	JourneyP95LimitMS     float64         `json:"journey_p95_limit_ms,omitempty"`
-	MaxErrorRate          float64         `json:"max_error_rate"`
-	Mode                  string          `json:"mode"`
-	ArrivalRate           int             `json:"arrival_rate,omitempty"`
-	SeparateSessions      bool            `json:"separate_sessions"`
-	MinSamplesPerStep     int             `json:"min_samples_per_step"`
-	Profiles              []ProfileConfig `json:"profiles,omitempty"`
-	WindowDuration        string          `json:"window_duration,omitempty"`
+	WorkloadRevision    string `json:"workload_revision,omitempty"`
+	ApplicationRevision string `json:"application_revision,omitempty"`
+	WorkloadFingerprint string `json:"workload_fingerprint,omitempty"`
+	Environment         string `json:"environment,omitempty"`
+	ProfileMixBasis     string `json:"profile_mix_basis,omitempty"`
+	ProfileMixReference string `json:"profile_mix_reference,omitempty"`
+	// ProfileMixReferenceCounts are optional user-provided counts per
+	// workflow (schema v40). They are a reference assumption, not evidence.
+	ProfileMixReferenceCounts []ProfileMixCount `json:"profile_mix_reference_counts,omitempty"`
+	ProfileSelection          string            `json:"profile_selection,omitempty"`
+	ProfileSessionScopes      []string          `json:"profile_session_scopes,omitempty"`
+	Users                     int               `json:"users"`
+	Duration                  string            `json:"duration"`
+	RampUp                    string            `json:"ramp_up,omitempty"`
+	ThinkTime                 string            `json:"think_time,omitempty"`
+	ThinkTimeRange            *ThinkTimeRange   `json:"think_time_range,omitempty"`
+	ThinkTimeSamples          []string          `json:"think_time_samples,omitempty"`
+	WorkloadSeed              uint64            `json:"workload_seed,omitempty"`
+	RequestTimeout            string            `json:"request_timeout"`
+	ConnectionPolicy          string            `json:"connection_policy,omitempty"`
+	MaxConnectionsPerHost     int               `json:"max_connections_per_host,omitempty"`
+	MaxRPS                    int               `json:"max_rps"`
+	P95LimitMS                float64           `json:"p95_limit_ms"`
+	JourneyP95LimitMS         float64           `json:"journey_p95_limit_ms,omitempty"`
+	MaxErrorRate              float64           `json:"max_error_rate"`
+	Mode                      string            `json:"mode"`
+	ArrivalRate               int               `json:"arrival_rate,omitempty"`
+	SeparateSessions          bool              `json:"separate_sessions"`
+	MinSamplesPerStep         int               `json:"min_samples_per_step"`
+	Profiles                  []ProfileConfig   `json:"profiles,omitempty"`
+	WindowDuration            string            `json:"window_duration,omitempty"`
 }
 
 // JourneyLatencyLimitMS returns the p95 limit applied to completed-journey
@@ -576,6 +582,9 @@ type ProfileConfig struct {
 	ThinkTime        string          `json:"think_time"`
 	ThinkTimeRange   *ThinkTimeRange `json:"think_time_range,omitempty"`
 	ThinkTimeSamples []string        `json:"think_time_samples,omitempty"`
+	// Writes and DataVariability are recorded from schema v40.
+	Writes          bool   `json:"writes,omitempty"`
+	DataVariability string `json:"data_variability,omitempty"`
 }
 
 type ThinkTimeRange struct {
@@ -634,6 +643,7 @@ type Result struct {
 	Journeys                         MetricSet                    `json:"journeys"`
 	Steps                            []StepResult                 `json:"steps"`
 	Profiles                         []ProfileResult              `json:"profiles,omitempty"`
+	ProfileMix                       *ProfileMixEvidence          `json:"profile_mix,omitempty"`
 	Windows                          []WindowResult               `json:"windows,omitempty"`
 	Outcome                          string                       `json:"outcome"`
 	ErrorsRate                       float64                      `json:"error_rate"`
