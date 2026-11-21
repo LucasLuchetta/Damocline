@@ -33,7 +33,13 @@ Damocline requests that never got a response widen only the upper bound. A
 server p95 above the client p95 is a mismatch: a client cannot see less time
 than the server spent. Matching entries outside the run window flag clock
 skew. Keep the generator and server on NTP; `--clock-tolerance` (default 2s)
-covers one-second log resolution. Exit code 1 means a mismatch.
+covers one-second log resolution. A missing matching server log entry cannot
+verify a step, even if the difference falls within the count tolerance. When
+request totals fully reconcile, a contradictory HTTP status class is a mismatch
+regardless of that tolerance; incomplete status reconciliation is
+`NOT_ASSESSABLE`. Missing server p95 alone remains non-blocking for count/status
+verification (for example in `combined` logs). Only an overall `MATCH` exits 0;
+`MISMATCH` and `NOT_ASSESSABLE` exit 1 so CI cannot approve uncertain evidence.
 
 ## 2. k6 comparison
 
