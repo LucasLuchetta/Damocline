@@ -28,8 +28,13 @@ func ValidateArtifactJSON(data []byte) error {
 		return err
 	}
 	var schema int
-	if err := json.Unmarshal(root["arrival_campaign_schema_version"], &schema); err != nil || schema < 1 || schema > CurrentSchemaVersion {
+	if err := json.Unmarshal(root["arrival_campaign_schema_version"], &schema); err != nil || schema < 1 || schema > EnvelopeSchemaVersion {
 		return errors.New("arrival campaign has an unsupported schema version")
+	}
+	if schema == EnvelopeSchemaVersion {
+		if err := requireArtifactFields(root, "load_envelope"); err != nil {
+			return err
+		}
 	}
 	if schema >= 5 {
 		if err := requireArtifactFields(root, "cooldown"); err != nil {

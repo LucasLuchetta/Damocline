@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -248,11 +249,17 @@ func exploreArrival(args []string, stdout, stderr io.Writer) int {
 	writes := fs.Bool("allow-writes", false, "explicitly opt in to HTTP mutation methods")
 	insecure := fs.Bool("allow-insecure-http", false, "permit intentional plaintext HTTP to a non-loopback host")
 	out := fs.String("out", "", "JSON exploration report output path")
+	extended := registerExtendedEnvelopeFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 	if *filename == "" || len(fs.Args()) != 0 {
 		fmt.Fprintln(stderr, "--config is required and positional arguments are not accepted")
+		return 2
+	}
+	extendedRequest, err := extended.request(*requireCalibration, *calibrationFile)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
 		return 2
 	}
 	scenario, err := config.Load(*filename)
@@ -284,6 +291,7 @@ func exploreArrival(args []string, stdout, stderr io.Writer) int {
 		*targetRate = required
 	}
 	options := arrivalexplorer.Options{
+		Extended:             extendedRequest != nil,
 		MinJourneysPerSecond: *minRate, MaxJourneysPerSecond: *maxRate,
 		TargetJourneysPerSecond: *targetRate, Repeats: *repeats,
 		StageDuration: *stage, Budget: *budget,
@@ -298,14 +306,41 @@ func exploreArrival(args []string, stdout, stderr io.Writer) int {
 	}
 	scenario.ArrivalRate = *minRate
 	validated, err := config.Parse(scenario, config.Options{
-		Authorized: *authorized || *dry, AllowWrites: *writes, AllowInsecureHTTP: *insecure, NetworkBaseline: true,
+		Authorized: *authorized || *dry, AllowWrites: *writes, AllowInsecureHTTP: *insecure, NetworkBaseline: true, ExtendedEnvelope: extendedRequest,
 	})
 	if err != nil {
 		fmt.Fprintf(stderr, "configuration error: %v\n", err)
 		return 2
 	}
 	var calibrationRecord *calibration.Record
-	if *calibrationFile != "" {
+	var selfCalibration *calibration.ScenarioRecord
+	if extendedRequest != nil {
+		selfCalibration, err = loadExtendedArrivalCalibration(*calibrationFile)
+		if err != nil {
+			fmt.Fprintf(stderr, "extended arrival calibration: %v\n", err)
+			return 2
+		}
+		for _, level := range selfCalibration.Levels {
+			if level.ArrivalRate >= *minRate && level.ArrivalRate <= *maxRate {
+				options.ProbeRates = append(options.ProbeRates, level.ArrivalRate)
+			}
+		}
+		slices.Sort(options.ProbeRates)
+		options.RequestedMinJourneysPerSecond, options.RequestedMaxJourneysPerSecond = *minRate, *maxRate
+		if len(options.ProbeRates) == 0 {
+			fmt.Fprintln(stderr, "extended arrival exploration has no calibrated rates in range")
+			return 2
+		}
+		if err := arrivalexplorer.Validate(options, validated.Scenario); err != nil {
+			fmt.Fprintf(stderr, "extended arrival exploration: %v\n", err)
+			return 2
+		}
+		if err := gateExtendedArrivalRates(&validated, selfCalibration, options.ProbeRates); err != nil {
+			fmt.Fprintf(stderr, "extended arrival exploration: %v; no traffic was sent\n", err)
+			return 2
+		}
+		fmt.Fprintf(stdout, "Extended envelope READY for scheduled starts %v/s at %d workers.\n", options.ProbeRates, validated.Scenario.Users)
+	} else if *calibrationFile != "" {
 		record, loadErr := loadCalibration(*calibrationFile)
 		if loadErr != nil {
 			fmt.Fprintf(stderr, "calibration error: %v\n", loadErr)
@@ -354,6 +389,9 @@ func exploreArrival(args []string, stdout, stderr io.Writer) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	runner := arrivalexplorer.Runner(engine.Run)
+	if selfCalibration != nil {
+		runner = arrivalexplorer.Runner(withScenarioCalibration(*selfCalibration, phaseRunner(runner)))
+	}
 	if calibrationRecord != nil {
 		record := *calibrationRecord
 		runner = func(runCtx context.Context, scenario config.Validated) report.Result {

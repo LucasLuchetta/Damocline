@@ -31,7 +31,7 @@ func UpperFailureRate95(failures, total int) (float64, error) {
 	z2 := oneSided95Z * oneSided95Z
 	denom := 1 + z2/n
 	center := (p + z2/(2*n)) / denom
-	margin := (oneSided95Z / denom) * math.Sqrt(p*(1-p)/n + z2/(4*n*n))
+	margin := (oneSided95Z / denom) * math.Sqrt(p*(1-p)/n+z2/(4*n*n))
 	return math.Min(1, center+margin), nil
 }
 

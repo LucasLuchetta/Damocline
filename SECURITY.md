@@ -2,24 +2,43 @@
 
 ## Supported versions
 
-Damocline is **pre-alpha** and has no released or security-supported version.
+Damocline is **pre-alpha**. There is no stable release, supported-version
+matrix, security fix SLA, or guarantee of vulnerability response times.
 
-## Reporting vulnerabilities
+## Private vulnerability disclosure
 
-Please **do not file public issues** containing exploitable vulnerabilities, sensitive data, or credentials.
+Please **do not open public issues or pull requests** containing exploitable
+vulnerabilities, secret values, private application details or credentials.
 
-Use GitHub private vulnerability reporting (**Security > Advisories > Report a vulnerability**) if enabled for this repository. If it is not available, arrange a private communication channel with the maintainer through their public GitHub profile without posting sensitive details.
+Use GitHub private vulnerability reporting at **Security > Advisories >
+Report a vulnerability** if the repository makes that feature available.
+Otherwise, contact the maintainer through their public GitHub profile to
+arrange a private channel **without including exploit details in a public
+message**. Do not post sensitive proof-of-concept traffic or artifacts.
 
-There is no formal response-time SLA at this stage.
+Include an affected commit/version, impact, safe reproduction steps and
+suggested remediation where possible. Do not test on third-party targets
+without their authorization.
 
-## Planned security requirements
+## Existing implementation and safety boundaries
 
-Before any load generation is shipped, the engine must:
+Damocline already has an experimental native HTTP load generator. Its
+pre-alpha status does **not** mean it is a non-networking scaffold, nor
+does it imply the generator is suitable for arbitrary public targets.
+Current safety boundaries include bounded load configurations, explicit
+authorization controls, generator-health checks, and redaction-oriented
+report handling. Their presence is not proof of complete security.
 
-- Restrict testing to targets users own or are authorized to assess.
-- Require explicit concurrency/rate/duration bounds, timeouts, and stop conditions.
-- Avoid arbitrary host discovery, destructive defaults, and production write operations without opt-in.
-- Redact credentials, session cookies, tokens, private URLs, and sensitive response data from artifacts.
-- Monitor its own resource constraints and stop safely when necessary.
+In particular:
 
-The existing CLI scaffold does not send load-test traffic.
+- Only test systems you own or are explicitly authorized to assess.
+- Keep concurrency, rate, duration, timeouts and abort conditions bounded.
+- Never commit credentials, session cookies, sensitive HAR files, private
+  URLs or production reports to the public repository.
+- Prefer read-only synthetic fixtures for validation. Mutating scenarios
+  require deliberate authorization and a cleanup plan.
+- Treat metrics, calibration and claimed causes as bounded evidence, not
+  guarantees of application capacity or vulnerability absence.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) and
+[GOVERNANCE.md](GOVERNANCE.md) for review and responsible-submission rules.

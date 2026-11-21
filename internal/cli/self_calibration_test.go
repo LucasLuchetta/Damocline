@@ -170,7 +170,7 @@ func TestAuditConsumesSelfCalibratedCampaign(t *testing.T) {
 	calibrateForTest(t, scenario, artifact, "--users", "4")
 	campaignOut := filepath.Join(dir, "campaign.json")
 	var stdout, stderr bytes.Buffer
-	code := Run([]string{"campaign", "--config", scenario, "--warmup", "0s", "--observation", "10s", "--recovery", "10s", "--repeats", "2",
+	code := Run([]string{"campaign", "--config", scenario, "--warmup", "0s", "--observation", "10s", "--recovery", "10s", "--repeats", "2", "--stability-max-p95-increase-ms", "100",
 		"--calibration", artifact, "--require-calibration", "--authorized", "--out", campaignOut}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("campaign failed (%d): %s %s", code, stdout.String(), stderr.String())

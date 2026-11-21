@@ -122,7 +122,11 @@ func gateExtendedLevels(v *config.Validated, calibrationFile string, levels []in
 	assess := func(users int) calibration.ExtendedCoverage {
 		s := v.Scenario
 		s.Users = users
-		return assessExtendedCoverage(s, record, runtime, now)
+		exact := record
+		if exact.SelfCalibration != nil {
+			exact.SelfCalibrationFingerprint = extendedLevelFingerprint(*v, users)
+		}
+		return assessExtendedCoverage(s, exact, runtime, now)
 	}
 	fmt.Fprintf(stdout, "Extended envelope (target class %s, hard maximum %d VUs/workers, %d starts/s, %s): checking calibration coverage for %d planned levels.\n",
 		v.Envelope.TargetClass, v.Envelope.Limits.MaxUsers, v.Envelope.Limits.MaxRPS, v.Envelope.Limits.MaxDuration, len(levels))
@@ -145,4 +149,12 @@ func gateExtendedLevels(v *config.Validated, calibrationFile string, levels []in
 	g := v.GeneratorGuardrails
 	fmt.Fprintf(stdout, "Generator guardrails enforced: CPU <= %.1f%%, RSS <= %d MiB, %d consecutive samples; exceeding either stops the trial as GENERATOR_LIMITED (a generator-side result, never an application limit).\n", g.MaxProcessCPUPercent, g.MaxProcessRSSBytes/(1024*1024), g.ConsecutiveSamples)
 	return func(users int) bool { return users <= v.Envelope.Limits.MaxUsers && assess(users).Status == "READY" }, 0
+}
+
+func extendedLevelFingerprint(v config.Validated, users int) string {
+	if len(v.Cookies) == 0 || len(v.Cookies) == users {
+		return v.WorkloadFingerprint
+	}
+	v.Cookies = make([]string, users)
+	return config.WorkloadFingerprint(v)
 }

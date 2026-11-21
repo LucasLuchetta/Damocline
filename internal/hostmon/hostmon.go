@@ -43,6 +43,8 @@ type Sample struct {
 	DiskCoverage     string    `json:"disk_io_coverage,omitempty"`
 	NetworkCoverage  string    `json:"network_io_coverage,omitempty"`
 	Workload         *Workload `json:"workload,omitempty"`
+	// Attribution is present only in sensor reading schema v2 (ADR 0172).
+	Attribution *Attribution `json:"workload_attribution,omitempty"`
 }
 type Result struct {
 	SchemaVersion int      `json:"schema_version"`
@@ -303,6 +305,15 @@ func Collect(ctx context.Context, duration, interval time.Duration) (Result, err
 }
 
 func CollectWithWorkload(ctx context.Context, duration, interval time.Duration, pid int) (Result, error) {
+	return CollectWithAttribution(ctx, duration, interval, pid, AttributionConfig{})
+}
+
+// CollectWithAttribution also records bounded process-tree and/or cgroup-v2
+// workload attribution when attribution is enabled (ADR 0172).
+func CollectWithAttribution(ctx context.Context, duration, interval time.Duration, pid int, attribution AttributionConfig) (Result, error) {
+	if err := ValidateAttributionConfig(attribution); err != nil {
+		return Result{}, err
+	}
 	if runtime.GOOS != "linux" {
 		return Result{}, fmt.Errorf("host monitor currently supports native Linux only")
 	}
@@ -324,6 +335,11 @@ func CollectWithWorkload(ctx context.Context, duration, interval time.Duration, 
 	previousWorkloadAt := time.Now()
 	if pid > 0 {
 		previousWorkload, _ = ReadWorkload(pid)
+	}
+	var sampler *AttributionSampler
+	if attribution.Enabled() {
+		sampler = NativeAttributionSampler(attribution)
+		sampler.Prime(time.Now())
 	}
 	for {
 		select {
@@ -362,6 +378,9 @@ func CollectWithWorkload(ctx context.Context, duration, interval time.Duration, 
 					previousWorkload = nil
 					previousWorkloadAt = time.Now()
 				}
+			}
+			if sampler != nil {
+				sample.Attribution = sampler.Sample(time.Now())
 			}
 			result.Samples = append(result.Samples, sample)
 			previous, previousDisk, previousNetwork = c, disk, network

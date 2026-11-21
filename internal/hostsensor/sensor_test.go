@@ -50,7 +50,7 @@ func TestHandlerRequiresAuthorizationAndExperimentID(t *testing.T) {
 	}
 	defer response.Body.Close()
 	var reading Reading
-	if err := json.NewDecoder(response.Body).Decode(&reading); err != nil || reading.ExperimentID != testExperiment || reading.SchemaVersion != 1 || len(reading.Host.Samples) != 1 {
+	if err := json.NewDecoder(response.Body).Decode(&reading); err != nil || reading.ExperimentID != testExperiment || reading.SchemaVersion != ReadingSchemaVersion || len(reading.Host.Samples) != 1 {
 		t.Fatalf("invalid reading: %+v err=%v", reading, err)
 	}
 }

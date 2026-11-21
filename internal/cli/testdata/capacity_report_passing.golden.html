@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:">
+<title>Capacity assessment</title>
+<style>
+:root{color-scheme:light dark;--bg:#ffffff;--fg:#1b1f24;--muted:#57606a;--line:#d0d7de;--panel:#f6f8fa;--ok:#1a7f37;--ok-bg:#dafbe1;--bad:#cf222e;--bad-bg:#ffebe9;--warn:#9a6700;--warn-bg:#fff8c5;--fact:#0969da;--hyp:#8250df;--unk:#9a6700;--s1:#0969da;--s2:#bc4c00}
+@media (prefers-color-scheme:dark){:root{--bg:#0d1117;--fg:#e6edf3;--muted:#9da7b3;--line:#30363d;--panel:#161b22;--ok:#3fb950;--ok-bg:#0f2a18;--bad:#ff7b72;--bad-bg:#3a1215;--warn:#d29922;--warn-bg:#2e2410;--fact:#58a6ff;--hyp:#bc8cff;--unk:#d29922;--s1:#58a6ff;--s2:#ffa657}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{max-width:960px;margin:0 auto;padding:24px 16px 48px}
+h1{font-size:1.7rem;margin:0 0 4px}h2{font-size:1.3rem;margin:32px 0 8px;border-bottom:1px solid var(--line);padding-bottom:4px}h3{font-size:1.05rem;margin:20px 0 6px}
+p,li{max-width:75ch}.muted{color:var(--muted)}
+.verdict{border:3px solid var(--line);border-radius:8px;padding:16px;margin:16px 0}
+.verdict strong.state{display:block;font-size:1.4rem;letter-spacing:.02em}
+.v-ok{border-color:var(--ok);background:var(--ok-bg)}.v-bad{border-color:var(--bad);background:var(--bad-bg)}.v-warn{border-color:var(--warn);background:var(--warn-bg)}
+.figures{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin:16px 0}
+.figure{border:1px solid var(--line);border-radius:8px;padding:12px;background:var(--panel)}
+.figure .value{font-size:1.6rem;font-weight:700;display:block}
+.kind{border-left:6px solid var(--line);padding:4px 12px;margin:12px 0}
+.kind>h3{margin-top:4px}.k-fact{border-color:var(--fact)}.k-hyp{border-color:var(--hyp)}.k-unk{border-color:var(--unk)}
+.tag{display:inline-block;font-size:.75rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;padding:1px 6px;border-radius:4px;border:1px solid currentColor}
+.t-fact{color:var(--fact)}.t-hyp{color:var(--hyp)}.t-unk{color:var(--unk)}
+table{border-collapse:collapse;width:100%;margin:8px 0;font-size:.9rem}th,td{border:1px solid var(--line);padding:4px 8px;text-align:left;vertical-align:top}th{background:var(--panel)}
+.table-wrap{overflow-x:auto}
+figure{margin:16px 0}figcaption{color:var(--muted);font-size:.9rem}
+svg{width:100%;height:auto;max-width:720px;display:block}
+svg text{fill:var(--fg);font-size:12px}svg .axis{stroke:var(--muted);stroke-width:1}svg .grid{stroke:var(--line);stroke-width:1}
+svg .limit{stroke:var(--bad);stroke-width:2;stroke-dasharray:6 4}
+svg .s-explore{stroke:var(--s1);stroke-width:2}svg .s-campaign{stroke:var(--s2);stroke-width:2}
+svg .fill-explore{fill:var(--s1)}svg .fill-campaign{fill:var(--s2)}svg .hollow{fill:var(--bg)}
+pre{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:12px;overflow-x:auto;white-space:pre-wrap;word-break:break-all}
+code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:.88em}
+@media print{:root{--bg:#fff;--fg:#000;--muted:#333;--line:#888;--panel:#fff}body{font-size:11pt}main{max-width:none;padding:0}h2,h3,figure,.verdict,.figure,table{break-inside:avoid}details{display:block}details>summary{display:none}a{color:inherit}}
+</style>
+</head>
+<body>
+<main>
+<header>
+<h1>Capacity assessment</h1>
+<p class="muted">Scenario synthetic &lt;local&gt; fixture · environment development · target http://127.0.0.1:18080 · campaign started 2026-10-19T12:00:00Z. Generated offline from saved evidence; no traffic was sent to produce this report.</p>
+</header>
+<section class="verdict v-ok" aria-labelledby="verdict-heading">
+<h2 id="verdict-heading" style="border:0;margin:0">Decision</h2>
+<strong class="state">DEMAND MET UNDER TESTED CONDITIONS</strong>
+<p>Formal assessment state: <code>GOAL_MET_UNDER_TESTED_CONDITIONS</code>; observed campaign state: <code>OBSERVED_PASS_ONLY</code>; measurement quality: <code>LIMITED</code>; decision confidence: <code>NOT_ESTABLISHED</code>.</p>
+</section>
+<section aria-label="Key figures" class="figures">
+<div class="figure"><span class="muted">Requested demand</span><span class="value">8 modeled active users</span><span class="muted">peak 8, growth 0%, reserve 0%</span></div>
+<div class="figure"><span class="muted">Highest approved level</span><span class="value">8 modeled active users</span><span class="muted">only a passing, decision-ready campaign approves a level</span></div>
+<div class="figure"><span class="muted">Tested campaign level</span><span class="value">8 modeled active users</span><span class="muted">required phase duration 20s</span></div>
+</section>
+<p class="muted">Modeled active users are closed-loop virtual users of the recorded workload. They are not people, connected sessions, requests in flight or requests per second. <span class="tag t-hyp">assumption</span> Declared usage assumption: at 4.00 actions per person per minute, 8 modeled users would correspond to about 1200.0 people, assuming one successful measured request per real action and the same workflow mix. This is not a measured human concurrency and does not change the decision.</p>
+<section aria-labelledby="conclusion">
+<h2 id="conclusion">Conclusion</h2>
+<p>The requested demand of 8 modeled active users was met under the tested conditions. The highest approved level is 8 modeled active users for scenario &#34;synthetic &lt;local&gt; fixture&#34; in the declared development environment over a required phase duration of 20s. This is not a prediction for other workloads, environments, durations or real people.</p>
+</section>
+<section aria-labelledby="next">
+<h2 id="next">Next decision</h2>
+<p>Decide whether the tested scenario, environment and duration represent the situation you need to plan for. If not, run a new campaign under those conditions before relying on this result.</p>
+</section>
+<section aria-labelledby="charts">
+<h2 id="charts">Measured behavior under load</h2>
+<p class="muted">Blue circles: exploration probes. Orange squares: campaign phases. Filled marks passed their run objectives; hollow marks did not. Exploration probes are short and are not capacity approvals.</p>
+<figure>
+<svg viewBox="0 0 640 300" role="img" aria-labelledby="chart-p95-t chart-p95-d">
+<title id="chart-p95-t">Request p95 latency versus load</title>
+<desc id="chart-p95-d">Scatter plot of 6 measurements of Request p95 (ms) against Modeled active users. The data is listed in the table below the charts.</desc>
+<line class="grid" x1="64.0" y1="256.0" x2="624.0" y2="256.0"/><text x="58.0" y="260.0" text-anchor="end">0</text>
+<text x="64.0" y="272.0" text-anchor="middle">0</text>
+<line class="grid" x1="64.0" y1="196.0" x2="624.0" y2="196.0"/><text x="58.0" y="200.0" text-anchor="end">250</text>
+<text x="204.0" y="272.0" text-anchor="middle">5</text>
+<line class="grid" x1="64.0" y1="136.0" x2="624.0" y2="136.0"/><text x="58.0" y="140.0" text-anchor="end">500</text>
+<text x="344.0" y="272.0" text-anchor="middle">10</text>
+<line class="grid" x1="64.0" y1="76.0" x2="624.0" y2="76.0"/><text x="58.0" y="80.0" text-anchor="end">750</text>
+<text x="484.0" y="272.0" text-anchor="middle">15</text>
+<line class="grid" x1="64.0" y1="16.0" x2="624.0" y2="16.0"/><text x="58.0" y="20.0" text-anchor="end">1000</text>
+<text x="624.0" y="272.0" text-anchor="middle">20</text>
+<line class="axis" x1="64.0" y1="16.0" x2="64.0" y2="256.0"/><line class="axis" x1="64.0" y1="256.0" x2="624.0" y2="256.0"/>
+<text x="344.0" y="294.0" text-anchor="middle">Modeled active users</text>
+<text x="14" y="136.0" text-anchor="middle" transform="rotate(-90 14 136.0)">Request p95 (ms)</text>
+<line class="limit" x1="64.0" y1="136.0" x2="624.0" y2="136.0"/><text x="620.0" y="130.0" text-anchor="end">objective 500 ms</text>
+<circle class="s-explore fill-explore" cx="120.0" cy="236.8" r="4.5"><title>explore 2 users, repeat 1: 80.0</title></circle>
+<circle class="s-explore fill-explore" cx="120.0" cy="235.6" r="4.5"><title>explore 2 users, repeat 2: 85.0</title></circle>
+<circle class="s-explore fill-explore" cx="176.0" cy="227.2" r="4.5"><title>explore 4 users, repeat 1: 120.0</title></circle>
+<circle class="s-explore hollow" cx="512.0" cy="40.0" r="4.5"><title>explore 16 users, repeat 1: 900.0</title></circle>
+<rect class="s-campaign fill-campaign" x="283.5" y="201.1" width="9" height="9"><title>campaign trial 1 observation: 210.0</title></rect>
+<rect class="s-campaign fill-campaign" x="283.5" y="201.1" width="9" height="9"><title>campaign trial 2 observation: 210.0</title></rect>
+</svg>
+<figcaption>Request p95 latency versus load. Dashed line: predeclared objective 500 ms.</figcaption>
+</figure>
+<figure>
+<svg viewBox="0 0 640 300" role="img" aria-labelledby="chart-rps-t chart-rps-d">
+<title id="chart-rps-t">Successful requests per second versus load</title>
+<desc id="chart-rps-d">Scatter plot of 6 measurements of Successful requests/s against Modeled active users. The data is listed in the table below the charts.</desc>
+<line class="grid" x1="64.0" y1="256.0" x2="624.0" y2="256.0"/><text x="58.0" y="260.0" text-anchor="end">0.0</text>
+<text x="64.0" y="272.0" text-anchor="middle">0</text>
+<line class="grid" x1="64.0" y1="196.0" x2="624.0" y2="196.0"/><text x="58.0" y="200.0" text-anchor="end">25.0</text>
+<text x="204.0" y="272.0" text-anchor="middle">5</text>
+<line class="grid" x1="64.0" y1="136.0" x2="624.0" y2="136.0"/><text x="58.0" y="140.0" text-anchor="end">50.0</text>
+<text x="344.0" y="272.0" text-anchor="middle">10</text>
+<line class="grid" x1="64.0" y1="76.0" x2="624.0" y2="76.0"/><text x="58.0" y="80.0" text-anchor="end">75.0</text>
+<text x="484.0" y="272.0" text-anchor="middle">15</text>
+<line class="grid" x1="64.0" y1="16.0" x2="624.0" y2="16.0"/><text x="58.0" y="20.0" text-anchor="end">100.0</text>
+<text x="624.0" y="272.0" text-anchor="middle">20</text>
+<line class="axis" x1="64.0" y1="16.0" x2="64.0" y2="256.0"/><line class="axis" x1="64.0" y1="256.0" x2="624.0" y2="256.0"/>
+<text x="344.0" y="294.0" text-anchor="middle">Modeled active users</text>
+<text x="14" y="136.0" text-anchor="middle" transform="rotate(-90 14 136.0)">Successful requests/s</text>
+<circle class="s-explore fill-explore" cx="120.0" cy="184.0" r="4.5"><title>explore 2 users, repeat 1: 30.00</title></circle>
+<circle class="s-explore fill-explore" cx="120.0" cy="184.5" r="4.5"><title>explore 2 users, repeat 2: 29.80</title></circle>
+<circle class="s-explore fill-explore" cx="176.0" cy="121.6" r="4.5"><title>explore 4 users, repeat 1: 56.00</title></circle>
+<circle class="s-explore hollow" cx="512.0" cy="59.2" r="4.5"><title>explore 16 users, repeat 1: 82.00</title></circle>
+<rect class="s-campaign fill-campaign" x="283.5" y="59.5" width="9" height="9"><title>campaign trial 1 observation: 80.00</title></rect>
+<rect class="s-campaign fill-campaign" x="283.5" y="59.5" width="9" height="9"><title>campaign trial 2 observation: 80.00</title></rect>
+</svg>
+<figcaption>Successful requests per second versus load.</figcaption>
+</figure>
+<p class="muted">If throughput stops rising while load increases, the system is saturating under this workload. The chart shows where, not why.</p>
+<figure>
+<svg viewBox="0 0 640 300" role="img" aria-labelledby="chart-errors-t chart-errors-d">
+<title id="chart-errors-t">Request error rate versus load</title>
+<desc id="chart-errors-d">Scatter plot of 6 measurements of Error rate (%) against Modeled active users. The data is listed in the table below the charts.</desc>
+<line class="grid" x1="64.0" y1="256.0" x2="624.0" y2="256.0"/><text x="58.0" y="260.0" text-anchor="end">0.00</text>
+<text x="64.0" y="272.0" text-anchor="middle">0</text>
+<line class="grid" x1="64.0" y1="196.0" x2="624.0" y2="196.0"/><text x="58.0" y="200.0" text-anchor="end">2.50</text>
+<text x="204.0" y="272.0" text-anchor="middle">5</text>
+<line class="grid" x1="64.0" y1="136.0" x2="624.0" y2="136.0"/><text x="58.0" y="140.0" text-anchor="end">5.00</text>
+<text x="344.0" y="272.0" text-anchor="middle">10</text>
+<line class="grid" x1="64.0" y1="76.0" x2="624.0" y2="76.0"/><text x="58.0" y="80.0" text-anchor="end">7.50</text>
+<text x="484.0" y="272.0" text-anchor="middle">15</text>
+<line class="grid" x1="64.0" y1="16.0" x2="624.0" y2="16.0"/><text x="58.0" y="20.0" text-anchor="end">10.00</text>
+<text x="624.0" y="272.0" text-anchor="middle">20</text>
+<line class="axis" x1="64.0" y1="16.0" x2="64.0" y2="256.0"/><line class="axis" x1="64.0" y1="256.0" x2="624.0" y2="256.0"/>
+<text x="344.0" y="294.0" text-anchor="middle">Modeled active users</text>
+<text x="14" y="136.0" text-anchor="middle" transform="rotate(-90 14 136.0)">Error rate (%)</text>
+<line class="limit" x1="64.0" y1="232.0" x2="624.0" y2="232.0"/><text x="620.0" y="226.0" text-anchor="end">maximum 1.00%</text>
+<circle class="s-explore fill-explore" cx="120.0" cy="256.0" r="4.5"><title>explore 2 users, repeat 1: 0.000</title></circle>
+<circle class="s-explore fill-explore" cx="120.0" cy="256.0" r="4.5"><title>explore 2 users, repeat 2: 0.000</title></circle>
+<circle class="s-explore fill-explore" cx="176.0" cy="256.0" r="4.5"><title>explore 4 users, repeat 1: 0.000</title></circle>
+<circle class="s-explore hollow" cx="512.0" cy="144.4" r="4.5"><title>explore 16 users, repeat 1: 4.651</title></circle>
+<rect class="s-campaign fill-campaign" x="283.5" y="251.5" width="9" height="9"><title>campaign trial 1 observation: 0.000</title></rect>
+<rect class="s-campaign fill-campaign" x="283.5" y="251.5" width="9" height="9"><title>campaign trial 2 observation: 0.000</title></rect>
+</svg>
+<figcaption>Request error rate versus load. Dashed line: predeclared maximum 1.00%.</figcaption>
+</figure>
+<details>
+<summary>Chart data</summary>
+<div class="table-wrap"><table>
+<caption>Every plotted measurement</caption>
+<thead><tr><th scope="col">Source</th><th scope="col">Modeled users</th><th scope="col">Request p95 (ms)</th><th scope="col">Successful requests/s</th><th scope="col">Error rate</th><th scope="col">Run outcome</th></tr></thead>
+<tbody>
+<tr><td>explore 2 users, repeat 1</td><td>2</td><td>80.0</td><td>30.00</td><td>0.000%</td><td>passed</td></tr>
+<tr><td>explore 2 users, repeat 2</td><td>2</td><td>85.0</td><td>29.80</td><td>0.000%</td><td>passed</td></tr>
+<tr><td>explore 4 users, repeat 1</td><td>4</td><td>120.0</td><td>56.00</td><td>0.000%</td><td>passed</td></tr>
+<tr><td>explore 16 users, repeat 1</td><td>16</td><td>900.0</td><td>82.00</td><td>4.651%</td><td>did not pass</td></tr>
+<tr><td>campaign trial 1 observation</td><td>8</td><td>210.0</td><td>80.00</td><td>0.000%</td><td>passed</td></tr>
+<tr><td>campaign trial 2 observation</td><td>8</td><td>210.0</td><td>80.00</td><td>0.000%</td><td>passed</td></tr>
+</tbody>
+</table></div>
+</details>
+</section>
+<section aria-labelledby="fhu">
+<h2 id="fhu">Facts, hypotheses and unknowns</h2>
+<div class="kind k-fact">
+<h3><span class="tag t-fact">measured fact</span> What was observed</h3>
+<ul>
+<li>Campaign at 8 modeled active users; observed passing levels [8], failing levels [].</li>
+<li>Repeat trials: 2 of 2 evaluable trials passed (0 excluded).</li>
+<li>Observation trial 1: 800 requests, request p95 210.0 ms, journey p95 210.0 ms, 80.00 successful journeys/s, request errors not recorded.</li>
+<li>Exploration passed short probes up to 4 modeled users. This is exploratory and is not an approved level.</li>
+</ul>
+</div>
+<div class="kind k-hyp">
+<h3><span class="tag t-hyp">hypothesis</span> Possible explanations and assumptions (not validated)</h3>
+<ul>
+<li>Declared usage assumption: at 4.00 actions per person per minute, 8 modeled users would correspond to about 1200.0 people, assuming one successful measured request per real action and the same workflow mix. This is not a measured human concurrency and does not change the decision.</li>
+</ul>
+</div>
+<div class="kind k-unk">
+<h3><span class="tag t-unk">unknown</span> What this evidence cannot establish</h3>
+<ul>
+<li>Physical host identity is not verified.</li>
+</ul>
+</div>
+</section>
+<section aria-labelledby="evidence">
+<h2 id="evidence">Evidence quality</h2>
+<p>Campaign calibration requirement: no exact coverage requirement. Generator runtime identity: <code>CONSISTENT</code>; CPU capacity consistency: <code>CONSISTENT</code>; host type: <code>NOT_RECORDED</code>.</p>
+<div class="table-wrap"><table>
+<caption>Per-phase calibration, network baseline, generator health and drift</caption>
+<thead><tr><th scope="col">Trial</th><th scope="col">Phase</th><th scope="col">Delivery verdict</th><th scope="col">Measurement quality</th><th scope="col">Calibration</th><th scope="col">Network baseline</th><th scope="col">Generator CPU peak</th><th scope="col">Drift screen</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>observation</td><td>PASS_OBSERVED</td><td>LIMITED</td><td>not recorded</td><td>PASS (p50 0.4 ms, p95 0.9 ms, 10/10)</td><td>21.0%</td><td>NO_LARGE_DRIFT_DETECTED</td></tr>
+<tr><td>2</td><td>observation</td><td>PASS_OBSERVED</td><td>LIMITED</td><td>not recorded</td><td>PASS (p50 0.4 ms, p95 0.9 ms, 10/10)</td><td>21.0%</td><td>NO_LARGE_DRIFT_DETECTED</td></tr>
+</tbody>
+</table></div>
+<p>Repeats: 2/2 evaluable trials passed; method <code>EXACT_CLOPPER_PEARSON_BINOMIAL</code> under assumption <code>INDEPENDENT_STATIONARY_REPEAT_TRIALS</code>; conditional pass-probability interval 0.158–1.000, which is not capacity confidence.</p>
+<p>Confidence dimensions: measurement <code>LIMITED</code>, workload representativeness <code>NOT_ASSESSED</code>, decision <code>NOT_ESTABLISHED</code>.</p>
+</section>
+<section aria-labelledby="blockers">
+<h2 id="blockers">Decision blockers and remediation</h2>
+<p>No decision blockers were recorded.</p>
+</section>
+<section aria-labelledby="limits">
+<h2 id="limits">Limitations and uncertainty</h2>
+<ul>
+<li>This assessment describes the saved evidence under its declared conditions. It does not certify universal or human-user capacity, establish dependence-aware confidence, or recommend infrastructure changes.</li>
+<li>Percentiles are nearest-rank descriptive estimates; statistical intervals assume independent, stationary samples, which this assessment does not establish.</li>
+<li>The workload mix is not independently validated.</li>
+<li>Observed results apply only to the recorded workload.</li>
+</ul>
+</section>
+<section aria-labelledby="replay">
+<h2 id="replay">Offline replay and evidence digests</h2>
+<ul>
+<li>Campaign source: <code>campaign.json</code></li>
+<li>Campaign evidence ID (canonical decoded fields): <code>sha256:campaign-fixture</code></li>
+<li>Campaign source file SHA-256 (exact bytes): <code>sha256:source-fixture</code></li>
+<li>Exploration source file SHA-256: <code>sha256:explore-fixture</code></li>
+<li>Auditor test executable SHA-256: <code>sha256:auditor-fixture</code></li>
+<li>Workload fingerprint: <code>sha256:workload-fixture</code></li>
+</ul>
+<p class="muted">Digests identify evidence; they are not signatures or host, producer or target attestation.</p>
+<pre><code>damocline audit --campaign &#39;campaign.json&#39; --expect-evidence-id &#39;sha256:campaign-fixture&#39; --expect-campaign-file-sha256 &#39;sha256:source-fixture&#39; --expect-auditor-sha256 &#39;sha256:auditor-fixture&#39; --peak-users 8 --growth-percent 0 --reserve-percent 0 --out &#39;replayed-assessment.json&#39; --report-out &#39;replayed-capacity-report.md&#39; --explore-file &#39;explore.json&#39; --expect-explore-file-sha256 &#39;sha256:explore-fixture&#39; --actions-per-user-minute 4 --html-out &#39;replayed-capacity-report.html&#39;</code></pre>
+</section>
+</main>
+</body>
+</html>
