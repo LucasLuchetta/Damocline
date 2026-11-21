@@ -64,7 +64,10 @@ go run ./cmd/damocline run --config .damocline/remote-ref/scenario.json --allow-
 
 The smoke workload: **2 concurrent VUs, 30 seconds, one read-only GET,
 100 request starts/s hard ceiling** (not a demand target), HTTP 200 and body
-marker required. The 4-slot target is intentionally bounded. HTTP is allowed
+marker required. The scenario uses `baseline_path: /healthz` for the Damocline
+pre-load network-path probe (20 requests); this route is intentionally excluded
+from the `/work` ledger so reference counts cannot be polluted by calibration.
+The 4-slot target is intentionally bounded. HTTP is allowed
 only because both machines are on a trusted local network.
 
 Do not run other generators concurrently, increase the envelope, or
