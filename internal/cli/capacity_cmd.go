@@ -337,9 +337,13 @@ func capacityCmd(args []string, stdout, stderr io.Writer) int {
 	stages := probes * opt.Repeats
 	exploreNeed := time.Duration(stages) * (opt.StageDuration + overhead)
 	explicitExploreBudget := false
+	explicitCampaignBudget := false
 	fs.Visit(func(f *flag.Flag) {
 		if f.Name == "explore-budget" {
 			explicitExploreBudget = true
+		}
+		if f.Name == "budget" {
+			explicitCampaignBudget = true
 		}
 	})
 	// The overhead above is each bound at its cap (for example the 30s
@@ -542,6 +546,12 @@ func capacityCmd(args []string, stdout, stderr io.Writer) int {
 		}
 		minimumBudget := campaign.PlannedBudget(schedule) + baselineAllowance
 		fmt.Fprintf(stdout, "Minimum campaign wall budget at %d VUs including six network preflights and bounded drains: %s.\n", level, minimumBudget)
+		// A default (not user-set) campaign cap grows to the computed minimum
+		// as long as it stays within the campaign wall-time limit.
+		if options.Budget < minimumBudget && !explicitCampaignBudget && minimumBudget <= capacityCampaignBudgetLimit(options) {
+			fmt.Fprintf(stdout, "Campaign wall cap raised from the %s default to %s at %d VUs (within the %s limit).\n", options.Budget, minimumBudget, level, capacityCampaignBudgetLimit(options))
+			options.Budget = minimumBudget
+		}
 		if options.Budget < minimumBudget {
 			return options, fmt.Errorf("budget %s is below %s; increase --budget within its ceiling, use explicit long-run staging opt-in if needed, simplify the workload, or validate more VUs", *budget, minimumBudget)
 		}
@@ -886,4 +896,13 @@ func capacityTransportArgs(allowInsecureHTTP bool) []string {
 		return []string{"--allow-insecure-http"}
 	}
 	return nil
+}
+
+// capacityCampaignBudgetLimit is the largest wall cap campaign.Validate
+// accepts for these options.
+func capacityCampaignBudgetLimit(options campaign.Options) time.Duration {
+	if options.LongRun {
+		return campaign.LongRunWallTimeLimit
+	}
+	return campaign.DefaultWallTimeLimit
 }
