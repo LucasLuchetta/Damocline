@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Add an RQ-3 independent-host LAN reference fixture (`lab/remote_reference_target.py`)
+  with a bounded read-only HTTP route, a target-owned NDJSON request ledger,
+  503 saturation behavior, RFC1918-only binding, and automatic shutdown. Add
+  deterministic Python stdlib self-tests (Linux CI), a starter scenario, and
+  a two-machine Ubuntu-target/Windows-generator validation protocol. The
+  fixture itself does not establish representative application capacity.
+
 - Require complete, workload-matched k6 checks before `compare-external`
   can report `k6_would_pass=true`. A failed content check vetoes a pass
   even when the HTTP status meets expectations (ADR 0186).

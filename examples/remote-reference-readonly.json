@@ -1,0 +1,28 @@
+{
+  "name": "RQ-3 LAN synthetic read-only smoke",
+  "workload_revision": "rq3-remote-read-v1",
+  "application_revision": "remote-reference-v1",
+  "environment": "separate-lan-generator-and-target",
+  "base_url": "http://127.0.0.1:18088",
+  "mode": "closed",
+  "users": 2,
+  "duration": "30s",
+  "ramp_up": "0s",
+  "request_timeout": "3s",
+  "max_rps": 100,
+  "p95_limit_ms": 1000,
+  "max_error_rate": 0.01,
+  "min_samples_per_step": 20,
+  "steps": [
+    {
+      "name": "remote_reference_read",
+      "method": "GET",
+      "path": "/work",
+      "expected_status": [
+        200
+      ],
+      "must_contain": "damocline-remote-reference-v1"
+    }
+  ],
+  "baseline_path": "/healthz"
+}

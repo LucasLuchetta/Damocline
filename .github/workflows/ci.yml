@@ -29,6 +29,8 @@ jobs:
         run: go vet ./...
       - name: Test with race detector
         run: go test -race ./...
+      - name: Verify independent LAN reference fixture
+        run: python3 -W error::ResourceWarning -m unittest discover -s lab -p 'test_remote_reference_target.py' -v
       - name: Fuzz bounded request expansion
         run: |
           go test ./internal/engine -run '^$' -fuzz '^FuzzInterpolateBoundedNeverExceedsLimit$' -fuzztime=5s -parallel=2
