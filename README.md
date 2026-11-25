@@ -421,7 +421,7 @@ go run ./cmd/damocline help
 go run ./cmd/damocline version
 ```
 
-For safe local testing, real authenticated application testing, and Windows instructions, see the [MVP quick start](docs/QUICKSTART.md). Use `--dry-run` to validate first, then `--authorized` to actually generate bounded traffic.
+For a safe local first run, authenticated application testing, and platform-specific instructions, see the [Quick start](docs/QUICKSTART.md). Use `--dry-run` to validate first, then `--authorized` to generate bounded traffic.
 
 **Optional local HTTP transport reference:** Run `go run ./cmd/damocline-calibrate --transport-matrix --out .damocline/calibration/transport.json` to verify bounded response-size, TLS, keep-alive, streaming, controlled delay and failure fixtures. The matrix never calls a customer application and does **not** certify the native generator scheduler or application capacity.
 
@@ -481,7 +481,7 @@ An `--extended` run adds the exact 15/20/50/100 arrivals-per-second loopback sta
 - [Measurement model](docs/METRICS.md)
 - [Scientific foundations and validation contract](docs/SCIENTIFIC_FOUNDATIONS.md)
 - [Local reference validation](docs/REFERENCE_VALIDATION.md)
-- [MVP quick start](docs/QUICKSTART.md)
+- [Quick start](docs/QUICKSTART.md)
 - [Source updates](docs/UPDATES.md)
 - [Decision records](docs/adr/0001-go-core.md)
 - [Contributing](CONTRIBUTING.md)
