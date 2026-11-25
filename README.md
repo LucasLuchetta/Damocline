@@ -39,7 +39,7 @@ Damocline will seek **scenario-specific sustainable capacity**, never claim one 
 > [!NOTE]
 > **Evidence level:** G0 is closed only for the **local reference scope** (loopback fixtures and calibrated generators). That is not certification for real applications. Capabilities are currently `IMPLEMENTED` and, for some loopback cases, `VALIDATED_CONTROLLED`; none is `PROVEN_REPRESENTATIVE`. The [Reliability Qualification milestone](docs/RELIABILITY_QUALIFICATION.md) takes priority over new features.
 
-## Current capabilities (October 2026)
+## Current capabilities
 
 Damocline is a **working experimental, local-first HTTP capacity testing CLI**. It executes bounded synthetic workloads, explores load levels, runs repeated campaigns and audits recorded evidence offline. Its results describe **specific tested scenarios and conditions**, not a certified maximum number of simultaneous human users.
 
