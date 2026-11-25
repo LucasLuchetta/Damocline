@@ -1,99 +1,108 @@
-# Quick start — HTTP MVP
+# Quick start — run a local HTTP test
 
-This release is an **experimental, self-hosted load generator**. It sends HTTP requests, not full browser events. It can exercise authenticated pages and APIs, but it does not automatically measure JavaScript rendering or find a universal server capacity.
+Damocline is an experimental, local-first HTTP capacity tool. This guide gets
+the source version running against a synthetic server on your own computer.
+It does not require a domain, account, Docker, or access to the internet after
+the source and Go toolchain are available.
 
-## 1. Install / build
+There are no official signed binary releases yet. Build and run the source
+with Go 1.24 or newer. The project is pre-alpha; a successful smoke test
+checks this small setup, not the capacity of a real application.
 
-**Option A — build from source (Windows PowerShell, Linux, or macOS):** install Go 1.24+, clone the repository, and run:
+## 1. Get the source
 
-```powershell
+Install [Git](https://git-scm.com/), [Go 1.24 or newer](https://go.dev/dl/),
+and Python 3, then run:
+
+```sh
 git clone https://github.com/LucasLuchetta/Damocline.git
 cd Damocline
-go test ./...
-go build -o damocline.exe ./cmd/damocline
-.\damocline.exe help
+go run ./cmd/damocline help
 ```
 
-If you are using the `feat/http-mvp` branch before merge, run `git switch feat/http-mvp` after cloning.
+`go run` builds the CLI locally. On Windows, use PowerShell, Windows Terminal,
+or CMD; the commands in this guide work from PowerShell. To install the
+source-based launcher instead, follow [Source installation](SOURCE_INSTALL.md).
 
-**Option B — Windows executable:** download the `damocline-preview-binaries` artifact from a successful [GitHub Actions run](https://github.com/LucasLuchetta/Damocline/actions/workflows/ci.yml), unzip it, and use `damocline-windows-amd64.exe`. These are temporary CI artifacts, not signed official releases.
+## 2. Start the synthetic server
 
-## 2. Try localhost first
-
-From the repository root, open a terminal with a local static server:
+Open a second terminal in the repository directory. Start Python's static
+server bound to loopback so other devices cannot connect to it:
 
 ```powershell
-python -m http.server 18080 --bind 127.0.0.1
+py -3 -m http.server 18080 --bind 127.0.0.1
 ```
 
-Open another terminal:
+On Linux or macOS, use:
 
-```powershell
-.\damocline.exe run --config examples/local-smoke.json --dry-run
-.\damocline.exe run --config examples/local-smoke.json --authorized --out reports/local.json
+```sh
+python3 -m http.server 18080 --bind 127.0.0.1
 ```
 
-`--dry-run` resolves the scenario but sends **zero requests**. `--authorized` is required for real traffic. The sample uses 2 VUs, a 5 RPS cap and only GET.
+Leave this terminal open while running the test. The server only returns a
+directory listing; it does not use real customer or application data.
 
-## 3. Safely configure an authenticated web app
+## 3. Validate, then run the bounded test
 
-Copy `examples/webapp-readonly.json` to `myapp.local.json` (the `*.local.json` pattern is gitignored).
+In the first terminal, validate the included 2-user, 5-request-per-second,
+10-second scenario. `--dry-run` sends no HTTP requests:
 
-Set `base_url` to your application's HTTPS **origin**, for example `https://app.example.com`. Replace the sample `/dashboard` and `/employees` paths with real routes you own and are authorized to test. Include an unmistakable `must_contain` marker for your authenticated page; an HTTP 200 might otherwise be a login page.
-
-### Windows PowerShell: session cookie without committing it
-
-Open your own authenticated browser session and securely obtain only the necessary `Cookie` header value. **Do not share the cookie with ChatGPT, paste it into an issue/PR, or add it to JSON.** Enter it locally:
-
-```powershell
-$cookie = Read-Host "Cookie header value from your authorized session" -AsSecureString
-$env:DAMOCLINE_SESSION_COOKIE = [System.Net.NetworkCredential]::new("", $cookie).Password
-Remove-Variable cookie
+```sh
+go run ./cmd/damocline run --config examples/local-smoke.json --dry-run
 ```
 
-The JSON uses `"Cookie": "${DAMOCLINE_SESSION_COOKIE}"`; the CLI resolves it from your current process environment, never prints the value, and does not add it to reports.
+If validation succeeds and the local server is running, explicitly authorize
+the traffic and save the report:
 
-Then:
-
-```powershell
-.\damocline.exe run --config .\myapp.local.json --dry-run
-.\damocline.exe run --config .\myapp.local.json --authorized --out reports/myapp-smoke.json
-Remove-Item Env:\DAMOCLINE_SESSION_COOKIE
+```sh
+go run ./cmd/damocline run --config examples/local-smoke.json --authorized --out .damocline/reports/local-smoke.json
 ```
 
-A bearer token can be supplied in a similar way with `"Authorization": "${DAMOCLINE_AUTHORIZATION}"`. Include the `Bearer ` prefix in the environment variable value if required by your API.
+Inspect the saved report offline:
 
-**Important:** a session cookie may be tied to a single user. Multiple Damocline VUs reusing one cookie are not equivalent to distinct real authenticated accounts. Use test users and a staging environment when possible. Pages may poll or trigger side effects even with GET; confirm each route's behavior first.
+```sh
+go run ./cmd/damocline report --file .damocline/reports/local-smoke.json
+```
 
-### Starting production testing
+Stop the Python server with `Ctrl+C` when finished. The `.damocline/` directory
+is local working data and is ignored by Git.
 
-Start with **2 virtual users / 5 RPS / 30 seconds** on read-only pages. Run during a quiet maintenance window, coordinate with the operator, check server health, and raise limits gradually only if measurements remain stable. Prefer staging with realistic data. The engine has hard configuration ceilings of 50 VUs, 100 RPS and 3 minutes but those ceilings are not safe recommendations for every app.
+## 4. Read the result carefully
 
-## 4. Read the results
+The report describes one bounded run against this local fixture. `PASS` means
+the configured objectives passed in that run. It does not establish a maximum
+number of users, long-term stability, or the capacity of another host or
+application. For measurement definitions and uncertainty, see
+[Understand your results](REPORT_EXPLAINER.md) and
+[Measurement model](METRICS.md).
 
-A run prints:
+## Test an application you are authorized to assess
 
-- Total requests, successful operations, failure reasons and cancelled requests.
-- Per-step p95 latency and aggregate p50/p95/p99.
-- Achieved throughput, configured virtual users, and whether your p95 and error-rate thresholds passed.
-- For open-loop arrival mode, scheduled/started/completed/dropped arrivals and scheduler-lag summaries; plus sampled Go-runtime and supported OS process health for the generator.
-- A JSON artifact for comparing later runs.
+Only test systems you own or have explicit permission to test. Prefer a
+staging environment and read-only routes; a `GET` request can still trigger
+side effects. Begin with low traffic, coordinate with the operator, and treat
+the standard limits as ceilings rather than recommended starting loads.
+`--authorized` records your explicit confirmation; it does not verify
+ownership or permission for you.
 
-**PASS means the declared objectives passed in this one run.** It does not mean the server supports that many *people* indefinitely or that it has a known maximum capacity. The report's error-rate upper bound assumes independent stationary outcomes. Schema-v32 and later reports also show exact p95 and p99 order-statistic rank intervals when they have at least 200 and 1,000 observations, respectively, up to a one-million-sample analysis limit. These intervals assume independent, stationary latency observations; they do not test those assumptions or account for temporal or actor-level dependence. When an interval is unavailable, the percentile remains descriptive. Generator health samples the Go runtime and, on Windows/Linux, OS process CPU/RSS; sampling can miss brief saturation. The run does not separate warm-up from a steady-state observation window.
+For the guided setup, supported authentication options, temporary browser
+login, and local handling of session cookies, see
+[Source installation](SOURCE_INSTALL.md) and [Guided CLI](INTERACTIVE_START.md).
+For scenarios, advanced workloads, calibration, and host monitoring, see
+[Advanced testing](ADVANCED_TESTING.md). Never commit credentials, cookies,
+private scenarios, or reports containing sensitive target details.
 
-To compare traffic under different settings, copy the scenario, change `users` deliberately, keep route/data/latency/error definitions constant, and repeat in comparable conditions. Results from overlapping pages cannot be added together to produce a system-wide limit.
+## Current limits
 
-For Linux or Docker servers you administer, collect server-side signals separately (for example CPU and memory using `docker stats`) while running Damocline from another machine. Host monitoring is not integrated into the MVP yet.
+- Damocline generates HTTP/HTTPS requests; it does not render pages in a
+  browser or measure JavaScript, WebSockets, or browser-visible performance.
+- Reusing one browser session across virtual users does not represent separate
+  human identities. Use distinct authorized test accounts when that matters.
+- Redirects are not followed by default. A redirect to a login page is
+  reported as a failed request unless the scenario explicitly accounts for it.
+- The standard safety ceilings are 50 virtual users, 100 requests per second,
+  and three minutes. They are not safe recommendations for every target.
+- Host monitoring is an optional separate command; collected metrics can
+  provide context but do not prove the cause of a bottleneck.
 
-## 5. Limitations and safeguards
-
-- **Execution model:** closed-loop VUs and open-loop journey arrivals are supported. Independent session arrivals with dependent within-session steps (a partly open model) are not implemented.
-- **Protocol:** HTTP/HTTPS only, no browser DOM, WebSockets, or JS rendering.
-- **Login:** no built-in browser/form login recorder. Use environment-backed headers, and confirm redirects to login are treated as failures by default.
-- **Body size:** responses larger than 2 MiB are flagged, not silently benchmarked as successful.
-- **Traffic bounds:** up to 50 VUs, 100 RPS, 3 minutes, 20 steps, 30-second request timeout. Use much smaller values when beginning.
-- **Writes:** GET/HEAD are available by default; POST/PUT/PATCH/DELETE require explicit `--allow-writes` and safe test data.
-- **Security:** no HTTP redirects are followed; non-local plaintext HTTP requires `--allow-insecure-http`. These features do **not** prove you own a target; follow explicit authorization and rate-limit policies.
-- **Reporting:** no response bodies, cookies, or authorization headers are exported. Journey metrics cover completed journeys; shutdown does not yet provide a full drain and latency accounting for every unfinished journey. Treat scenario paths and test environment details as sensitive where appropriate.
-
-See [Measurement model](METRICS.md) for precise terminology and the [Roadmap](ROADMAP.md) for future capacity exploration and host telemetry.
+See the [roadmap](ROADMAP.md) for current validation gaps and release status.

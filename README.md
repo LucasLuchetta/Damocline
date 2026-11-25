@@ -39,7 +39,7 @@ Damocline will seek **scenario-specific sustainable capacity**, never claim one 
 > [!NOTE]
 > **Evidence level:** G0 is closed only for the **local reference scope** (loopback fixtures and calibrated generators). That is not certification for real applications. Capabilities are currently `IMPLEMENTED` and, for some loopback cases, `VALIDATED_CONTROLLED`; none is `PROVEN_REPRESENTATIVE`. The [Reliability Qualification milestone](docs/RELIABILITY_QUALIFICATION.md) takes priority over new features.
 
-## Current capabilities (October 2026)
+## Current capabilities
 
 Damocline is a **working experimental, local-first HTTP capacity testing CLI**. It executes bounded synthetic workloads, explores load levels, runs repeated campaigns and audits recorded evidence offline. Its results describe **specific tested scenarios and conditions**, not a certified maximum number of simultaneous human users.
 
@@ -421,7 +421,7 @@ go run ./cmd/damocline help
 go run ./cmd/damocline version
 ```
 
-For safe local testing, real authenticated application testing, and Windows instructions, see the [MVP quick start](docs/QUICKSTART.md). Use `--dry-run` to validate first, then `--authorized` to actually generate bounded traffic.
+For a safe local first run, authenticated application testing, and platform-specific instructions, see the [Quick start](docs/QUICKSTART.md). Use `--dry-run` to validate first, then `--authorized` to generate bounded traffic.
 
 **Optional local HTTP transport reference:** Run `go run ./cmd/damocline-calibrate --transport-matrix --out .damocline/calibration/transport.json` to verify bounded response-size, TLS, keep-alive, streaming, controlled delay and failure fixtures. The matrix never calls a customer application and does **not** certify the native generator scheduler or application capacity.
 
@@ -481,7 +481,7 @@ An `--extended` run adds the exact 15/20/50/100 arrivals-per-second loopback sta
 - [Measurement model](docs/METRICS.md)
 - [Scientific foundations and validation contract](docs/SCIENTIFIC_FOUNDATIONS.md)
 - [Local reference validation](docs/REFERENCE_VALIDATION.md)
-- [MVP quick start](docs/QUICKSTART.md)
+- [Quick start](docs/QUICKSTART.md)
 - [Source updates](docs/UPDATES.md)
 - [Decision records](docs/adr/0001-go-core.md)
 - [Contributing](CONTRIBUTING.md)
